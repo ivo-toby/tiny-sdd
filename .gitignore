@@ -1,0 +1,15 @@
+# Local agent configuration
+.agents/
+.codex/
+
+# Raw model events and copied candidate repositories; retain locally.
+experiments/runs/
+.tinysdd/
+
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store

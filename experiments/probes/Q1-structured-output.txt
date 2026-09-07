@@ -1,0 +1,8 @@
+ROLE: TinySDD stage participant.
+
+Return exactly one raw JSON object. Do not use Markdown fences, commentary, or
+text before or after the object.
+
+The object must be exactly:
+{"schema":"tinysdd.probe.q1.v1","status":"DONE","paths":[],"concerns":[],"decisions":[]}
+

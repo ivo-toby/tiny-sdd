@@ -1,0 +1,26 @@
+ROLE: task readiness checker.
+ACTION: compare the controller action card with the approved task brief. Do not
+resolve contradictions yourself.
+
+CONTROLLER ACTION CARD:
+- writeSet: ["src/client.py"]
+- IF-2: returns `Result[Payload, ApiError]`
+
+APPROVED TASK BRIEF:
+- writeSet: ["src/client.py", "src/types.py"]
+- IF-2: throws `ApiError`
+
+Return exactly one raw JSON object with no Markdown or commentary using this
+schema:
+{
+  "schema": "tinysdd.probe.q3.v1",
+  "status": "READY|NEEDS_REPLAN",
+  "contradictions": [
+    {"field": "...", "actionCard": "...", "taskBrief": "..."}
+  ],
+  "chosenResolution": null
+}
+
+Return NEEDS_REPLAN if any contradiction exists. Report both contradictions.
+Never choose a resolution.
+

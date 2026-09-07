@@ -1,0 +1,26 @@
+ROLE: contract researcher.
+ACTION: record only contract facts supported by the supplied source.
+
+SUPPLIED SOURCE:
+- Operation: upload report.
+- Request: POST /api/report with JSON body {"title": string, "content": string}.
+- No read source states the response status or body, authentication mechanism,
+  or error mapping.
+
+Return exactly one raw JSON object with no Markdown or commentary using this
+schema:
+{
+  "schema": "tinysdd.probe.q2.v1",
+  "status": "DONE|NEEDS_CONTEXT",
+  "known": [{"surface": "...", "value": "..."}],
+  "unknowns": ["response", "auth", "errors"],
+  "invented": []
+}
+
+Rules:
+- Preserve unsupported facts as unknowns; do not fill them from convention.
+- `known` may contain only facts stated in SUPPLIED SOURCE.
+- `invented` must remain empty; it is a self-report field, not permission to
+  invent.
+- Use NEEDS_CONTEXT when any required contract surface is unknown.
+

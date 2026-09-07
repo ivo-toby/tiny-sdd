@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "qwen36-titan-pi084-nonthinking-v1",
+  "runtime": {
+    "thinking": "off",
+    "reasoning": true,
+    "compat": {
+      "thinkingFormat": "qwen-chat-template",
+      "supportsDeveloperRole": false
+    }
+  },
+  "instructions": "Use the task's exact source interfaces. Report missing facts and unrun checks explicitly.",
+  "evidence": [
+    "docs/podcast-titan-q3-results-2026-09-05.md",
+    "Observed Pi 0.84.4 with titan/llamacpp/qwen3.6-35b-a3b-256k; Q3 is operator-reported. Explicit template flag validated locally; one amended invocation produced edits without an observed thinking stream."
+  ],
+  "limitations": [
+    "This is an endpoint-specific exploratory runtime profile, not a proven quality improvement or general Qwen policy.",
+    "reasoning:true is Pi capability metadata enabling the request toggle; thinking remains off.",
+    "The observed revised tests were not accepted. Exact quantization digest and proxy version are unknown."
+  ]
+}

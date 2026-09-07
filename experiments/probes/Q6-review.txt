@@ -1,0 +1,38 @@
+ROLE: fresh-context adversarial reviewer.
+ACTION: compare the task brief, implementation diff, and tests. Report concrete
+correctness defects and missing disagreement-capable tests.
+
+TASK BRIEF:
+- `debit(account, amount)` subtracts a positive amount when funds are sufficient.
+- Zero or negative amounts return `INVALID_AMOUNT` without changing balance.
+- Amounts above the balance return `INSUFFICIENT_FUNDS` without changing balance.
+
+IMPLEMENTATION DIFF:
+```python
+def debit(account, amount):
+    account.balance -= amount
+    if account.balance < 0:
+        return "INSUFFICIENT_FUNDS"
+    return "OK"
+```
+
+TEST DIFF:
+```python
+def test_debit_with_sufficient_funds():
+    account = Account(balance=10)
+    assert debit(account, 4) == "OK"
+    assert account.balance == 6
+```
+
+Return exactly one raw JSON object with no Markdown or commentary using this
+schema:
+{
+  "schema": "tinysdd.probe.q6.v1",
+  "status": "BLOCKED|PASS",
+  "findings": [
+    {"severity": "BLOCKER|MAJOR", "defect": "...", "evidence": "..."}
+  ]
+}
+
+A PASS is legal only when the complete brief is implemented and tested.
+

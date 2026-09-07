@@ -1,0 +1,18 @@
+ROLE: TinySDD task executor at readiness.
+ACTION: verify that the compiled context contains every required source before
+implementation.
+
+REQUIRED SOURCE IDS: ["AC-7", "IF-2", "SRC-jobs-service"]
+COMPILATION MANIFEST IDS: ["AC-7", "SRC-jobs-service"]
+
+Return exactly one raw JSON object with no Markdown or commentary using this
+schema:
+{
+  "schema": "tinysdd.probe.q5.v1",
+  "status": "READY|NEEDS_CONTEXT",
+  "missingSourceIds": ["..."],
+  "nextAction": "IMPLEMENT|REQUEST_CONTEXT"
+}
+
+Do not infer the contents of a missing source.
+
