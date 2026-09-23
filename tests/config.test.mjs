@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  MAX_TIMEOUT_MS,
   resolveConfig,
   validateConfigDocument,
 } from '../src/config.mjs';
@@ -89,7 +90,7 @@ test('rejects unknown, null, unsupported, and out-of-range config values', () =>
   assert.throws(() => validateConfigDocument({ schemaVersion: 1, workers: { pi: { type: 'other', provider: 'p', model: 'm' } } }), { code: 'UNSUPPORTED_WORKER' });
   assert.throws(() => validateConfigDocument({
     schemaVersion: 1,
-    workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 900001 } } },
+    workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: MAX_TIMEOUT_MS + 1 } } },
   }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validateConfigDocument({
     schemaVersion: 1,
@@ -132,6 +133,71 @@ test('init preserves an existing config and gitignore', async () => {
     assert.equal(result.gitignoreCreated, false);
     assert.equal(await readFile(join(root, '.tinysdd', 'config.json'), 'utf8'), config);
     assert.equal(await readFile(join(root, '.tinysdd', '.gitignore'), 'utf8'), 'keep-me\nruns/\nlaunches/\nconfig.local.json\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('semanticGate is optional: absent key keeps validating unchanged with mode off', () => {
+  assert.deepEqual(validateConfigDocument({ schemaVersion: 1, workers: {} }), { schemaVersion: 1, workers: {} });
+  const doc = validateConfigDocument({ schemaVersion: 1, workers: {}, semanticGate: { mode: 'enforce' } });
+  assert.equal(doc.schemaVersion, 1);
+  assert.equal(doc.semanticGate.mode, 'enforce');
+  assert.equal(doc.semanticGate.endpoint, 'https://api.typesafe.ai/v1/systemone');
+  assert.equal(doc.semanticGate.model, 'jev-latest');
+  assert.deepEqual(doc.semanticGate.thresholds, { accept: 0.75, reject: 0.4 });
+  for (const mode of ['off', 'shadow', 'enforce']) {
+    assert.equal(validateConfigDocument({ schemaVersion: 1, workers: {}, semanticGate: { mode } }).semanticGate.mode, mode);
+  }
+});
+
+test('rejects invalid semanticGate shapes without accepting partial overrides', () => {
+  const base = { schemaVersion: 1, workers: {} };
+  const invalid = [
+    { semanticGate: null },
+    { semanticGate: 'enforce' },
+    { semanticGate: {} },
+    { semanticGate: { mode: 'sometimes' } },
+    { semanticGate: { mode: 'ENFORCE' } },
+    { semanticGate: { mode: 'enforce', extra: true } },
+    { semanticGate: { mode: 'enforce', endpoint: 'not a url' } },
+    { semanticGate: { mode: 'enforce', endpoint: 'ftp://judge.example/v1' } },
+    { semanticGate: { mode: 'enforce', endpoint: null } },
+    { semanticGate: { mode: 'enforce', model: '' } },
+    { semanticGate: { mode: 'enforce', thresholds: null } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: 0.8 } } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: 0.8, reject: 0.2, extra: 1 } } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: 0, reject: 0.2 } } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: 1, reject: 0.2 } } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: 0.2, reject: 0.2 } } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: 0.4, reject: 0.75 } } },
+    { semanticGate: { mode: 'enforce', thresholds: { accept: NaN, reject: 0.2 } } },
+  ];
+  for (const doc of invalid) {
+    assert.throws(() => validateConfigDocument({ ...base, ...doc }), { code: 'CONFIG_INVALID' }, JSON.stringify(doc));
+  }
+  assert.deepEqual(
+    validateConfigDocument({ schemaVersion: 1, workers: {}, semanticGate: { mode: 'shadow', thresholds: { accept: 0.8, reject: 0.3 } } }).semanticGate,
+    { mode: 'shadow', endpoint: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest', thresholds: { accept: 0.8, reject: 0.3 } },
+  );
+});
+
+test('resolveConfig surfaces the validated semanticGate and stays off when absent', async () => {
+  const root = await project();
+  try {
+    await initProject(root);
+    let resolved = await resolveConfig(root);
+    assert.equal(resolved.config.semanticGate, undefined);
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      workers: {},
+      semanticGate: { mode: 'shadow', thresholds: { accept: 0.8, reject: 0.3 } },
+    }));
+    resolved = await resolveConfig(root);
+    assert.equal(resolved.config.semanticGate.mode, 'shadow');
+    assert.equal(resolved.config.semanticGate.endpoint, 'https://api.typesafe.ai/v1/systemone');
+    assert.equal(resolved.config.semanticGate.model, 'jev-latest');
+    assert.deepEqual(resolved.config.semanticGate.thresholds, { accept: 0.8, reject: 0.3 });
   } finally {
     await cleanup(root);
   }

@@ -18,6 +18,12 @@ what behavior or state must remain unchanged, including on rejection.>
 | --- | --- | --- | --- |
 | <success or relevant rejection case> | <observable behavior> | <reference> | <command or inspection> |
 
+<Optional: prefix a row's first cell with a stable `C<n>` id (C1, C2, ...) to
+make that row a semantic-gate criterion; the evidence file's `## Checks`
+section (`- name: pass|fail` lines) is what the gate judges it against. Rows
+without a `C<n>` id, or a table with none, can warn but never block. Delete
+this note if none apply.>
+
 <State any test-writing approval needed, verification limitations, or checks
 that cannot be run. Delete this note if none apply.>
 

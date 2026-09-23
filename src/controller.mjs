@@ -26,6 +26,19 @@ import {
   validateConfigDocument,
 } from './config.mjs';
 import { compileContext } from './context-compiler.mjs';
+import {
+  extractAcceptanceCriteria,
+  extractEvidenceChecks,
+  judgeEvidenceSufficiency,
+} from './jev.mjs';
+import {
+  aggregateGateOutcome,
+  appendDecisionRecords,
+  buildDecisionRecord,
+  computeBand,
+  JUDGE_UNAVAILABLE_ACTION,
+  SHADOW_POLICY_ACTION,
+} from './semantic-policy.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -506,6 +519,99 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
 
 export const resolvePacket = resolveTaskPacket;
 
+// The semantic gate judges, the controller decides. It runs outside
+// mutateState so the Jev HTTP call never holds the controller lock, and it
+// only constrains an accepted verdict: enforce can block it, shadow never
+// does, and a judge failure falls back to exactly the mode-off behavior.
+async function semanticGateDecision(root, { taskId, verdict, evidenceContent, judge }) {
+  if (verdict !== 'accepted') return null;
+  let resolved;
+  try {
+    resolved = await resolveConfig(root);
+  } catch {
+    return null;
+  }
+  const gate = resolved.config.semanticGate;
+  if (!gate || gate.mode === 'off') return null;
+  let task;
+  try {
+    const info = await layout(root, { create: false });
+    const state = await readState(info);
+    task = Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
+  } catch {
+    return null;
+  }
+  if (!task || !task.approval) return null;
+  let briefText;
+  try {
+    briefText = await readProjectFile(root, task.brief, taskBriefOptions());
+  } catch {
+    return null;
+  }
+  const artifactDigests = { briefDigest: sha256(briefText), evidenceDigest: sha256(evidenceContent) };
+  const criteria = extractAcceptanceCriteria(briefText);
+  const checks = extractEvidenceChecks(evidenceContent);
+  const timestamp = nowIso();
+  const baseRecord = { taskId, mode: gate.mode, model: gate.model, artifactDigests };
+  const shortCircuit = criteria.length === 0 ? 'brief has no C-prefixed acceptance criteria' : !checks.present ? 'evidence has no ## Checks section' : null;
+  if (shortCircuit !== null) {
+    // Warn-only boundary: confirm, never block, no judge call.
+    await appendDecisionRecords(root, taskId, [buildDecisionRecord({
+      timestamp,
+      ...baseRecord,
+      band: 'confirm',
+      policyAction: gate.mode === 'shadow' ? 'ignored-shadow' : 'confirm',
+      reason: shortCircuit,
+    })]);
+    if (gate.mode !== 'enforce') return { mode: gate.mode, action: 'confirm' };
+    return { mode: gate.mode, action: 'confirm', reviewField: { mode: gate.mode, action: 'confirm', evaluatedAt: timestamp, warnings: [shortCircuit] } };
+  }
+  let judged;
+  try {
+    judged = await judgeEvidenceSufficiency({ taskId, criteria, checks: checks.checks, endpoint: gate.endpoint, model: gate.model, judge });
+  } catch (error) {
+    if (!(error instanceof TinySDDError) || error.code !== 'JEV_UNAVAILABLE') throw error;
+    // Judge down: behave exactly as mode off plus an unavailable record.
+    await appendDecisionRecords(root, taskId, [buildDecisionRecord({
+      timestamp,
+      ...baseRecord,
+      policyAction: JUDGE_UNAVAILABLE_ACTION,
+      reason: error.details?.reason ?? error.code,
+    })]);
+    return null;
+  }
+  const evaluated = criteria.map((criterion) => {
+    const noul = judged.answers[criterion.id];
+    return { id: criterion.id, text: criterion.text, noul, band: computeBand(noul, gate.thresholds) };
+  });
+  const { action } = aggregateGateOutcome({ evaluated, mode: gate.mode });
+  await appendDecisionRecords(root, taskId, evaluated.map((item) => buildDecisionRecord({
+    timestamp,
+    ...baseRecord,
+    modelVersion: judged.modelVersion,
+    questionId: item.id,
+    criterionDigest: sha256(item.text),
+    noul: item.noul,
+    band: item.band,
+    // Per-criterion action in enforce; shadow collapses every line to ignored-shadow.
+    policyAction: gate.mode === 'shadow' ? SHADOW_POLICY_ACTION : item.band,
+  })));
+  if (action === 'block') return { mode: gate.mode, action, evaluated, thresholds: gate.thresholds };
+  if (gate.mode === 'enforce' && action === 'confirm') {
+    return {
+      mode: gate.mode,
+      action,
+      reviewField: {
+        mode: gate.mode,
+        action,
+        evaluatedAt: timestamp,
+        warnings: evaluated.filter((item) => item.band !== 'allow').map((item) => `criterion ${item.id} noul ${item.noul} is below the accept threshold ${gate.thresholds.accept}`),
+      },
+    };
+  }
+  return { mode: gate.mode, action };
+}
+
 export async function reviewTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const verdict = options.verdict;
@@ -513,7 +619,16 @@ export async function reviewTask(projectRoot, options = {}) {
   const by = requireText(options.by, 'review by');
   const evidence = normalizeReviewEvidence(requireText(options.evidence, 'evidence'), 'evidence');
   const root = await canonicalProjectRoot(projectRoot);
-  await readProjectFile(root, evidence, reviewEvidenceOptions());
+  const gateEvidence = await readProjectFile(root, evidence, reviewEvidenceOptions());
+  const gate = await semanticGateDecision(root, { taskId: id, verdict, evidenceContent: gateEvidence, judge: options.judge });
+  if (gate !== null && gate.mode === 'enforce' && gate.action === 'block') {
+    const blocked = gate.evaluated.filter((item) => item.band === 'block');
+    throw tinyError('SEMANTIC_GATE_REJECTED', `semantic gate rejected the accepted verdict: ${blocked.map((item) => `${item.id} noul ${item.noul} < reject threshold ${gate.thresholds.reject}`).join(', ')}`, {
+      mode: gate.mode,
+      thresholds: gate.thresholds,
+      criteria: blocked.map((item) => ({ id: item.id, noul: item.noul, band: item.band })),
+    });
+  }
   return mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
@@ -534,6 +649,7 @@ export async function reviewTask(projectRoot, options = {}) {
       approvalDigest: task.approval.approvalDigest,
       allowedDigest: digestJson(allowedSnapshot),
     };
+    if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
     if (verdict === 'accepted') review.acceptanceDigest = digestJson({ ...review, taskId: id });
     task.review = review;
     return { task: publicTask(task, await inspectTask(root, state, task)) };

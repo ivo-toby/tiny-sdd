@@ -14,7 +14,7 @@ const SECRET_KEY = /(?:api[_-]?key|authorization|bearer|cookie|credential|passwo
 
 export const PI_AGENT_ENV = "PI_CODING_AGENT_DIR";
 export const DEFAULT_TIMEOUT_MS = 300_000;
-export const MAX_TIMEOUT_MS = 900_000;
+export const MAX_TIMEOUT_MS = 3_600_000;
 export const DEFAULT_TOOL_LIMIT = 40;
 export const MAX_TOOL_LIMIT = 100;
 

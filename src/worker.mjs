@@ -15,7 +15,7 @@ import {
 } from "./pi-environment.mjs";
 import { compileContext } from "./context-compiler.mjs";
 
-const MAX_RAW_OUTPUT_BYTES = 16 * 1024 * 1024;
+const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const MAX_USER_PROMPT_BYTES = 128 * 1024;
 const MAX_RESOURCE_BYTES = 512 * 1024;

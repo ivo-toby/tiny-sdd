@@ -15,6 +15,7 @@ import {
   resolveTaskPacket,
   reviewTask,
 } from '../src/controller.mjs';
+import { sha256 } from '../src/fs-utils.mjs';
 
 const exec = promisify(execFile);
 
@@ -307,6 +308,261 @@ test('next exposes a pending approval without advancing state', async () => {
     await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/a.ts'] });
     const next = await controllerNext(root);
     assert.deepEqual(next.next, { action: 'pending_approval', taskId: 'one' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+const GATE_BRIEF = [
+  '# Brief',
+  '',
+  '## Acceptance and checks',
+  '',
+  '| Situation | Expected result and preserved state | Source | Exact check |',
+  '| --- | --- | --- | --- |',
+  '| C1 | behavior one is demonstrated | brief | run tests |',
+  '| C2 | behavior two is demonstrated | brief | inspect output |',
+  '',
+].join('\n');
+
+const GATE_EVIDENCE = [
+  '# Evidence',
+  '',
+  '## Checks',
+  '',
+  '- run tests: pass',
+  '- inspect output: pass',
+  '',
+].join('\n');
+
+async function gateProject(mode, { brief = GATE_BRIEF, evidence = GATE_EVIDENCE, thresholds } = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'tinysdd-gate-'));
+  await mkdir(join(root, 'docs'), { recursive: true });
+  await writeFile(join(root, 'docs', 'brief.md'), brief);
+  await initProject(root);
+  const gate = { mode };
+  if (thresholds !== undefined) gate.thresholds = thresholds;
+  await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({ schemaVersion: 1, workers: {}, semanticGate: gate }));
+  await mkdir(join(root, '.tinysdd', 'reviews'), { recursive: true });
+  await writeFile(join(root, '.tinysdd', 'reviews', 'evidence.md'), evidence);
+  await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/new-file.ts'] });
+  await approveTask(root, { id: 'one', by: 'operator', reason: 'checked scope' });
+  return root;
+}
+
+function judgeStub(answers, { fail = false } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (fail) throw new Error('judge down');
+    return { status: 200, json: async () => ({ answers }) };
+  };
+  return { calls, fetchImpl };
+}
+
+async function decisionLines(root) {
+  const text = await readFile(join(root, '.tinysdd', 'runs', 'decisions', 'one.jsonl'), 'utf8');
+  return text.trim().split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line));
+}
+
+async function controllerState(root) {
+  return JSON.parse(await readFile(join(root, '.tinysdd', 'runs', 'controller.json'), 'utf8'));
+}
+
+test('shadow gate never blocks and logs ignored-shadow decisions', async () => {
+  const root = await gateProject('shadow');
+  try {
+    const judge = judgeStub({ C1: { noul: 0.1 }, C2: { noul: 0.2 } });
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    const lines = await decisionLines(root);
+    assert.equal(lines.length, 2);
+    for (const line of lines) {
+      assert.equal(line.policyAction, 'ignored-shadow');
+      assert.equal(line.gate, 'evidence-sufficiency');
+      assert.equal(line.mode, 'shadow');
+    }
+    assert.equal(lines[0].questionId, 'C1');
+    assert.equal(lines[0].band, 'block');
+    assert.equal(lines[0].noul, 0.1);
+    assert.equal(lines[1].questionId, 'C2');
+    assert.equal(lines[1].noul, 0.2);
+    const state = await controllerState(root);
+    assert.equal(state.tasks.one.review.semanticGate, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('enforce gate blocks acceptance below the reject threshold without state change', async () => {
+  const root = await gateProject('enforce');
+  const stateBefore = await readFile(join(root, '.tinysdd', 'runs', 'controller.json'), 'utf8');
+  try {
+    const judge = judgeStub({ C1: { noul: 0.3 }, C2: { noul: 0.9 } });
+    await assert.rejects(
+      reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } }),
+      (error) => {
+        assert.equal(error.code, 'SEMANTIC_GATE_REJECTED');
+        assert.match(error.message, /C1/u);
+        assert.deepEqual(error.details.criteria, [{ id: 'C1', noul: 0.3, band: 'block' }]);
+        assert.deepEqual(error.details.thresholds, { accept: 0.75, reject: 0.4 });
+        return true;
+      },
+    );
+    assert.equal(await readFile(join(root, '.tinysdd', 'runs', 'controller.json'), 'utf8'), stateBefore);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    const lines = await decisionLines(root);
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0].policyAction, 'block');
+    assert.equal(lines[1].policyAction, 'allow');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('enforce gate allows acceptance above the accept threshold and logs allow', async () => {
+  const root = await gateProject('enforce');
+  try {
+    const judge = judgeStub({ C1: { noul: 0.9 }, C2: { noul: 0.8 } });
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    const state = await controllerState(root);
+    assert.equal(state.tasks.one.review.semanticGate, undefined);
+    assert.equal(typeof state.tasks.one.review.acceptanceDigest, 'string');
+    const lines = await decisionLines(root);
+    assert.deepEqual(lines.map((line) => line.policyAction), ['allow', 'allow']);
+    assert.equal(lines[0].model, 'jev-latest');
+    assert.match(lines[0].criterionDigest, /^[a-f0-9]{64}$/u);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('enforce gate records a confirm warning in the review between thresholds', async () => {
+  const root = await gateProject('enforce');
+  try {
+    const judge = judgeStub({ C1: { noul: 0.55 }, C2: { noul: 0.9 } });
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    const state = await controllerState(root);
+    assert.equal(state.tasks.one.review.semanticGate.mode, 'enforce');
+    assert.equal(state.tasks.one.review.semanticGate.action, 'confirm');
+    assert.equal(state.tasks.one.review.semanticGate.warnings.length, 1);
+    assert.match(state.tasks.one.review.semanticGate.warnings[0], /C1 noul 0\.55/u);
+    const lines = await decisionLines(root);
+    assert.deepEqual(lines.map((line) => line.band), ['confirm', 'allow']);
+    assert.deepEqual(lines.map((line) => line.policyAction), ['confirm', 'allow']);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an unavailable judge behaves exactly like off and logs semantic-judge-unavailable', async () => {
+  const root = await gateProject('enforce');
+  const originalKey = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'test-key';
+  try {
+    const judge = judgeStub({}, { fail: true });
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal(judge.calls.length, 2);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    const state = await controllerState(root);
+    assert.equal(state.tasks.one.review.semanticGate, undefined);
+    const lines = await decisionLines(root);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].policyAction, 'semantic-judge-unavailable');
+    assert.equal(lines[0].questionId, null);
+    assert.equal(lines[0].criterionDigest, null);
+    assert.equal(lines[0].noul, null);
+    assert.equal(lines[0].band, null);
+    assert.equal(lines[0].reason, 'JEV_NETWORK');
+  } finally {
+    if (originalKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = originalKey;
+    await cleanup(root);
+  }
+});
+
+test('decision log records carry the fixed field set with digests only', async () => {
+  const root = await gateProject('enforce');
+  try {
+    const judge = judgeStub({ C1: { noul: 0.9 }, C2: { noul: 0.8 } });
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    const lines = await decisionLines(root);
+    for (const line of lines) {
+      assert.deepEqual(Object.keys(line).sort(), [
+        'artifactDigests', 'band', 'criterionDigest', 'gate', 'mode', 'model',
+        'modelVersion', 'noul', 'policyAction', 'questionId', 'taskId', 'timestamp',
+      ]);
+      assert.match(line.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+      assert.equal(line.taskId, 'one');
+      assert.equal(line.gate, 'evidence-sufficiency');
+      assert.equal(line.model, 'jev-latest');
+      assert.match(line.criterionDigest, /^[a-f0-9]{64}$/u);
+      const rendered = JSON.stringify(line);
+      assert.ok(!rendered.includes('behavior one'));
+      assert.ok(!rendered.includes('run tests'));
+    }
+    assert.equal(lines[0].questionId, 'C1');
+    assert.equal(lines[0].criterionDigest, sha256('behavior one is demonstrated | brief | run tests'));
+    assert.deepEqual(lines[0].artifactDigests, { briefDigest: sha256(GATE_BRIEF), evidenceDigest: sha256(GATE_EVIDENCE) });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('evidence without a Checks section confirms without calling the judge', async () => {
+  const root = await gateProject('enforce', { evidence: 'observed evidence\n' });
+  try {
+    const judge = judgeStub({});
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal(judge.calls.length, 0);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    const state = await controllerState(root);
+    assert.equal(state.tasks.one.review.semanticGate.action, 'confirm');
+    assert.match(state.tasks.one.review.semanticGate.warnings[0], /## Checks section/u);
+    const lines = await decisionLines(root);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].policyAction, 'confirm');
+    assert.equal(lines[0].band, 'confirm');
+    assert.equal(lines[0].noul, null);
+    assert.equal(lines[0].questionId, null);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a brief without C-prefixed rows confirms without calling the judge', async () => {
+  const root = await gateProject('enforce', {
+    brief: '# Brief\n\n## Acceptance and checks\n\n| Situation | Expected result |\n| --- | --- |\n| unnumbered | something observed |\n',
+  });
+  try {
+    const judge = judgeStub({});
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal(judge.calls.length, 0);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    const lines = await decisionLines(root);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].policyAction, 'confirm');
+    assert.equal(lines[0].band, 'confirm');
+    assert.match(lines[0].reason, /C-prefixed/u);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('gate stays inactive for non-accepted verdicts and off mode', async () => {
+  const root = await gateProject('enforce');
+  try {
+    const judge = judgeStub({});
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal(judge.calls.length, 0);
+    assert.equal((await controllerStatus(root)).tasks[0].review.verdict, 'revision');
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({ schemaVersion: 1, workers: {} }));
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } });
+    assert.equal(judge.calls.length, 0);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    await assert.rejects(readFile(join(root, '.tinysdd', 'runs', 'decisions', 'one.jsonl'), 'utf8'));
   } finally {
     await cleanup(root);
   }
