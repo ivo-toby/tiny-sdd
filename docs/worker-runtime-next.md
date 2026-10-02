@@ -20,10 +20,13 @@ compaction behavior.
   read/write/edit worker cannot observe a test run, so it simulates the whole
   task in one thinking response before its first write. That simulation has no
   natural bound.
-- **First positive evidence for slicing.** Slice S1 (2 files, 6 tests, a 4-fact
-  manifest) completed in 159 s with zero reads and 1,422 output tokens, and was
-  accepted after controller verification. It is confounded: task size, thinking
-  level and manifest size all changed together (2.5).
+- **Slicing delivered the module.** S1–S5a were accepted after ~55 minutes of
+  total model time including revisions, against zero usable output from ~60
+  minutes of single-task attempts (2.5, 2.6). Round 1 typically got the structure
+  right with one systematic defect that a single test or lint run would have
+  shown; round 2, given an exact controller review, landed in 43–430 s. The
+  controller was acting as the worker's `run_checks`, once per round. Confounds
+  remain: task size, thinking level and manifest size changed together.
 - **The primary fix is `run_checks`**: a fixed tool that runs only the task's
   approved check commands against the current candidate, in a separate sandbox
   with no network, no credentials and no inference process. Pi 0.84.4 can expose
@@ -35,7 +38,8 @@ compaction behavior.
   fixes: `task close` / `task supersede`, `task apply` with a recorded link to
   the applied run, a slice-DAG `status`, protected contract files, and possibly
   plan-level approval (3.2).
-- **Prototyped on this branch:** gitignore-aware worker copy; preflight for
+- **Prototyped on this branch:** gitignore-aware worker copy (its first live use
+  found a bug with a committed or unignored `.tinysdd/`, now fixed); preflight for
   thinking control and the token cap; a per-response thinking budget configurable
   in profiles; `output_limit` split into `raw_output_limit` /
   `response_token_limit`; the `no_progress` watchdog (`limits.firstWriteMs`);
@@ -162,12 +166,91 @@ them: S1 at thinking high, and the full task at medium (section 4).
    clean-worktree workaround unnecessary.
 6. Shell examples using `${3:+--depends-on $3}` don't word-split in zsh.
 
+### 2.6 Remaining slices and first use of this branch
+
+Worker `code-local` (qwen3.8-q4s), thinking medium + qwen-chat-template, 65K
+`maxTokens`, 15-minute cap (the `main` value).
+
+| Slice | Round 1 | Round 2 (`--base-run` + review evidence) |
+| --- | --- | --- |
+| S1 errors + lease (2 files, 6 tests) | 2m39s, 5 tools, 0 reads: all green | — |
+| S2 path-validation (1 file, 12 tests) | 4m17s, 9 tools: 6/12 fail; `const relative = relative(...)` shadows the import (TDZ ReferenceError) | 43 s, 2 tools: renamed to `rel`, 12/12 |
+| S3 in-memory backend (1 file, 8 tests) | 7m07s, 12 tools: 8/8, but 3 eslint `require-await` errors | 85 s, 3 tools: non-async + `Promise.resolve`, clean |
+| S4 allowlist (1 file, 39 tests) | outcome `timeout` at 15 min, but the file was complete: 39/39, lint clean, accepted | — |
+| S5 lifecycle (2 files, 48 tests) | `timeout` at 15 min, 0 writes: one ~58K-char response simulating the async microtask ordering of the tests | re-split by behavior |
+| S5a sequential core (2 files, 36 tests) | 11m13s: both files written, but used `.val` on neverthrow results (the ts-results API, hallucinated): 9 tsc / 42 eslint errors | **this branch**: 7m09s, 4 tools, `firstWriteAtMs` 384099: 36/36, clean |
+| S5b async (edit 1 file, 12 tests) | running | |
+
+**Pattern.** Round 1 gets the structure right with one systematic defect: a
+shadowed import, a lint rule, a wrong library accessor. A single test or lint run
+would show each of these. Round 2, with an exact controller review (line, cause,
+fix), lands in 43–430 s. Total model time for S1–S5a including revisions is about
+55 minutes, against zero usable output from about 60 minutes of single-task
+attempts. The controller is effectively the worker's `run_checks`, invoked once
+per round at the cost of a full review round-trip.
+
+**Decomposition limits.**
+
+- File-level slicing was not enough for S5. One file with dense async semantics
+  (timeouts, settle-once races, cancellation, fake timers) still triggered
+  unbounded mental test simulation. Splitting by behavior (sequential core vs
+  async), with a test file per behavior, worked.
+- S4 and S5 hit the 15-minute cap. S4's candidate was complete, so `timeout`
+  says nothing about candidate quality. Reviewers could still accept it, and
+  TinySDD allowed that.
+
+**First live use of this branch.**
+
+1. **Bug, fixed in `efd887d`:** the git-aware copy failed with "git-listed path
+   may not address controller state" when `.tinysdd/` was untracked but not
+   ignored (`init` only ignores runs/, launches/ and config.local.json). A
+   committed `.tinysdd/config.json` would have failed the same way. Name
+   exclusions now run before path validation, as in the walk.
+2. `firstWriteAtMs`, `toolCalls` and `workspaceCopy.mode` appeared as expected
+   on S5a round 2.
+3. The `task add` sizing output was correct and useful (S1 rerun: allowedFiles 2,
+   compiledContextBytes 11862, citedTestLines 78, no warnings).
+
+**Manifest quality.**
+
+- **Lint rules.** S3's revision was caused by the repo's `require-await` rule,
+  which the manifest didn't state; after the eslint rules were added as a fact,
+  later slices had no lint issues.
+- **Library API facts.** S5a confused neverthrow's `.value` with ts-results'
+  `.val`. When a model may mix up similar libraries, cite the dependency
+  version and the two or three exact accessors the repo uses.
+- **"The excerpts are complete, do not re-read"** coincided with 0 reads on S1
+  but not on S5a (3 reads of files it was told not to re-read). Compare
+  `citedRereads` across the reruns before concluding anything.
+
+**More controller friction.**
+
+1. Editing a shared brief invalidates every task that uses it. A short addendum
+   turned all four accepted slices `stale` and blocked the next task; reverting the
+   brief byte-for-byte restored them.
+2. Still no close or supersede: `broker-contract` stays `stale_approval` and the
+   abandoned `broker-lifecycle` stays `ready`.
+3. Hand-applying patches invites mistakes. A `--base-run` revision's `patch.diff`
+   is a delta against the prior candidate, not against the project, so it had to
+   be applied by copying `workspace-after` files instead.
+4. A stray rsync during a hand-synced worktree copy overwrote the worktree's `.git`
+   link with the main repo's `.git` directory, so the shared `info/exclude` no
+   longer applied. Run workers from the project itself or a real `git worktree`;
+   the git-aware copy makes hand-synced copies unnecessary.
+
+**Next on the operator side:** S5b round 1; rerun A (same slices on this branch,
+identical conditions, from a clean `git worktree`, to measure run-to-run
+variance); rerun B (the same with the `firstWriteMs` watchdog, a per-response
+thinking budget and a 60-minute cap).
+
 ## 3. Recommendations
 
 ### 3.1 Feedback loop without bash: `run_checks` (primary fix)
 
 **Goal.** Turn unbounded mental simulation into cheap, observed feedback: edit,
-check, fix in small steps. **Non-goals.** No arbitrary command, no network, no
+check, fix in small steps. Update 3 shows what it would replace: each S2, S3 and
+S5a revision was one controller check-and-review round-trip for a defect the
+worker could have seen itself in one check run. **Non-goals.** No arbitrary command, no network, no
 credentials near executed code, and no change to who verifies: worker-observed
 check results are never acceptance evidence. **Operator decision:** executing
 dependency code and model-written code on the host without network or
@@ -320,6 +403,20 @@ direct test of the cited-test-lines threshold. From this branch on, every
 resources, cited lines, cited test lines), so each run pairs input size with
 behavior.
 
+**Split by behavior, not only by file.** S5 showed that one file with dense async
+semantics still triggers unbounded simulation. The sizing report should also look
+at the cited tests' characteristics, which can be detected from the test source:
+fake timers, deferred/manual promises, concurrency or race tests, and many
+ordering assertions. Above a threshold it should recommend a behavior split
+(sequential core vs async edge, each with its own test file), not just fewer files.
+
+**Standard manifest facts.** The controller's preparation should always cover two
+facts, and the skill or the context compiler's prompt should ask for them:
+the project's lint rules that commonly bite (S3: `require-await`), and for
+dependencies a small model may confuse with similar libraries, the version plus
+the exact accessors the repo uses (S5a: neverthrow `.value`, not ts-results
+`.val`).
+
 **Smaller, focused manifests.** S1's worker read nothing and said it could trust
 the excerpt; every single-task worker re-read 5–9 cited files. The manifest size
 changed with the task size, so this is not yet attributable, but it suggests that
@@ -355,9 +452,12 @@ step itself and a record of which worker run was applied. Proposal:
 - `tinysdd task apply --id S1 --run WORKER_RUN_ID --by LABEL`:
   - refuses unless the run is `completed`, scope-clean, belongs to the task, and
     its patch touches only the task's allowed paths;
-  - applies the run's `patch.diff` to the project, stripping the
-    `workspace-before/` / `workspace-after/` prefix (the equivalent of today's
-    manual `git apply -p1`), after a `git apply --check`;
+  - applies by content, not by patch: for each changed allowed path it writes
+    the run's `workspace-after` file into the project. Before writing, it checks
+    that the project's current file equals the state the run's lineage started
+    from (the root run's `workspace-before`). A `--base-run` revision's
+    `patch.diff` is a delta against the prior candidate, not the project (update 3,
+    friction 3), so a patch-based apply would be wrong for revisions;
   - verifies that each allowed file now equals the run's `workspace-after` copy;
   - records `applied: { runId, patchSha256, appliedAt, by, files }` in task state.
 - `task review --verdict accepted` then works as today: it binds the project's
@@ -378,6 +478,20 @@ needs a current approval, so once its brief changes it stays `stale_approval`.
   other open tasks depend on it, and those tasks are listed.
 - `task supersede --id OLD --with S1,...,S5 --by --reason`: `close` plus a
   recorded link to the successors, so the feature history shows the re-cut.
+
+**Shared briefs.** Approval and acceptance bind the whole brief's digest, so one
+addendum to a brief shared by four slices made all four `stale` (update 3). Three
+options, in order of preference:
+
+1. **One brief per task** (convention, no code): a shared feature spec is cited
+   through the context manifest by line range. A slice then goes stale only when
+   the section it cites changes, because the context compiler already digests
+   exact ranges.
+2. **Append-only addenda:** `task addendum --id ID FILE` attaches a dated note
+   that is included in the packet and recorded, without changing the approved
+   brief's digest. It is visible but can't silently change accepted meaning.
+3. **Section-bound digests in the brief:** more machinery for the same effect as
+   option 1.
 
 **Plan-level approval (needs an operator decision on meaning).** Today each
 task's approval records the acceptance digests of its dependencies, so S5 cannot
@@ -464,6 +578,13 @@ Measure that cost (section 4) rather than treating decomposition as free.
   `worker continue --run RUN --message FILE`. The message would be a recorded
   controller artifact, counted as planned steering under current-scope rules.
   This needs session retention and a recording rule; run it after `run_checks`.
+- **Timeout is not a quality signal.** S4 timed out with a complete, passing
+  candidate. On `timeout` (and `stopped`), the result should add a
+  `candidateState`: allowed paths touched vs total, and, once `run_checks` exists,
+  the last worker-observed check result. Reviewers already can and should judge
+  the candidate itself. The first measured `firstWriteAtMs` on this branch was
+  384 s (S5a round 2, which then finished at 7m09s), a useful anchor for
+  per-worker `firstWriteMs`.
 - **`worker stop` (small, needed now).** Run 4 lost its result because stopping
   meant killing the launcher. `worker stop --id LAUNCH` should signal the launcher,
   which kills the Pi process group and then finalizes normally: snapshot, patch,
@@ -561,6 +682,12 @@ contexts grow.
 | `--protect`, `task update` | Designed (3.2) | Controller semantics, so the open questions come first. |
 | Plan-level approval | Designed (3.2) | Changes approval meaning; operator decision first. |
 | `worker stop` with `stopped` outcome | Designed (3.3) | Small; next to implement. |
+| `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |
+| Timeout candidate state | Designed (3.3) | `candidateState` on timeout/stopped; S4 timed out with a complete candidate. |
+| Shared briefs going stale | Designed (3.2) | One brief per task plus cited spec ranges; addenda as the alternative. |
+| Behavior-split sizing signal | Designed (3.2) | Test characteristics (fake timers, deferred promises, races) recommend a behavior split. |
+| Standard manifest facts | Designed (3.2) | Lint rules and confusable library accessors, prompted by the skill. |
+| Run workers from a real worktree | **Documented** (quickstart) | Never from a hand-synced copy. |
 | Shell portability in examples | Checked | No `${var:+…}` constructs in this repository's skill or docs. Rule for future examples: one literal flag per argument, no conditional parameter expansion. |
 | Cited files in workspace as read-only | Deferred | Fix note 8 suggests it if re-reads stay high. S1 had zero; `citedRereads` measures the rest. |
 
@@ -613,20 +740,82 @@ with controller work.
 | single | run 2 | 8 / 12 / 43 / ~650 | off, not sent | response cap | 5 | 0 | — | 16384 / 15579 | 9 min | — | — |
 | single | run 3 | 8 / 12 / 43 / ~650 | high | timeout | 9 | 0 | — | n/a | 20 min | — | — |
 | single | run 4 | 8 / 12 / 43 / ~650 | high | stopped (interrupted) | 7 | 0 | — | ~35–40K (est.) | 17 min | — | — |
-| sliced | S1 | 2 / 4 / ? / 6 tests | medium | completed | 0 | 2 files | < 159 s | 1422 / 838 | 159 s | 6/6 | 0 (one note) |
+| sliced | S1 | 2 / 4 / 11.6 KB (rerun) / 78 | medium | completed | 0 | 2 files | < 159 s | 1422 / 838 | 159 s | 6/6 | 0 (one note) |
+| sliced | S2 | 1 / ? / ? / 12 tests | medium | completed, then revision | ? | 1 file | ? | ? | 4m17s + 43 s | 6/12 → 12/12 | 1 (TDZ shadowing) |
+| sliced | S3 | 1 / ? / ? / 8 tests | medium | completed, then revision | ? | 1 file | ? | ? | 7m07s + 85 s | 8/8, lint → clean | 1 (`require-await`) |
+| sliced | S4 | 1 / ? / ? / 39 tests | medium | timeout (complete candidate) | ? | 1 file | ? | ? | 15 min | 39/39 | 0 |
+| sliced | S5 | 2 / ? / ? / 48 tests | medium | timeout, 0 writes | ? | 0 | — | ~58K chars thinking | 15 min | — | re-split |
+| sliced | S5a | 2 / ? / ? / 36 tests | medium | completed, then revision | 3 (cited) | 2 files | 384 s (round 2) | ? | 11m13s + 7m09s | tsc/lint fail → 36/36 | 1 (`.val` API) |
 
-## 5. Interaction with the semantic-gate (Jev) findings
+Rerun A (same slices, same conditions, clean `git worktree`) measures
+run-to-run variance; rerun B (watchdog, thinking budget, 60-minute cap) measures
+the new runtime settings. Both produce `taskShape` and the observed fields
+directly, so the `?` cells fill themselves.
 
-The operator's POC found no demonstrated benefit from enforcing Jev, which checks
-evidence coverage, not correctness. A deterministic rule requiring one explicit
-passing check per acceptance criterion likely gives similar value. The `checks`
-declaration from 3.1 provides that rule's input: each declared check can name
-the `C<n>` criteria it covers, so "every criterion has at least one declared
-check" is checkable at `task add` without a judge. Whether acceptance should then
-require recorded passing evidence per criterion is a review and acceptance
-decision in the gate area, which this work leaves alone. Worker-observed
-`run_checks` results must never satisfy such a rule; only controller-recorded
-evidence can.
+## 5. Decision models (Jev, Laya and others)
+
+The goal is to spend fewer frontier tokens. Decision models are cheap
+classifiers: given a state and typed questions (choice, score, or noul, a
+yes-probability), they return calibrated probabilities. Jev (typesafe.ai) is
+hosted. Laya (Convai Innovations) is open-weight under Apache 2.0, about 421M
+parameters on a ModernBERT encoder, uses the same typed-question primitives, and
+runs locally in tens of milliseconds. Reports say its zero-shot accuracy is weak
+without fine-tuning; that is not verified here.
+
+**Why the first Jev POC was thin.** It tested one decision point (evidence
+sufficiency at acceptance) on one task with two evidence variants. That decision
+point sits right next to a frontier or human review that happens anyway, so even
+a perfect judge there saves few frontier tokens. The finding still stands: Jev
+detected missing evidence (coverage) but not semantically false evidence. The
+right question is broader: which decisions currently cost frontier tokens, and
+can a cheap model take them or pre-filter them at an acceptable false-accept
+rate?
+
+**Candidate decision points**, each with a deterministic baseline to beat:
+
+| Decision | Frontier cost today | Question shape | Deterministic baseline |
+| --- | --- | --- | --- |
+| Failure triage after checks: can the worker fix this from the check log alone, or is it a test defect, missing context or environment? | a full review round per revision (S2, S3, S5a) | choice | error-pattern rules (TDZ, lint rule id, tsc code) |
+| Research relevance: which files and symbols matter for this change? | frontier exploration of the repo | score per candidate chunk | grep/symbol graph |
+| Review triage: does this green, in-scope diff need a frontier review? | every slice is reviewed | noul | all checks green + scope clean + no public API change |
+| Spec coverage: does every requirement have a criterion and every criterion a check? | frontier spec review | noul per requirement | ID traceability |
+| Slice routing: does this packet need a behavior split, or a stronger model? | frontier re-cutting after failures (S5) | choice | sizing and test-characteristic lint |
+
+Failure triage is the most promising before `run_checks` exists. In update 3
+every round-1 defect was the kind a raw check log explains. "Log is sufficient,
+retry locally with the log as review evidence" would have skipped three frontier
+review rounds. Once `run_checks` exists, the worker sees those logs itself, and
+triage moves to "is this failure worth escalating at all".
+
+**How to evaluate properly.** Decision models are another role in the benchmark
+(section 6). Benchmark scoring itself stays deterministic; decision models are
+evaluated, never the evaluator.
+
+- **Labels come for free.** Every worker run now has deterministic ground truth
+  (controller checks, review verdicts). The talon S1–S5 rounds are the first
+  labeled examples; benchmark runs will produce hundreds.
+- **Compare per decision point:** the deterministic baseline, Jev, Laya
+  zero-shot, Laya fine-tuned on TinySDD labels, a local LLM judge (the qualified
+  small model) and a frontier judge, as the reference.
+- **Metrics:** false-accept rate at the operating threshold (the one that
+  matters), frontier tokens avoided, and latency.
+- **Adopt only where a model beats the deterministic baseline**, in shadow mode
+  first.
+
+A distinctive loop for a local-first tool: benchmark and review history become
+training data for a fine-tuned local decision model.
+
+**Integration shape.** One `decision` provider interface (state + typed
+questions → probabilities) with jev, laya and llm-judge implementations. Each
+decision point gets its own `off`/`shadow`/`enforce` mode, and every decision is
+logged with digests. The existing semantic-gate code is the natural first
+provider; it is the operator's in-progress work, so this design does not change
+it.
+
+**`run_checks` input.** Each declared check (3.1) can name the `C<n>` criteria it
+covers, which gives the deterministic rule from the POC ("every criterion has at
+least one declared check") its input at `task add`. Worker-observed `run_checks`
+results never count as acceptance evidence for any decision point.
 
 ## 6. Implementation plan
 
@@ -638,14 +827,22 @@ Each item lists the checks that close it.
 1. **`worker stop`.** Acceptance: with a fake Pi sleeping, `worker stop` produces
    `result.json` with outcome `stopped`, retained `stdout.jsonl`, `workspace-after`
    and patch, and a launch status of `finished`, not `interrupted`.
+1a. **Timeout `candidateState`.** Acceptance: a timed-out fake run that wrote all
+   allowed paths reports `candidateState.allowedPathsTouched` equal to the total.
 2. **`task close` and `task supersede`.** Acceptance: a `stale_approval` task can be
    closed; a closed task leaves `next` and status counts; closing is refused while
    open tasks depend on it, and they are listed; supersede records its successors.
-3. **`task apply` and `appliedFromRun`.** Acceptance: the patch applies to a
-   fixture project and is recorded; refused for a failed or out-of-scope run, a
-   run from another task, or a patch that doesn't apply; post-apply files equal
-   `workspace-after`; review records `identical`; accepting before applying is
-   still detectable as `stale`.
+3. **`task apply` and `appliedFromRun`.** Acceptance: a content apply writes
+   `workspace-after` files and is recorded; it works for a `--base-run` revision
+   chain; it is refused for a failed or out-of-scope run, a run from another task,
+   or a project file that no longer matches the lineage's starting state; review
+   records `identical`; accepting before applying is still detectable as `stale`.
+3a. **Shared briefs.** Skill convention for one brief per task with cited spec
+   ranges; `task addendum` only if the convention isn't enough.
+3b. **Sizing signals for behavior splits and standard manifest facts.** Acceptance:
+   a fixture test file with fake timers and deferred promises raises a
+   behavior-split warning; the skill asks for lint rules and confusable library
+   accessors.
 4. **Slice-DAG `status` and `--feature`.** Acceptance: topological order and tree
    rendering in a CLI test; the applied run is shown per accepted slice.
 5. **`--protect` and `task update`.** Acceptance: overlap with `--allow` is
@@ -728,6 +925,11 @@ Still open:
 18. **`task apply` after review edits:** if the controller fixes the applied code
     during review, should acceptance just record `identical: false` (proposed),
     or require the fix to go through a revision run?
+19. **Shared briefs:** convention (one brief per task, spec cited by range) or an
+    append-only addendum command?
+20. **Timeout candidates:** S4 was accepted after a timeout. Should a timed-out
+    candidate need an explicit flag at review (`--accept-timeout-candidate`), or is
+    the reviewer's judgment enough (the current behavior)?
 
 ## 8. What this branch changed, and how it was verified
 
@@ -746,14 +948,18 @@ Still open:
 | `refactor: define worker limit caps once, in config.mjs` | single timeout/tool-call cap source |
 | `feat(worker): configurable per-response thinking budget in profiles` | profile budget field and budgets, temporary settings, preflight report |
 | `feat(worker): record task shape in every worker result` | `taskShape`, shared `contextSizeMetrics` |
-| `docs: add first-slice evidence and decomposition friction` | this revision |
+| `docs: add first-slice evidence and decomposition friction` | S1 evidence, friction, answers |
+| `fix(worker): skip .tinysdd and .git entries in the git copy listing` | the bug found on first live use |
+| `docs: add slice results and first-use findings (update 3)` | this revision |
 
 Commands run in this environment (Node 22.22.0, Linux, no bubblewrap, no Pi):
 
 - Baseline before any change: `npm test` → 70 tests, 65 pass, 5 fail (the
   semantic-gate tests from question 15). `TYPESAFE_API_KEY=stub npm test` → 70/70.
-- After this branch: `TYPESAFE_API_KEY=stub npm test` → 91/91. `npm test` without
-  the key → 91 tests, 86 pass, the same 5 gate tests fail.
+- After this branch: `TYPESAFE_API_KEY=stub npm test` → 92/92. `npm test` without
+  the key → 92 tests, 87 pass, the same 5 gate tests fail.
+- The `.tinysdd/` copy bug was reproduced with the old code (the test fails with
+  the exact live error message) before the fix.
 - Apply/accept ordering: a scratch script against src/controller.mjs showed
   accept-then-apply → S1 `stale`, S2 blocked by S1; apply-then-accept → S1
   `accepted`, S2 `pending_approval`.
