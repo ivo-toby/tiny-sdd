@@ -606,13 +606,14 @@ lists the checks that close it.
 | `feat(worker): record cited re-reads, repeated reads and compactions` | read and compaction observations |
 | `feat(worker): record cumulative usage across assistant responses` | `cumulativeUsage` |
 | `docs: worker runtime next iteration` | this document, skill slice convention |
+| `fix(worker): refuse an empty git copy listing` | a project ignored by an enclosing repository fails clearly |
 
 Commands run in this environment (Node 22.22.0, Linux, no bubblewrap, no Pi):
 
 - Baseline before any change: `npm test` → 70 tests, 65 pass, 5 fail (the
   semantic-gate tests from question 15). `TYPESAFE_API_KEY=stub npm test` → 70/70.
-- After this branch: `TYPESAFE_API_KEY=stub npm test` → 87/87. `npm test` without
-  the key → 87 tests, 82 pass, the same 5 gate tests fail.
+- After this branch: `TYPESAFE_API_KEY=stub npm test` → 88/88. `npm test` without
+  the key → 88 tests, 83 pass, the same 5 gate tests fail.
 - The gate files (`src/jev.mjs`, `src/semantic-policy.mjs`, `docs/jev-*`) are
   unchanged.
 

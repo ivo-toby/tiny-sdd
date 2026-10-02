@@ -658,6 +658,21 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("git copy refuses an empty listing instead of an empty workspace", async () => {
+    const outer = await mkdtemp(join(tmpdir(), "tinysdd-copy-outer-"));
+    const destination = await mkdtemp(join(tmpdir(), "tinysdd-copy-test-"));
+    try {
+      await git(outer, "init", "-q");
+      await writeFile(join(outer, ".gitignore"), "project/\n");
+      await mkdir(join(outer, "project", "src"), { recursive: true });
+      await writeFile(join(outer, "project", "src", "allowed.txt"), "before\n");
+      await assert.rejects(copyProjectTree(join(outer, "project"), destination), /listed no copyable files.*gitignored by an enclosing repository/u);
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+      await rm(destination, { recursive: true, force: true });
+    }
+  });
+
   test("git copy keeps symlink rejection, skips deleted tracked files and enforces limits", async () => {
     const project = await makeGitProject();
     const destinations = [];

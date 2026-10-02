@@ -275,7 +275,7 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
     await copyFile(sourcePath, destinationPath);
     copied.add(rel);
   }
-  if (copied.size === 0 && listing.paths.length > 0) fail("git ls-files listed no copyable files; refusing an empty worker workspace");
+  if (copied.size === 0) fail("git ls-files listed no copyable files under projectRoot; refusing an empty worker workspace (is the project directory gitignored by an enclosing repository?)");
   return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
 }
 
