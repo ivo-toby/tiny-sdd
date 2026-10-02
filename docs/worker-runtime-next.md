@@ -52,6 +52,19 @@ compaction behavior.
   packet is the first user message, and Pi's split-turn compaction would replace
   it with a model-written summary (3.6). Only recording is implemented.
 
+## Tracking
+
+Work is tracked in GitHub issues. The five epics carry sub-issues, and each issue
+lists its blockers as `Blocked by: #N`.
+
+| Epic | Sub-issues |
+| --- | --- |
+| [#2](https://github.com/ivo-toby/tiny-sdd/issues/2) Benchmark and model qualification (TinyThreshold) | #7 harness · #23 implement-slice set · #24 scoring and qualification records · #33 calibration · #34 dispatch policy · #25 write-tests set · #35 research set · #8 frontier-token accounting · #9 talon comparison and reruns |
+| [#3](https://github.com/ivo-toby/tiny-sdd/issues/3) Worker runtime | #10 `worker stop` · #11 timeout candidate state · #12 / #26 / #36 `run_checks` A, B, C · #42 contract change, measured · #13 macOS sandbox · #43 compaction |
+| [#4](https://github.com/ivo-toby/tiny-sdd/issues/4) Controller support for decomposition | #14 close/supersede · #15 `task apply` · #16 shared briefs · #17 `--protect` and `task update` · #18 behavior-split sizing · #19 standard manifest facts · #27 slice-DAG status · #39 plan-level approval (decision needed) |
+| [#5](https://github.com/ivo-toby/tiny-sdd/issues/5) Full SDD flow, harness-independent format | #20 format spec · #28 per-phase gates · #29 research phase · #30 living specs · #31 harness adapters · #37 frontier-side skills · #38 engagement levels |
+| [#6](https://github.com/ivo-toby/tiny-sdd/issues/6) Decision models (Jev, Laya, local judges) | #21 survey · #22 decision inventory and baselines · #32 labeled dataset and evaluation · #40 pluggable providers · #41 Laya fine-tune (exploratory) |
+
 ## 1. Problem
 
 TinySDD's worker gets a strong-model-prepared packet and implements one bounded
