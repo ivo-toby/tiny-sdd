@@ -46,6 +46,16 @@ local debugging only. Poll `worker status` until `data.status` is `finished`; an
 `interrupted` launch has no usable candidate result and must be recorded as such.
 Read only the top-level `data.status`: `data.request` is the launch-time snapshot
 and its `launchStatus` stays `running` after the worker ends.
+To end a launch early, use `tinysdd worker stop --id LAUNCH_ID --json` rather than
+killing the launcher. It signals the launcher, which stops Pi and finalizes the
+run as usual: the result has outcome `stopped` (error code `WORKER_STOPPED`), and
+the candidate, patch and raw events are kept. `stopped` is not acceptance; review
+the candidate like any other failed outcome. `--wait-ms N` (0 to 600000, default
+30000) bounds how long the command waits for the result. If finalizing takes
+longer, `data.status` is `stopping`; keep polling `worker status` until it is
+`finished`. `worker stop` signals only a process it can verify is that launch's
+launcher (Linux `/proc`), and otherwise fails with `LAUNCH_NOT_OURS` without
+sending a signal. Stopping an already stopping launch only waits.
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new

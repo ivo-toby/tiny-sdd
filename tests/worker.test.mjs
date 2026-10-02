@@ -2,7 +2,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -29,6 +29,23 @@ async function makeGitProject() {
   await writeFile(join(root, "debug.log"), "ignored\n");
   await writeFile(join(root, "src", "untracked.ts"), "export const fresh = true;\n");
   return root;
+}
+
+// Aborts once the fake Pi has emitted its tool events, so the abort never races
+// the run's setup or the fake's startup.
+async function abortWhenReading(project, controller) {
+  const runs = join(project, ".tinysdd", "runs");
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      for (const run of await readdir(runs)) {
+        if ((await readFile(join(runs, run, "stdout.jsonl"), "utf8")).includes("tool_execution_start")) return controller.abort();
+      }
+    } catch {
+      // The run directory or its output does not exist yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  controller.abort();
 }
 
 async function listTree(root, prefix = "") {
@@ -573,6 +590,50 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.observed.firstWriteAtMs, null);
       assert.deepEqual(result.observed.toolCallsByName, { read: 2 });
       assert.match(await readFile(result.artifactPaths.stdout, "utf8"), /tool_execution_start/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("finalizes a run stopped by an abort signal as stopped, keeping its evidence", async () => {
+    const project = await makeProject();
+    try {
+      const controller = new AbortController();
+      const aborter = abortWhenReading(project, controller);
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker({ timeoutMs: 10_000 }), runtime: runtime(undefined, "think"), signal: controller.signal });
+      await aborter;
+      assert.equal(result.outcome, "stopped");
+      assert.equal(result.observed.processTermination.stopRequested, true);
+      assert.equal(result.observed.processTermination.stoppedBeforeSpawn, undefined);
+      assert.ok(result.observed.processTermination.elapsedMs < 3_000);
+      assert.ok(result.limitDetails.toolCalls >= 1);
+      assert.equal(result.limitDetails.elapsedMs, result.observed.processTermination.elapsedMs);
+      assert.equal(JSON.parse(await readFile(join(result.artifactPaths.directory, "result.json"), "utf8")).outcome, "stopped");
+      assert.ok((await stat(result.artifactPaths.patch)).isFile());
+      assert.ok((await stat(result.artifactPaths.workspaceAfter)).isDirectory());
+      assert.deepEqual(result.scopeViolations, []);
+      assert.match(await readFile(result.artifactPaths.stdout, "utf8"), /tool_execution_start/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("does not spawn Pi when already stopped, but still finalizes", async () => {
+    const project = await makeProject();
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      // The "allowed" action would edit src/allowed.txt if Pi ran.
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed"), signal: controller.signal });
+      assert.equal(result.outcome, "stopped");
+      assert.equal(result.observed.processTermination.stoppedBeforeSpawn, true);
+      assert.equal(result.observed.processTermination.stopRequested, true);
+      assert.equal(result.observed.processTermination.exitCode, null);
+      assert.equal(await readFile(result.artifactPaths.stdout, "utf8"), "");
+      assert.equal(await readFile(result.artifactPaths.stderr, "utf8"), "");
+      assert.deepEqual(result.changedPaths, []);
+      assert.ok((await stat(result.artifactPaths.workspaceAfter)).isDirectory());
+      assert.equal(JSON.parse(await readFile(join(result.artifactPaths.directory, "result.json"), "utf8")).outcome, "stopped");
     } finally {
       await rm(project, { recursive: true, force: true });
     }

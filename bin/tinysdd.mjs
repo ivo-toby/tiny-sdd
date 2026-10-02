@@ -3,8 +3,8 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
-import { lstat } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { lstat, readFile, unlink } from 'node:fs/promises';
 
 import {
   addTask,
@@ -37,10 +37,13 @@ Usage:
   tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
+  tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
 
 Workers return isolated candidates and patches; they never apply or accept them.
 Use \`worker start\` for real model calls from an agent: it detaches the controller
 from short-lived interactive shells. Poll it with \`worker status\`.
+Stopping a launch with \`worker stop\` finalizes the run with outcome \`stopped\`,
+keeping its evidence and candidate.
 Use --json for machine-readable results, including failed worker evidence.
 `;
 
@@ -135,12 +138,16 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'worker') {
-    if (!['run', 'start', 'status'].includes(subcommand)) throw cliError('worker requires run, start, or status');
-    const allowed = subcommand === 'status'
-      ? new Map([['id', 'value']])
-      : new Map([['task', 'value'], ['worker', 'value'], ['base-run', 'value'], ['baseline-run', 'value']]);
+    if (!['run', 'start', 'status', 'stop'].includes(subcommand)) throw cliError('worker requires run, start, status, or stop');
+    const allowedBySubcommand = {
+      status: new Map([['id', 'value']]),
+      stop: new Map([['id', 'value'], ['wait-ms', 'value']]),
+    };
+    const allowed = allowedBySubcommand[subcommand]
+      ?? new Map([['task', 'value'], ['worker', 'value'], ['base-run', 'value'], ['baseline-run', 'value']]);
     const { values, positional } = parseFlags(rest, allowed);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    if (subcommand === 'stop') values['wait-ms'] = parseWaitMs(values['wait-ms']);
     return { command, subcommand, values };
   }
   if (command === 'status' || command === 'next') {
@@ -148,6 +155,15 @@ function parseCommand(args) {
     return { command, values: {} };
   }
   throw cliError(`unknown command: ${command}`);
+}
+
+const DEFAULT_STOP_WAIT_MS = 30_000;
+const MAX_STOP_WAIT_MS = 600_000;
+
+function parseWaitMs(value) {
+  if (value === undefined) return DEFAULT_STOP_WAIT_MS;
+  if (!/^\d+$/.test(value) || Number(value) > MAX_STOP_WAIT_MS) throw cliError(`--wait-ms must be an integer from 0 to ${MAX_STOP_WAIT_MS}`);
+  return Number(value);
 }
 
 const LAUNCH_ID_PATTERN = /^launch-[a-f0-9-]{36}$/;
@@ -224,8 +240,8 @@ async function startWorker(project, options) {
   };
 }
 
-async function workerStatus(project, options) {
-  const id = launchId(options.id);
+async function loadLaunch(project, rawId) {
+  const id = launchId(rawId);
   let location;
   try {
     location = await launchDirectory(project, id, { allowMissing: false });
@@ -246,14 +262,75 @@ async function workerStatus(project, options) {
   // request.json is a launch-time snapshot. Expose its stored status as
   // launchStatus so pollers cannot mistake it for the current data.status.
   const { status: launchStatus, ...requestFields } = info.value;
-  const request = { ...requestFields, launchStatus };
+  return { id, location, pid: info.value.pid, request: { ...requestFields, launchStatus } };
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
+}
+
+async function workerStatus(project, options) {
+  const { id, location, pid, request } = await loadLaunch(project, options.id);
   const result = await readJsonFile(join(location.directory, 'result.json'), { code: 'LAUNCH_MALFORMED' });
-  if (result) return { id, status: 'finished', request, result: result.value };
-  let alive = false;
-  if (Number.isInteger(info.value.pid) && info.value.pid > 0) {
-    try { process.kill(info.value.pid, 0); alive = true; } catch (error) { alive = error?.code === 'EPERM'; }
+  const stop = await readJsonFile(join(location.directory, 'stop.json'), { code: 'LAUNCH_MALFORMED' });
+  const stopFields = stop ? { stopRequestedAt: stop.value?.requestedAt ?? null } : {};
+  if (result) return { id, status: 'finished', ...stopFields, request, result: result.value };
+  if (!pidAlive(pid)) return { id, status: 'interrupted', ...stopFields, request };
+  return { id, status: stop ? 'stopping' : 'running', ...stopFields, request };
+}
+
+// request.json's pid can outlive its launcher and be reused, so only signal a
+// process whose argv is this launch's own worker-launcher.mjs invocation.
+async function isLaunchLauncher(pid, directory) {
+  let cmdline;
+  try {
+    cmdline = await readFile(`/proc/${pid}/cmdline`, 'utf8');
+  } catch {
+    return false;
   }
-  return { id, status: alive ? 'running' : 'interrupted', request };
+  const argv = cmdline.split('\0');
+  return argv.some((arg) => basename(arg) === 'worker-launcher.mjs') && argv.includes(directory);
+}
+
+async function workerStop(project, options) {
+  const { id, location, pid, request } = await loadLaunch(project, options.id);
+  const resultPath = join(location.directory, 'result.json');
+  const stopPath = join(location.directory, 'stop.json');
+  const readResult = () => readJsonFile(resultPath, { code: 'LAUNCH_MALFORMED' });
+  const finished = (result, stopRequested) => ({ id, status: 'finished', stopRequested, request, result: result.value });
+  const early = await readResult();
+  if (early) return finished(early, false);
+  if (!pidAlive(pid)) return { id, status: 'interrupted', stopRequested: false, request };
+  if (process.platform !== 'linux') throw tinyError('UNSUPPORTED_PLATFORM', 'worker stop requires Linux /proc to verify the launcher');
+  if (!await isLaunchLauncher(pid, location.directory)) {
+    throw tinyError('LAUNCH_NOT_OURS', `process ${pid} is alive but is not the launcher of ${id}; refusing to signal it`);
+  }
+  // The launcher handles one SIGTERM; a second one would kill it before it
+  // finalizes, so a repeated stop only waits.
+  if (!await readJsonFile(stopPath, { code: 'LAUNCH_MALFORMED' })) {
+    await atomicWriteJson(stopPath, { schemaVersion: 1, id, requestedAt: new Date().toISOString() });
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (error) {
+      await unlink(stopPath).catch(() => {});
+      // The launcher exited on its own between the checks and the signal.
+      if (error?.code === 'ESRCH') {
+        const late = await readResult();
+        return late ? finished(late, false) : { id, status: 'interrupted', stopRequested: false, request };
+      }
+      throw error;
+    }
+  }
+  const deadline = Date.now() + options.waitMs;
+  for (;;) {
+    const result = await readResult();
+    if (result) return finished(result, true);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(200, remaining)));
+  }
+  return { id, status: 'stopping', stopRequested: true, request, statusCommand: `tinysdd worker status --id ${id}` };
 }
 
 async function run(argv) {
@@ -295,6 +372,7 @@ async function run(argv) {
   });
   else if (parsed.command === 'worker' && parsed.subcommand === 'start') data = await startWorker(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
+  else if (parsed.command === 'worker' && parsed.subcommand === 'stop') data = await workerStop(project, { id: parsed.values.id, waitMs: parsed.values['wait-ms'] });
   else throw cliError('unsupported command');
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
@@ -314,6 +392,14 @@ async function run(argv) {
   return { ok: true, data, ...(json ? {} : {}) };
 }
 
+function describeStop(data) {
+  if (data.status === 'stopping') return `stopping; poll: ${data.statusCommand}`;
+  if (data.status !== 'finished') return data.status;
+  const outcome = data.result?.data?.outcome;
+  if (outcome === 'stopped') return 'finished (stopped by operator)';
+  return outcome ? `finished (outcome ${outcome})` : 'finished';
+}
+
 function writeResult(result, json) {
   const envelope = { ...result };
   delete envelope.presentation;
@@ -331,7 +417,9 @@ function writeResult(result, json) {
   }
   if (result.ok) {
     const data = result.data;
-    if (data?.outcome) {
+    if (typeof data?.stopRequested === 'boolean') {
+      process.stdout.write(`Launch ${data.id}: ${describeStop(data)}\n`);
+    } else if (data?.outcome) {
       process.stdout.write(`Worker ${data.outcome}; verification and review are pending.\n`);
       for (const change of data.changedPaths ?? []) process.stdout.write(`  ${change.change}: ${change.path}\n`);
       if (data.artifactPaths?.directory) process.stdout.write(`Evidence: ${data.artifactPaths.directory}\n`);

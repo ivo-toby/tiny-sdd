@@ -11,6 +11,13 @@ function invalid(message) {
 
 const [projectRoot, taskId, workerName, launchDirectory, baseRunId, baselineRunId] = process.argv.slice(2);
 
+// `worker stop` sends SIGTERM. Handling it (instead of the default exit) keeps
+// this process alive to kill Pi and finalize the run as `stopped`. The handlers
+// are once-only, so a second signal falls back to the default and kills it.
+const stopController = new AbortController();
+process.once('SIGTERM', () => stopController.abort());
+process.once('SIGINT', () => stopController.abort());
+
 try {
   if (![projectRoot, taskId, workerName, launchDirectory].every((value) => typeof value === 'string' && value.length > 0)) {
     throw invalid('worker launcher requires project root, task, worker, and launch directory');
@@ -20,17 +27,24 @@ try {
     worker: workerName,
     baseRunId: baseRunId || undefined,
     baselineRunId: baselineRunId || undefined,
+    signal: stopController.signal,
   });
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
+  const stopped = data?.outcome === 'stopped';
+  let code = 'WORKER_FAILED';
+  let message = `worker ended with outcome ${data?.outcome}`;
+  if (scopeViolations) {
+    code = 'WORKER_SCOPE_VIOLATION';
+    message = 'worker changed paths outside packet.allowedPaths';
+  } else if (stopped) {
+    code = 'WORKER_STOPPED';
+    message = 'worker was stopped by the operator';
+  }
   const result = failedOutcome || scopeViolations
     ? {
       ok: false,
-      error: {
-        code: scopeViolations ? 'WORKER_SCOPE_VIOLATION' : 'WORKER_FAILED',
-        message: scopeViolations ? 'worker changed paths outside packet.allowedPaths' : `worker ended with outcome ${data.outcome}`,
-        details: { outcome: data?.outcome, scopeViolations: data?.scopeViolations ?? [] },
-      },
+      error: { code, message, details: { outcome: data?.outcome, scopeViolations: data?.scopeViolations ?? [] } },
       data,
     }
     : { ok: true, data };

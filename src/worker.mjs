@@ -847,7 +847,7 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct }) {
+async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, signal }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
@@ -861,6 +861,8 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   let latest = { bytes: 0, toolCalls: 0 };
   let firstWriteAtMs = null;
   let closed = false;
+  let stopRequested = false;
+  let stoppedBeforeSpawn = false;
   const stop = (reason) => {
     if (forcedOutcome) return;
     forcedOutcome = reason;
@@ -868,15 +870,27 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     killTimer = setTimeout(() => killProcessGroup(child?.pid, "SIGKILL"), 250);
     killTimer.unref?.();
   };
-  try {
-    child = spawn(command, args, {
-      cwd,
-      env,
-      detached: true,
-      stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
-    });
-  } catch (error) {
-    spawnError = error instanceof Error ? error.message : String(error);
+  const onAbort = () => {
+    stopRequested = true;
+    stop("stopped");
+  };
+  if (signal?.aborted) {
+    // Stopped before Pi started: spawn nothing, but still finalize the run.
+    stopRequested = true;
+    stoppedBeforeSpawn = true;
+    forcedOutcome = "stopped";
+  } else {
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
+      });
+    } catch (error) {
+      spawnError = error instanceof Error ? error.message : String(error);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
   }
   const closePromise = new Promise((resolvePromise) => {
     if (!child) return resolvePromise({ code: null, signal: null });
@@ -915,6 +929,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   }
   const termination = await closePromise;
   closed = true;
+  signal?.removeEventListener("abort", onAbort);
   if (pollTimer) clearInterval(pollTimer);
   if (timeoutTimer) clearTimeout(timeoutTimer);
   if (killTimer) clearTimeout(killTimer);
@@ -936,6 +951,8 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
       spawnError,
       elapsedMs: Date.now() - startedAt,
       directTestRuntime: direct === true,
+      stopRequested,
+      ...(stoppedBeforeSpawn ? { stoppedBeforeSpawn } : {}),
     },
     firstWriteAtMs,
     forcedOutcome: reason,
@@ -1055,6 +1072,7 @@ function outcomeLimitDetails(outcome, capture, metadata, limits) {
   if (outcome === "tool_limit") return { maxToolCalls: limits.maxToolCalls, toolCalls: capture.parsed.toolCalls };
   if (outcome === "timeout") return { timeoutMs: limits.timeoutMs, elapsedMs: capture.processTermination.elapsedMs };
   if (outcome === "no_progress") return { firstWriteMs: limits.firstWriteMs, elapsedMs: capture.processTermination.elapsedMs, toolCalls: capture.parsed.toolCalls };
+  if (outcome === "stopped") return { elapsedMs: capture.processTermination.elapsedMs, toolCalls: capture.parsed.toolCalls };
   return null;
 }
 
@@ -1161,7 +1179,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
  * harness explicitly enables it.  Production callers use the four documented
  * arguments and therefore always require Linux bubblewrap.
  */
-export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId } = {}) {
+export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
@@ -1277,7 +1295,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
       args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv });
     }
-    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test });
+    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, signal });
     after = await snapshotTree(workspace);
     await copySnapshotTree(workspace, afterArtifact);
     await writeJson(join(artifactDir, "after-snapshot.json"), after);
