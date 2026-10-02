@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile, lstat, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DEFAULT_MAX_TOOL_CALLS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_TOOL_CALLS } from "./config.mjs";
 
 /**
  * The worker owns a very small copy of Pi's model configuration.  In
@@ -13,10 +14,11 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const SECRET_KEY = /(?:api[_-]?key|authorization|bearer|cookie|credential|password|secret|token(?:$|[_-]))/iu;
 
 export const PI_AGENT_ENV = "PI_CODING_AGENT_DIR";
-export const DEFAULT_TIMEOUT_MS = 300_000;
-export const MAX_TIMEOUT_MS = 3_600_000;
-export const DEFAULT_TOOL_LIMIT = 40;
-export const MAX_TOOL_LIMIT = 100;
+// Limits have one source of truth (config.mjs) so the controller's config
+// validation and the worker's own check cannot disagree.
+export { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS };
+export const DEFAULT_TOOL_LIMIT = DEFAULT_MAX_TOOL_CALLS;
+export const MAX_TOOL_LIMIT = MAX_TOOL_CALLS;
 // Pi 0.84.4 documents these model defaults (docs/models.md).  A model entry
 // without maxTokens is silently capped at PI_DEFAULT_MAX_TOKENS per response.
 export const PI_DEFAULT_MAX_TOKENS = 16_384;

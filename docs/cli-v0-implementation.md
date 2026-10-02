@@ -22,7 +22,8 @@ No worker bash or arbitrary extensions in this initial adapter. MCP is deferred.
 Each named worker: `type:"pi"`, exact `provider`, exact `model`, optional
 `profile` (project-relative JSON path), `skills` (project-relative SKILL.md
 paths), `instructions` (project-relative text paths), `limits` with timeoutMs
-(default300000, max900000), maxToolCalls(default40,max100).
+(default300000, max900000; later raised to 3600000, now a single constant in
+src/config.mjs), maxToolCalls(default40,max100).
 No credentials or endpoint configuration in this schema; Pi supplies connection
 data. No guessed aliases or fallback. Unknown adapter types fail explicitly.
 
