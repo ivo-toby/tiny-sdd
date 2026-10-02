@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { dispatchWorker, publicError } from './controller.mjs';
 import { atomicWriteJson } from './fs-utils.mjs';
+import { isFailedWorkerOutcome } from './outcomes.mjs';
 
 function invalid(message) {
   const error = new Error(message);
@@ -20,7 +21,7 @@ try {
     baseRunId: baseRunId || undefined,
     baselineRunId: baselineRunId || undefined,
   });
-  const failedOutcome = ['failed', 'timeout', 'tool_limit', 'output_limit'].includes(data?.outcome);
+  const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
   const result = failedOutcome || scopeViolations
     ? {

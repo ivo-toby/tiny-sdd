@@ -17,6 +17,9 @@ export const DEFAULT_TIMEOUT_MS = 300_000;
 export const MAX_TIMEOUT_MS = 3_600_000;
 export const DEFAULT_TOOL_LIMIT = 40;
 export const MAX_TOOL_LIMIT = 100;
+// Pi 0.84.4 documents these model defaults (docs/models.md).  A model entry
+// without maxTokens is silently capped at PI_DEFAULT_MAX_TOKENS per response.
+export const PI_DEFAULT_MAX_TOKENS = 16_384;
 
 export class PiEnvironmentError extends Error {
   constructor(message, options = {}) {

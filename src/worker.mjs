@@ -9,6 +9,7 @@ import {
   DEFAULT_TOOL_LIMIT,
   MAX_TIMEOUT_MS,
   MAX_TOOL_LIMIT,
+  PI_DEFAULT_MAX_TOKENS,
   PiEnvironmentError,
   preparePiEnvironment,
   validatePiWorker,
@@ -844,7 +845,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     try {
       const [outInfo, errInfo] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
       latest.bytes = outInfo.size + errInfo.size;
-      if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("output_limit");
+      if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("raw_output_limit");
       const text = await readFile(stdoutPath, "utf8");
       latest.toolCalls = parseEvents(text).toolCalls;
       if (latest.toolCalls >= maxToolCalls) stop("tool_limit");
@@ -872,7 +873,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   const stderr = await readFile(stderrPath, "utf8");
   const parsed = parseEvents(stdout);
   const bytes = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
-  const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : null);
+  const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "raw_output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : null);
   return {
     stdout,
     stderr,
@@ -980,11 +981,27 @@ async function writeJson(path, value) {
 
 function classifyOutcome(capture) {
   if (capture.forcedOutcome) return capture.forcedOutcome;
-  if (capture.parsed.stopReason === "length" || capture.parsed.stopReason === "max_tokens") return "output_limit";
+  if (capture.parsed.stopReason === "length" || capture.parsed.stopReason === "max_tokens") return "response_token_limit";
   if (capture.parsed.stopReason === "error" || capture.parsed.errorMessage) return "failed";
   if (capture.processTermination.spawnError || capture.processTermination.exitCode !== 0) return "failed";
   if (["stop", "completed", "end_turn"].includes(capture.parsed.stopReason)) return "completed";
   return "failed";
+}
+
+function outcomeLimitDetails(outcome, capture, metadata, limits) {
+  if (outcome === "response_token_limit") {
+    const usage = capture.parsed.usage ?? {};
+    return {
+      maxTokens: metadata.maxTokens ?? PI_DEFAULT_MAX_TOKENS,
+      maxTokensSource: metadata.maxTokens === null ? "pi-default" : "model",
+      outputTokens: Number.isFinite(usage.output) ? usage.output : null,
+      reasoningTokens: Number.isFinite(usage.reasoning) ? usage.reasoning : null,
+    };
+  }
+  if (outcome === "raw_output_limit") return { maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES, rawOutputBytes: capture.rawBytes };
+  if (outcome === "tool_limit") return { maxToolCalls: limits.maxToolCalls, toolCalls: capture.parsed.toolCalls };
+  if (outcome === "timeout") return { timeoutMs: limits.timeoutMs, elapsedMs: capture.processTermination.elapsedMs };
+  return null;
 }
 
 async function resolveBrief(projectRoot, packet) {
@@ -1187,6 +1204,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const allowedSet = new Set(selectedAllowed);
     const scopeViolations = changes.filter((change) => !allowedSet.has(slash(change.path))).map((change) => ({ path: slash(change.path), change: change.change, reason: "changed path is outside packet.allowedPaths" }));
     const outcome = classifyOutcome(capture);
+    const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);
     result = {
       schemaVersion: 1,
       runId,
@@ -1210,6 +1228,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         toolCalls: capture.parsed.toolCalls,
         rawOutputBytes: capture.rawBytes,
       },
+      ...(limitDetails ? { limitDetails } : {}),
       changedPaths: changes,
       scopeViolations,
       artifactPaths: {

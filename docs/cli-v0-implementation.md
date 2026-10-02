@@ -87,7 +87,8 @@ is Linux-only for worker execution; controller is portable Node.
 
 The adapter API accepts `{projectRoot, packet, worker, profile}` and returns a
 schemaVersion1 result envelope: runId, taskId, outcome
-(`completed|failed|timeout|tool_limit|output_limit`), model identity, observed
+(`completed|failed|timeout|tool_limit|output_limit`; `output_limit` was later split
+into `raw_output_limit` and `response_token_limit`, and `no_progress` added), model identity, observed
 process/assistant termination, changed paths, scope violations, artifact paths,
 and separately labeled model claims. It never records acceptance or invokes
 checks under inference credentials. Preserve raw events locally; warn they can

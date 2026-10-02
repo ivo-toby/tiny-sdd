@@ -20,6 +20,7 @@ import {
   reviewTask,
 } from '../src/controller.mjs';
 import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, readJsonFile, tinyError } from '../src/fs-utils.mjs';
+import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 
 const VERSION = '0.1.0';
 const HELP = `TinySDD ${VERSION}
@@ -275,7 +276,7 @@ async function run(argv) {
   else if (parsed.command === 'worker' && parsed.subcommand === 'start') data = await startWorker(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
   else throw cliError('unsupported command');
-  const failedOutcome = ['failed', 'timeout', 'tool_limit', 'output_limit'].includes(data?.outcome);
+  const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
   if (failedOutcome || scopeViolations) {
     return {

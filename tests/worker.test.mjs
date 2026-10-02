@@ -52,7 +52,11 @@ const models = {
       baseUrl: "$FAKE_BASE",
       apiKey: "literal-provider-secret",
       headers: { Authorization: "Bearer $FAKE_TOKEN" },
-      models: [{ id: "fake/exact-model", contextWindow: 4096, maxTokens: 256, input: ["text"], reasoning: false, headers: { Authorization: "Bearer $FAKE_TOKEN", "X-Mixed": "prefix-$$literal-$FAKE_TOKEN" } }],
+      models: [
+        { id: "fake/exact-model", contextWindow: 4096, maxTokens: 256, input: ["text"], reasoning: false, headers: { Authorization: "Bearer $FAKE_TOKEN", "X-Mixed": "prefix-$$literal-$FAKE_TOKEN" } },
+        // Like the talon Qwen entry: no maxTokens and no thinking compat.
+        { id: "fake/bare-model", contextWindow: 4096, input: ["text"], reasoning: false },
+      ],
     },
   },
 };
@@ -82,7 +86,7 @@ if (action === "error") {
   process.exit(0);
 }
 if (action === "length") {
-  console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"length",content:[{type:"text",text:"truncated"}]}}));
+  console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"length",usage:{input:900,output:16384,reasoning:15579,cacheRead:0,cacheWrite:0,totalTokens:17284},content:[{type:"text",text:"truncated"}]}}));
   process.exit(0);
 }
 if (action === "tools") {
@@ -408,7 +412,7 @@ describe("Pi worker capture and scope", () => {
   });
 
   test("classifies assistant errors and length stops independently of process exit zero", async () => {
-    for (const [action, expected, stopReason] of [["error", "failed", "error"], ["length", "output_limit", "length"]]) {
+    for (const [action, expected, stopReason] of [["error", "failed", "error"], ["length", "response_token_limit", "length"]]) {
       const project = await makeProject();
       try {
         const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, action) });
@@ -422,12 +426,26 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("records the effective token cap and reasoning share for a response token limit", async () => {
+    for (const [model, maxTokens, maxTokensSource] of [["fake/exact-model", 256, "model"], ["fake/bare-model", 16384, "pi-default"]]) {
+      const project = await makeProject();
+      try {
+        const result = await runWorker({ projectRoot: project, packet: packet(), worker: { ...worker(), model }, runtime: runtime(undefined, "length") });
+        assert.equal(result.outcome, "response_token_limit");
+        assert.deepEqual(result.limitDetails, { maxTokens, maxTokensSource, outputTokens: 16384, reasoningTokens: 15579 });
+      } finally {
+        await rm(project, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("classifies a tool limit while retaining raw output", async () => {
     const project = await makeProject();
     try {
       const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker({ maxToolCalls: 2, timeoutMs: 5_000 }), runtime: runtime(undefined, "tools") });
       assert.equal(result.outcome, "tool_limit");
       assert.ok(result.observed.toolCalls >= 2);
+      assert.equal(result.limitDetails.maxToolCalls, 2);
       assert.match(await readFile(result.artifactPaths.stdout, "utf8"), /tool_execution_start/u);
     } finally {
       await rm(project, { recursive: true, force: true });
