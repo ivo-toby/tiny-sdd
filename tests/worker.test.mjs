@@ -6,7 +6,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { preparePiEnvironment } from "../src/pi-environment.mjs";
+import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
 import { copyProjectTree, runWorker } from "../src/worker.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -167,6 +167,54 @@ describe("Pi environment filtering", () => {
       preparePiEnvironment({ worker: { ...worker(), provider: "other" }, sourceAgentDir }),
       /Configured Pi provider is unavailable/u,
     );
+  });
+});
+
+describe("Pi runtime preflight", () => {
+  const api = "openai-completions";
+
+  test("flags the talon run 2 entry: thinking off but no toggle sent and Pi's default token cap", () => {
+    const report = piRuntimePreflight({ api, model: { id: "qwen", reasoning: false }, thinking: "off" });
+    assert.equal(report.thinking.control, "not-sent");
+    assert.deepEqual(report.maxTokens, { value: 16384, source: "pi-default" });
+    assert.deepEqual(report.errors, []);
+    assert.equal(report.warnings.length, 2);
+    assert.match(report.warnings[0], /may not disable thinking/u);
+    assert.match(report.warnings[1], /no maxTokens.*16384/u);
+  });
+
+  test("refuses a thinking level that Pi cannot send", () => {
+    const report = piRuntimePreflight({ api, model: { id: "qwen", reasoning: false, maxTokens: 65536 }, thinking: "high" });
+    assert.equal(report.thinking.control, "not-sent");
+    assert.match(report.errors[0], /thinking "high" was requested but cannot be sent/u);
+    const unmapped = piRuntimePreflight({ api, model: { id: "q", reasoning: true, maxTokens: 8192, thinkingLevelMap: { high: null }, compat: { thinkingFormat: "qwen-chat-template" } }, thinking: "high" });
+    assert.equal(unmapped.errors.length, 1);
+  });
+
+  test("accepts explicit qwen chat-template control and warns when reasoning can consume the whole response", () => {
+    const thinkingOn = { id: "qwen", reasoning: true, maxTokens: 65536, compat: { thinkingFormat: "qwen-chat-template" } };
+    const high = piRuntimePreflight({ api, model: thinkingOn, thinking: "high" });
+    assert.equal(high.thinking.control, "sent");
+    assert.deepEqual(high.errors, []);
+    assert.deepEqual(high.warnings.map((warning) => /share one 65536-token response cap/u.test(warning)), [true]);
+    const budgeted = piRuntimePreflight({ api, model: { ...thinkingOn, compat: { ...thinkingOn.compat, thinkingTokenBudgetField: "thinking_budget_tokens" } }, thinking: "high" });
+    assert.deepEqual(budgeted.warnings, []);
+    assert.equal(budgeted.thinkingTokenBudgetField, "thinking_budget_tokens");
+    const off = piRuntimePreflight({ api, model: thinkingOn, thinking: "off" });
+    assert.equal(off.thinking.control, "sent");
+    assert.deepEqual(off.warnings, []);
+  });
+
+  test("models the off value for reasoning_effort formats and unknown or native APIs", () => {
+    const openai = { id: "m", reasoning: true, maxTokens: 4096, compat: { thinkingFormat: "openai" } };
+    assert.equal(piRuntimePreflight({ api, model: openai, thinking: "off" }).thinking.control, "not-sent");
+    assert.equal(piRuntimePreflight({ api, model: { ...openai, thinkingLevelMap: { off: "none" } }, thinking: "off" }).thinking.control, "sent");
+    const autodetected = piRuntimePreflight({ api, model: { id: "m", reasoning: true, maxTokens: 4096 }, thinking: "off" });
+    assert.equal(autodetected.thinking.control, "unverified");
+    assert.equal(autodetected.warnings.length, 1);
+    const native = piRuntimePreflight({ api: "anthropic-messages", model: { id: "m", reasoning: true, maxTokens: 4096 }, thinking: "high" });
+    assert.equal(native.thinking.control, "provider-native");
+    assert.deepEqual(native.errors, []);
   });
 });
 
@@ -436,6 +484,26 @@ describe("Pi worker capture and scope", () => {
       } finally {
         await rm(project, { recursive: true, force: true });
       }
+    }
+  });
+
+  test("refuses an unhonorable thinking request and records effective runtime state", async () => {
+    const project = await makeProject();
+    try {
+      await assert.rejects(
+        runWorker({ projectRoot: project, packet: packet(), worker: worker(), profile: { schemaVersion: 1, id: "wants-thinking", runtime: { thinking: "high" } }, runtime: runtime(undefined, "complete") }),
+        /Worker preflight failed: thinking "high" was requested but cannot be sent/u,
+      );
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: { ...worker(), model: "fake/bare-model" }, runtime: runtime(undefined, "complete") });
+      const metadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.equal(metadata.thinking, "off");
+      assert.equal(metadata.effectiveThinkingControl, "not-sent");
+      assert.equal(metadata.effectiveMaxTokens, 16384);
+      assert.equal(metadata.maxTokensSource, "pi-default");
+      assert.equal(metadata.preflight.warnings.length, 2);
+      assert.equal(result.warnings.filter((warning) => warning.startsWith("Preflight: ")).length, 2);
+    } finally {
+      await rm(project, { recursive: true, force: true });
     }
   });
 

@@ -90,6 +90,16 @@ the project's `tinysdd-profiles/qwen36.json` before using this configuration.
 It controls Pi's request-level thinking flag; it is not a promise of code quality.
 Other machines must use their own exact configured IDs. No fallback is automatic.
 
+Before a launch, TinySDD compares the requested thinking level with what Pi will
+actually send for that model entry (rules read from pi-ai 0.84.4). A thinking
+level Pi cannot send, because the entry lacks `reasoning: true`, fails
+`worker start` and `worker run` before any model call. Warnings cover `thinking: "off"`
+with no off toggle (a Qwen chat template then thinks anyway), a missing
+`maxTokens` (Pi's silent 16384-token response cap), and thinking without a
+`compat.thinkingTokenBudgetField` (reasoning can use the whole response).
+`runtime.json` records `thinking` (requested) next to `effectiveThinkingControl`,
+`effectiveMaxTokens` and `maxTokensSource`.
+
 Optional worker `skills` lists project-relative SKILL.md files; `instructions`
 lists additional project-relative text resources. Applicable AGENTS.md guidance
 is included separately. Profiles cannot override task permissions. MCP and

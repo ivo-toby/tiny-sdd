@@ -21,6 +21,7 @@ import {
 } from '../src/controller.mjs';
 import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, readJsonFile, tinyError } from '../src/fs-utils.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
+import { preflightPiWorker } from '../src/pi-environment.mjs';
 
 const VERSION = '0.1.0';
 const HELP = `TinySDD ${VERSION}
@@ -171,6 +172,17 @@ async function startWorker(project, options) {
   if (!options.task) throw cliError('--task requires a value');
   const resolved = await configShow(project, { worker: options.worker });
   if (!resolved.workerName) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; configure defaultWorker or pass --worker');
+  // Fail before detaching when Pi cannot honor the configured request, so an
+  // agent does not poll a launch that was never going to run as configured.
+  let preflight;
+  try {
+    preflight = await preflightPiWorker({ worker: resolved.worker, profile: resolved.profile });
+  } catch (error) {
+    throw tinyError('WORKER_PREFLIGHT_FAILED', error instanceof Error ? error.message : String(error));
+  }
+  if (preflight.errors.length > 0) {
+    throw tinyError('WORKER_PREFLIGHT_FAILED', `worker preflight failed: ${preflight.errors.join('; ')}`, { errors: preflight.errors, warnings: preflight.warnings });
+  }
   const id = `launch-${randomUUID()}`;
   const location = await launchDirectory(project, id);
   await ensureDirectory(location.directory);
@@ -201,7 +213,15 @@ async function startWorker(project, options) {
     status: 'running',
     pid: child.pid,
   });
-  return { id, taskId: options.task, worker: resolved.workerName, status: 'running', pid: child.pid, statusCommand: `tinysdd worker status --id ${id}` };
+  return {
+    id,
+    taskId: options.task,
+    worker: resolved.workerName,
+    status: 'running',
+    pid: child.pid,
+    statusCommand: `tinysdd worker status --id ${id}`,
+    preflight: { thinking: preflight.thinking, maxTokens: preflight.maxTokens, warnings: preflight.warnings },
+  };
 }
 
 async function workerStatus(project, options) {
@@ -327,6 +347,9 @@ function writeResult(result, json) {
     } else if (data?.taskId && data?.brief?.text) {
       process.stdout.write(`Task: ${data.taskId}\nAllowed files: ${data.allowedPaths.join(', ')}\n\n${data.brief.text}\n`);
       if (data.review?.evidence?.text) process.stdout.write(`\nReview feedback:\n${data.review.evidence.text}\n`);
+    } else if (data?.statusCommand) {
+      process.stdout.write(`Started ${data.id} (${data.worker}, task ${data.taskId}). Poll: ${data.statusCommand}\n`);
+      for (const warning of data.preflight?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);
     } else if (data?.configPath) {
       process.stdout.write(`${data.configCreated ? 'Created' : 'Preserved'} config: ${data.configPath}\n`);
     } else {

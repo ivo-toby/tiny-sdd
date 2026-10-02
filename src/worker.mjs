@@ -1048,7 +1048,16 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     piExecutable: runtime.test ? "test-harness" : pi.path,
     piVersion,
     bubblewrap: runtime.test ? null : bwrap.path,
+    // `thinking` is the requested level; effectiveThinkingControl says whether
+    // Pi will actually send a thinking parameter for it (talon run 2 recorded
+    // "off" while no toggle was sent and the model thought anyway).
     thinking: profile?.runtime?.thinking ?? "off",
+    effectiveThinkingControl: prepared.metadata.preflight.thinking.control,
+    effectiveThinkingReason: prepared.metadata.preflight.thinking.reason,
+    effectiveMaxTokens: prepared.metadata.preflight.maxTokens.value,
+    maxTokensSource: prepared.metadata.preflight.maxTokens.source,
+    thinkingTokenBudgetField: prepared.metadata.preflight.thinkingTokenBudgetField,
+    preflight: { basis: prepared.metadata.preflight.basis, warnings: prepared.metadata.preflight.warnings },
     reasoningRequested: profile?.runtime?.reasoning ?? null,
     rawReasoning: prepared.metadata.rawReasoning,
     effectiveReasoning: prepared.metadata.effectiveReasoning,
@@ -1249,7 +1258,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;

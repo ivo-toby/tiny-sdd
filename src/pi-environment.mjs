@@ -307,15 +307,101 @@ function validateWorker(worker) {
   return { timeoutMs, maxToolCalls };
 }
 
+// Thinking-control rules for Pi's openai-completions requests, read from
+// @earendil-works/pi-ai 0.84.4 (dist/api/openai-completions.js).  Every branch
+// there requires model.reasoning === true; without it no thinking parameter is
+// sent in either direction.  Re-check these sets when the Pi version changes.
+export const PREFLIGHT_BASIS = "pi-ai 0.84.4 openai-completions thinking rules";
+const OFF_ALWAYS_SENT = new Set(["qwen", "qwen-chat-template", "zai", "together"]);
+const OFF_SENT_UNLESS_MAP_NULL = new Set(["deepseek", "openrouter", "string-thinking"]);
+const OFF_SENT_IF_MAP_STRING = new Set(["openai", "baseten"]);
+const ON_ALWAYS_SENT = new Set(["qwen", "qwen-chat-template", "zai", "together", "deepseek", "openrouter", "string-thinking", "baseten"]);
+
+function hasEntries(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function thinkingControl({ api, thinking, reasoning, compat, thinkingLevelMap }) {
+  const format = compat?.thinkingFormat ?? null;
+  const base = { requested: thinking, reasoning: reasoning ?? null, thinkingFormat: format };
+  if (reasoning !== true) {
+    return { ...base, control: "not-sent", reason: "model entry does not have reasoning: true, so Pi sends no thinking parameter" };
+  }
+  if (api !== "openai-completions") {
+    return { ...base, control: "provider-native", reason: `Pi controls thinking natively for api ${api ?? "unknown"}; TinySDD does not model it` };
+  }
+  if (thinking !== "off") {
+    if (thinkingLevelMap?.[thinking] === null) return { ...base, control: "not-sent", reason: `thinkingLevelMap marks level ${thinking} unsupported` };
+    if (format === null) return { ...base, control: "unverified", reason: "no explicit compat.thinkingFormat; Pi auto-detects the request format from provider and baseUrl" };
+    if (ON_ALWAYS_SENT.has(format)) return { ...base, control: "sent", reason: `thinkingFormat ${format} sends an enable value` };
+    if (format === "openai") {
+      return compat?.supportsReasoningEffort === false
+        ? { ...base, control: "not-sent", reason: "thinkingFormat openai with supportsReasoningEffort false sends nothing" }
+        : { ...base, control: "sent", reason: "thinkingFormat openai sends reasoning_effort; the server may ignore it" };
+    }
+    if (format === "chat-template") {
+      return hasEntries(compat?.chatTemplateKwargs)
+        ? { ...base, control: "sent", reason: "chat-template sends the configured chatTemplateKwargs" }
+        : { ...base, control: "not-sent", reason: "chat-template without chatTemplateKwargs sends nothing" };
+    }
+    if (format === "ant-ling") {
+      return typeof thinkingLevelMap?.[thinking] === "string"
+        ? { ...base, control: "sent", reason: "ant-ling sends the mapped effort" }
+        : { ...base, control: "not-sent", reason: "ant-ling sends nothing without a thinkingLevelMap entry" };
+    }
+    return { ...base, control: "unverified", reason: `thinkingFormat ${format} is not modelled by this preflight` };
+  }
+  if (format === null) return { ...base, control: "unverified", reason: "no explicit compat.thinkingFormat; whether an off value is sent depends on Pi's provider auto-detection" };
+  if (OFF_ALWAYS_SENT.has(format)) return { ...base, control: "sent", reason: `thinkingFormat ${format} sends an explicit off value` };
+  if (OFF_SENT_UNLESS_MAP_NULL.has(format)) {
+    return thinkingLevelMap?.off === null
+      ? { ...base, control: "not-sent", reason: "thinkingLevelMap.off is null: the model cannot disable thinking" }
+      : { ...base, control: "sent", reason: `thinkingFormat ${format} sends an explicit off value` };
+  }
+  if (OFF_SENT_IF_MAP_STRING.has(format)) {
+    return typeof thinkingLevelMap?.off === "string"
+      ? { ...base, control: "sent", reason: `thinkingFormat ${format} sends thinkingLevelMap.off` }
+      : { ...base, control: "not-sent", reason: `thinkingFormat ${format} sends an off value only when thinkingLevelMap.off is a string` };
+  }
+  if (format === "chat-template") {
+    return hasEntries(compat?.chatTemplateKwargs)
+      ? { ...base, control: "sent", reason: "chat-template sends the configured chatTemplateKwargs" }
+      : { ...base, control: "not-sent", reason: "chat-template without chatTemplateKwargs sends nothing" };
+  }
+  if (format === "ant-ling") return { ...base, control: "not-sent", reason: "ant-ling sends nothing when thinking is off" };
+  return { ...base, control: "unverified", reason: `thinkingFormat ${format} is not modelled by this preflight` };
+}
+
 /**
- * Prepare a temporary, credential-filtered Pi state directory.
+ * Compare what the worker requests with what Pi will actually send.
  *
- * The returned `env` contains only the credential variables referenced by the
- * selected provider/model plus the Pi state selector.  The caller must invoke
- * `cleanup()` in a finally block.
+ * Errors mean the request cannot be honored and the run must not start.
+ * Warnings are recorded in runtime.json and the result envelope.
  */
-export async function preparePiEnvironment({ worker, profile = null, sourceAgentDir = defaultSourceAgentDir(), sourceEnv = process.env } = {}) {
-  const limits = validateWorker(worker);
+export function piRuntimePreflight({ api, model, thinking = "off" }) {
+  const errors = [];
+  const warnings = [];
+  const control = thinkingControl({ api, thinking, reasoning: model.reasoning, compat: model.compat, thinkingLevelMap: model.thinkingLevelMap });
+  if (thinking !== "off" && (control.control === "not-sent")) {
+    errors.push(`thinking "${thinking}" was requested but cannot be sent: ${control.reason}`);
+  } else if (thinking !== "off" && control.control === "unverified") {
+    warnings.push(`thinking "${thinking}" may not reach the server: ${control.reason}`);
+  } else if (thinking === "off" && ["not-sent", "unverified"].includes(control.control)) {
+    warnings.push(`thinking "off" may not disable thinking: ${control.reason}; a model whose chat template thinks by default will still think`);
+  }
+  const configuredMaxTokens = Number.isFinite(model.maxTokens) ? model.maxTokens : null;
+  const maxTokens = { value: configuredMaxTokens ?? PI_DEFAULT_MAX_TOKENS, source: configuredMaxTokens === null ? "pi-default" : "model" };
+  if (configuredMaxTokens === null) {
+    warnings.push(`model entry has no maxTokens; Pi caps every response at its default ${PI_DEFAULT_MAX_TOKENS} output tokens, reasoning included`);
+  }
+  const budgetField = model.compat?.thinkingTokenBudgetField ?? (model.compat?.supportsThinkingTokenBudget ? "thinking_token_budget" : null);
+  if (thinking !== "off" && control.control === "sent" && api === "openai-completions" && !budgetField) {
+    warnings.push(`reasoning and the answer share one ${maxTokens.value}-token response cap and no compat.thinkingTokenBudgetField is set, so a single thinking phase can consume the whole response`);
+  }
+  return { basis: PREFLIGHT_BASIS, thinking: control, maxTokens, thinkingTokenBudgetField: budgetField, errors, warnings };
+}
+
+async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
   const modelsPath = join(sourceAgentDir, "models.json");
   const models = await readJson(modelsPath, "Pi models.json");
   if (!models || typeof models !== "object" || Array.isArray(models) || !models.providers || typeof models.providers !== "object") {
@@ -336,6 +422,32 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
   const generatedEnv = {};
   const nextSecret = { value: 0 };
   const safeProvider = sanitizeProvider(provider, worker.provider, model, sourceEnv, generatedEnv, nextSecret);
+  const api = model.api ?? provider.api ?? null;
+  const preflight = piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off" });
+  return { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight };
+}
+
+/**
+ * Check a worker's Pi model entry without creating any state.  `worker start`
+ * uses this to fail before detaching when the request cannot be honored.
+ */
+export async function preflightPiWorker({ worker, profile = null, sourceAgentDir = defaultSourceAgentDir(), sourceEnv = process.env } = {}) {
+  validateWorker(worker);
+  const resolved = await resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv });
+  return resolved.preflight;
+}
+
+/**
+ * Prepare a temporary, credential-filtered Pi state directory.
+ *
+ * The returned `env` contains only the credential variables referenced by the
+ * selected provider/model plus the Pi state selector.  The caller must invoke
+ * `cleanup()` in a finally block.
+ */
+export async function preparePiEnvironment({ worker, profile = null, sourceAgentDir = defaultSourceAgentDir(), sourceEnv = process.env } = {}) {
+  const limits = validateWorker(worker);
+  const { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight } = await resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv });
+  if (preflight.errors.length > 0) fail(`Worker preflight failed: ${preflight.errors.join("; ")}`);
   const stateDir = await mkdtemp(join(tmpdir(), "tinysdd-pi-state-"));
   let cleaned = false;
   try {
@@ -358,7 +470,7 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
     schemaVersion: 1,
     provider: worker.provider,
     model: worker.model,
-    api: provider.api ?? null,
+    api,
     contextWindow: Number.isFinite(model.contextWindow) ? model.contextWindow : null,
     maxTokens: Number.isFinite(model.maxTokens) ? model.maxTokens : null,
     rawReasoning: rawReasoning ?? null,
@@ -372,6 +484,7 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
     maxToolCalls: limits.maxToolCalls,
     credentialEnvironmentNames: [],
     generatedCredentialReferenceCount: Object.keys(generatedEnv).length,
+    preflight,
   };
   return {
     stateDir,
