@@ -19,7 +19,7 @@ export const DEFAULT_MAX_TOOL_CALLS = 40;
 export const MAX_TOOL_CALLS = 100;
 
 const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits'];
-const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls'];
+const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs'];
 const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
 const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat'];
 const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole'];
@@ -79,7 +79,12 @@ function validateLimits(value, label) {
   if (!Number.isInteger(maxToolCalls) || maxToolCalls <= 0 || maxToolCalls > MAX_TOOL_CALLS) {
     throw tinyError('CONFIG_INVALID', `${label}.maxToolCalls must be an integer from 1 to ${MAX_TOOL_CALLS}`);
   }
-  return { timeoutMs, maxToolCalls };
+  if (value.firstWriteMs === undefined) return { timeoutMs, maxToolCalls };
+  // Optional no-progress watchdog: stop when no write/edit has started by then.
+  if (!Number.isInteger(value.firstWriteMs) || value.firstWriteMs <= 0 || value.firstWriteMs >= timeoutMs) {
+    throw tinyError('CONFIG_INVALID', `${label}.firstWriteMs must be a positive integer below timeoutMs`);
+  }
+  return { timeoutMs, maxToolCalls, firstWriteMs: value.firstWriteMs };
 }
 
 function validateWorker(raw, name, label = `workers.${name}`) {

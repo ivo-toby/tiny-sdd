@@ -89,6 +89,20 @@ if (action === "length") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"length",usage:{input:900,output:16384,reasoning:15579,cacheRead:0,cacheWrite:0,totalTokens:17284},content:[{type:"text",text:"truncated"}]}}));
   process.exit(0);
 }
+if (action === "think") {
+  // Reads, then a long silent planning phase with no write (talon run 3).
+  for (let i = 0; i < 2; i += 1) console.log(JSON.stringify({type:"tool_execution_start",toolName:"read",args:{path:"src/allowed.txt"}}));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  process.exit(0);
+}
+if (action === "write-late") {
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  console.log(JSON.stringify({type:"tool_execution_start",toolName:"write",args:{path:"src/allowed.txt"}}));
+  writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Wrote the file."}]}}));
+  process.exit(0);
+}
 if (action === "tools") {
   for (let i = 0; i < 4; i += 1) console.log(JSON.stringify({type:"tool_execution_start",toolName:"read"}));
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -502,6 +516,35 @@ describe("Pi worker capture and scope", () => {
       assert.equal(metadata.maxTokensSource, "pi-default");
       assert.equal(metadata.preflight.warnings.length, 2);
       assert.equal(result.warnings.filter((warning) => warning.startsWith("Preflight: ")).length, 2);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("stops a run with no write or edit by firstWriteMs as no_progress", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker({ timeoutMs: 10_000, firstWriteMs: 400 }), runtime: runtime(undefined, "think") });
+      assert.equal(result.outcome, "no_progress");
+      assert.ok(result.observed.processTermination.elapsedMs < 3_000);
+      assert.equal(result.limitDetails.firstWriteMs, 400);
+      assert.equal(result.observed.writeCalls, 0);
+      assert.equal(result.observed.firstWriteAtMs, null);
+      assert.deepEqual(result.observed.toolCallsByName, { read: 2 });
+      assert.match(await readFile(result.artifactPaths.stdout, "utf8"), /tool_execution_start/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("lets a run continue once it has started a write before firstWriteMs", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker({ timeoutMs: 10_000, firstWriteMs: 600 }), runtime: runtime(undefined, "write-late") });
+      assert.equal(result.outcome, "completed");
+      assert.equal(result.observed.writeCalls, 1);
+      assert.ok(result.observed.firstWriteAtMs !== null && result.observed.firstWriteAtMs < 600);
+      assert.ok(result.observed.processTermination.elapsedMs > 600);
     } finally {
       await rm(project, { recursive: true, force: true });
     }

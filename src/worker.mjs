@@ -755,10 +755,15 @@ function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalP
   return args;
 }
 
+const WRITE_TOOLS = new Set(["write", "edit"]);
+
 function parseEvents(text) {
   const assistant = [];
   const turnEnds = [];
   let toolCalls = 0;
+  let writeCalls = 0;
+  const toolCallsByName = {};
+  const readPaths = [];
   for (const line of text.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let event;
@@ -767,7 +772,13 @@ function parseEvents(text) {
     } catch {
       continue;
     }
-    if (event.type === "tool_execution_start") toolCalls += 1;
+    if (event.type === "tool_execution_start") {
+      toolCalls += 1;
+      const name = typeof event.toolName === "string" ? event.toolName : "unknown";
+      toolCallsByName[name] = (toolCallsByName[name] ?? 0) + 1;
+      if (WRITE_TOOLS.has(name)) writeCalls += 1;
+      if (name === "read" && typeof event.args?.path === "string") readPaths.push(event.args.path);
+    }
     if (event.type === "message_end" && event.message?.role === "assistant") assistant.push(event.message);
     else if (event.type === "turn_end" && event.message?.role === "assistant") turnEnds.push(event.message);
     if (event.type === "toolCall" || event.type === "tool_call") toolCalls += 1;
@@ -787,7 +798,7 @@ function parseEvents(text) {
   }
   const stopReason = finalMessage?.stopReason ?? finalMessage?.rawStopReason ?? null;
   const errorMessage = finalMessage?.errorMessage ?? finalMessage?.error?.message ?? null;
-  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, claims, claimsTruncated: truncated };
+  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, claims, claimsTruncated: truncated };
 }
 
 function killProcessGroup(pid, signal) {
@@ -803,7 +814,7 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, direct }) {
+async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
@@ -815,6 +826,8 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   let timeoutTimer;
   let killTimer;
   let latest = { bytes: 0, toolCalls: 0 };
+  let firstWriteAtMs = null;
+  let closed = false;
   const stop = (reason) => {
     if (forcedOutcome) return;
     forcedOutcome = reason;
@@ -847,8 +860,13 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
       latest.bytes = outInfo.size + errInfo.size;
       if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("raw_output_limit");
       const text = await readFile(stdoutPath, "utf8");
-      latest.toolCalls = parseEvents(text).toolCalls;
+      const parsedNow = parseEvents(text);
+      latest.toolCalls = parsedNow.toolCalls;
       if (latest.toolCalls >= maxToolCalls) stop("tool_limit");
+      // Poll-granular (100 ms): when the first write/edit start was seen.
+      if (firstWriteAtMs === null && parsedNow.writeCalls > 0) firstWriteAtMs = Date.now() - startedAt;
+      // A worker that ended on its own is classified from its own stop reason.
+      if (!closed && firstWriteMs !== null && firstWriteAtMs === null && Date.now() - startedAt >= firstWriteMs) stop("no_progress");
     } catch {
       // The files remain authoritative after process close; transient stat
       // failures are classified from the final capture below.
@@ -863,6 +881,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     timeoutTimer.unref?.();
   }
   const termination = await closePromise;
+  closed = true;
   if (pollTimer) clearInterval(pollTimer);
   if (timeoutTimer) clearTimeout(timeoutTimer);
   if (killTimer) clearTimeout(killTimer);
@@ -885,6 +904,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
       elapsedMs: Date.now() - startedAt,
       directTestRuntime: direct === true,
     },
+    firstWriteAtMs,
     forcedOutcome: reason,
     rawBytes: bytes,
   };
@@ -1001,6 +1021,7 @@ function outcomeLimitDetails(outcome, capture, metadata, limits) {
   if (outcome === "raw_output_limit") return { maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES, rawOutputBytes: capture.rawBytes };
   if (outcome === "tool_limit") return { maxToolCalls: limits.maxToolCalls, toolCalls: capture.parsed.toolCalls };
   if (outcome === "timeout") return { timeoutMs: limits.timeoutMs, elapsedMs: capture.processTermination.elapsedMs };
+  if (outcome === "no_progress") return { firstWriteMs: limits.firstWriteMs, elapsedMs: capture.processTermination.elapsedMs, toolCalls: capture.parsed.toolCalls };
   return null;
 }
 
@@ -1074,7 +1095,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
       generatedCodeExecution: false,
       inferenceNetwork: true,
     },
-    limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
     credentialEnvironmentNames: prepared.metadata.credentialEnvironmentNames,
     generatedCredentialReferenceCount: prepared.metadata.generatedCredentialReferenceCount,
   };
@@ -1203,7 +1224,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
       args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv });
     }
-    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, direct: runtimeChoice.test });
+    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test });
     after = await snapshotTree(workspace);
     await copySnapshotTree(workspace, afterArtifact);
     await writeJson(join(artifactDir, "after-snapshot.json"), after);
@@ -1235,6 +1256,9 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         usage: capture.parsed.usage,
         usageScope: "final-assistant-message",
         toolCalls: capture.parsed.toolCalls,
+        toolCallsByName: capture.parsed.toolCallsByName,
+        writeCalls: capture.parsed.writeCalls,
+        firstWriteAtMs: capture.firstWriteAtMs,
         rawOutputBytes: capture.rawBytes,
       },
       ...(limitDetails ? { limitDetails } : {}),

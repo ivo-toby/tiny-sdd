@@ -100,6 +100,12 @@ with no off toggle (a Qwen chat template then thinks anyway), a missing
 `runtime.json` records `thinking` (requested) next to `effectiveThinkingControl`,
 `effectiveMaxTokens` and `maxTokensSource`.
 
+Optional `limits.firstWriteMs` (below `timeoutMs`) is a no-progress watchdog:
+if no `write` or `edit` tool call has started by then, the run stops with outcome
+`no_progress` and keeps its raw events, including the partial reasoning. It is
+off unless set. The result's `observed.toolCallsByName`, `writeCalls` and
+`firstWriteAtMs` (100 ms poll granularity) show how a run spent its time.
+
 Optional worker `skills` lists project-relative SKILL.md files; `instructions`
 lists additional project-relative text resources. Applicable AGENTS.md guidance
 is included separately. Profiles cannot override task permissions. MCP and

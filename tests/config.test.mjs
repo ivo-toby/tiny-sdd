@@ -100,6 +100,17 @@ test('rejects unknown, null, unsupported, and out-of-range config values', () =>
     schemaVersion: 1,
     workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { maxToolCalls: null } } },
   }), { code: 'CONFIG_INVALID' });
+  for (const firstWriteMs of [null, 0, 300000, 1.5]) {
+    assert.throws(() => validateConfigDocument({
+      schemaVersion: 1,
+      workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 300000, firstWriteMs } } },
+    }), { code: 'CONFIG_INVALID' });
+  }
+  const watched = validateConfigDocument({
+    schemaVersion: 1,
+    workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 1200000, firstWriteMs: 480000 } } },
+  });
+  assert.deepEqual(watched.workers.pi.limits, { timeoutMs: 1200000, maxToolCalls: 40, firstWriteMs: 480000 });
 });
 
 test('rejects symlinked profile paths', async (t) => {
