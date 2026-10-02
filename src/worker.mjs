@@ -228,9 +228,13 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
   const checkedDirectories = new Set();
   let missingSkipped = 0;
   for (const listed of listing.paths) {
+    // Apply the walk's name exclusions (.git, .tinysdd, node_modules, secret
+    // names) before path validation: a committed or unignored .tinysdd/ is
+    // normal and must be skipped, not rejected as controller state.
+    const listedParts = listed.split("/");
+    if (listedParts.some((part, index) => excludedName(part, index < listedParts.length - 1))) continue;
     const rel = projectRelative(listed, "git-listed path");
     const parts = rel.split("/");
-    if (parts.some((part, index) => excludedName(part, index < parts.length - 1))) continue;
     let parentMissing = false;
     for (let index = 1; index < parts.length; index += 1) {
       const directory = parts.slice(0, index).join("/");

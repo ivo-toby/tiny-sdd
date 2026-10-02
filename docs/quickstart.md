@@ -173,7 +173,12 @@ source symlinks are rejected. In a Git work tree the copy set is
 state, build output, local agent homes) are left out while new untracked source
 is kept; outside Git the whole tree is walked. `workspaceCopy.mode` in the result
 records which was used. An allowed file or context excerpt that exists but is
-gitignored fails the run instead of producing an unappliable patch. Put needed dependency interfaces in the task or
+gitignored fails the run instead of producing an unappliable patch.
+Run workers from the project itself or from a real `git worktree`, never from a
+hand-synced copy: the copy set comes from Git, so ignored files in the project
+directory never reach the worker, and a synced copy only adds ways to break the
+`.git` link or pick up stray files. `.tinysdd/` is always left out of the copy,
+whether it is committed, untracked or ignored. Put needed dependency interfaces in the task or
 selected instruction resources rather than assuming the worker can inspect an
 installed dependency tree.
 

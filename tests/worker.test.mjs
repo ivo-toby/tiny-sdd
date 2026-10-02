@@ -658,6 +658,23 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("skips tracked and unignored .tinysdd state in the git copy instead of failing", async () => {
+    const project = await makeGitProject();
+    try {
+      // talon: .tinysdd/ has no ignore rule; init only ignores runs/ and launches/.
+      await mkdir(join(project, ".tinysdd", "tasks"), { recursive: true });
+      await writeFile(join(project, ".tinysdd", "config.json"), "{\"schemaVersion\":1,\"workers\":{}}\n");
+      await writeFile(join(project, ".tinysdd", "tasks", "slice.md"), "# Slice\n");
+      await git(project, "add", ".tinysdd/config.json");
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+      assert.equal(result.outcome, "completed");
+      assert.equal(result.workspaceCopy.mode, "git-ls-files");
+      assert.deepEqual(await listTree(result.artifactPaths.workspaceBefore), [".gitignore", "TASK.md", "src/allowed.txt", "src/untracked.ts"]);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("records the walk fallback outside a git repository", async () => {
     const project = await makeProject();
     try {
