@@ -103,6 +103,14 @@ if (action === "write-late") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Wrote the file."}]}}));
   process.exit(0);
 }
+if (action === "reread") {
+  for (const path of [join(process.cwd(), "src", "allowed.txt"), "./src/allowed.txt", "src/allowed.txt", "TASK.md"]) {
+    console.log(JSON.stringify({type:"tool_execution_start",toolName:"read",args:{path}}));
+  }
+  console.log(JSON.stringify({type:"compaction_end",reason:"threshold",aborted:false,willRetry:false,result:{summary:"Summary of the task so far.",firstKeptEntryId:"e7",tokensBefore:90000,estimatedTokensAfter:24000}}));
+  console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Done reading."}]}}));
+  process.exit(0);
+}
 if (action === "tools") {
   for (let i = 0; i < 4; i += 1) console.log(JSON.stringify({type:"tool_execution_start",toolName:"read"}));
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -545,6 +553,29 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.observed.writeCalls, 1);
       assert.ok(result.observed.firstWriteAtMs !== null && result.observed.firstWriteAtMs < 600);
       assert.ok(result.observed.processTermination.elapsedMs > 600);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("measures cited re-reads and records compaction without trusting its summary", async () => {
+    const project = await makeProject();
+    try {
+      const contextText = JSON.stringify({ schemaVersion: 1, facts: [], resources: [{ path: "src/allowed.txt", startLine: 1, endLine: 1, purpose: "Cited contract." }] });
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), context: { path: ".tinysdd/tasks/task.context.json", text: contextText, sha256: createHash("sha256").update(contextText).digest("hex") } },
+        worker: worker({ maxToolCalls: 10 }),
+        runtime: runtime(undefined, "reread"),
+      });
+      assert.equal(result.outcome, "completed");
+      assert.equal(result.observed.reads, 4);
+      assert.equal(result.observed.citedRereads, 3);
+      assert.deepEqual(result.observed.repeatedReads, { "src/allowed.txt": 3 });
+      assert.equal(result.observed.compactions.length, 1);
+      assert.equal(result.observed.compactions[0].tokensBefore, 90000);
+      assert.equal(result.observed.compactions[0].summarySha256, createHash("sha256").update("Summary of the task so far.").digest("hex"));
+      assert.ok(result.warnings.some((warning) => /compacted the worker context/u.test(warning)));
     } finally {
       await rm(project, { recursive: true, force: true });
     }

@@ -764,6 +764,7 @@ function parseEvents(text) {
   let writeCalls = 0;
   const toolCallsByName = {};
   const readPaths = [];
+  const compactions = [];
   for (const line of text.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let event;
@@ -778,6 +779,18 @@ function parseEvents(text) {
       toolCallsByName[name] = (toolCallsByName[name] ?? 0) + 1;
       if (WRITE_TOOLS.has(name)) writeCalls += 1;
       if (name === "read" && typeof event.args?.path === "string") readPaths.push(event.args.path);
+    }
+    if (event.type === "compaction_end") {
+      const summary = typeof event.result?.summary === "string" ? event.result.summary : null;
+      compactions.push({
+        reason: event.reason ?? null,
+        aborted: event.aborted === true,
+        tokensBefore: Number.isFinite(event.result?.tokensBefore) ? event.result.tokensBefore : null,
+        estimatedTokensAfter: Number.isFinite(event.result?.estimatedTokensAfter) ? event.result.estimatedTokensAfter : null,
+        summarySha256: summary === null ? null : createHash("sha256").update(summary).digest("hex"),
+        summaryBytes: summary === null ? null : Buffer.byteLength(summary),
+        errorMessage: typeof event.errorMessage === "string" ? event.errorMessage : null,
+      });
     }
     if (event.type === "message_end" && event.message?.role === "assistant") assistant.push(event.message);
     else if (event.type === "turn_end" && event.message?.role === "assistant") turnEnds.push(event.message);
@@ -798,7 +811,7 @@ function parseEvents(text) {
   }
   const stopReason = finalMessage?.stopReason ?? finalMessage?.rawStopReason ?? null;
   const errorMessage = finalMessage?.errorMessage ?? finalMessage?.error?.message ?? null;
-  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, claims, claimsTruncated: truncated };
+  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, claims, claimsTruncated: truncated };
 }
 
 function killProcessGroup(pid, signal) {
@@ -1023,6 +1036,25 @@ function outcomeLimitDetails(outcome, capture, metadata, limits) {
   if (outcome === "timeout") return { timeoutMs: limits.timeoutMs, elapsedMs: capture.processTermination.elapsedMs };
   if (outcome === "no_progress") return { firstWriteMs: limits.firstWriteMs, elapsedMs: capture.processTermination.elapsedMs, toolCalls: capture.parsed.toolCalls };
   return null;
+}
+
+function workspaceRelativeRead(path, workspace) {
+  for (const prefix of [`${workspace}/`, "/work/"]) if (path.startsWith(prefix)) return path.slice(prefix.length);
+  return path.replace(/^(?:\.\/)+/u, "");
+}
+
+// Reads are measured, not blocked: the worker contract asks the model not to
+// re-read cited excerpts, and this makes compliance visible per run.
+function readObservations(readPaths, workspace, compiledContext) {
+  const counts = {};
+  for (const path of readPaths) {
+    const rel = workspaceRelativeRead(path, workspace);
+    counts[rel] = (counts[rel] ?? 0) + 1;
+  }
+  const cited = new Set((compiledContext?.resources ?? []).map((resource) => resource.path));
+  const citedRereads = Object.entries(counts).filter(([path]) => cited.has(path)).reduce((sum, [, count]) => sum + count, 0);
+  const repeatedReads = Object.fromEntries(Object.entries(counts).filter(([, count]) => count > 1));
+  return { reads: readPaths.length, citedRereads, repeatedReads };
 }
 
 async function resolveBrief(projectRoot, packet) {
@@ -1259,6 +1291,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         toolCallsByName: capture.parsed.toolCallsByName,
         writeCalls: capture.parsed.writeCalls,
         firstWriteAtMs: capture.firstWriteAtMs,
+        ...readObservations(capture.parsed.readPaths, workspace, compiledContext),
+        compactions: capture.parsed.compactions,
         rawOutputBytes: capture.rawBytes,
       },
       ...(limitDetails ? { limitDetails } : {}),
@@ -1282,7 +1316,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;
