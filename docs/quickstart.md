@@ -104,7 +104,8 @@ resolution before dispatch:
 tinysdd config validate
 tinysdd config show --worker qwen --json
 tinysdd worker start --task first-change --worker qwen --json
-# Poll the returned launch id until status is "finished":
+# Poll the returned launch id until data.status is "finished".
+# data.request.launchStatus is the launch-time snapshot, not current state.
 tinysdd worker status --id LAUNCH_ID --json
 ```
 

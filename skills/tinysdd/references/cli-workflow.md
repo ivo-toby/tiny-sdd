@@ -42,8 +42,10 @@ are a precaution, not a general detector for secrets embedded in source.
 Use `worker start` for real model calls from an orchestrating agent. It launches
 the controller in a detached process so short-lived agent shells cannot send an
 unintended SIGTERM to a still-working model. `worker run` is foreground mode for
-local debugging only. Poll `worker status` until it returns `finished`; an
+local debugging only. Poll `worker status` until `data.status` is `finished`; an
 `interrupted` launch has no usable candidate result and must be recorded as such.
+Read only the top-level `data.status`: `data.request` is the launch-time snapshot
+and its `launchStatus` stays `running` after the worker ends.
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new

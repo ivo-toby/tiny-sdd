@@ -222,13 +222,17 @@ async function workerStatus(project, options) {
     throw error;
   }
   if (!info?.value || info.value.id !== id) throw cliError(`launch not found: ${id}`, 'LAUNCH_NOT_FOUND');
+  // request.json is a launch-time snapshot. Expose its stored status as
+  // launchStatus so pollers cannot mistake it for the current data.status.
+  const { status: launchStatus, ...requestFields } = info.value;
+  const request = { ...requestFields, launchStatus };
   const result = await readJsonFile(join(location.directory, 'result.json'), { code: 'LAUNCH_MALFORMED' });
-  if (result) return { id, status: 'finished', request: info.value, result: result.value };
+  if (result) return { id, status: 'finished', request, result: result.value };
   let alive = false;
   if (Number.isInteger(info.value.pid) && info.value.pid > 0) {
     try { process.kill(info.value.pid, 0); alive = true; } catch (error) { alive = error?.code === 'EPERM'; }
   }
-  return { id, status: alive ? 'running' : 'interrupted', request: info.value };
+  return { id, status: alive ? 'running' : 'interrupted', request };
 }
 
 async function run(argv) {
