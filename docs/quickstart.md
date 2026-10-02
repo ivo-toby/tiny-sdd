@@ -144,6 +144,17 @@ tinysdd worker start --task first-change --worker qwen --json
 tinysdd worker status --id LAUNCH_ID --json
 ```
 
+To end a launch early, run `tinysdd worker stop --id LAUNCH_ID --json` rather than
+killing the launcher. It signals the launcher, which stops Pi and finalizes the
+run as usual: the result has outcome `stopped` (error code `WORKER_STOPPED`), and
+the candidate, patch and raw events are kept. `stopped` is not acceptance; review
+the candidate like any other failed outcome. `--wait-ms N` (0 to 600000, default
+30000) bounds how long the command waits for the result. If finalizing takes
+longer, `data.status` is `stopping`; poll `worker status` until it is `finished`.
+`worker stop` signals only a process it can verify is that launch's launcher
+(Linux `/proc`), and otherwise fails with `LAUNCH_NOT_OURS` without sending a
+signal. Stopping an already stopping launch only waits.
+
 ## Controlled benchmark replay
 
 To compare workers fairly after the live project has moved on, replay the

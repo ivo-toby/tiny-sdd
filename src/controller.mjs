@@ -719,6 +719,7 @@ export async function dispatchWorker(projectRoot, options = {}) {
     profile: resolved.profile,
     baseRunId: options.baseRunId,
     baselineRunId: options.baselineRunId,
+    signal: options.signal,
   });
 }
 

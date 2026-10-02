@@ -5,7 +5,8 @@
 // response_token_limit: one model response stopped at its output-token cap
 // (assistant stopReason "length"/"max_tokens").
 // no_progress: no write/edit tool call before the configured firstWriteMs.
-export const WORKER_OUTCOMES = Object.freeze(['completed', 'failed', 'timeout', 'tool_limit', 'raw_output_limit', 'response_token_limit', 'no_progress']);
+// stopped: the operator stopped the run (`worker stop`); evidence is finalized as usual.
+export const WORKER_OUTCOMES = Object.freeze(['completed', 'failed', 'timeout', 'tool_limit', 'raw_output_limit', 'response_token_limit', 'no_progress', 'stopped']);
 export const FAILED_WORKER_OUTCOMES = Object.freeze(WORKER_OUTCOMES.filter((outcome) => outcome !== 'completed'));
 
 export function isFailedWorkerOutcome(outcome) {

@@ -694,7 +694,7 @@ contexts grow.
 | Slice-DAG `status`, `--feature` | Designed (3.2) | |
 | `--protect`, `task update` | Designed (3.2) | Controller semantics, so the open questions come first. |
 | Plan-level approval | Designed (3.2) | Changes approval meaning; operator decision first. |
-| `worker stop` with `stopped` outcome | Designed (3.3) | Small; next to implement. |
+| `worker stop` with `stopped` outcome | **Implemented** (#10) | Finalizes the run with outcome `stopped` (evidence, candidate and patch kept); only signals a launcher verified through `/proc/<pid>/cmdline`. |
 | `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |
 | Timeout candidate state | Designed (3.3) | `candidateState` on timeout/stopped; S4 timed out with a complete candidate. |
 | Shared briefs going stale | Designed (3.2) | One brief per task plus cited spec ranges; addenda as the alternative. |
