@@ -132,7 +132,12 @@ apply the patch, commit, or accept its own result. Inference can reach the selec
 provider; use only source you are authorized to send there. Raw event files may
 contain source. Filename exclusions are not a general secret scanner.
 The candidate omits `.git`, `.tinysdd`, `node_modules` and common credential files;
-source symlinks are rejected. Put needed dependency interfaces in the task or
+source symlinks are rejected. In a Git work tree the copy set is
+`git ls-files --cached --others --exclude-standard`, so gitignored files (runtime
+state, build output, local agent homes) are left out while new untracked source
+is kept; outside Git the whole tree is walked. `workspaceCopy.mode` in the result
+records which was used. An allowed file or context excerpt that exists but is
+gitignored fails the run instead of producing an unappliable patch. Put needed dependency interfaces in the task or
 selected instruction resources rather than assuming the worker can inspect an
 installed dependency tree.
 

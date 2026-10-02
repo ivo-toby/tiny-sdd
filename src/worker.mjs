@@ -22,6 +22,7 @@ const MAX_RESOURCE_BYTES = 512 * 1024;
 const MAX_PATCH_BYTES = 32 * 1024 * 1024;
 const MAX_COPY_FILES = 20_000;
 const MAX_COPY_BYTES = 512 * 1024 * 1024;
+const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
 const MAX_CLAIM_BYTES = 128 * 1024;
 const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
@@ -137,8 +138,66 @@ function excludedName(name, directory) {
   return PROJECT_SECRET_NAME.test(name);
 }
 
-async function copyProjectTree(sourceRoot, destinationRoot) {
+function gitEnvironment() {
+  // Repository discovery must depend only on the project directory, never on
+  // an inherited GIT_DIR/GIT_WORK_TREE that points somewhere else.
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+}
+
+async function gitCopyList(sourceRoot) {
+  const child = spawn("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: sourceRoot, env: gitEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+  const chunks = [];
+  let bytes = 0;
+  let overflow = false;
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_GIT_LIST_BYTES) chunks.push(chunk);
+    else overflow = true;
+  });
+  child.stderr.on("data", (chunk) => {
+    if (stderr.length < 1024) stderr += chunk.toString("utf8").slice(0, 1024 - stderr.length);
+  });
+  const termination = await new Promise((resolvePromise) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already exited */ }
+      finish({ code: null, error: "git ls-files timed out" });
+    }, 30_000);
+    timer.unref?.();
+    child.once("error", (error) => finish({ code: null, error: error?.code === "ENOENT" ? "git is unavailable" : (error instanceof Error ? error.message : String(error)) }));
+    child.once("close", (code) => finish({ code, error: null }));
+  });
+  if (termination.error) return { paths: null, reason: termination.error };
+  if (termination.code !== 0) return { paths: null, reason: stderr.trim().split("\n")[0] || `git ls-files exited ${termination.code}` };
+  if (overflow) fail("git ls-files output exceeds the bounded worker copy list");
+  const listed = Buffer.concat(chunks).toString("utf8").split("\0").filter((path) => path.length > 0);
+  // Unmerged index entries are listed once per stage.
+  return { paths: [...new Set(listed)].sort(), reason: null };
+}
+
+/**
+ * Copy the worker's view of a source tree.
+ *
+ * A live project inside a Git work tree is copied from `git ls-files --cached
+ * --others --exclude-standard`, so gitignored runtime state never reaches the
+ * worker while new untracked source does.  Everything else (no Git, Git
+ * unavailable, or an immutable baseline snapshot) uses the recursive walk.
+ */
+export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = true, maxFiles = MAX_COPY_FILES, maxBytes = MAX_COPY_BYTES } = {}) {
   const counters = { files: 0, bytes: 0 };
+  const copied = new Set();
+  const count = (size) => {
+    counters.files += 1;
+    counters.bytes += size;
+    if (counters.files > maxFiles || counters.bytes > maxBytes) fail("Project copy exceeds bounded worker input size");
+  };
   async function visit(source, destination, relativePath) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
@@ -154,14 +213,88 @@ async function copyProjectTree(sourceRoot, destinationRoot) {
         continue;
       }
       if (!info.isFile()) fail(`Source contains unsupported filesystem entry: ${rel}`);
-      counters.files += 1;
-      counters.bytes += info.size;
-      if (counters.files > MAX_COPY_FILES || counters.bytes > MAX_COPY_BYTES) fail("Project copy exceeds bounded worker input size");
+      count(info.size);
       await copyFile(sourcePath, destinationPath);
+      copied.add(rel);
     }
   }
-  await visit(sourceRoot, destinationRoot, "");
-  return counters;
+  const listing = useGit ? await gitCopyList(sourceRoot) : { paths: null, reason: "immutable baseline snapshot" };
+  if (!listing.paths) {
+    await visit(sourceRoot, destinationRoot, "");
+    return { mode: "walk", fallbackReason: listing.reason, files: counters.files, bytes: counters.bytes, missingSkipped: 0, copied };
+  }
+  await mkdir(destinationRoot, { recursive: true, mode: 0o700 });
+  const checkedDirectories = new Set();
+  let missingSkipped = 0;
+  for (const listed of listing.paths) {
+    const rel = projectRelative(listed, "git-listed path");
+    const parts = rel.split("/");
+    if (parts.some((part, index) => excludedName(part, index < parts.length - 1))) continue;
+    let parentMissing = false;
+    for (let index = 1; index < parts.length; index += 1) {
+      const directory = parts.slice(0, index).join("/");
+      if (checkedDirectories.has(directory)) continue;
+      let info;
+      try {
+        info = await lstat(join(sourceRoot, ...parts.slice(0, index)));
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        parentMissing = true;
+        break;
+      }
+      if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${directory}`);
+      if (!info.isDirectory()) fail(`Source contains unsupported filesystem entry: ${directory}`);
+      checkedDirectories.add(directory);
+    }
+    const sourcePath = join(sourceRoot, ...parts);
+    let info = null;
+    if (!parentMissing) {
+      try {
+        info = await lstat(sourcePath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+    if (!info) {
+      // Tracked but deleted in the working tree (not yet staged).
+      missingSkipped += 1;
+      continue;
+    }
+    if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${rel}`);
+    const destinationPath = join(destinationRoot, ...parts);
+    if (info.isDirectory()) {
+      // A gitlink (submodule) is listed as a directory; copy its working tree
+      // with the walk rules rather than dropping source the task may need.
+      await visit(sourcePath, destinationPath, rel);
+      continue;
+    }
+    if (!info.isFile()) fail(`Source contains unsupported filesystem entry: ${rel}`);
+    count(info.size);
+    await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
+    await copyFile(sourcePath, destinationPath);
+    copied.add(rel);
+  }
+  if (copied.size === 0 && listing.paths.length > 0) fail("git ls-files listed no copyable files; refusing an empty worker workspace");
+  return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
+}
+
+async function assertCopiedInputs(sourceRoot, copy, allowedPaths, compiledContext) {
+  for (const resource of compiledContext?.resources ?? []) {
+    if (!copy.copied.has(resource.path)) fail(`Context resource is not part of the worker copy (gitignored or excluded): ${resource.path}`);
+  }
+  for (const path of allowedPaths) {
+    if (copy.copied.has(path)) continue;
+    let info;
+    try {
+      info = await lstat(join(sourceRoot, ...path.split("/")));
+    } catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "ENOTDIR") continue;
+      throw error;
+    }
+    // An existing allowed file missing from the copy would come back as a
+    // "created" file and produce a patch that cannot apply to the project.
+    if (info.isFile()) fail(`Allowed path exists but is not part of the worker copy (gitignored or excluded): ${path}`);
+  }
 }
 
 async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId) {
@@ -985,7 +1118,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let capture;
   let patchInfo;
   let result;
-    await copyProjectTree(executionSource, workspace);
+    const workspaceCopy = await copyProjectTree(executionSource, workspace, { useGit: !frozenBaseline });
+    await assertCopiedInputs(executionSource, workspaceCopy, selectedAllowed, compiledContext);
     await overlayRevisionBase(revisionBase, workspace);
     await copyRegularTree(workspace, baseline);
     before = await snapshotTree(workspace);
@@ -1065,6 +1199,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         },
       } : {}),
       ...(frozenBaseline ? { baselineRun: { id: frozenBaseline.id } } : {}),
+      workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
       outcome,
       model: { provider: worker.provider, id: worker.model },
       observed: {

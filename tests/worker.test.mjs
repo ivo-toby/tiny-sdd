@@ -1,11 +1,45 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { preparePiEnvironment } from "../src/pi-environment.mjs";
-import { runWorker } from "../src/worker.mjs";
+import { copyProjectTree, runWorker } from "../src/worker.mjs";
+
+const execFileAsync = promisify(execFile);
+
+async function git(cwd, ...args) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  await execFileAsync("git", args, { cwd, env });
+}
+
+// A git project whose gitignored runtime state contains a symlink and a
+// credential-looking file, like the talon data/ directory that broke run 1.
+async function makeGitProject() {
+  const root = await makeProject();
+  await git(root, "init", "-q");
+  await writeFile(join(root, ".gitignore"), "data/\n*.log\n");
+  await git(root, "add", ".gitignore", "TASK.md", "src/allowed.txt");
+  await mkdir(join(root, "data", "home", ".codex"), { recursive: true });
+  await writeFile(join(root, "data", "home", ".codex", "auth.json"), "{\"token\":\"synthetic\"}\n");
+  await symlink("/definitely/not/copied", join(root, "data", "home", "apply_patch"));
+  await writeFile(join(root, "debug.log"), "ignored\n");
+  await writeFile(join(root, "src", "untracked.ts"), "export const fresh = true;\n");
+  return root;
+}
+
+async function listTree(root, prefix = "") {
+  const output = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) output.push(...await listTree(join(root, entry.name), rel));
+    else output.push(rel);
+  }
+  return output.sort();
+}
 
 const originalTestFlag = process.env.TINYSDD_WORKER_TEST;
 let fakePi;
@@ -413,6 +447,80 @@ describe("Pi worker capture and scope", () => {
     } finally {
       await rm(project, { recursive: true, force: true });
       await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("copies a git project from ls-files so ignored runtime state never reaches the worker", async () => {
+    const project = await makeGitProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+      assert.equal(result.outcome, "completed");
+      assert.equal(result.workspaceCopy.mode, "git-ls-files");
+      assert.deepEqual(await listTree(result.artifactPaths.workspaceBefore), [".gitignore", "TASK.md", "src/allowed.txt", "src/untracked.ts"]);
+      assert.deepEqual(result.changedPaths.map((entry) => entry.path), ["src/allowed.txt"]);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("records the walk fallback outside a git repository", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "complete") });
+      assert.equal(result.workspaceCopy.mode, "walk");
+      assert.equal(typeof result.workspaceCopy.fallbackReason, "string");
+      assert.deepEqual(await listTree(result.artifactPaths.workspaceBefore), ["TASK.md", "src/allowed.txt"]);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects an allowed path or context resource that the git copy leaves out", async () => {
+    const project = await makeGitProject();
+    try {
+      await assert.rejects(
+        runWorker({ projectRoot: project, packet: packet(["src/allowed.txt", "debug.log"]), worker: worker(), runtime: runtime(undefined, "complete") }),
+        /Allowed path exists but is not part of the worker copy.*debug\.log/u,
+      );
+      const manifest = JSON.stringify({ schemaVersion: 1, facts: [], resources: [{ path: "debug.log", startLine: 1, endLine: 1, purpose: "Ignored file." }] });
+      await assert.rejects(
+        runWorker({
+          projectRoot: project,
+          packet: { ...packet(), context: { path: ".tinysdd/tasks/ctx.json", text: manifest, sha256: createHash("sha256").update(manifest).digest("hex") } },
+          worker: worker(),
+          runtime: runtime(undefined, "complete"),
+        }),
+        /Context resource is not part of the worker copy.*debug\.log/u,
+      );
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("git copy keeps symlink rejection, skips deleted tracked files and enforces limits", async () => {
+    const project = await makeGitProject();
+    const destinations = [];
+    const destination = async () => {
+      const path = await mkdtemp(join(tmpdir(), "tinysdd-copy-test-"));
+      destinations.push(path);
+      return path;
+    };
+    try {
+      await writeFile(join(project, "src", "gone.txt"), "tracked\n");
+      await git(project, "add", "src/gone.txt");
+      await rm(join(project, "src", "gone.txt"));
+      const copy = await copyProjectTree(project, await destination());
+      assert.equal(copy.mode, "git-ls-files");
+      assert.equal(copy.missingSkipped, 1);
+      assert.equal(copy.files, 4);
+      await assert.rejects(copyProjectTree(project, await destination(), { maxFiles: 3 }), /exceeds bounded worker input size/u);
+      await assert.rejects(copyProjectTree(project, await destination(), { maxBytes: 8 }), /exceeds bounded worker input size/u);
+      await symlink("allowed.txt", join(project, "src", "tracked-link"));
+      await git(project, "add", "src/tracked-link");
+      await assert.rejects(copyProjectTree(project, await destination()), /Source contains a symlink; refusing to copy src\/tracked-link/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      for (const path of destinations) await rm(path, { recursive: true, force: true });
     }
   });
 
