@@ -74,6 +74,23 @@ async function compileTaskContext(projectRoot, path) {
   return compileContext(projectRoot, { path, text, sha256: sha256(text) });
 }
 
+// Provisional advisory thresholds from one observed failure (talon
+// broker-contract: 8 files, 43 KB context, 64 tests, zero worker writes).
+// They warn; they never block registration or approval.
+export const TASK_SIZE_THRESHOLDS = Object.freeze({ allowedFiles: 3, compiledContextBytes: 40 * 1024, citedTestLines: 300 });
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$/u;
+
+function taskSizing(allow, compiled) {
+  const citedTestLines = (compiled?.resources ?? [])
+    .filter((resource) => TEST_PATH.test(resource.path))
+    .reduce((sum, resource) => sum + resource.endLine - resource.startLine + 1, 0);
+  const metrics = { allowedFiles: allow.length, compiledContextBytes: compiled?.bytes ?? 0, citedTestLines };
+  const warnings = Object.entries(TASK_SIZE_THRESHOLDS)
+    .filter(([key, limit]) => metrics[key] > limit)
+    .map(([key, limit]) => `${key} ${metrics[key]} exceeds the advisory limit ${limit}; consider splitting the task`);
+  return { ...metrics, thresholds: { ...TASK_SIZE_THRESHOLDS }, warnings };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -365,7 +382,9 @@ export async function addTask(projectRoot, options = {}) {
   }))].sort();
   const root = await canonicalProjectRoot(projectRoot);
   await readProjectFile(root, brief, taskBriefOptions());
-  if (context !== undefined) await readProjectFile(root, context, taskBriefOptions());
+  // Validate the manifest schema, source ranges and budget now rather than
+  // first discovering an invalid manifest at approval.
+  const compiled = context === undefined ? null : await compileTaskContext(root, context);
   for (const path of allow) {
     const absolute = await assertInternalPath(root, path.split('/'), { allowMissing: true });
     try {
@@ -389,7 +408,7 @@ export async function addTask(projectRoot, options = {}) {
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, brief, ...(context === undefined ? {} : { context }), dependsOn, allow } };
+    return { task: { id, brief, ...(context === undefined ? {} : { context }), dependsOn, allow }, sizing: taskSizing(allow, compiled) };
   });
 }
 
@@ -404,12 +423,13 @@ export async function approveTask(projectRoot, options = {}) {
     const status = await inspectTask(root, state, task);
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     const briefDigest = await digestProjectFile(root, task.brief, taskBriefOptions()).catch(() => { throw tinyError('BRIEF_MISSING', `brief is missing: ${task.brief}`); });
-    const contextDigest = task.context
-      ? await compileTaskContext(root, task.context).then((compiled) => compiled.sha256).catch((error) => {
+    const compiled = task.context
+      ? await compileTaskContext(root, task.context).catch((error) => {
         if (error?.code === 'ENOENT' || error?.code === 'PATH_NOT_FOUND') throw tinyError('CONTEXT_MISSING', `context manifest is missing: ${task.context}`);
         throw error;
       })
       : null;
+    const contextDigest = compiled ? compiled.sha256 : null;
     const dependencyAcceptances = {};
     for (const dependency of task.dependsOn) {
       const dependencyState = await inspectTask(root, state, state.tasks[dependency]);
@@ -419,7 +439,7 @@ export async function approveTask(projectRoot, options = {}) {
     const approvedAt = nowIso();
     const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
-    return { task: publicTask(task, await inspectTask(root, state, task)) };
+    return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
   });
 }
 

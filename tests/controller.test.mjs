@@ -128,6 +128,56 @@ test('selected context source changes also make approval stale', async () => {
   }
 });
 
+test('task add validates the context manifest before registering the task', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src', 'contract.ts'), 'export const boundary = 1;\n');
+    const manifest = join(root, '.tinysdd', 'tasks', 'one.context.json');
+    await writeFile(manifest, JSON.stringify({ schemaVersion: 1, task: 'one', facts: [], resources: [] }));
+    await assert.rejects(
+      addTask(root, { id: 'one', brief: 'docs/brief.md', context: '.tinysdd/tasks/one.context.json', allow: ['src/new-file.ts'] }),
+      { code: 'CONTEXT_MANIFEST_INVALID', message: /unknown key: task/u },
+    );
+    await writeFile(manifest, JSON.stringify({ schemaVersion: 1, facts: [], resources: [{ path: 'src/contract.ts', startLine: 1, endLine: 9, purpose: 'Out of range.' }] }));
+    await assert.rejects(
+      addTask(root, { id: 'one', brief: 'docs/brief.md', context: '.tinysdd/tasks/one.context.json', allow: ['src/new-file.ts'] }),
+      { code: 'CONTEXT_MANIFEST_INVALID', message: /exceeds source/u },
+    );
+    assert.deepEqual((await controllerStatus(root)).tasks, []);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task add and approve report advisory sizing without blocking', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+    await mkdir(join(root, 'tests'), { recursive: true });
+    await writeFile(join(root, 'tests', 'contract.test.ts'), `${Array.from({ length: 320 }, (_, index) => `// assertion ${index}`).join('\n')}\n`);
+    await writeFile(join(root, '.tinysdd', 'tasks', 'big.context.json'), JSON.stringify({
+      schemaVersion: 1,
+      facts: [],
+      resources: [{ path: 'tests/contract.test.ts', startLine: 1, endLine: 320, purpose: 'Fixed acceptance tests.' }],
+    }));
+    const allow = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'];
+    const added = await addTask(root, { id: 'big', brief: 'docs/brief.md', context: '.tinysdd/tasks/big.context.json', allow });
+    assert.equal(added.sizing.allowedFiles, 4);
+    assert.equal(added.sizing.citedTestLines, 320);
+    assert.ok(added.sizing.compiledContextBytes > 0);
+    assert.deepEqual(added.sizing.warnings.map((warning) => warning.split(' ')[0]), ['allowedFiles', 'citedTestLines']);
+    const approved = await approveTask(root, { id: 'big', by: 'operator', reason: 'accepted the size risk' });
+    assert.equal(approved.task.status, 'ready');
+    assert.equal(approved.sizing.warnings.length, 2);
+    const small = await addTask(root, { id: 'small', brief: 'docs/brief.md', allow: ['src/small.ts'] });
+    assert.deepEqual(small.sizing.warnings, []);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('allows an approved path below parent directories that do not exist yet', async () => {
   const root = await project();
   try {

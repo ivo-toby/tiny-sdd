@@ -322,6 +322,7 @@ function writeResult(result, json) {
       if (Object.hasOwn(data, 'next')) process.stdout.write(data.next ? `Next: ${data.next.taskId} — ${data.next.action}\n` : 'No pending task.\n');
     } else if (data?.task?.id) {
       process.stdout.write(`${data.task.id}: ${data.task.status ?? 'registered'}\n`);
+      for (const warning of data.sizing?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);
     } else if (data?.taskId && data?.brief?.text) {
       process.stdout.write(`Task: ${data.taskId}\nAllowed files: ${data.allowedPaths.join(', ')}\n\n${data.brief.text}\n`);
       if (data.review?.evidence?.text) process.stdout.write(`\nReview feedback:\n${data.review.evidence.text}\n`);
