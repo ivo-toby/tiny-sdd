@@ -30,6 +30,19 @@ Trace expected results to a source or label them as decisions needing approval.
 Include exact import/interface context where an external dependency matters.
 Split work when one task has several independently reviewable obligations.
 
+For a small-model worker, slicing is the default, not a fallback. A read/write/edit
+worker cannot observe a test run, so it tends to simulate the whole task before
+its first write; larger tasks make that simulation longer. Give each slice one or
+two source files and its own test file, and depend on earlier slices with
+`--depends-on`. Each slice's tests import that slice's module directly, never a
+barrel `index`, so a slice's tests load before later modules exist; the barrel
+belongs to the final slice. Controller-owned contracts (shared types, fixed tests)
+stay the same in every slice and are not in any slice's allowed paths.
+`task add` reports allowed files, compiled-context bytes and cited test lines;
+split when it warns. Apply an accepted slice's reviewed patch to the project
+before recording acceptance: acceptance binds the project's allowed-file content,
+and the next slice's worker copies the project.
+
 Before delegating a nontrivial implementation task, prepare a compact context
 manifest under `.tinysdd/tasks/` when exact repository facts would prevent
 rediscovery: public signatures, schemas, invariants, acceptance assertions, or
