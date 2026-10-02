@@ -604,6 +604,8 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.outcome, "completed");
       assert.equal(result.observed.reads, 4);
       assert.equal(result.observed.citedRereads, 3);
+      assert.deepEqual(result.taskShape, { allowedFiles: 1, contextFacts: 0, compiledContextBytes: result.taskShape.compiledContextBytes, citedResources: 1, citedLines: 1, citedTestLines: 0 });
+      assert.ok(result.taskShape.compiledContextBytes > 0);
       assert.deepEqual(result.observed.repeatedReads, { "src/allowed.txt": 3 });
       assert.equal(result.observed.compactions.length, 1);
       assert.equal(result.observed.compactions[0].tokensBefore, 90000);

@@ -166,6 +166,8 @@ test('task add and approve report advisory sizing without blocking', async () =>
     const added = await addTask(root, { id: 'big', brief: 'docs/brief.md', context: '.tinysdd/tasks/big.context.json', allow });
     assert.equal(added.sizing.allowedFiles, 4);
     assert.equal(added.sizing.citedTestLines, 320);
+    assert.equal(added.sizing.contextFacts, 0);
+    assert.equal(added.sizing.citedResources, 1);
     assert.ok(added.sizing.compiledContextBytes > 0);
     assert.deepEqual(added.sizing.warnings.map((warning) => warning.split(' ')[0]), ['allowedFiles', 'citedTestLines']);
     const approved = await approveTask(root, { id: 'big', by: 'operator', reason: 'accepted the size risk' });

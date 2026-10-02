@@ -25,7 +25,7 @@ import {
   resolveConfig,
   validateConfigDocument,
 } from './config.mjs';
-import { compileContext } from './context-compiler.mjs';
+import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
 import {
   extractAcceptanceCriteria,
   extractEvidenceChecks,
@@ -78,13 +78,8 @@ async function compileTaskContext(projectRoot, path) {
 // broker-contract: 8 files, 43 KB context, 64 tests, zero worker writes).
 // They warn; they never block registration or approval.
 export const TASK_SIZE_THRESHOLDS = Object.freeze({ allowedFiles: 3, compiledContextBytes: 40 * 1024, citedTestLines: 300 });
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$/u;
-
 function taskSizing(allow, compiled) {
-  const citedTestLines = (compiled?.resources ?? [])
-    .filter((resource) => TEST_PATH.test(resource.path))
-    .reduce((sum, resource) => sum + resource.endLine - resource.startLine + 1, 0);
-  const metrics = { allowedFiles: allow.length, compiledContextBytes: compiled?.bytes ?? 0, citedTestLines };
+  const metrics = { allowedFiles: allow.length, ...contextSizeMetrics(compiled) };
   const warnings = Object.entries(TASK_SIZE_THRESHOLDS)
     .filter(([key, limit]) => metrics[key] > limit)
     .map(([key, limit]) => `${key} ${metrics[key]} exceeds the advisory limit ${limit}; consider splitting the task`);

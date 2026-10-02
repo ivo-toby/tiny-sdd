@@ -14,7 +14,7 @@ import {
   preparePiEnvironment,
   validatePiWorker,
 } from "./pi-environment.mjs";
-import { compileContext } from "./context-compiler.mjs";
+import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -1296,6 +1296,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         },
       } : {}),
       ...(frozenBaseline ? { baselineRun: { id: frozenBaseline.id } } : {}),
+      taskShape: { allowedFiles: selectedAllowed.length, ...contextSizeMetrics(compiledContext) },
       workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
       outcome,
       model: { provider: worker.provider, id: worker.model },
