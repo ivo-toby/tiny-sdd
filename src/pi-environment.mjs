@@ -22,6 +22,11 @@ export const MAX_TOOL_LIMIT = MAX_TOOL_CALLS;
 // Pi 0.84.4 documents these model defaults (docs/models.md).  A model entry
 // without maxTokens is silently capped at PI_DEFAULT_MAX_TOKENS per response.
 export const PI_DEFAULT_MAX_TOKENS = 16_384;
+// pi-ai 0.84.4 DEFAULT_THINKING_BUDGETS and MIN_ANSWER_TOKENS
+// (dist/api/simple-options.js): the per-level reasoning cap Pi sends when a
+// thinkingTokenBudgetField is configured, clamped to leave answer room.
+export const PI_DEFAULT_THINKING_BUDGETS = Object.freeze({ minimal: 1024, low: 2048, medium: 8192, high: 16384 });
+const PI_MIN_ANSWER_TOKENS = 1024;
 
 export class PiEnvironmentError extends Error {
   constructor(message, options = {}) {
@@ -384,7 +389,7 @@ function thinkingControl({ api, thinking, reasoning, compat, thinkingLevelMap })
  * Errors mean the request cannot be honored and the run must not start.
  * Warnings are recorded in runtime.json and the result envelope.
  */
-export function piRuntimePreflight({ api, model, thinking = "off" }) {
+export function piRuntimePreflight({ api, model, thinking = "off", thinkingBudgets = null }) {
   const errors = [];
   const warnings = [];
   const control = thinkingControl({ api, thinking, reasoning: model.reasoning, compat: model.compat, thinkingLevelMap: model.thinkingLevelMap });
@@ -404,7 +409,19 @@ export function piRuntimePreflight({ api, model, thinking = "off" }) {
   if (thinking !== "off" && control.control === "sent" && api === "openai-completions" && !budgetField) {
     warnings.push(`reasoning and the answer share one ${maxTokens.value}-token response cap and no compat.thinkingTokenBudgetField is set, so a single thinking phase can consume the whole response`);
   }
-  return { basis: PREFLIGHT_BASIS, thinking: control, maxTokens, thinkingTokenBudgetField: budgetField, errors, warnings };
+  if (thinkingBudgets && !budgetField && api === "openai-completions") {
+    warnings.push("thinkingBudgets are configured but no compat.thinkingTokenBudgetField is set, so Pi will not send them");
+  }
+  let thinkingBudget = null;
+  if (thinking !== "off" && control.control === "sent" && api === "openai-completions" && budgetField) {
+    const configured = thinkingBudgets?.[thinking];
+    const levelBudget = configured ?? PI_DEFAULT_THINKING_BUDGETS[thinking];
+    const tokens = Math.min(levelBudget, Math.max(0, maxTokens.value - PI_MIN_ANSWER_TOKENS));
+    // Pi omits the field when the clamped budget is zero.
+    thinkingBudget = { field: budgetField, tokens, source: configured === undefined ? "pi-default" : "profile", clamped: tokens < levelBudget, sent: tokens > 0 };
+    if (tokens === 0) warnings.push(`maxTokens ${maxTokens.value} leaves no room for a thinking budget after Pi's ${PI_MIN_ANSWER_TOKENS}-token answer reserve, so none is sent`);
+  }
+  return { basis: PREFLIGHT_BASIS, thinking: control, maxTokens, thinkingTokenBudgetField: budgetField, thinkingBudget, errors, warnings };
 }
 
 async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
@@ -429,7 +446,7 @@ async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
   const nextSecret = { value: 0 };
   const safeProvider = sanitizeProvider(provider, worker.provider, model, sourceEnv, generatedEnv, nextSecret);
   const api = model.api ?? provider.api ?? null;
-  const preflight = piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off" });
+  const preflight = piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off", thinkingBudgets: profileRuntime?.thinkingBudgets ?? null });
   return { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight };
 }
 
@@ -458,7 +475,11 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
   let cleaned = false;
   try {
     await writeFile(join(stateDir, "models.json"), `${JSON.stringify({ providers: { [worker.provider]: safeProvider } }, null, 2)}\n`, { mode: 0o600 });
-    await writeFile(join(stateDir, "settings.json"), `${JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0, timeoutMs: 120000 } }, compaction: { enabled: false } }, null, 2)}\n`, { mode: 0o600 });
+    // The user's global Pi settings are never inherited; a profile's thinking
+    // budgets are the only settings it contributes.
+    const settings = { retry: { enabled: false, provider: { maxRetries: 0, timeoutMs: 120000 } }, compaction: { enabled: false } };
+    if (profile?.runtime?.thinkingBudgets) settings.thinkingBudgets = { ...profile.runtime.thinkingBudgets };
+    await writeFile(join(stateDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
     // Pi's startup/auth checks may create this file.  It is intentionally an
     // empty temporary store, never a copy of the user's auth.json.
     await writeFile(join(stateDir, "auth.json"), "{}\n", { mode: 0o600 });

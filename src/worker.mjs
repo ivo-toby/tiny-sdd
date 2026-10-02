@@ -505,13 +505,21 @@ function validateProfile(value) {
   if (value.instructions !== undefined && typeof value.instructions !== "string") fail("Worker profile.instructions must be a string");
   if (value.runtime !== undefined) {
     if (!value.runtime || typeof value.runtime !== "object" || Array.isArray(value.runtime)) fail("Worker profile.runtime must be an object");
-    const allowed = new Set(["thinking", "reasoning", "compat"]);
+    const allowed = new Set(["thinking", "reasoning", "compat", "thinkingBudgets"]);
     for (const key of Object.keys(value.runtime)) if (!allowed.has(key)) fail(`Worker profile.runtime.${key} is unsupported`);
     if (value.runtime.thinking !== undefined && !["off", "minimal", "low", "medium", "high"].includes(value.runtime.thinking)) fail("Worker profile.runtime.thinking is invalid");
     if (value.runtime.reasoning !== undefined && typeof value.runtime.reasoning !== "boolean") fail("Worker profile.runtime.reasoning must be boolean");
     if (value.runtime.compat !== undefined) {
       if (!value.runtime.compat || typeof value.runtime.compat !== "object" || Array.isArray(value.runtime.compat)) fail("Worker profile.runtime.compat must be an object");
-      for (const key of Object.keys(value.runtime.compat)) if (!["thinkingFormat", "supportsDeveloperRole"].includes(key)) fail(`Worker profile.runtime.compat.${key} is unsupported`);
+      for (const key of Object.keys(value.runtime.compat)) if (!["thinkingFormat", "supportsDeveloperRole", "thinkingTokenBudgetField"].includes(key)) fail(`Worker profile.runtime.compat.${key} is unsupported`);
+    }
+    if (value.runtime.thinkingBudgets !== undefined) {
+      const budgets = value.runtime.thinkingBudgets;
+      if (!budgets || typeof budgets !== "object" || Array.isArray(budgets)) fail("Worker profile.runtime.thinkingBudgets must be an object");
+      for (const [level, tokens] of Object.entries(budgets)) {
+        if (!["minimal", "low", "medium", "high"].includes(level)) fail(`Worker profile.runtime.thinkingBudgets.${level} is unsupported`);
+        if (!Number.isInteger(tokens) || tokens <= 0) fail(`Worker profile.runtime.thinkingBudgets.${level} must be a positive integer`);
+      }
     }
   }
   for (const key of ["evidence", "limitations"]) {
@@ -1118,6 +1126,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     effectiveMaxTokens: prepared.metadata.preflight.maxTokens.value,
     maxTokensSource: prepared.metadata.preflight.maxTokens.source,
     thinkingTokenBudgetField: prepared.metadata.preflight.thinkingTokenBudgetField,
+    effectiveThinkingBudget: prepared.metadata.preflight.thinkingBudget,
     preflight: { basis: prepared.metadata.preflight.basis, warnings: prepared.metadata.preflight.warnings },
     reasoningRequested: profile?.runtime?.reasoning ?? null,
     rawReasoning: prepared.metadata.rawReasoning,

@@ -100,6 +100,25 @@ with no off toggle (a Qwen chat template then thinks anyway), a missing
 `runtime.json` records `thinking` (requested) next to `effectiveThinkingControl`,
 `effectiveMaxTokens` and `maxTokensSource`.
 
+To cap reasoning per response, set the request field and, optionally, per-level
+budgets in the worker's profile. TinySDD writes the budgets into the worker's
+temporary Pi settings; your global Pi settings are never inherited:
+
+```json
+"runtime": {
+  "thinking": "medium",
+  "reasoning": true,
+  "compat": { "thinkingFormat": "qwen-chat-template", "thinkingTokenBudgetField": "thinking_budget_tokens" },
+  "thinkingBudgets": { "medium": 8192, "high": 16384 }
+}
+```
+
+Pi clamps the budget so that 1024 tokens of `maxTokens` stay available for the
+answer. Without `thinkingBudgets`, Pi's defaults apply (minimal 1024, low 2048,
+medium 8192, high 16384). `runtime.json` records the effective budget as
+`effectiveThinkingBudget`. The server must honor the field; check one run's
+`usage.reasoning` against it.
+
 Optional `limits.firstWriteMs` (below `timeoutMs`) is a no-progress watchdog:
 if no `write` or `edit` tool call has started by then, the run stops with outcome
 `no_progress` and keeps its raw events, including the partial reasoning. It is

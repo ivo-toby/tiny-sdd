@@ -213,3 +213,25 @@ test('resolveConfig surfaces the validated semanticGate and stays off when absen
     await cleanup(root);
   }
 });
+
+test('profiles may set a thinking budget field and per-level budgets, strictly', async () => {
+  const root = await project();
+  const write = (runtime) => writeFile(join(root, 'profile.json'), JSON.stringify({ schemaVersion: 1, id: 'budget', runtime }));
+  try {
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'qwen',
+      workers: { qwen: { type: 'pi', provider: 'titan', model: 'qwen', profile: 'profile.json' } },
+    }));
+    await write({ thinking: 'medium', reasoning: true, compat: { thinkingFormat: 'qwen-chat-template', thinkingTokenBudgetField: 'thinking_budget_tokens' }, thinkingBudgets: { medium: 6000, high: 12000 } });
+    const resolved = await resolveConfig(root);
+    assert.deepEqual(resolved.profile.runtime.thinkingBudgets, { medium: 6000, high: 12000 });
+    assert.equal(resolved.profile.runtime.compat.thinkingTokenBudgetField, 'thinking_budget_tokens');
+    for (const thinkingBudgets of [{ xhigh: 1000 }, { medium: 0 }, { medium: 1.5 }, []]) {
+      await write({ thinking: 'medium', thinkingBudgets });
+      await assert.rejects(resolveConfig(root), { code: 'PROFILE_INVALID' });
+    }
+  } finally {
+    await cleanup(root);
+  }
+});

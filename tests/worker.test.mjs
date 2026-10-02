@@ -227,6 +227,38 @@ describe("Pi runtime preflight", () => {
     assert.deepEqual(off.warnings, []);
   });
 
+  test("reports the per-response thinking budget Pi will send", () => {
+    const qwen = { id: "qwen", reasoning: true, maxTokens: 65536, compat: { thinkingFormat: "qwen-chat-template", thinkingTokenBudgetField: "thinking_budget_tokens" } };
+    const medium = piRuntimePreflight({ api, model: qwen, thinking: "medium" });
+    assert.deepEqual(medium.thinkingBudget, { field: "thinking_budget_tokens", tokens: 8192, source: "pi-default", clamped: false, sent: true });
+    assert.deepEqual(medium.warnings, []);
+    const custom = piRuntimePreflight({ api, model: qwen, thinking: "high", thinkingBudgets: { high: 12000 } });
+    assert.equal(custom.thinkingBudget.tokens, 12000);
+    assert.equal(custom.thinkingBudget.source, "profile");
+    const tight = piRuntimePreflight({ api, model: { ...qwen, maxTokens: 4096 }, thinking: "high" });
+    assert.deepEqual([tight.thinkingBudget.tokens, tight.thinkingBudget.clamped], [3072, true]);
+    const none = piRuntimePreflight({ api, model: { ...qwen, maxTokens: 1024 }, thinking: "high" });
+    assert.equal(none.thinkingBudget.sent, false);
+    assert.match(none.warnings.join("\n"), /no room for a thinking budget/u);
+    const unsent = piRuntimePreflight({ api, model: { ...qwen, compat: { thinkingFormat: "qwen-chat-template" } }, thinking: "high", thinkingBudgets: { high: 12000 } });
+    assert.equal(unsent.thinkingBudget, null);
+    assert.match(unsent.warnings.join("\n"), /thinkingBudgets are configured but no compat.thinkingTokenBudgetField/u);
+  });
+
+  test("writes profile thinking budgets into the worker's temporary Pi settings only", async () => {
+    const profile = { schemaVersion: 1, id: "budgeted", runtime: { thinking: "medium", reasoning: true, compat: { thinkingFormat: "qwen-chat-template", thinkingTokenBudgetField: "thinking_budget_tokens" }, thinkingBudgets: { medium: 6000 } } };
+    const prepared = await preparePiEnvironment({ worker: { ...worker(), model: "fake/bare-model" }, profile, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } });
+    try {
+      const settings = JSON.parse(await readFile(join(prepared.stateDir, "settings.json"), "utf8"));
+      assert.deepEqual(settings.thinkingBudgets, { medium: 6000 });
+      const state = JSON.parse(await readFile(join(prepared.stateDir, "models.json"), "utf8"));
+      assert.equal(state.providers.fake.models[0].compat.thinkingTokenBudgetField, "thinking_budget_tokens");
+      assert.deepEqual(prepared.metadata.preflight.thinkingBudget, { field: "thinking_budget_tokens", tokens: 6000, source: "profile", clamped: false, sent: true });
+    } finally {
+      await prepared.cleanup();
+    }
+  });
+
   test("models the off value for reasoning_effort formats and unknown or native APIs", () => {
     const openai = { id: "m", reasoning: true, maxTokens: 4096, compat: { thinkingFormat: "openai" } };
     assert.equal(piRuntimePreflight({ api, model: openai, thinking: "off" }).thinking.control, "not-sent");

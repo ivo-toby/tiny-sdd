@@ -33,7 +33,8 @@ null and unknown keys are errors. All effective workers are validated. Explicit
 `--worker` selects a name; it does not rewrite config. Profiles contain
 schemaVersion1, id, optional instructions string, optional runtime object with
 thinking (`off|minimal|low|medium|high`), reasoning boolean and compat object
-(only thinkingFormat and supportsDeveloperRole allowed). Descriptive evidence
+(initially only thinkingFormat and supportsDeveloperRole; thinkingTokenBudgetField
+and runtime.thinkingBudgets were added later). Descriptive evidence
 and limitations arrays of strings are optional. Profile is guidance/settings,
 never permission or a replacement for repository instructions.
 

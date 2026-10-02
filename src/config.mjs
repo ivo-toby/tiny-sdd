@@ -21,8 +21,9 @@ export const MAX_TOOL_CALLS = 100;
 const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits'];
 const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs'];
 const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
-const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat'];
-const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole'];
+const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets'];
+const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole', 'thinkingTokenBudgetField'];
+const THINKING_BUDGET_KEYS = ['minimal', 'low', 'medium', 'high'];
 const SEMANTIC_GATE_KEYS = ['mode', 'endpoint', 'model', 'thresholds'];
 const SEMANTIC_GATE_MODES = ['off', 'shadow', 'enforce'];
 const SEMANTIC_GATE_THRESHOLD_KEYS = ['accept', 'reject'];
@@ -214,7 +215,20 @@ function validateProfileDocument(raw, path) {
         if (typeof raw.runtime.compat.supportsDeveloperRole !== 'boolean') throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.compat.supportsDeveloperRole must be boolean`);
         compat.supportsDeveloperRole = raw.runtime.compat.supportsDeveloperRole;
       }
+      if (raw.runtime.compat.thinkingTokenBudgetField !== undefined) {
+        compat.thinkingTokenBudgetField = assertString(raw.runtime.compat.thinkingTokenBudgetField, `profile ${path}.runtime.compat.thinkingTokenBudgetField`);
+      }
       runtime.compat = compat;
+    }
+    if (raw.runtime.thinkingBudgets !== undefined) {
+      // Per-level reasoning caps, written into the worker's temporary Pi
+      // settings; Pi sends them only with compat.thinkingTokenBudgetField.
+      assertPlainObject(raw.runtime.thinkingBudgets, 'PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets`);
+      assertExactKeys(raw.runtime.thinkingBudgets, THINKING_BUDGET_KEYS, 'PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets`);
+      for (const [level, tokens] of Object.entries(raw.runtime.thinkingBudgets)) {
+        if (!Number.isInteger(tokens) || tokens <= 0) throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets.${level} must be a positive integer`);
+      }
+      runtime.thinkingBudgets = { ...raw.runtime.thinkingBudgets };
     }
     profile.runtime = runtime;
   }
