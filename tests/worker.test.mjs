@@ -503,6 +503,7 @@ describe("Pi worker capture and scope", () => {
         const result = await runWorker({ projectRoot: project, packet: packet(), worker: { ...worker(), model }, runtime: runtime(undefined, "length") });
         assert.equal(result.outcome, "response_token_limit");
         assert.deepEqual(result.limitDetails, { maxTokens, maxTokensSource, outputTokens: 16384, reasoningTokens: 15579 });
+        assert.deepEqual(result.observed.cumulativeUsage, { assistantMessages: 1, input: 900, output: 16384, reasoning: 15579, totalTokens: 17284 });
       } finally {
         await rm(project, { recursive: true, force: true });
       }

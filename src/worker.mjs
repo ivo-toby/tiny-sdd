@@ -803,6 +803,14 @@ function parseEvents(text) {
     if (!Array.isArray(message.content)) continue;
     for (const part of message.content) if (part?.type === "text" && typeof part.text === "string") textParts.push(part.text);
   }
+  // Sum of per-response usage. Input is re-counted on every response because
+  // each request resends the context; it is not unique prompt tokens.
+  const cumulativeUsage = { assistantMessages: authoritative.length, input: 0, output: 0, reasoning: null, totalTokens: 0 };
+  for (const message of authoritative) {
+    const usage = message.usage ?? {};
+    for (const key of ["input", "output", "totalTokens"]) if (Number.isFinite(usage[key])) cumulativeUsage[key] += usage[key];
+    if (Number.isFinite(usage.reasoning)) cumulativeUsage.reasoning = (cumulativeUsage.reasoning ?? 0) + usage.reasoning;
+  }
   let claims = textParts.join("\n\n");
   let truncated = false;
   if (Buffer.byteLength(claims) > MAX_CLAIM_BYTES) {
@@ -811,7 +819,7 @@ function parseEvents(text) {
   }
   const stopReason = finalMessage?.stopReason ?? finalMessage?.rawStopReason ?? null;
   const errorMessage = finalMessage?.errorMessage ?? finalMessage?.error?.message ?? null;
-  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, claims, claimsTruncated: truncated };
+  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, cumulativeUsage, claims, claimsTruncated: truncated };
 }
 
 function killProcessGroup(pid, signal) {
@@ -1287,6 +1295,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         assistantTermination: { observed: Boolean(capture.parsed.finalMessage), stopReason: capture.parsed.stopReason, errorMessage: capture.parsed.errorMessage },
         usage: capture.parsed.usage,
         usageScope: "final-assistant-message",
+        cumulativeUsage: capture.parsed.cumulativeUsage,
         toolCalls: capture.parsed.toolCalls,
         toolCallsByName: capture.parsed.toolCallsByName,
         writeCalls: capture.parsed.writeCalls,
