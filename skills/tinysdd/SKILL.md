@@ -38,6 +38,13 @@ two source files and its own test file, and depend on earlier slices with
 barrel `index`, so a slice's tests load before later modules exist; the barrel
 belongs to the final slice. Controller-owned contracts (shared types, fixed tests)
 stay the same in every slice and are not in any slice's allowed paths.
+Write one brief per slice, and cite a shared feature spec through each slice's
+context manifest by line range instead of sharing a brief: approval binds a
+brief's whole digest, so one edit to a shared brief stales every slice. Approval
+binds only the cited lines, so appending to the spec or editing outside every
+cited range keeps the slices current. Inserting lines above a cited range shifts
+it and makes that slice stale, so append addenda at the end of the spec. The
+manifest format is in `docs/context-compiler.md` of the TinySDD repository.
 `task add` reports allowed files, compiled-context bytes and cited test lines;
 split when it warns. Apply an accepted slice's reviewed patch to the project
 before recording acceptance: acceptance binds the project's allowed-file content,
@@ -48,8 +55,9 @@ manifest under `.tinysdd/tasks/` when exact repository facts would prevent
 rediscovery: public signatures, schemas, invariants, acceptance assertions, or
 the immediate dependency direction. Select exact line ranges and state why each
 is needed; do not dump a directory, write a hidden summary, or copy controller
-state. Register it with `task add --context`; its digest is part of approval.
-Read the resulting compiled-context artifact during review if the worker used it.
+state. Register it with `task add --context`; approval binds the manifest and the
+cited lines. Read the resulting compiled-context artifact during review if the
+worker used it.
 Always include lint rules that commonly bite in the slice, and for any dependency
 a small model may confuse with a similar library, include its installed version
 and the two or three exact accessors the repository uses. For example, state
