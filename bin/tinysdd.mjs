@@ -10,6 +10,7 @@ import {
   addTask,
   applyTask,
   approveTask,
+  acceptFeature,
   closeTask,
   configShow,
   configValidate,
@@ -21,10 +22,12 @@ import {
   resolveBenchmarkPacket,
   resolveTaskPacket,
   reviewTask,
+  reportFeature,
   supersedeTask,
   updateTask,
 } from '../src/controller.mjs';
 import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, normalizeProjectRelative, readJsonFile, tinyError } from '../src/fs-utils.mjs';
+import { appendUsageRecord, importUsageRecords, USAGE_LEDGER_MAX_BYTES } from '../src/usage.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
@@ -51,6 +54,13 @@ Usage:
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
   tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K]
+  tinysdd [--json] [--project PATH] usage record --phase PHASE --model MODEL --input N --output N [--reasoning N] [--cache-read N] [--cache-write N] [--total N] [--task ID] [--feature NAME]
+  tinysdd [--json] [--project PATH] usage import --file PATH
+  tinysdd [--json] [--project PATH] usage report --feature NAME
+  tinysdd [--json] [--project PATH] feature accept --feature NAME --by LABEL --reason TEXT
+  tinysdd [--json] [--project PATH] feature report --feature NAME
+
+Usage phases: specify, research, plan, slice, write-tests, review, rescue.
 
 Retired (closed or superseded) tasks leave \`next\`, cannot be approved, reviewed or
 dispatched, and are refused while open tasks depend on them.
@@ -179,6 +189,30 @@ function parseCommand(args) {
     const { values, positional } = parseFlags(rest, new Map([
       ['worker', 'value'], ['suite', 'value'], ['repeat', 'value'],
     ]));
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
+  if (command === 'usage') {
+    if (!['record', 'import', 'report'].includes(subcommand)) throw cliError('usage requires record, import, or report');
+    const allowedBySubcommand = {
+      record: new Map([
+        ['phase', 'value'], ['model', 'value'], ['input', 'value'], ['output', 'value'],
+        ['reasoning', 'value'], ['cache-read', 'value'], ['cache-write', 'value'], ['total', 'value'],
+        ['task', 'value'], ['feature', 'value'],
+      ]),
+      import: new Map([['file', 'value']]),
+      report: new Map([['feature', 'value']]),
+    };
+    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
+  if (command === 'feature') {
+    if (!['accept', 'report'].includes(subcommand)) throw cliError('feature requires accept or report');
+    const allowed = subcommand === 'accept'
+      ? new Map([['feature', 'value'], ['by', 'value'], ['reason', 'value']])
+      : new Map([['feature', 'value']]);
+    const { values, positional } = parseFlags(rest, allowed);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -442,12 +476,76 @@ async function workerStop(project, options) {
   return { id, status: 'stopping', stopRequested: true, request, statusCommand: `tinysdd worker status --id ${id}` };
 }
 
+function requiredOption(options, name) {
+  const value = options[name];
+  if (typeof value !== 'string' || value.length === 0) throw cliError(`--${name} requires a value`);
+  return value;
+}
+
+function parseUsageToken(value, flag) {
+  if (typeof value !== 'string' || !/^\d+$/u.test(value)) throw cliError(`${flag} must be a nonnegative safe integer`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw cliError(`${flag} must be a nonnegative safe integer`);
+  return parsed;
+}
+
+async function recordUsageCommand(project, options) {
+  if (options.task === undefined && options.feature === undefined) throw cliError('--task or --feature is required for usage attribution');
+  const record = await appendUsageRecord(project, {
+    phase: requiredOption(options, 'phase'),
+    model: requiredOption(options, 'model'),
+    input: parseUsageToken(requiredOption(options, 'input'), '--input'),
+    output: parseUsageToken(requiredOption(options, 'output'), '--output'),
+    ...(options.reasoning === undefined ? {} : { reasoning: parseUsageToken(options.reasoning, '--reasoning') }),
+    ...(options['cache-read'] === undefined ? {} : { cacheRead: parseUsageToken(options['cache-read'], '--cache-read') }),
+    ...(options['cache-write'] === undefined ? {} : { cacheWrite: parseUsageToken(options['cache-write'], '--cache-write') }),
+    ...(options.total === undefined ? {} : { totalTokens: parseUsageToken(options.total, '--total') }),
+    ...(options.task === undefined ? {} : { taskId: options.task }),
+    ...(options.feature === undefined ? {} : { feature: options.feature }),
+  });
+  return { record };
+}
+
+async function readUsageImportFile(project, requested) {
+  const relative = normalizeProjectRelative(requiredOption({ file: requested }, 'file'), '--file');
+  const path = await assertInternalPath(project, relative.split('/'), { allowMissing: false });
+  const info = await lstat(path);
+  if (!info.isFile()) throw tinyError('INVALID_FILE', `usage import file must be a regular file: ${relative}`);
+  if (info.size > USAGE_LEDGER_MAX_BYTES) throw tinyError('USAGE_IMPORT_TOO_LARGE', `usage import exceeds ${USAGE_LEDGER_MAX_BYTES} bytes`);
+  return readFile(path, 'utf8');
+}
+
+async function importUsageCommand(project, options) {
+  const text = await readUsageImportFile(project, options.file);
+  const records = await importUsageRecords(project, text);
+  return { records };
+}
+
+function reportMetricText(report, component) {
+  const value = report?.[component] ?? 'UNKNOWN';
+  if (value !== 'UNKNOWN') return String(value);
+  const known = report?.knownSubtotals?.[component];
+  return known === null || known === undefined ? 'UNKNOWN' : `UNKNOWN (known subtotal ${known})`;
+}
+
+function renderUsageReport(data) {
+  const state = data.accepted === true
+    ? (data.stale ? 'accepted snapshot, stale' : 'accepted snapshot, current')
+    : 'live report, not accepted';
+  const frontier = data.report?.frontier?.totals;
+  const local = data.report?.local?.totals;
+  process.stdout.write(`Feature ${data.feature}: ${state}\n`);
+  process.stdout.write(`Frontier input ${reportMetricText(frontier, 'input')}; output ${reportMetricText(frontier, 'output')}\n`);
+  process.stdout.write(`Local input ${reportMetricText(local, 'input')}; output ${reportMetricText(local, 'output')}\n`);
+}
+
 async function run(argv) {
   const { args, json, help, version, project } = extractGlobals(argv);
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
   if (help) return { ok: true, data: { help: HELP }, presentation: 'help' };
   const parsed = parseCommand(args);
   let data;
+  let presentation;
   if (parsed.command === 'init') data = await initProject(project, parsed.values);
   else if (parsed.command === 'config') data = parsed.subcommand === 'show'
     ? await configShow(project, { worker: parsed.values.worker })
@@ -511,6 +609,30 @@ async function run(argv) {
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'stop') data = await workerStop(project, { id: parsed.values.id, waitMs: parsed.values['wait-ms'] });
   else if (parsed.command === 'bench' && parsed.subcommand === 'run') data = await runBenchmarkCommand(project, parsed.values);
+  else if (parsed.command === 'usage' && parsed.subcommand === 'record') {
+    data = await recordUsageCommand(project, parsed.values);
+    presentation = 'usage-record';
+  }
+  else if (parsed.command === 'usage' && parsed.subcommand === 'import') {
+    data = await importUsageCommand(project, parsed.values);
+    presentation = 'usage-import';
+  }
+  else if (parsed.command === 'usage' && parsed.subcommand === 'report') {
+    data = await reportFeature(project, { feature: requiredOption(parsed.values, 'feature') });
+    presentation = 'usage-report';
+  }
+  else if (parsed.command === 'feature' && parsed.subcommand === 'accept') {
+    data = await acceptFeature(project, {
+      feature: requiredOption(parsed.values, 'feature'),
+      by: requiredOption(parsed.values, 'by'),
+      reason: requiredOption(parsed.values, 'reason'),
+    });
+    presentation = 'feature-accept';
+  }
+  else if (parsed.command === 'feature' && parsed.subcommand === 'report') {
+    data = await reportFeature(project, { feature: requiredOption(parsed.values, 'feature') });
+    presentation = 'usage-report';
+  }
   else throw cliError('unsupported command');
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
@@ -527,7 +649,7 @@ async function run(argv) {
       data,
     };
   }
-  return { ok: true, data, ...(json ? {} : {}) };
+  return { ok: true, data, presentation };
 }
 
 function describeStop(data) {
@@ -614,6 +736,19 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'status') {
     renderStatusTree(result.data);
+    return;
+  }
+  if (result.presentation === 'usage-record') {
+    process.stdout.write(`Recorded usage ${result.data.record.id} (${result.data.record.phase}, input ${result.data.record.input}, output ${result.data.record.output}).\n`);
+    return;
+  }
+  if (result.presentation === 'usage-import') {
+    process.stdout.write(`Imported ${result.data.records.length} usage record(s).\n`);
+    return;
+  }
+  if (result.presentation === 'usage-report' || result.presentation === 'feature-accept') {
+    if (result.presentation === 'feature-accept') process.stdout.write(`Feature ${result.data.feature}: acceptance recorded.\n`);
+    renderUsageReport(result.data);
     return;
   }
   if (result.ok) {
