@@ -8,9 +8,11 @@ import {
   assertPlainObject,
   canonicalProjectRoot,
   ensureDirectory,
+  stableStringify,
   tinyError,
   withExclusiveLock,
 } from './fs-utils.mjs';
+import { USAGE_PHASES } from './usage.mjs';
 import {
   USAGE_REPORT_SCHEMA_VERSION,
   USAGE_REPORT_TYPE,
@@ -94,11 +96,11 @@ function boundedIdentifierList(value, label) {
 function validateMetric(value, label, allowedKeys = METRIC_KEYS) {
   const metric = exactObject(value, allowedKeys, label);
   for (const component of USAGE_COMPONENTS) {
-    if (!(metric[component] === USAGE_UNKNOWN || Number.isSafeInteger(metric[component]))) eventError(`${label}.${component} must be a safe integer or UNKNOWN`);
+    if (!(metric[component] === USAGE_UNKNOWN || (Number.isSafeInteger(metric[component]) && metric[component] >= 0))) eventError(`${label}.${component} must be a nonnegative safe integer or UNKNOWN`);
   }
   const subtotals = exactObject(metric.knownSubtotals, USAGE_COMPONENTS, `${label}.knownSubtotals`);
   for (const component of USAGE_COMPONENTS) {
-    if (subtotals[component] !== null && !Number.isSafeInteger(subtotals[component])) eventError(`${label}.knownSubtotals.${component} must be a safe integer or null`);
+    if (subtotals[component] !== null && (!Number.isSafeInteger(subtotals[component]) || subtotals[component] < 0)) eventError(`${label}.knownSubtotals.${component} must be a nonnegative safe integer or null`);
   }
   const coverage = exactObject(metric.coverage, USAGE_COMPONENTS, `${label}.coverage`);
   for (const component of USAGE_COMPONENTS) {
@@ -106,6 +108,7 @@ function validateMetric(value, label, allowedKeys = METRIC_KEYS) {
     if (!Number.isSafeInteger(item.observed) || item.observed < 0) eventError(`${label}.coverage.${component}.observed must be a nonnegative safe integer`);
     if (item.expected !== null && (!Number.isSafeInteger(item.expected) || item.expected < 0)) eventError(`${label}.coverage.${component}.expected must be a nonnegative safe integer or null`);
     if (typeof item.complete !== 'boolean') eventError(`${label}.coverage.${component}.complete must be boolean`);
+    if (item.complete && (metric[component] === USAGE_UNKNOWN || item.expected === null || item.observed !== item.expected)) eventError(`${label}.coverage.${component} cannot be complete without full numeric coverage`);
   }
   boundedArray(metric.missing, `${label}.missing`, FEATURE_EVENTS_MAX_RECORDS).forEach((reason, index) => text(reason, `${label}.missing[${index}]`));
 }
@@ -114,7 +117,11 @@ function validateFileReference(value, label) {
   const reference = exactObject(value, FILE_REFERENCE_KEYS, label);
   identifier(reference.runId, `${label}.runId`);
   text(reference.path, `${label}.path`, 512);
-  if (reference.sha256 !== null && !DIGEST_PATTERN.test(reference.sha256)) eventError(`${label}.sha256 must be a digest or null`);
+  if (reference.sha256 !== null && (typeof reference.sha256 !== 'string' || !DIGEST_PATTERN.test(reference.sha256))) eventError(`${label}.sha256 must be a digest or null`);
+  const expectedPath = reference.path.endsWith('/result.json')
+    ? `.tinysdd/runs/${reference.runId}/result.json`
+    : `.tinysdd/runs/${reference.runId}/stdout.jsonl`;
+  if (reference.path !== expectedPath) eventError(`${label}.path must remain inside its run directory`);
 }
 
 function validateRunReferences(value, label) {
@@ -143,7 +150,7 @@ function validateReport(value, feature) {
   if (report.schemaVersion !== USAGE_REPORT_SCHEMA_VERSION || report.type !== USAGE_REPORT_TYPE) eventError('report has an unsupported schema');
   if (report.feature !== feature) eventError('report feature does not match event feature');
   timestamp(report.generatedAt, 'report.generatedAt');
-  boundedArray(report.tasks, 'report.tasks').forEach((raw, index) => {
+  const reportTasks = boundedArray(report.tasks, 'report.tasks').map((raw, index) => {
     const label = `report.tasks[${index}]`;
     const task = exactObject(raw, TASK_REPORT_KEYS, label);
     identifier(task.taskId, `${label}.taskId`);
@@ -151,10 +158,16 @@ function validateReport(value, feature) {
     identifier(task.feature, `${label}.feature`, FEATURE_PATTERN, 64);
     if (typeof task.retired !== 'boolean') eventError(`${label}.retired must be boolean`);
     boundedIdentifierList(task.runIds, `${label}.runIds`);
+    return { taskId: task.taskId, retired: task.retired };
   });
+  for (let index = 1; index < reportTasks.length; index += 1) {
+    if (reportTasks[index - 1].taskId.localeCompare(reportTasks[index].taskId) >= 0) eventError('report.tasks must be sorted by task id');
+  }
 
   const frontier = exactObject(report.frontier, FRONTIER_KEYS, 'report.frontier');
   const byPhase = plainObject(frontier.byPhase, 'report.frontier.byPhase');
+  const phaseKeys = Object.keys(byPhase);
+  if (phaseKeys.length !== USAGE_PHASES.length || phaseKeys.some((phase, index) => phase !== USAGE_PHASES[index])) eventError('report.frontier.byPhase must contain the canonical usage phases');
   for (const [phase, raw] of Object.entries(byPhase)) {
     const label = `report.frontier.byPhase.${phase}`;
     const phaseReport = exactObject(raw, [...METRIC_KEYS, 'ledgerRecordIds'], label);
@@ -175,12 +188,15 @@ function validateReport(value, feature) {
     validateMetric(task, label, TASK_SUMMARY_KEYS);
     boundedIdentifierList(task.runIds, `${label}.runIds`);
     boundedIdentifierList(task.revisionRunIds, `${label}.revisionRunIds`);
-    if (task.elapsedMs !== USAGE_UNKNOWN && !Number.isSafeInteger(task.elapsedMs)) eventError(`${label}.elapsedMs must be a safe integer or UNKNOWN`);
-    if (task.knownElapsedMs !== null && !Number.isSafeInteger(task.knownElapsedMs)) eventError(`${label}.knownElapsedMs must be a safe integer or null`);
+    if (task.elapsedMs !== USAGE_UNKNOWN && (!Number.isSafeInteger(task.elapsedMs) || task.elapsedMs < 0)) eventError(`${label}.elapsedMs must be a nonnegative safe integer or UNKNOWN`);
+    if (task.knownElapsedMs !== null && (!Number.isSafeInteger(task.knownElapsedMs) || task.knownElapsedMs < 0)) eventError(`${label}.knownElapsedMs must be a nonnegative safe integer or null`);
   }
   validateMetric(local.totals, 'report.local.totals', [...METRIC_KEYS, 'elapsedMs', 'knownElapsedMs']);
-  if (local.totals.elapsedMs !== USAGE_UNKNOWN && !Number.isSafeInteger(local.totals.elapsedMs)) eventError('report.local.totals.elapsedMs must be a safe integer or UNKNOWN');
-  if (local.totals.knownElapsedMs !== null && !Number.isSafeInteger(local.totals.knownElapsedMs)) eventError('report.local.totals.knownElapsedMs must be a safe integer or null');
+  if (local.totals.elapsedMs !== USAGE_UNKNOWN && (!Number.isSafeInteger(local.totals.elapsedMs) || local.totals.elapsedMs < 0)) eventError('report.local.totals.elapsedMs must be a nonnegative safe integer or UNKNOWN');
+  if (local.totals.knownElapsedMs !== null && (!Number.isSafeInteger(local.totals.knownElapsedMs) || local.totals.knownElapsedMs < 0)) eventError('report.local.totals.knownElapsedMs must be a nonnegative safe integer or null');
+  const reportTaskIds = new Set(reportTasks.map((task) => task.taskId));
+  const localTaskIds = Object.keys(byTask);
+  if (localTaskIds.length !== reportTaskIds.size || localTaskIds.some((taskId) => !reportTaskIds.has(taskId))) eventError('report.local.byTask must match report.tasks');
   boundedIdentifierList(local.runIds, 'report.local.runIds');
   boundedIdentifierList(local.revisionRunIds, 'report.local.revisionRunIds');
 
@@ -193,6 +209,12 @@ function validateReport(value, feature) {
     validateRunReferences(section.runReferences, `report.${name}.runReferences`);
     validateMissing(section.missing, `report.${name}.missing`);
   }
+  if (stableStringify(report.snapshot.ledgerRecordIds) !== stableStringify(report.provenance.ledgerRecordIds)
+    || stableStringify(report.snapshot.runReferences) !== stableStringify(report.provenance.runReferences)
+    || stableStringify(report.snapshot.missing) !== stableStringify(report.provenance.missing)) {
+    eventError('report.snapshot must match report.provenance');
+  }
+  return reportTasks;
 }
 
 function normalizeMembership(value) {
@@ -269,6 +291,8 @@ export function normalizeFeatureEvent(value) {
     activeAcceptanceDigests,
     report: normalizeReport(raw.report, feature),
   };
+  const reportMembership = event.report.tasks.map((task) => ({ id: task.taskId, retired: task.retired }));
+  if (stableStringify(reportMembership) !== stableStringify(membership)) eventError('report.tasks must match event membership');
   const bytes = Buffer.byteLength(JSON.stringify(event));
   if (bytes > FEATURE_EVENT_MAX_BYTES) eventError(`feature event exceeds ${FEATURE_EVENT_MAX_BYTES} bytes`);
   return deepFreeze(event);

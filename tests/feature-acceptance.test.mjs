@@ -200,6 +200,37 @@ test('rejects a partial trailing feature event record', async () => {
   }
 });
 
+test('rejects malformed persisted report numbers, phases, membership, and references', async () => {
+  const root = await project();
+  try {
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    const runDirectory = join(root, '.tinysdd', 'runs', 'worker-one');
+    await mkdir(runDirectory, { recursive: true });
+    await writeFile(join(runDirectory, 'packet.json'), JSON.stringify({ taskId: 'one' }), 'utf8');
+    await writeFile(join(runDirectory, 'result.json'), JSON.stringify({ runId: 'worker-one', taskId: 'one', observed: { cumulativeUsage: { assistantMessages: 1, input: 1, output: 1, totalTokens: 2 }, processTermination: { elapsedMs: 1 } } }), 'utf8');
+    await writeFile(join(runDirectory, 'stdout.jsonl'), `${JSON.stringify({ type: 'message_end', message: { role: 'assistant', usage: { input: 1, output: 1, totalTokens: 2 } } })}\n`, 'utf8');
+    await acceptFeature(root, { feature: 'broker', by: 'operator', reason: 'feature complete' });
+    const ledgerPath = join(root, '.tinysdd', 'runs', 'feature-events.jsonl');
+    const pristine = await readFile(ledgerPath, 'utf8');
+    const variants = [
+      (event) => { event.report.local.totals.input = -1; },
+      (event) => { event.report.frontier.byPhase = {}; },
+      (event) => { event.report.tasks = []; },
+      (event) => { event.report.snapshot.runReferences = []; },
+      (event) => { event.report.provenance.runReferences[0].result.path = '../../outside'; },
+      (event) => { event.report.local.totals.input = 'UNKNOWN'; event.report.local.totals.coverage.input = { observed: 4, expected: 1, complete: true }; },
+    ];
+    for (const mutate of variants) {
+      const event = JSON.parse(pristine.trim());
+      mutate(event);
+      await writeFile(ledgerPath, `${JSON.stringify(event)}\n`, 'utf8');
+      await assert.rejects(reportFeature(root, { feature: 'broker' }), { code: 'FEATURE_EVENT_INVALID' });
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('feature acceptance and report refuse symlinked event ledger paths', async () => {
   const root = await project();
   try {
