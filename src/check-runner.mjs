@@ -5,7 +5,7 @@
 // capabilities, a scratch copy of the candidate and resource limits. Nothing
 // here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -15,6 +15,8 @@ const MIB = 1024 * 1024;
 
 export const CHECK_LIMIT_DEFAULTS = Object.freeze({
   addressSpaceBytes: 8 * 1024 * MIB,
+  // Extra tasks (processes and threads) the check may create, on top of what the
+  // uid already runs: RLIMIT_NPROC counts every task of the uid on the host.
   maxProcesses: 512,
   fileSizeBytes: 256 * MIB,
   scratchBytes: 1024 * MIB,
@@ -266,11 +268,36 @@ async function assertMountPointsFree(work, mounts) {
   }
 }
 
-function sandboxArguments({ binaries, nodeRoot, work, mounts, limits, check }) {
+// RLIMIT_NPROC counts every task of the real uid on the host, threads
+// included, not only the sandbox's. A fixed limit would stop a busy account
+// from starting the sandbox at all, so the limit is this baseline plus the
+// extra tasks the check may create.
+async function countUserTasks(uid) {
+  let entries;
+  try {
+    entries = await readdir('/proc');
+  } catch (error) {
+    throw unavailable(`cannot count the uid's tasks to set the process limit: ${error.code ?? error.message}`);
+  }
+  let tasks = 0;
+  for (const entry of entries) {
+    if (!/^\d+$/u.test(entry)) continue;
+    let status;
+    try {
+      status = await readFile(`/proc/${entry}/status`, 'utf8');
+    } catch {
+      continue; // The process exited during the scan.
+    }
+    if (Number(/^Uid:\t(\d+)/mu.exec(status)?.[1]) === uid) tasks += Number(/^Threads:\t(\d+)/mu.exec(status)?.[1] ?? 1);
+  }
+  return tasks;
+}
+
+function sandboxArguments({ binaries, nodeRoot, work, mounts, limits, check, processLimit }) {
   const tmpfsSize = String(limits.tmpfsBytes);
   return [
     `--as=${limits.addressSpaceBytes}`,
-    `--nproc=${limits.maxProcesses}`,
+    `--nproc=${processLimit}`,
     `--fsize=${limits.fileSizeBytes}`,
     '--',
     binaries.bwrap,
@@ -444,10 +471,21 @@ export async function runCheck(options) {
     });
     await assertMountPointsFree(work, request.mounts);
 
+    // Measured right before the spawn, so the baseline is as current as it can be.
+    const uid = process.getuid();
+    const processBaseline = await countUserTasks(uid);
     const capture = new OutputCapture(request.limits.storedOutputBytes);
     const run = await runSandbox({
       command: binaries.prlimit,
-      args: sandboxArguments({ binaries, nodeRoot: request.nodeRoot, work, mounts: request.mounts, limits: request.limits, check: request.check }),
+      args: sandboxArguments({
+        binaries,
+        nodeRoot: request.nodeRoot,
+        work,
+        mounts: request.mounts,
+        limits: request.limits,
+        check: request.check,
+        processLimit: processBaseline + request.limits.maxProcesses,
+      }),
       timeoutMs: request.check.timeoutMs,
       capture,
     });
@@ -463,7 +501,16 @@ export async function runCheck(options) {
       durationMs: run.durationMs,
       output: summarizeOutput(capture, request.limits),
       limits: request.limits,
-      sandbox: { bwrap: binaries.bwrap, prlimit: binaries.prlimit, network: 'none', env: [...SANDBOX_ENV] },
+      sandbox: {
+        bwrap: binaries.bwrap,
+        prlimit: binaries.prlimit,
+        network: 'none',
+        env: [...SANDBOX_ENV],
+        processBaseline,
+        // The kernel does not apply RLIMIT_NPROC to root (or to CAP_SYS_ADMIN and
+        // CAP_SYS_RESOURCE); there the timeout and the PID namespace are the bound.
+        processLimitEnforced: uid !== 0,
+      },
     };
   } finally {
     await removeScratch(scratch);

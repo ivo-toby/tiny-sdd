@@ -1,6 +1,6 @@
 import { afterEach, after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -100,20 +100,6 @@ describe('check runner', { skip: SKIP }, () => {
     return files;
   }
 
-  async function userTaskCount() {
-    let tasks = 0;
-    for (const entry of await readdir('/proc')) {
-      if (!/^\d+$/.test(entry)) continue;
-      try {
-        const status = await readFile(`/proc/${entry}/status`, 'utf8');
-        if (Number(/^Uid:\t(\d+)/mu.exec(status)?.[1]) === process.getuid()) tasks += Number(/^Threads:\t(\d+)/mu.exec(status)?.[1] ?? 1);
-      } catch {
-        // The process exited while it was being listed.
-      }
-    }
-    return tasks;
-  }
-
   async function processesMatching(token) {
     const found = [];
     for (const entry of await readdir('/proc')) {
@@ -146,7 +132,10 @@ describe('check runner', { skip: SKIP }, () => {
       prlimit: result.sandbox.prlimit,
       network: 'none',
       env: ['PATH', 'HOME', 'CI', 'LANG', 'PWD'],
+      processBaseline: result.sandbox.processBaseline,
+      processLimitEnforced: process.getuid() !== 0,
     });
+    assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
   });
 
   test('a failing test exits non-zero and its failure text is in the tail', async () => {
@@ -455,12 +444,55 @@ describe('check runner', { skip: SKIP }, () => {
         '',
       ].join('\n'),
     });
-    // RLIMIT_NPROC counts every task of the uid on the host, threads included,
-    // so the limit has to sit above what the uid already runs.
-    const maxProcesses = (await userTaskCount()) + 150;
-    const result = await run(candidate, { argv: ['node', 'spawn.mjs'] }, { limits: { maxProcesses } });
+    // maxProcesses is what the check may add; the runner puts the uid's current
+    // task count under it, so this works however busy the account already is.
+    const result = await run(candidate, { argv: ['node', 'spawn.mjs'] }, { limits: { maxProcesses: 150 } });
     assert.equal(result.exitCode, 6, result.output.text);
     assert.match(result.output.text, /spawned \d+ EAGAIN/u);
+    assert.equal(result.sandbox.processLimitEnforced, true);
+    const spawned = Number(/spawned (\d+)/u.exec(result.output.text)[1]);
+    assert.ok(spawned > 50 && spawned <= 150, `${spawned} children were spawned`);
+  });
+
+  test('a uid that already runs more than maxProcesses tasks can still start a check', { skip: process.getuid?.() === 0 ? 'RLIMIT_NPROC is not enforced for root' : false }, async () => {
+    // A fixed limit of 512 would make bwrap fail to start here, which is what a
+    // busy desktop account looks like.
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const sleepers = Array.from({ length: 520 }, () => spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore' }));
+    try {
+      await Promise.all(sleepers.map((sleeper) => new Promise((resolve) => sleeper.once('spawn', resolve))));
+      const result = await run(candidate, {});
+      assert.equal(result.exitCode, 0, result.output.text);
+      assert.ok(result.sandbox.processBaseline > 512, `baseline ${result.sandbox.processBaseline}`);
+    } finally {
+      for (const sleeper of sleepers) sleeper.kill('SIGKILL');
+    }
+  });
+
+  test('the process limit is the uid task count plus maxProcesses, and root is reported as unenforced', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const dump = join(fixtures, `nproc-${counter}.txt`);
+    const prlimitPath = await stubExecutable(`printf '%s\\n' "$@" > '${dump}'`);
+    const limitOf = async (limits) => {
+      const result = await run(candidate, {}, { prlimitPath, limits });
+      const nproc = (await readFile(dump, 'utf8')).split('\n').find((line) => line.startsWith('--nproc='));
+      return { result, nproc: Number(nproc.slice('--nproc='.length)) };
+    };
+
+    const quiet = await limitOf({ maxProcesses: 100 });
+    assert.equal(quiet.nproc, quiet.result.sandbox.processBaseline + 100);
+    assert.equal(quiet.result.limits.maxProcesses, 100);
+    assert.equal(quiet.result.sandbox.processLimitEnforced, process.getuid() !== 0);
+
+    // Other tasks of the same uid, started by the test, raise the baseline.
+    const sleepers = Array.from({ length: 40 }, () => spawn('/usr/bin/sleep', ['30'], { stdio: 'ignore' }));
+    try {
+      const busy = await limitOf({ maxProcesses: 100 });
+      assert.equal(busy.nproc, busy.result.sandbox.processBaseline + 100);
+      assert.ok(busy.result.sandbox.processBaseline >= quiet.result.sandbox.processBaseline + 30, `${quiet.result.sandbox.processBaseline} -> ${busy.result.sandbox.processBaseline}`);
+    } finally {
+      for (const sleeper of sleepers) sleeper.kill('SIGKILL');
+    }
   });
 
   test('output is capped: the last stored bytes and a tail with an omission marker', async () => {
@@ -711,15 +743,17 @@ describe('check runner', { skip: SKIP }, () => {
       const prlimitPath = await stubExecutable(`printf '%s\\n' "$@" > '${dump}'\n/usr/bin/env > '${environmentDump}'`);
       const previous = process.env.TINYSDD_SECRET_PROBE;
       process.env.TINYSDD_SECRET_PROBE = 'x';
+      let sandbox;
       try {
         const result = await run(candidate, {}, { prlimitPath, dependencyMounts: [{ source: dependencies, target: 'node_modules' }] });
         assert.equal(result.exitCode, 0);
+        sandbox = result.sandbox;
       } finally {
         if (previous === undefined) delete process.env.TINYSDD_SECRET_PROBE;
         else process.env.TINYSDD_SECRET_PROBE = previous;
       }
       const args = (await readFile(dump, 'utf8')).split('\n').slice(0, -1);
-      assert.deepEqual(args.slice(0, 5), [`--as=${8 * 1024 * MIB}`, '--nproc=512', `--fsize=${256 * MIB}`, '--', '/usr/bin/bwrap']);
+      assert.deepEqual(args.slice(0, 5), [`--as=${8 * 1024 * MIB}`, `--nproc=${sandbox.processBaseline + 512}`, `--fsize=${256 * MIB}`, '--', '/usr/bin/bwrap']);
       const bwrapArgs = args.slice(5);
       for (const flag of ['--clearenv', '--die-with-parent', '--unshare-all', '--new-session']) assert.ok(bwrapArgs.includes(flag), flag);
       assert.ok(!bwrapArgs.includes('--share-net'));
