@@ -47,6 +47,18 @@ no globs. Dependencies use `--depends-on first-change` on a later task.
 You can implement the packet in your current agent without invoking a worker.
 The controller never changes the model in that outer agent.
 
+To retire a task you abandoned or re-cut, use `task close` or `task supersede`.
+Neither needs an approval, so they work on a task whose approval went stale when
+its brief changed. The task becomes `closed` or `superseded`, leaves `next`, and
+can no longer be approved, reviewed or dispatched. They are refused for an
+accepted task and while open tasks depend on it (the error lists them). A
+retired task never satisfies a dependency. `supersede` records the successors,
+shown under `closure` in `status --json`:
+
+```sh
+tinysdd task supersede --id broker-contract --with broker-s1,broker-s2 --by operator --reason 're-cut into slices'
+```
+
 When a worker needs an exact API, schema, or acceptance oracle, add a reviewed
 context manifest under `.tinysdd/tasks/` and pass it with `--context`. TinySDD
 will compile only its declared source line ranges and record their digests; see

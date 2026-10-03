@@ -9,6 +9,7 @@ import { lstat, readFile, unlink } from 'node:fs/promises';
 import {
   addTask,
   approveTask,
+  closeTask,
   configShow,
   configValidate,
   controllerNext,
@@ -18,6 +19,7 @@ import {
   publicError,
   resolveTaskPacket,
   reviewTask,
+  supersedeTask,
 } from '../src/controller.mjs';
 import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, readJsonFile, tinyError } from '../src/fs-utils.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
@@ -34,11 +36,15 @@ Usage:
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
   tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL
+  tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
+  tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
 
+Retired (closed or superseded) tasks leave \`next\`, cannot be approved, reviewed or
+dispatched, and are refused while open tasks depend on them.
 Workers return isolated candidates and patches; they never apply or accept them.
 Use \`worker start\` for real model calls from an agent: it detaches the controller
 from short-lived interactive shells. Poll it with \`worker status\`.
@@ -125,12 +131,14 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'task') {
-    if (!['add', 'approve', 'packet', 'review'].includes(subcommand)) throw cliError('task requires add, approve, packet, or review');
+    if (!['add', 'approve', 'packet', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, approve, packet, review, close, or supersede');
     const allowedByCommand = {
       add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['depends-on', 'list'], ['allow', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
       review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value']]),
+      close: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
+      supersede: new Map([['id', 'value'], ['with', 'list'], ['by', 'value'], ['reason', 'value']]),
     };
     const allowed = allowedByCommand[subcommand];
     const { values, positional } = parseFlags(rest, allowed);
@@ -364,6 +372,17 @@ async function run(argv) {
     evidence: parsed.values.evidence,
     by: parsed.values.by,
   });
+  else if (parsed.command === 'task' && parsed.subcommand === 'close') data = await closeTask(project, {
+    id: parsed.values.id,
+    by: parsed.values.by,
+    reason: parsed.values.reason,
+  });
+  else if (parsed.command === 'task' && parsed.subcommand === 'supersede') data = await supersedeTask(project, {
+    id: parsed.values.id,
+    with: parsed.values.with,
+    by: parsed.values.by,
+    reason: parsed.values.reason,
+  });
   else if (parsed.command === 'worker' && parsed.subcommand === 'run') data = await dispatchWorker(project, {
     taskId: parsed.values.task,
     worker: parsed.values.worker,
@@ -400,6 +419,11 @@ function describeStop(data) {
   return outcome ? `finished (outcome ${outcome})` : 'finished';
 }
 
+function describeTask(task) {
+  if (task.closure?.kind === 'superseded') return `superseded by ${task.closure.supersededBy.join(', ')}`;
+  return task.status ?? 'registered';
+}
+
 function writeResult(result, json) {
   const envelope = { ...result };
   delete envelope.presentation;
@@ -426,11 +450,12 @@ function writeResult(result, json) {
     } else if (Array.isArray(data?.tasks)) {
       if (data.tasks.length === 0) process.stdout.write('No tasks registered.\n');
       for (const task of data.tasks) {
-        process.stdout.write(`${task.id}: ${task.status}${task.blockedBy?.length ? ` (requires ${task.blockedBy.join(', ')})` : ''}\n`);
+        // A retired task's blockers no longer matter.
+        process.stdout.write(`${task.id}: ${describeTask(task)}${task.blockedBy?.length && !task.closure ? ` (requires ${task.blockedBy.join(', ')})` : ''}\n`);
       }
       if (Object.hasOwn(data, 'next')) process.stdout.write(data.next ? `Next: ${data.next.taskId} — ${data.next.action}\n` : 'No pending task.\n');
     } else if (data?.task?.id) {
-      process.stdout.write(`${data.task.id}: ${data.task.status ?? 'registered'}\n`);
+      process.stdout.write(`${data.task.id}: ${describeTask(data.task)}\n`);
       for (const warning of data.sizing?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);
     } else if (data?.taskId && data?.brief?.text) {
       process.stdout.write(`Task: ${data.taskId}\nAllowed files: ${data.allowedPaths.join(', ')}\n\n${data.brief.text}\n`);

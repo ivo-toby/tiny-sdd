@@ -18,6 +18,20 @@ Attribution and reason must reflect actual authority, not the example text.
 For dependent tasks use `--depends-on validation`. State and review artifacts
 live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
+Retire a task you abandoned or re-cut instead of leaving it open. `task close`
+and `task supersede` need no approval, so they work on a `stale_approval` task
+that `task review --verdict blocked` cannot reach. Both are terminal: the task
+gets status `closed` or `superseded`, leaves `next`, and can no longer be
+approved, reviewed or dispatched. Neither retires an `accepted` task, and both
+are refused while open tasks depend on it; the error lists them. A retired task
+never satisfies a dependency, and a new task cannot depend on one. `supersede`
+also records the successor tasks, which `status --json` shows under `closure`:
+
+```sh
+tinysdd task supersede --id broker-contract --with broker-s1,broker-s2 --by operator --reason 're-cut into slices'
+tinysdd task close --id scratch --by operator --reason 'no longer needed'
+```
+
 Worker setup when config does not yet exist:
 
 ```sh
