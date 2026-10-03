@@ -100,6 +100,23 @@ describe('check runner', { skip: SKIP }, () => {
     return files;
   }
 
+  // Total size of the regular files below a directory, tolerant of entries that vanish.
+  async function treeBytes(root) {
+    let total = 0;
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    for (const entry of entries) {
+      const path = join(root, entry.name);
+      if (entry.isDirectory()) total += await treeBytes(path);
+      else total += await stat(path).then((info) => info.size, () => 0);
+    }
+    return total;
+  }
+
   async function processesMatching(token) {
     const found = [];
     for (const entry of await readdir('/proc')) {
@@ -127,6 +144,8 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(result.output.tail, result.output.text);
     assert.deepEqual(result.limits, CHECK_LIMIT_DEFAULTS);
     assert.ok(Number.isInteger(result.durationMs) && result.durationMs >= 0);
+    assert.equal(CHECK_LIMIT_DEFAULTS.scratchBytes, 512 * MIB);
+    assert.equal(CHECK_LIMIT_DEFAULTS.maxProcesses, 512);
     assert.deepEqual(result.sandbox, {
       bwrap: result.sandbox.bwrap,
       prlimit: result.sandbox.prlimit,
@@ -329,13 +348,66 @@ describe('check runner', { skip: SKIP }, () => {
     assert.deepEqual(await snapshot(candidate), before);
   });
 
-  test('the scratch copy is removed even when the check makes directories unreadable', async () => {
+  test('the host copy is mounted read-only at /input and /work is a separate tmpfs', async () => {
     const candidate = await makeDir({
-      'lock.mjs': "import { chmodSync } from 'node:fs';\nchmodSync('/work/locked/inner', 0);\nchmodSync('/work/locked', 0);\n",
-      'locked/inner/file.txt': 'x\n',
+      't.test.mjs': PASSING_TEST,
+      'probe.mjs': [
+        "import { readFileSync, writeFileSync, readdirSync } from 'node:fs';",
+        'const outcomes = [];',
+        "for (const action of [() => writeFileSync('/input/new.txt', 'x'), () => writeFileSync('/input/t.test.mjs', 'x')]) {",
+        "  try { action(); outcomes.push('wrote'); } catch (error) { outcomes.push(error.code); }",
+        '}',
+        "console.log(outcomes.join(','), readFileSync('/input/t.test.mjs', 'utf8') === readFileSync('/work/t.test.mjs', 'utf8'));",
+        "writeFileSync('/work/t.test.mjs', 'changed in /work');",
+        "console.log(readFileSync('/input/t.test.mjs', 'utf8').startsWith('import test'), readdirSync('/work').includes('probe.mjs'));",
+        '',
+      ].join('\n'),
     });
-    const result = await run(candidate, { argv: ['node', 'lock.mjs'] });
+    const result = await run(candidate, { argv: ['node', 'probe.mjs'] });
     assert.equal(result.exitCode, 0, result.output.text);
+    assert.equal(result.output.text, 'EROFS,EROFS true\ntrue true\n');
+  });
+
+  test('/work is size-limited while the check runs, and the host copy never grows', async () => {
+    const script = [
+      "import { writeFileSync } from 'node:fs';",
+      'const chunk = Buffer.alloc(64 * 1024 * 1024, 1);',
+      'let written = 0;',
+      "let code = 'no error';",
+      'for (let index = 0; index < 4; index += 1) {',
+      '  try {',
+      '    writeFileSync(`/work/big${index}`, chunk);',
+      '    written += 64;',
+      '  } catch (error) {',
+      '    code = error.code;',
+      '    break;',
+      '  }',
+      '}',
+      'console.log(`written ${written} ${code}`);',
+      '',
+    ].join('\n');
+    const candidate = await makeDir({ 'fill.mjs': script });
+    let largest = 0;
+    let sampling = true;
+    const sampler = (async () => {
+      while (sampling) {
+        largest = Math.max(largest, await treeBytes(scratchRoot));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    })();
+    let result;
+    try {
+      result = await run(candidate, { argv: ['node', 'fill.mjs'] }, { limits: { scratchBytes: 128 * MIB, fileSizeBytes: 128 * MIB } });
+    } finally {
+      sampling = false;
+      await sampler;
+    }
+    assert.equal(result.exitCode, 0, result.output.text);
+    // 64 MiB fit next to the candidate; the next file runs out of space in the tmpfs.
+    assert.match(result.output.text, /written 64 ENOSPC/u);
+    // What the host holds is the copy of the candidate and nothing the check wrote.
+    assert.ok(largest > 0, 'the sampler never saw the host copy');
+    assert.ok(largest <= Buffer.byteLength(script), `the host scratch grew to ${largest} bytes`);
   });
 
   test('a timeout kills the process group and the sandbox, and reports timedOut', async () => {
@@ -628,9 +700,10 @@ describe('check runner', { skip: SKIP }, () => {
     });
 
     test('a candidateDir that exceeds the scratch limit while copying', () => assertRefused(/scratch limit/u, async () => {
-      const options = await withCandidate({ limits: { scratchBytes: 1024 } });
-      await writeFile(join(options.candidateDir, 'a.bin'), Buffer.alloc(700));
-      await writeFile(join(options.candidateDir, 'b.bin'), Buffer.alloc(700));
+      // t.test.mjs takes one page and each .bin two, so the second .bin is over three pages.
+      const options = await withCandidate({ limits: { scratchBytes: 3 * 4096 } });
+      await writeFile(join(options.candidateDir, 'a.bin'), Buffer.alloc(5000));
+      await writeFile(join(options.candidateDir, 'b.bin'), Buffer.alloc(5000));
       return options;
     }));
 
@@ -658,9 +731,30 @@ describe('check runner', { skip: SKIP }, () => {
       await assertRefused(/unknown key: mode/u, async () => withCandidate({ dependencyMounts: [{ source: real, target: 'node_modules', mode: 'rw' }] }));
     });
 
-    test('a mount target that collides with a file in candidateDir', () => assertRefused(/collides with a file/u, async () => {
+    // The mount is read-only, so the copy of the candidate cannot be merged
+    // into it: anything at the target is refused, a directory included.
+    test('a mount target that already exists in candidateDir as a file', () => assertRefused(/already exists in candidateDir: node_modules/u, async () => {
       const options = await withCandidate();
       await writeFile(join(options.candidateDir, 'node_modules'), 'a file, not a directory\n');
+      return options;
+    }));
+
+    test('a mount target that already exists in candidateDir as a directory', () => assertRefused(/already exists in candidateDir: node_modules/u, async () => {
+      const options = await withCandidate();
+      await mkdir(join(options.candidateDir, 'node_modules'));
+      return options;
+    }));
+
+    test('a mount target below a file in candidateDir', () => assertRefused(/below a file in candidateDir/u, async () => {
+      const options = await withCandidate();
+      await writeFile(join(options.candidateDir, 'packages'), 'a file\n');
+      return { ...options, dependencyMounts: [{ source: options.dependencyMounts[0].source, target: 'packages/a/node_modules' }] };
+    }));
+
+    test('a candidateDir whose files would not fit the tmpfs once rounded up to pages', () => assertRefused(/scratch limit/u, async () => {
+      // 20 one-byte files are 20 bytes, but a tmpfs charges a 4 KiB page for each.
+      const options = await withCandidate({ limits: { scratchBytes: 16 * 1024 } });
+      for (let index = 0; index < 20; index += 1) await writeFile(join(options.candidateDir, `f${index}.txt`), 'x');
       return options;
     }));
 
@@ -727,12 +821,34 @@ describe('check runner', { skip: SKIP }, () => {
       await assert.rejects(run(candidate, {}, { prlimitPath }), { code: 'CHECK_RUNNER_UNAVAILABLE' });
     });
 
-    test('a check command that cannot be executed is a failed check', async () => {
+    test('a check command that does not exist is a failed check, not a setup failure', async () => {
+      const dependencies = await makeDir({ 'pkg/index.js': 'module.exports = 1;\n' });
+      const candidate = await makeDir({});
+      const result = await run(candidate, { argv: ['node_modules/.bin/missing'] }, { dependencyMounts: [{ source: dependencies, target: 'node_modules' }] });
+      assert.equal(result.exitCode, 127);
+      assert.match(result.output.text, /node_modules\/\.bin\/missing: not found/u);
+    });
+
+    test('a wrapper copy failure (exit 125 with the tinysdd-setup prefix) is a setup failure', async () => {
       const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
-      const bwrapPath = await stubExecutable("echo 'bwrap: execvp /work/node_modules/.bin/x: No such file or directory' >&2\nexit 1");
-      const result = await run(candidate, {}, { bwrapPath });
+      const message = 'tinysdd-setup: copying the candidate into the sandbox failed: cp: error writing /work/x: No space left on device';
+      const failing = await stubExecutable(`echo '${message}' >&2\nexit 125`);
+      await assert.rejects(run(candidate, {}, { bwrapPath: failing }), (error) => {
+        assert.equal(error.code, 'CHECK_RUNNER_UNAVAILABLE');
+        assert.match(error.details.output, /No space left on device/u);
+        return true;
+      });
+      // The same text from a check that exited differently is just that check's output.
+      const other = await stubExecutable(`echo '${message}' >&2\nexit 1`);
+      const result = await run(candidate, {}, { bwrapPath: other });
       assert.equal(result.exitCode, 1);
-      assert.match(result.output.text, /execvp/u);
+      assert.match(result.output.text, /^tinysdd-setup: /u);
+    });
+
+    test('a bwrap that cannot even run /bin/sh is a setup failure', async () => {
+      const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+      const bwrapPath = await stubExecutable("echo 'bwrap: execvp /bin/sh: No such file or directory' >&2\nexit 1");
+      await assert.rejects(run(candidate, {}, { bwrapPath }), { code: 'CHECK_RUNNER_UNAVAILABLE' });
     });
 
     test('the sandbox command is built as documented and spawned without the host environment', async () => {
@@ -763,10 +879,20 @@ describe('check runner', { skip: SKIP }, () => {
       assert.ok(sequence('--ro-bind', dependencies, '/work/node_modules'));
       assert.ok(sequence('--unshare-all', '--new-session'));
       assert.ok(sequence('--setenv', 'HOME', '/tmp'));
-      const bind = bwrapArgs.indexOf('--bind');
-      assert.ok(bwrapArgs[bind + 1].startsWith(`${scratchRoot}/tinysdd-check-`) && bwrapArgs[bind + 1].endsWith('/work'));
-      assert.equal(bwrapArgs[bind + 2], '/work');
-      assert.deepEqual(bwrapArgs.slice(-4), ['--', '/opt/node/bin/node', '--test', 't.test.mjs']);
+      assert.ok(sequence('--size', String(256 * MIB), '--tmpfs', '/tmp'));
+      // The host copy is bound read-only at /input; /work is a tmpfs of scratchBytes.
+      const input = bwrapArgs.indexOf('--ro-bind', bwrapArgs.indexOf('--remount-ro'));
+      assert.ok(bwrapArgs[input + 1].startsWith(`${scratchRoot}/tinysdd-check-`) && bwrapArgs[input + 1].endsWith('/input'));
+      assert.equal(bwrapArgs[input + 2], '/input');
+      assert.ok(sequence('--size', String(512 * MIB), '--tmpfs', '/work'));
+      assert.ok(!bwrapArgs.includes('--bind'), 'nothing writable is bound from the host');
+      assert.ok(bwrapArgs.indexOf('/work') < bwrapArgs.indexOf(dependencies), 'the dependency mounts go on top of the /work tmpfs');
+      // The wrapper is fixed text and the argv follows it as separate arguments.
+      const wrapper = bwrapArgs.lastIndexOf('--') + 1;
+      assert.deepEqual(bwrapArgs.slice(wrapper, wrapper + 2), ['/bin/sh', '-c']);
+      assert.match(bwrapArgs[wrapper + 2], /^err=\$\(cp -a \/input\/\. \/work\/ 2>&1\) \|\| \{ printf 'tinysdd-setup: /u);
+      assert.doesNotMatch(bwrapArgs[wrapper + 2], /node|t\.test\.mjs|--test/u);
+      assert.deepEqual(bwrapArgs.slice(wrapper + 3), ['tinysdd-check', '/opt/node/bin/node', '--test', 't.test.mjs']);
       assert.doesNotMatch(await readFile(environmentDump, 'utf8'), /TINYSDD_SECRET_PROBE|^HOME=|^NODE_/mu);
     });
 

@@ -5,7 +5,7 @@
 // capabilities, a scratch copy of the candidate and resource limits. Nothing
 // here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -19,8 +19,10 @@ export const CHECK_LIMIT_DEFAULTS = Object.freeze({
   // uid already runs: RLIMIT_NPROC counts every task of the uid on the host.
   maxProcesses: 512,
   fileSizeBytes: 256 * MIB,
-  scratchBytes: 1024 * MIB,
-  // /tmp and /dev/shm are memory-backed, so RLIMIT_AS does not cover them.
+  // The candidate must fit, and /work inside the sandbox is a tmpfs of this
+  // size. Like /tmp and /dev/shm it is RAM-backed, and RLIMIT_AS does not cover
+  // it, so up to scratchBytes + 2 * tmpfsBytes of memory can be used per check.
+  scratchBytes: 512 * MIB,
   tmpfsBytes: 256 * MIB,
   storedOutputBytes: MIB,
   returnedTailBytes: 16 * 1024,
@@ -35,6 +37,16 @@ const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
 const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'bwrapPath', 'prlimitPath', 'tempRoot'];
 // bwrap adds PWD itself when --chdir is used and it cannot be unset.
 const SANDBOX_ENV = Object.freeze(['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
+// The candidate is bound read-only at /input and copied into the /work tmpfs
+// here, so what the check writes is bounded by the tmpfs size. The script is
+// fixed text: the check's argv reaches the shell only as "$@", never as script.
+// cp -a keeps the modes (the exec bit) and works for root and for an
+// unprivileged uid; its own errors are folded into the one setup message.
+// There is no cd: bwrap --chdir /work already set the directory, and a cd would
+// add OLDPWD to the check's environment.
+const SETUP_PREFIX = 'tinysdd-setup: ';
+const SETUP_FAILURE_EXIT = 125;
+const COPY_AND_EXEC = `err=$(cp -a /input/. /work/ 2>&1) || { printf '${SETUP_PREFIX}copying the candidate into the sandbox failed: %s\\n' "$err" >&2; exit ${SETUP_FAILURE_EXIT}; }; exec "$@"`;
 
 function invalid(message, details = undefined) {
   return tinyError('CHECK_INVALID', message, details);
@@ -193,6 +205,12 @@ async function resolveTempRoot(requested) {
   return canonical;
 }
 
+// tmpfs charges whole pages, so a candidate only fits the /work tmpfs if its
+// files are counted that way.
+function pageFootprint(bytes) {
+  return Math.ceil(bytes / 4096) * 4096;
+}
+
 async function copyRegularFile(from, to, info, budget, label) {
   let input;
   try {
@@ -207,18 +225,21 @@ async function copyRegularFile(from, to, info, budget, label) {
     if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev) {
       throw invalid(`candidateDir changed while it was being copied: ${label}`);
     }
-    if (budget.used + opened.size > budget.limit) throw invalid(`candidateDir exceeds the scratch limit of ${budget.limit} bytes`, { limit: budget.limit });
+    const refuse = () => invalid(`candidateDir exceeds the scratch limit of ${budget.limit} bytes`, { limit: budget.limit });
+    if (budget.used + pageFootprint(opened.size) > budget.limit) throw refuse();
+    let copied = 0;
     await pipeline(
       input.createReadStream(),
       async function* countBytes(source) {
         for await (const chunk of source) {
-          budget.used += chunk.length;
-          if (budget.used > budget.limit) throw invalid(`candidateDir exceeds the scratch limit of ${budget.limit} bytes`, { limit: budget.limit });
+          copied += chunk.length;
+          if (budget.used + pageFootprint(copied) > budget.limit) throw refuse();
           yield chunk;
         }
       },
       createWriteStream(to, { flags: 'wx', mode: opened.mode & 0o777 }),
     );
+    budget.used += pageFootprint(copied);
   } finally {
     await input.close().catch(() => {});
   }
@@ -249,12 +270,14 @@ function copyFailure(error) {
   return invalid(`candidateDir could not be copied: ${error?.code ?? error?.message}`);
 }
 
-// bwrap would fail on a file where a mount point must be a directory, and that
-// failure would look like a failing check.
-async function assertMountPointsFree(work, mounts) {
+// A dependency mount is read-only, so the candidate cannot also have something
+// at the target: copying into it would fail inside the sandbox, and a file or
+// directory there would otherwise be hidden by the mount.
+async function assertMountPointsFree(input, mounts) {
   for (const { target } of mounts) {
-    let current = work;
-    for (const segment of target.split('/')) {
+    const segments = target.split('/');
+    let current = input;
+    for (const [index, segment] of segments.entries()) {
       current = join(current, segment);
       let info;
       try {
@@ -263,7 +286,8 @@ async function assertMountPointsFree(work, mounts) {
         if (error?.code === 'ENOENT') break;
         throw error;
       }
-      if (!info.isDirectory()) throw invalid(`dependency mount target collides with a file in candidateDir: ${target}`, { target });
+      if (index === segments.length - 1) throw invalid(`dependency mount target already exists in candidateDir: ${target}`, { target });
+      if (!info.isDirectory()) throw invalid(`dependency mount target is below a file in candidateDir: ${target}`, { target });
     }
   }
 }
@@ -293,7 +317,7 @@ async function countUserTasks(uid) {
   return tasks;
 }
 
-function sandboxArguments({ binaries, nodeRoot, work, mounts, limits, check, processLimit }) {
+function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit }) {
   const tmpfsSize = String(limits.tmpfsBytes);
   return [
     `--as=${limits.addressSpaceBytes}`,
@@ -311,11 +335,12 @@ function sandboxArguments({ binaries, nodeRoot, work, mounts, limits, check, pro
     '--size', tmpfsSize, '--tmpfs', '/tmp',
     '--size', tmpfsSize, '--tmpfs', '/dev/shm',
     '--remount-ro', '/dev',
-    '--bind', work, '/work',
+    '--ro-bind', input, '/input',
+    '--size', String(limits.scratchBytes), '--tmpfs', '/work',
     ...mounts.flatMap((mount) => ['--ro-bind', mount.source, `/work/${mount.target}`]),
     '--setenv', 'PATH', '/opt/node/bin:/usr/bin:/bin', '--setenv', 'HOME', '/tmp', '--setenv', 'CI', '1', '--setenv', 'LANG', 'C.UTF-8',
     '--chdir', '/work',
-    '--', check.executable, ...check.argv.slice(1),
+    '--', '/bin/sh', '-c', COPY_AND_EXEC, 'tinysdd-check', check.executable, ...check.argv.slice(1),
   ];
 }
 
@@ -411,31 +436,23 @@ function runSandbox({ command, args, timeoutMs, capture }) {
   });
 }
 
-// bwrap and prlimit report their own failures as "bwrap: ..." or "prlimit: ...".
-// A failure to exec the check itself ("bwrap: execvp ...") is a failing check,
-// but anything else means the sandbox was never built and nothing ran.
+// prlimit and bwrap report their own failures as "prlimit: ..." or "bwrap: ...",
+// and the wrapper script reports a failed copy as "tinysdd-setup: ..." with exit
+// 125. Any of them means the sandbox was never fully built and the check did not
+// run. A check that cannot be executed is not one of these: the shell reports
+// that as exit 127 and it stays a failing check.
 function sandboxSetupFailure(run, head) {
   if (run.timedOut || run.exitCode === 0 || run.signal) return null;
   const text = head.toString('utf8');
-  if (text.startsWith('bwrap: execvp ')) return null;
+  if (text.startsWith(SETUP_PREFIX)) return run.exitCode === SETUP_FAILURE_EXIT ? text : null;
   return text.startsWith('bwrap: ') || text.startsWith('prlimit: ') ? text : null;
 }
 
-async function restorePermissions(directory) {
-  await chmod(directory, 0o700);
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.isDirectory()) await restorePermissions(join(directory, entry.name));
-  }
-}
-
+// The check only ever writes inside the sandbox, and the host copy is bound
+// read-only, so a plain recursive remove is enough: the copy's directories are
+// created owner-writable.
 async function removeScratch(scratch) {
-  try {
-    await rm(scratch, { recursive: true, force: true });
-  } catch {
-    // The check may have made directories unreadable; make them removable and retry once.
-    await restorePermissions(scratch).catch(() => {});
-    await rm(scratch, { recursive: true, force: true }).catch(() => {});
-  }
+  await rm(scratch, { recursive: true, force: true }).catch(() => {});
 }
 
 export async function runCheck(options) {
@@ -464,12 +481,12 @@ export async function runCheck(options) {
     throw unavailable(`could not create a scratch directory in ${tempRoot}: ${error.code ?? error.message}`);
   }
   try {
-    const work = join(scratch, 'work');
-    await mkdir(work, { mode: 0o700 });
-    await copyDirectory(request.candidateDir, work, { used: 0, limit: request.limits.scratchBytes }).catch((error) => {
+    const input = join(scratch, 'input');
+    await mkdir(input, { mode: 0o700 });
+    await copyDirectory(request.candidateDir, input, { used: 0, limit: request.limits.scratchBytes }).catch((error) => {
       throw copyFailure(error);
     });
-    await assertMountPointsFree(work, request.mounts);
+    await assertMountPointsFree(input, request.mounts);
 
     // Measured right before the spawn, so the baseline is as current as it can be.
     const uid = process.getuid();
@@ -480,7 +497,7 @@ export async function runCheck(options) {
       args: sandboxArguments({
         binaries,
         nodeRoot: request.nodeRoot,
-        work,
+        input,
         mounts: request.mounts,
         limits: request.limits,
         check: request.check,
