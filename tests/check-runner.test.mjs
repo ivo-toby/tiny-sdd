@@ -1130,7 +1130,7 @@ test('without POSIX identity APIs the runner reports unavailable and this file s
     const probe = `const m = await import(${JSON.stringify(runner)}); let code; try { await m.runCheck({ candidateDir: '/x', check: { id: 'c', argv: ['node'], timeoutMs: 1000 } }); } catch (error) { code = error.code; } console.log(JSON.stringify({ available: m.checkRunnerAvailable().available, code }));`;
     const { stdout } = await execFileAsync(process.execPath, ['--import', preload, '--input-type=module', '-e', probe], { env });
     assert.deepEqual(JSON.parse(stdout), { available: false, code: 'CHECK_RUNNER_UNAVAILABLE' });
-    const suite = await execFileAsync(process.execPath, ['--import', preload, '--test', fileURLToPath(import.meta.url)], { env });
+    const suite = await execFileAsync(process.execPath, ['--import', preload, '--test', '--test-reporter=tap', fileURLToPath(import.meta.url)], { env });
     assert.match(suite.stdout, /^# fail 0$/mu);
     assert.match(suite.stdout, /check runner unavailable: the check runner requires Linux \(this is win32\)/u);
   } finally {
