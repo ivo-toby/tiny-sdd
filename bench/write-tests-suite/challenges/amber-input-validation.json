@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "amber-input-validation",
+  "version": "1",
+  "role": "write-tests",
+  "difficultyTags": [
+    "input-validation",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/amber-input-validation",
+    "sha256": "0b1d62e22bb6e4b1271d8cb22817c8c41e4898b73649f7096f702e9339c1bac6"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/amber-input-validation/brief.md",
+      "sha256": "65a1c0f834508fddb914adccdb8a85d7763393626e3a2ff4c9908e17d1a05d42"
+    },
+    "context": {
+      "path": "packets/amber-input-validation/context.json",
+      "sha256": "8a2991261adc6ccea238a2b6a176671c0fcf6d7fe07764e70f81ae8f1b0f12a7"
+    },
+    "checks": {
+      "path": "packets/amber-input-validation/checks.json",
+      "sha256": "8bae446dc726c7d93663ccd9076ac6fad1d2c742ef6820d275eb240d2fbadcb2"
+    },
+    "allowedPaths": [
+      "tests/contract.test.mjs"
+    ],
+    "protectedPaths": [
+      "src/options.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/amber-input-validation/visible.json",
+      "sha256": "d3a7dddf2f0364524947898abf3974d4645a3c1ee4e4db04235dd50e54255253"
+    },
+    "heldOut": {
+      "path": "verifier/amber-input-validation/held-out.json",
+      "sha256": "d3a7dddf2f0364524947898abf3974d4645a3c1ee4e4db04235dd50e54255253"
+    }
+  }
+}

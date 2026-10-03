@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "cobalt-state-machine",
+  "version": "1",
+  "role": "write-tests",
+  "difficultyTags": [
+    "state-transition",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/cobalt-state-machine",
+    "sha256": "3c4f58e7de0f38556252944900382e13c396d2c3dddb7e698eaeac39d8f41499"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/cobalt-state-machine/brief.md",
+      "sha256": "11a67ca5c381840ad555a4614cef66316b7d03215784838dbec6ed621bd0bef5"
+    },
+    "context": {
+      "path": "packets/cobalt-state-machine/context.json",
+      "sha256": "f1975aad5cbc91561455270aeb0cbede46cfc5e036492ed5a49af43234f7ac84"
+    },
+    "checks": {
+      "path": "packets/cobalt-state-machine/checks.json",
+      "sha256": "00a4ccb0213d42b0a73ce5e8924f6f0689ff9938627d1aa31894c15e3db48c9e"
+    },
+    "allowedPaths": [
+      "tests/contract.test.mjs"
+    ],
+    "protectedPaths": [
+      "src/state-machine.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/cobalt-state-machine/visible.json",
+      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+    },
+    "heldOut": {
+      "path": "verifier/cobalt-state-machine/held-out.json",
+      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+    }
+  }
+}

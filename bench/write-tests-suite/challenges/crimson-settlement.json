@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "crimson-settlement",
+  "version": "1",
+  "role": "write-tests",
+  "difficultyTags": [
+    "async-settlement",
+    "medium"
+  ],
+  "fixture": {
+    "path": "fixtures/crimson-settlement",
+    "sha256": "dde513f0aec9a84df11d51a9441a38844cdf9ec88abf410f0682ccc19e2a5e64"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/crimson-settlement/brief.md",
+      "sha256": "9248760671707e04adf4513a38c794e453a2e25a22864ffe91810ec3b1728ba0"
+    },
+    "context": {
+      "path": "packets/crimson-settlement/context.json",
+      "sha256": "d8ee81bb03e18a18f03e79f39dc6df4fec952933869221b1b0bd4e855948d59b"
+    },
+    "checks": {
+      "path": "packets/crimson-settlement/checks.json",
+      "sha256": "00a4ccb0213d42b0a73ce5e8924f6f0689ff9938627d1aa31894c15e3db48c9e"
+    },
+    "allowedPaths": [
+      "tests/contract.test.mjs"
+    ],
+    "protectedPaths": [
+      "src/settle.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/crimson-settlement/visible.json",
+      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+    },
+    "heldOut": {
+      "path": "verifier/crimson-settlement/held-out.json",
+      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+    }
+  }
+}

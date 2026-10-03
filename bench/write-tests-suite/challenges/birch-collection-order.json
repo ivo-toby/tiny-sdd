@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "birch-collection-order",
+  "version": "1",
+  "role": "write-tests",
+  "difficultyTags": [
+    "collection-order",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/birch-collection-order",
+    "sha256": "2841bee83141781032ab06c640f92ab76ed0ea5de7dc0a632219123cebab8b3c"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/birch-collection-order/brief.md",
+      "sha256": "69ff8d8dbe98521ccf89ae011a8f0efcdc2e2751dba15d09870074dd8ce63fcb"
+    },
+    "context": {
+      "path": "packets/birch-collection-order/context.json",
+      "sha256": "0a980228e850f9f254eb72de00f26fda6b0fedbae7fe3e69d91148698395c515"
+    },
+    "checks": {
+      "path": "packets/birch-collection-order/checks.json",
+      "sha256": "00a4ccb0213d42b0a73ce5e8924f6f0689ff9938627d1aa31894c15e3db48c9e"
+    },
+    "allowedPaths": [
+      "tests/contract.test.mjs"
+    ],
+    "protectedPaths": [
+      "src/group-by.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/birch-collection-order/visible.json",
+      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+    },
+    "heldOut": {
+      "path": "verifier/birch-collection-order/held-out.json",
+      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+    }
+  }
+}

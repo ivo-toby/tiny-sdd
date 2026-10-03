@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The exported interface is groupBy(items, keyOf).",
+    "The writable test must import groupBy from ../src/group-by.mjs.",
+    "The key function receives an item and its zero-based index; returned groups have key and items fields."
+  ],
+  "resources": [
+    {
+      "path": "src/group-by.mjs",
+      "startLine": 1,
+      "endLine": 18,
+      "purpose": "Exact collection grouping interface for order and mutation tests."
+    }
+  ]
+}

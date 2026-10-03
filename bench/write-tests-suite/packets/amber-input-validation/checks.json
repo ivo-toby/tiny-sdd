@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [
+    {
+      "id": "contract-tests",
+      "argv": ["node", "--test", "--test-reporter=tap", "tests/contract.test.mjs"],
+      "timeoutMs": 120000,
+      "criteria": ["C1", "C2", "C3", "C4"]
+    }
+  ]
+}

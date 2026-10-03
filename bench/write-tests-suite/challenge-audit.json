@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "write-tests-v1",
+  "phase": "phase-1",
+  "challenges": [
+    {
+      "id": "amber-input-validation",
+      "category": "input-validation",
+      "referenceTest": {
+        "path": "candidates/amber-input-validation/reference/tests/contract.test.mjs",
+        "sha256": "7f2f6dc2a1e4cd83101241fb241213fd6499113e76994e03774d35fc6f257856"
+      },
+      "witnesses": [
+        { "id": "C1", "testName": "C1 defaults omitted options without dropping explicit values", "invariant": "omitted fields use defaults and explicit values remain explicit" },
+        { "id": "C2", "testName": "C2 rejects non-integer timeout values instead of coercing them", "invariant": "timeoutMs is not coerced from a numeric string" },
+        { "id": "C3", "testName": "C3 enforces the inclusive timeout bounds", "invariant": "timeoutMs is between 1 and 60000 inclusive" },
+        { "id": "C4", "testName": "C4 canonicalizes header names while retaining their values", "invariant": "header names are lowercase and values are retained" }
+      ],
+      "wrongSources": [
+        {
+          "id": "wrong-string-timeout",
+          "path": "candidates/amber-input-validation/wrong-string-timeout/src/options.mjs",
+          "sha256": "3fb73469e71dd474b02bd34c47df31484ec18ae3b2b83029eb2faacd5edabd56",
+          "kills": ["C2"]
+        },
+        {
+          "id": "wrong-zero-timeout",
+          "path": "candidates/amber-input-validation/wrong-zero-timeout/src/options.mjs",
+          "sha256": "a27977f9f71d6fa6ce731b3899770fd2185c5c847f82603395b0befca9ca4154",
+          "kills": ["C3"]
+        },
+        {
+          "id": "wrong-header-case",
+          "path": "candidates/amber-input-validation/wrong-header-case/src/options.mjs",
+          "sha256": "00535003f49021e4cce1108c22ae18f08f01a05eed3799304c8c9a117f641ea7",
+          "kills": ["C4"]
+        },
+        {
+          "id": "wrong-missing-default",
+          "path": "candidates/amber-input-validation/wrong-missing-default/src/options.mjs",
+          "sha256": "966b59d2ad916256821ccb96407578a945dc00b84aaf72c714d3706c62c87bb5",
+          "kills": ["C1"]
+        }
+      ]
+    },
+    {
+      "id": "birch-collection-order",
+      "category": "collection-order",
+      "referenceTest": {
+        "path": "candidates/birch-collection-order/reference/tests/contract.test.mjs",
+        "sha256": "a3dedec12af413559270c7dbddc3764abbd03195fb8850912891be48124abe5d"
+      },
+      "witnesses": [
+        { "id": "C1", "testName": "C1 preserves first-seen group order", "invariant": "groups retain first-key order" },
+        { "id": "C2", "testName": "C2 preserves member order within each group", "invariant": "members retain input order within groups" },
+        { "id": "C3", "testName": "C3 does not mutate the input collection", "invariant": "groupBy leaves its input array unchanged" }
+      ],
+      "wrongSources": [
+        {
+          "id": "wrong-sorted-groups",
+          "path": "candidates/birch-collection-order/wrong-sorted-groups/src/group-by.mjs",
+          "sha256": "81eef44cef834dbbcaebc1035237dbc5a91bdc40afd57ff7213a1221491ccab8",
+          "kills": ["C1"]
+        },
+        {
+          "id": "wrong-sorted-members",
+          "path": "candidates/birch-collection-order/wrong-sorted-members/src/group-by.mjs",
+          "sha256": "5e1993d9585ac2363fccb50888a3ee37bb96e1a9310f0ce458ce88faf57302cc",
+          "kills": ["C2"]
+        },
+        {
+          "id": "wrong-mutates-input",
+          "path": "candidates/birch-collection-order/wrong-mutates-input/src/group-by.mjs",
+          "sha256": "6548d445ea5212c98c25feceb2f7943280ab7ea82604d683469f905b256b1f0c",
+          "kills": ["C3"]
+        }
+      ]
+    },
+    {
+      "id": "cobalt-state-machine",
+      "category": "state-transition",
+      "referenceTest": {
+        "path": "candidates/cobalt-state-machine/reference/tests/contract.test.mjs",
+        "sha256": "51d77ea0474212e95d282cf26760bbb534647212864504f8646eaadc1b316263"
+      },
+      "witnesses": [
+        { "id": "C1", "testName": "C1 accepts only legal state transitions", "invariant": "only the declared idle and running transitions are legal" },
+        { "id": "C2", "testName": "C2 rejects events after a terminal state", "invariant": "succeeded and failed states are terminal" },
+        { "id": "C3", "testName": "C3 returns a new state without mutating the input", "invariant": "transitions are immutable and preserve extra fields" }
+      ],
+      "wrongSources": [
+        {
+          "id": "wrong-any-state-completion",
+          "path": "candidates/cobalt-state-machine/wrong-any-state-completion/src/state-machine.mjs",
+          "sha256": "c4fb91df260c4b398b7b4726501678fd1532af5e2ba210243317b2b16288ffe7",
+          "kills": ["C1"]
+        },
+        {
+          "id": "wrong-terminal-restart",
+          "path": "candidates/cobalt-state-machine/wrong-terminal-restart/src/state-machine.mjs",
+          "sha256": "6afa2cc32d1b40bc0a731c05abeb1d348d5d31464b69534dddb3780c5a024dc3",
+          "kills": ["C2"]
+        },
+        {
+          "id": "wrong-mutates-state",
+          "path": "candidates/cobalt-state-machine/wrong-mutates-state/src/state-machine.mjs",
+          "sha256": "4cce7e0af83b854c4549b7be0f3f9bfd17f56906f90fc6cde0a0d638df1da950",
+          "kills": ["C3"]
+        }
+      ]
+    },
+    {
+      "id": "crimson-settlement",
+      "category": "async-settlement",
+      "referenceTest": {
+        "path": "candidates/crimson-settlement/reference/tests/contract.test.mjs",
+        "sha256": "84898b203a0cd10abc50330b155fba584885af312626cc973a37e817da88ab24"
+      },
+      "witnesses": [
+        { "id": "C1", "testName": "C1 records fulfillment and rejection without rejecting the batch", "invariant": "all task outcomes become settlement records" },
+        { "id": "C2", "testName": "C2 keeps results in declaration order when completion order differs", "invariant": "result order follows input order" },
+        { "id": "C3", "testName": "C3 starts every task before awaiting settlement", "invariant": "independent task functions start concurrently" }
+      ],
+      "wrongSources": [
+        {
+          "id": "wrong-reject-batch",
+          "path": "candidates/crimson-settlement/wrong-reject-batch/src/settle.mjs",
+          "sha256": "4ff85c07ca1538d6b71e3ef5e1f2789bbb57fa1cb432a786bea3386bdf07bd14",
+          "kills": ["C1"]
+        },
+        {
+          "id": "wrong-completion-order",
+          "path": "candidates/crimson-settlement/wrong-completion-order/src/settle.mjs",
+          "sha256": "4cf10f9ea7c7eceb1f49b4c35b0f4097f8a58aca2f1387eaaf68e7eb739d956b",
+          "kills": ["C2"]
+        },
+        {
+          "id": "wrong-sequential",
+          "path": "candidates/crimson-settlement/wrong-sequential/src/settle.mjs",
+          "sha256": "174409a835ea81eca250eae36ce8638bb2c773c1efe4010c088dc568fd3a5f21",
+          "kills": ["C3"]
+        }
+      ]
+    },
+    {
+      "id": "dune-emitter-edge",
+      "category": "api-edge",
+      "referenceTest": {
+        "path": "candidates/dune-emitter-edge/reference/tests/contract.test.mjs",
+        "sha256": "b06936231a792ef2cb20a1abd8c987b3c5415bc3ba012248e26b24deadd314d7"
+      },
+      "witnesses": [
+        { "id": "C1", "testName": "C1 deduplicates the same subscription", "invariant": "one listener receives one callback per emission" },
+        { "id": "C2", "testName": "C2 dispatches a snapshot in subscription order", "invariant": "removal during dispatch affects the next emission only" },
+        { "id": "C3", "testName": "C3 removes only the target subscription and is idempotent", "invariant": "unsubscribe does not remove unrelated listeners" }
+      ],
+      "wrongSources": [
+        {
+          "id": "wrong-duplicate-subscribe",
+          "path": "candidates/dune-emitter-edge/wrong-duplicate-subscribe/src/emitter.mjs",
+          "sha256": "4d4a671d13272d8479b3bcbaad935b52ca9e7ad2d2f6d05fdac28dfdabba4067",
+          "kills": ["C1"]
+        },
+        {
+          "id": "wrong-live-dispatch",
+          "path": "candidates/dune-emitter-edge/wrong-live-dispatch/src/emitter.mjs",
+          "sha256": "fd7aebb37bea95d7feaebae1d9dd71d3afb58ccd288e01e01e408e5ecbafc4e7",
+          "kills": ["C2"]
+        },
+        {
+          "id": "wrong-unsubscribe-all",
+          "path": "candidates/dune-emitter-edge/wrong-unsubscribe-all/src/emitter.mjs",
+          "sha256": "c199c10089ac29ff3b68c332f82487a081b7d4e66f99f6567d668674d7005d70",
+          "kills": ["C3"]
+        }
+      ]
+    }
+  ]
+}

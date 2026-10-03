@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The exported interface is async settleTasks(tasks).",
+    "The writable test must import settleTasks from ../src/settle.mjs.",
+    "Each task is a zero-argument function; the result is an array of settlement records in the input order."
+  ],
+  "resources": [
+    {
+      "path": "src/settle.mjs",
+      "startLine": 1,
+      "endLine": 17,
+      "purpose": "Exact async task interface for settlement, ordering, and concurrency tests."
+    }
+  ]
+}

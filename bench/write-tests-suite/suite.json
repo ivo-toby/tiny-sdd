@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "write-tests-v1",
+  "version": "2026-10-03.1",
+  "challenges": [
+    {
+      "path": "challenges/amber-input-validation.json",
+      "sha256": "962986a6e957a8babc0be24f81985b1fed9f18e4e41057f7afcc4d9a0e875994"
+    },
+    {
+      "path": "challenges/birch-collection-order.json",
+      "sha256": "388909def4d1906ca2e5c8e5db1a31b2af5bff681b2164f936371fabb9881c0d"
+    },
+    {
+      "path": "challenges/cobalt-state-machine.json",
+      "sha256": "54740d3722e17e46d2ad6171146339203c936ac95c066ae154d1c474ac033e64"
+    },
+    {
+      "path": "challenges/crimson-settlement.json",
+      "sha256": "b103b7051964bae9a6c84f5a31380d8e1ea3c3ea96e2537daaec9be4badf6453"
+    },
+    {
+      "path": "challenges/dune-emitter-edge.json",
+      "sha256": "3af110190c8f50dd4fd11079de8179a6b5a61c5848a93f770738628144f65e7e"
+    }
+  ],
+  "defaults": {
+    "repeat": 1
+  }
+}
