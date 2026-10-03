@@ -699,7 +699,7 @@ contexts grow.
 | Timeout candidate state | Designed (3.3) | `candidateState` on timeout/stopped; S4 timed out with a complete candidate. |
 | Shared briefs going stale | Designed (3.2) | One brief per task plus cited spec ranges; addenda as the alternative. |
 | Behavior-split sizing signal | Designed (3.2) | Test characteristics (fake timers, deferred promises, races) recommend a behavior split. |
-| Standard manifest facts | Designed (3.2) | Lint rules and confusable library accessors, prompted by the skill. |
+| Standard manifest facts | **Implemented** (#19) | Lint rules and confusable library accessors, prompted by the skill. |
 | Run workers from a real worktree | **Documented** (quickstart) | Never from a hand-synced copy. |
 | Shell portability in examples | Checked | No `${var:+…}` constructs in this repository's skill or docs. Rule for future examples: one literal flag per argument, no conditional parameter expansion. |
 | Cited files in workspace as read-only | Deferred | Fix note 8 suggests it if re-reads stay high. S1 had zero; `citedRereads` measures the rest. |

@@ -50,6 +50,11 @@ the immediate dependency direction. Select exact line ranges and state why each
 is needed; do not dump a directory, write a hidden summary, or copy controller
 state. Register it with `task add --context`; its digest is part of approval.
 Read the resulting compiled-context artifact during review if the worker used it.
+Always include lint rules that commonly bite in the slice, and for any dependency
+a small model may confuse with a similar library, include its installed version
+and the two or three exact accessors the repository uses. For example, state
+`require-await` when async code is in scope, and distinguish neverthrow's
+`.value` from ts-results' `.val` when that is the relevant API.
 
 For stateful acceptance checks, trace the setup and each mutation before deriving
 expected values and versions; a stored value is not a version counter. Test
