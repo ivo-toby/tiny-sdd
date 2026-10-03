@@ -128,6 +128,11 @@ writeFileSync(process.env.FAKE_LAUNCHER_READY, '');
 setInterval(() => {}, 1000);
 `;
 
+// `worker stop` verifies a live launcher through /proc, so it can only get past
+// that check on Linux. Stops that return earlier (finished, dead pid, bad
+// arguments) run everywhere.
+const LINUX_ONLY_STOP = process.platform !== 'linux' && 'worker stop needs Linux /proc';
+
 const LAUNCH_ID = 'launch-11111111-2222-3333-4444-555555555555';
 
 async function waitFor(check, label) {
@@ -203,7 +208,7 @@ async function workerJson(root, ...args) {
   return JSON.parse((await worker(root, '--json', ...args)).stdout);
 }
 
-test('worker stop signals the launcher and returns its finalized result', async () => {
+test('worker stop signals the launcher and returns its finalized result', { skip: LINUX_ONLY_STOP }, async () => {
   const root = await project();
   let fake;
   try {
@@ -230,7 +235,7 @@ test('worker stop signals the launcher and returns its finalized result', async 
   }
 });
 
-test('worker stop reports stopping when the launcher is still finalizing, and never signals twice', async () => {
+test('worker stop reports stopping when the launcher is still finalizing, and never signals twice', { skip: LINUX_ONLY_STOP }, async () => {
   const root = await project();
   let fake;
   try {
@@ -264,7 +269,7 @@ test('worker stop reports stopping when the launcher is still finalizing, and ne
   }
 });
 
-test('worker stop refuses to signal a live process that is not this launch\'s launcher', async () => {
+test('worker stop refuses to signal a live process that is not this launch\'s launcher', { skip: LINUX_ONLY_STOP }, async () => {
   const root = await project();
   const other = sleeper();
   let lookalike;

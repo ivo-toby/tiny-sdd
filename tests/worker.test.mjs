@@ -850,10 +850,12 @@ describe("Pi worker capture and scope", () => {
 
   test("fails closed when the Linux sandbox executable is unavailable", async () => {
     const project = await makeProject();
+    // Off Linux, chooseRuntime refuses before it looks for bubblewrap.
+    const refusal = process.platform === "linux" ? /bubblewrap.*unavailable|unavailable.*bubblewrap/u : /require Linux bubblewrap/u;
     try {
       await assert.rejects(
         runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: "/definitely/missing/bwrap", piExecutable: fakePi } }),
-        /bubblewrap.*unavailable|unavailable.*bubblewrap/u,
+        refusal,
       );
     } finally {
       await rm(project, { recursive: true, force: true });
