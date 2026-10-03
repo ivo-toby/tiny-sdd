@@ -459,7 +459,11 @@ async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
 export async function preflightPiWorker({ worker, profile = null, sourceAgentDir = defaultSourceAgentDir(), sourceEnv = process.env } = {}) {
   validateWorker(worker);
   const resolved = await resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv });
-  return resolved.preflight;
+  return {
+    ...resolved.preflight,
+    effectiveReasoning: resolved.model.reasoning ?? null,
+    effectiveCompat: resolved.model.compat ?? null,
+  };
 }
 
 /**
