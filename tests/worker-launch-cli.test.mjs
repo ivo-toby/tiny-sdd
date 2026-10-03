@@ -8,10 +8,13 @@ import { tmpdir } from 'node:os';
 import { initProject } from '../src/controller.mjs';
 
 const exec = promisify(execFile);
+// Project roots may not resolve through a symlink, and tmpdir() does on macOS
+// (/var -> /private/var), so temp dirs are built from the real path.
+const canonicalTmpdir = await realpath(tmpdir());
 const cli = new URL('../bin/tinysdd.mjs', import.meta.url);
 
 async function project() {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-launch-cli-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-launch-cli-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
   await initProject(root);
@@ -75,7 +78,7 @@ test('worker status reports current state at data.status, not in the launch snap
 
 test('worker start fails before detaching when Pi cannot honor the thinking request', async () => {
   const root = await project();
-  const agentDir = await mkdtemp(join(tmpdir(), 'tinysdd-launch-agent-'));
+  const agentDir = await mkdtemp(join(canonicalTmpdir, 'tinysdd-launch-agent-'));
   try {
     await writeFile(join(agentDir, 'models.json'), JSON.stringify({
       providers: { titan: { api: 'openai-completions', baseUrl: 'http://127.0.0.1:9/v1', models: [{ id: 'qwen-bare', reasoning: false }] } },
@@ -167,7 +170,7 @@ async function launch(root, pid, id = LAUNCH_ID) {
 
 // Starts the fake launcher with the argv `worker start` would give the real one.
 async function startFakeLauncher(root, directory, { delayMs = 0 } = {}) {
-  const helperDirectory = await mkdtemp(join(tmpdir(), 'tinysdd-fake-launcher-'));
+  const helperDirectory = await mkdtemp(join(canonicalTmpdir, 'tinysdd-fake-launcher-'));
   const script = join(helperDirectory, 'worker-launcher.mjs');
   const ready = join(helperDirectory, 'ready');
   const signals = join(helperDirectory, 'signals');

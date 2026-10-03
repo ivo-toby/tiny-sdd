@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -10,8 +10,12 @@ import {
 } from '../src/config.mjs';
 import { initProject } from '../src/controller.mjs';
 
+// Project roots may not resolve through a symlink, and tmpdir() does on macOS
+// (/var -> /private/var), so temp dirs are built from the real path.
+const canonicalTmpdir = await realpath(tmpdir());
+
 async function project() {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-config-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-config-'));
   await mkdir(join(root, '.tinysdd'), { recursive: true });
   return root;
 }
