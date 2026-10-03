@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { lstat, readFile, unlink } from 'node:fs/promises';
 
 import {
@@ -24,10 +24,11 @@ import {
   supersedeTask,
   updateTask,
 } from '../src/controller.mjs';
-import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, readJsonFile, tinyError } from '../src/fs-utils.mjs';
+import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, normalizeProjectRelative, readJsonFile, tinyError } from '../src/fs-utils.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
+import { runBenchmark } from '../src/benchmark-runner.mjs';
 
 const VERSION = '0.1.0';
 const HELP = `TinySDD ${VERSION}
@@ -49,6 +50,7 @@ Usage:
   tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
+  tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K]
 
 Retired (closed or superseded) tasks leave \`next\`, cannot be approved, reviewed or
 dispatched, and are refused while open tasks depend on them.
@@ -172,6 +174,14 @@ function parseCommand(args) {
     if (subcommand === 'stop') values['wait-ms'] = parseWaitMs(values['wait-ms']);
     return { command, subcommand, values };
   }
+  if (command === 'bench') {
+    if (subcommand !== 'run') throw cliError('bench requires run');
+    const { values, positional } = parseFlags(rest, new Map([
+      ['worker', 'value'], ['suite', 'value'], ['repeat', 'value'],
+    ]));
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
   if (command === 'status') {
     const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['feature', 'value']]));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
@@ -292,6 +302,51 @@ async function runWorkerCommand(project, options) {
     if (warnings.length > 0 && error && typeof error === 'object') error.cliWarnings = warnings;
     throw error;
   }
+}
+
+function parseBenchmarkRepeat(value) {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/u.test(value)) throw cliError('--repeat must be an integer from 1 to 1000');
+  const repeat = Number(value);
+  if (!Number.isSafeInteger(repeat) || repeat < 1 || repeat > 1000) {
+    throw cliError('--repeat must be an integer from 1 to 1000');
+  }
+  return repeat;
+}
+
+async function resolveBenchmarkSuite(project, requested) {
+  const relativeSuite = normalizeProjectRelative(requested ?? 'bench', '--suite');
+  const target = await assertInternalPath(project, relativeSuite.split('/'), { allowMissing: false });
+  const info = await lstat(target);
+  if (info.isDirectory()) {
+    return { relative: relativeSuite, root: target, path: 'suite.json' };
+  }
+  if (info.isFile() && basename(target) === 'suite.json') {
+    return { relative: relativeSuite, root: dirname(target), path: 'suite.json' };
+  }
+  throw cliError('--suite must name a suite directory or suite.json');
+}
+
+async function runBenchmarkCommand(project, options) {
+  if (!options.worker) throw cliError('--worker requires a value');
+  const repeat = parseBenchmarkRepeat(options.repeat);
+  const resolved = await configShow(project, { worker: options.worker });
+  if (!resolved.workerName || !resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
+  const suite = await resolveBenchmarkSuite(resolved.projectRoot, options.suite);
+  process.stderr.write(`Benchmark ${suite.relative} started with worker ${resolved.workerName}.\n`);
+  const result = await runBenchmark({
+    projectRoot: resolved.projectRoot,
+    suiteRoot: suite.root,
+    suitePath: suite.path,
+    repeat,
+    worker: resolved.worker,
+    profile: resolved.profile,
+  });
+  const warnings = result.config.checkRunner.available
+    ? []
+    : [`run_checks unavailable: ${result.config.checkRunner.reason}`];
+  process.stderr.write(`Benchmark complete: ${result.invocation.caseResults.length} attempt(s); results ${result.directory}\n`);
+  return warnings.length === 0 ? result : { ...result, warnings };
 }
 
 async function loadLaunch(project, rawId) {
@@ -455,6 +510,7 @@ async function run(argv) {
   else if (parsed.command === 'worker' && parsed.subcommand === 'start') data = await startWorker(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'stop') data = await workerStop(project, { id: parsed.values.id, waitMs: parsed.values['wait-ms'] });
+  else if (parsed.command === 'bench' && parsed.subcommand === 'run') data = await runBenchmarkCommand(project, parsed.values);
   else throw cliError('unsupported command');
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
@@ -587,6 +643,9 @@ function writeResult(result, json) {
     } else if (data?.statusCommand) {
       process.stdout.write(`Started ${data.id} (${data.worker}, task ${data.taskId}). Poll: ${data.statusCommand}\n`);
       for (const warning of data.preflight?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);
+    } else if (data?.invocation?.invocationId && data?.summary?.groups) {
+      const scheduled = data.summary.groups.reduce((total, group) => total + group.scheduled, 0);
+      process.stdout.write(`Benchmark ${data.invocation.invocationId}: ${scheduled} attempt(s) recorded.\nResults: ${data.directory}\n`);
     } else if (data?.configPath) {
       process.stdout.write(`${data.configCreated ? 'Created' : 'Preserved'} config: ${data.configPath}\n`);
     } else {
