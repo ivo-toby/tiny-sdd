@@ -75,6 +75,11 @@ Visible and held-out verifier resources are overlaid only under the reserved
 verifier root after collision, symlink, and dependency-overlap checks. Held-out
 resources are loaded and hashed on the host; they are never part of the worker
 packet, prompt, fixture, candidate evidence, or a later revision input.
+Verifier checks may reference suite-relative files with separate or inline
+`--require`, `-r`, `--import`, or `--loader` operands. The evaluator rewrites
+these operands to explicit `./__tinysdd_benchmark_verifier/<visibility>/...`
+paths after staging the referenced bytes; unrelated bare package specifiers
+remain package specifiers.
 
 The config identity binds the effective worker/provider/model and runtime
 settings, profile and TinySDD revisions, suite and verifier bytes, checker
