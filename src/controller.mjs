@@ -757,6 +757,12 @@ export async function applyTask(projectRoot, options = {}) {
       throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
     }
 
+    // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
+    const inputs = new Set([task.brief, task.context, task.checks].filter(Boolean));
+    const rewritten = plan.filter((item) => item.status === 'written' && inputs.has(item.path)).map((item) => item.path);
+    if (rewritten.length > 0) {
+      throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
+    }
     // Compile the context as inspectTask will read it once this apply is recorded,
     // and refuse now if that would leave the approval stale.
     if (task.context) {

@@ -1658,6 +1658,79 @@ test('apply refuses before writing when the recorded pins would leave the approv
   }
 });
 
+// Task `one` allows its own brief, context manifest and checks manifest (all project-local) plus src/a.ts.
+const TASK_INPUTS = { brief: 'docs/brief.md', context: 'docs/context.json', checks: 'docs/checks.json' };
+const contextManifest = (fact) => JSON.stringify({ schemaVersion: 1, facts: [fact], resources: [] });
+const checksManifest = (timeoutMs) => JSON.stringify({ schemaVersion: 1, dependencyMounts: ['node_modules'], checks: [{ id: 'unit', argv: ['node_modules/.bin/vitest'], timeoutMs }] });
+
+async function inputsProject(files = {}) {
+  const start = { 'docs/brief.md': '# Brief\n', 'docs/context.json': contextManifest('fact one'), 'docs/checks.json': checksManifest(5000), 'src/a.ts': 'a0\n', ...files };
+  const root = await project();
+  await writeTree(root, start);
+  await addApprovedTask(root, 'one', { allow: Object.keys(start).sort(), context: TASK_INPUTS.context, checks: TASK_INPUTS.checks });
+  return { root, start };
+}
+
+test('apply refuses a run that rewrites its own brief, context manifest or checks, and writes nothing', async () => {
+  const rewrites = {
+    'docs/brief.md': '# Brief, rewritten by the run\n',
+    'docs/context.json': contextManifest('a different fact'),
+    'docs/checks.json': checksManifest(9000),
+  };
+  for (const [path, rewritten] of Object.entries(rewrites)) {
+    const { root, start } = await inputsProject();
+    try {
+      await fakeRun(root, RUN_ONE, { before: start, after: { ...start, [path]: rewritten, 'src/a.ts': 'a1\n' } });
+      await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT', details: { paths: [path], runId: RUN_ONE }, message: /docs\//u }, path);
+      await assertNothingApplied(root, start);
+      assert.equal(await taskStatus(root, 'one'), 'ready', path);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('apply names every task input the run rewrites', async () => {
+  const { root, start } = await inputsProject();
+  try {
+    await fakeRun(root, RUN_ONE, { before: start, after: { ...start, 'docs/brief.md': '# New brief\n', 'docs/checks.json': checksManifest(7000), 'src/a.ts': 'a1\n' } });
+    await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT', details: { paths: ['docs/brief.md', 'docs/checks.json'], runId: RUN_ONE } });
+    await assertNothingApplied(root, start);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task inputs that are allowed but left unchanged by the run do not stop apply', async () => {
+  const { root, start } = await inputsProject();
+  try {
+    await fakeRun(root, RUN_ONE, { before: start, after: { ...start, 'src/a.ts': 'a1\n' } });
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'written']]);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a task input the project already holds in its candidate form is already-applied, not refused', async () => {
+  // The task was approved with the rewritten manifest already in the project, so nothing is written for it.
+  const rewritten = contextManifest('a different fact');
+  const { root, start } = await inputsProject({ 'docs/context.json': rewritten });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { ...start, 'docs/context.json': contextManifest('fact one') }, after: { ...start, 'docs/context.json': rewritten, 'src/a.ts': 'a1\n' } });
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['docs/context.json', 'already-applied'], ['src/a.ts', 'written']]);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('apply removes a deleted file only, and review checks it stays absent', async () => {
   const files = { 'src/a.ts': 'keep\n', 'src/b.ts': 'remove\n' };
   const root = await applyProject(files);

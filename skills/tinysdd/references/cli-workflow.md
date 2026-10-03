@@ -113,7 +113,10 @@ writing nothing, if one of those project files no longer matches the state the
 lineage started from; files that already equal the candidate are recorded as
 `already-applied`. It refuses another task's run, a benchmark replay, scope
 violations and a run whose outcome is not `completed` (a timed-out run included),
-with no override. The record shows under `applied` in `status --json`; an
+with no override. It also refuses, with `APPLY_CHANGES_TASK_INPUT` and nothing
+written, a run that would rewrite the task's own brief, context manifest or checks
+manifest (possible when they are in `--allow`), since that would leave the approval
+it was dispatched under stale. The record shows under `applied` in `status --json`; an
 accepting review adds `appliedFromRun` with `identical: false` if any allowed
 file differs from what apply left. Apply is neither verification nor acceptance.
 
