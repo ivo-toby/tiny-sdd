@@ -86,8 +86,15 @@ function isPrivileged() {
   return process.getuid() === 0 || process.geteuid() === 0;
 }
 
+// Checked before anything reads the caller's identity: process.getuid and its
+// siblings do not exist on Windows.
+function unsupportedPlatform() {
+  return process.platform === 'linux' ? null : `the check runner requires Linux (this is ${process.platform})`;
+}
+
 function locateBinaries({ bwrapPath, prlimitPath, setprivPath } = {}) {
-  if (process.platform !== 'linux') return { reason: `the check runner requires Linux (this is ${process.platform})` };
+  const platform = unsupportedPlatform();
+  if (platform) return { reason: platform };
   const bwrapCandidates = bwrapPath === undefined ? BWRAP_DEFAULTS : [bwrapPath];
   const bwrap = findExecutable(bwrapCandidates);
   if (!bwrap) return { reason: `bubblewrap is not an executable file (tried ${bwrapCandidates.join(', ')})` };
@@ -535,6 +542,8 @@ async function removeScratch(scratch) {
 
 export async function runCheck(options) {
   if (!isPlainObject(options)) throw invalid('runCheck options must be an object');
+  const platform = unsupportedPlatform();
+  if (platform) throw unavailable(platform);
   const request = parseRequest(options);
   const binaries = locateBinaries(options);
   if (binaries.reason) throw unavailable(binaries.reason);

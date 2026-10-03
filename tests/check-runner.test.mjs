@@ -6,14 +6,16 @@ import { createServer } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { CHECK_LIMIT_DEFAULTS, checkRunnerAvailable, runCheck } from '../src/check-runner.mjs';
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
-const AS_ROOT = process.getuid() === 0;
+// process.getuid and getgid do not exist on Windows; this file must still load there.
+const AS_ROOT = process.getuid?.() === 0;
 // A root caller drops to nobody:nogroup; anyone else runs as itself.
-const TARGET = AS_ROOT ? { uid: 65534, gid: 65534 } : { uid: process.getuid(), gid: process.getgid() };
+const TARGET = AS_ROOT ? { uid: 65534, gid: 65534 } : { uid: process.getuid?.() ?? -1, gid: process.getgid?.() ?? -1 };
 // Spawn options that make the test's own helper processes belong to TARGET.
 const AS_TARGET = AS_ROOT ? { uid: TARGET.uid, gid: TARGET.gid } : {};
 
@@ -1107,4 +1109,31 @@ describe('check runner', { skip: SKIP }, () => {
     });
 
   });
+});
+
+// Windows has no process.getuid, geteuid or getgid. This host has them, so a
+// child process emulates such a host: the runner must refuse with a code and
+// this file must still load and skip.
+test('without POSIX identity APIs the runner reports unavailable and this file still loads', { skip: process.env.TINYSDD_NO_POSIX_IDS === '1' ? 'already inside the emulation' : false }, async () => {
+  const dir = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-no-posix-'));
+  try {
+    const preload = join(dir, 'no-posix-ids.mjs');
+    await writeFile(preload, [
+      "Object.defineProperty(process, 'platform', { value: 'win32' });",
+      "for (const name of ['getuid', 'geteuid', 'getgid', 'getegid', 'getgroups']) process[name] = undefined;",
+      '',
+    ].join('\n'));
+    const env = { ...process.env, TINYSDD_NO_POSIX_IDS: '1', TYPESAFE_API_KEY: 'stub' };
+    delete env.NODE_TEST_CONTEXT;
+    delete env.NODE_OPTIONS;
+    const runner = new URL('../src/check-runner.mjs', import.meta.url).href;
+    const probe = `const m = await import(${JSON.stringify(runner)}); let code; try { await m.runCheck({ candidateDir: '/x', check: { id: 'c', argv: ['node'], timeoutMs: 1000 } }); } catch (error) { code = error.code; } console.log(JSON.stringify({ available: m.checkRunnerAvailable().available, code }));`;
+    const { stdout } = await execFileAsync(process.execPath, ['--import', preload, '--input-type=module', '-e', probe], { env });
+    assert.deepEqual(JSON.parse(stdout), { available: false, code: 'CHECK_RUNNER_UNAVAILABLE' });
+    const suite = await execFileAsync(process.execPath, ['--import', preload, '--test', fileURLToPath(import.meta.url)], { env });
+    assert.match(suite.stdout, /^# fail 0$/mu);
+    assert.match(suite.stdout, /check runner unavailable: the check runner requires Linux \(this is win32\)/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
