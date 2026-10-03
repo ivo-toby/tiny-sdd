@@ -153,8 +153,10 @@ describe('check runner', { skip: SKIP }, () => {
       env: ['PATH', 'HOME', 'CI', 'LANG', 'PWD'],
       processBaseline: result.sandbox.processBaseline,
       processLimitEnforced: process.getuid() !== 0,
+      nestedUserNamespaces: result.sandbox.nestedUserNamespaces,
     });
     assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
+    assert.ok(['disabled', 'allowed'].includes(result.sandbox.nestedUserNamespaces));
   });
 
   test('a failing test exits non-zero and its failure text is in the tail', async () => {
@@ -851,6 +853,33 @@ describe('check runner', { skip: SKIP }, () => {
       await assert.rejects(run(candidate, {}, { bwrapPath }), { code: 'CHECK_RUNNER_UNAVAILABLE' });
     });
 
+    test('nested user namespaces are disabled where bwrap can, and an older bwrap still runs the check', async () => {
+      const candidate = await makeDir({
+        'userns.mjs': [
+          "import { spawnSync } from 'node:child_process';",
+          "const outcome = spawnSync('unshare', ['-U', 'true'], { encoding: 'utf8' });",
+          "console.log('nested', outcome.error ? outcome.error.code : outcome.status);",
+          '',
+        ].join('\n'),
+      });
+      const real = await run(candidate, { argv: ['node', 'userns.mjs'] });
+      assert.equal(real.exitCode, 0, real.output.text);
+      assert.ok(['disabled', 'allowed'].includes(real.sandbox.nestedUserNamespaces));
+      if (real.sandbox.nestedUserNamespaces === 'disabled') assert.doesNotMatch(real.output.text, /nested 0\n/u);
+
+      // A bwrap without the option rejects the probe and the run is built without it.
+      const dump = join(fixtures, `older-${counter}.txt`);
+      const prlimitPath = await stubExecutable(`printf '%s\\n' "$@" > '${dump}'`);
+      const older = await stubExecutable("case \"$*\" in *--disable-userns*) echo 'bwrap: Unknown option --disable-userns' >&2; exit 1;; esac\nexit 0");
+      const result = await run(candidate, {}, { bwrapPath: older, prlimitPath });
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.sandbox.nestedUserNamespaces, 'allowed');
+      const args = (await readFile(dump, 'utf8')).split('\n');
+      assert.ok(!args.includes('--disable-userns'));
+      assert.ok(!args.includes('--unshare-user'));
+      assert.ok(args.includes('--unshare-all'));
+    });
+
     test('the sandbox command is built as documented and spawned without the host environment', async () => {
       const dependencies = await makeDir({});
       const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
@@ -875,6 +904,7 @@ describe('check runner', { skip: SKIP }, () => {
       assert.ok(!bwrapArgs.includes('--share-net'));
       const sequence = (...items) => bwrapArgs.some((_, index) => items.every((item, offset) => bwrapArgs[index + offset] === item));
       assert.ok(sequence('--cap-drop', 'ALL'));
+      assert.equal(sequence('--unshare-user', '--disable-userns'), sandbox.nestedUserNamespaces === 'disabled');
       assert.ok(sequence('--ro-bind', dirname(dirname(process.execPath)), '/opt/node'));
       assert.ok(sequence('--ro-bind', dependencies, '/work/node_modules'));
       assert.ok(sequence('--unshare-all', '--new-session'));

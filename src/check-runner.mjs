@@ -6,7 +6,7 @@
 // here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { TinySDDError, isPlainObject, normalizeProjectRelative, tinyError } from './fs-utils.mjs';
@@ -47,6 +47,10 @@ const SANDBOX_ENV = Object.freeze(['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
 const SETUP_PREFIX = 'tinysdd-setup: ';
 const SETUP_FAILURE_EXIT = 125;
 const COPY_AND_EXEC = `err=$(cp -a /input/. /work/ 2>&1) || { printf '${SETUP_PREFIX}copying the candidate into the sandbox failed: %s\\n' "$err" >&2; exit ${SETUP_FAILURE_EXIT}; }; exec "$@"`;
+// bwrap 0.8 and later can stop the check from creating nested user namespaces.
+// It is probed once per bwrap, and an older or unwilling bwrap just runs without it.
+const USERNS_PROBE_ARGS = ['--unshare-all', '--unshare-user', '--disable-userns', '--cap-drop', 'ALL', '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind-try', '/lib64', '/lib64', '--', '/bin/true'];
+const usernsProbes = new Map();
 
 function invalid(message, details = undefined) {
   return tinyError('CHECK_INVALID', message, details);
@@ -317,7 +321,16 @@ async function countUserTasks(uid) {
   return tasks;
 }
 
-function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit }) {
+function nestedUserNamespaces(bwrap) {
+  if (!usernsProbes.has(bwrap)) {
+    usernsProbes.set(bwrap, new Promise((resolve) => {
+      execFile(bwrap, USERNS_PROBE_ARGS, { env: {}, timeout: 10000 }, (error) => resolve(error ? 'allowed' : 'disabled'));
+    }));
+  }
+  return usernsProbes.get(bwrap);
+}
+
+function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit, nestedUserns }) {
   const tmpfsSize = String(limits.tmpfsBytes);
   return [
     `--as=${limits.addressSpaceBytes}`,
@@ -327,6 +340,7 @@ function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, pr
     binaries.bwrap,
     '--clearenv',
     '--die-with-parent', '--unshare-all', '--new-session',
+    ...(nestedUserns === 'disabled' ? ['--unshare-user', '--disable-userns'] : []),
     // bwrap only drops its capabilities when it is unprivileged; run as root it would keep them.
     '--cap-drop', 'ALL',
     '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind-try', '/lib64', '/lib64',
@@ -491,6 +505,7 @@ export async function runCheck(options) {
     // Measured right before the spawn, so the baseline is as current as it can be.
     const uid = process.getuid();
     const processBaseline = await countUserTasks(uid);
+    const nestedUserns = await nestedUserNamespaces(binaries.bwrap);
     const capture = new OutputCapture(request.limits.storedOutputBytes);
     const run = await runSandbox({
       command: binaries.prlimit,
@@ -502,6 +517,7 @@ export async function runCheck(options) {
         limits: request.limits,
         check: request.check,
         processLimit: processBaseline + request.limits.maxProcesses,
+        nestedUserns,
       }),
       timeoutMs: request.check.timeoutMs,
       capture,
@@ -527,6 +543,7 @@ export async function runCheck(options) {
         // The kernel does not apply RLIMIT_NPROC to root (or to CAP_SYS_ADMIN and
         // CAP_SYS_RESOURCE); there the timeout and the PID namespace are the bound.
         processLimitEnforced: uid !== 0,
+        nestedUserNamespaces: nestedUserns,
       },
     };
   } finally {
