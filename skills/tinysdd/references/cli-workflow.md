@@ -111,9 +111,8 @@ candidate, not the project). It follows the lineage to the first run, and refuse
 with `APPLY_CONFLICT`, writing nothing, if a project file no longer matches the
 state that run started from; files that already equal the candidate are recorded
 as `already-applied`. It refuses another task's run, a benchmark replay, scope
-violations and a run whose outcome is not `completed`; `--allow-incomplete` permits
-the last (a complete candidate from a timed-out run) and records the outcome. The
-record shows under `applied` in `status --json`; an accepting review adds
+violations and a run whose outcome is not `completed` (a timed-out run included),
+with no override. The record shows under `applied` in `status --json`; an accepting review adds
 `appliedFromRun` with `identical: false` if the files were edited after applying.
 Apply is neither verification nor acceptance.
 

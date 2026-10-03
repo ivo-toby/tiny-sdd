@@ -36,7 +36,7 @@ Usage:
   tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
-  tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL [--allow-incomplete]
+  tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
   tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL
   tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
@@ -102,12 +102,6 @@ function parseFlags(tokens, allowed) {
     const equals = token.indexOf('=');
     const name = equals === -1 ? token.slice(2) : token.slice(2, equals);
     if (!allowed.has(name)) throw cliError(`unknown option: --${name}`);
-    if (allowed.get(name) === 'boolean') {
-      const given = equals === -1 ? 'true' : token.slice(equals + 1);
-      if (!['true', 'false'].includes(given)) throw cliError(`--${name} takes no value`);
-      values[name] = given === 'true';
-      continue;
-    }
     let value;
     if (equals !== -1) {
       value = token.slice(equals + 1);
@@ -146,7 +140,7 @@ function parseCommand(args) {
       add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
-      apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value'], ['allow-incomplete', 'boolean']]),
+      apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
       review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value']]),
       close: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       supersede: new Map([['id', 'value'], ['with', 'list'], ['by', 'value'], ['reason', 'value']]),
@@ -382,7 +376,6 @@ async function run(argv) {
     id: parsed.values.id,
     run: parsed.values.run,
     by: parsed.values.by,
-    allowIncomplete: parsed.values['allow-incomplete'] === true,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'review') data = await reviewTask(project, {
     id: parsed.values.id,

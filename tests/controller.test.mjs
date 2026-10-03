@@ -1289,7 +1289,6 @@ test('apply writes created and modified files, records the run and leaves the ta
     assert.deepEqual(record, {
       runId: RUN_ONE,
       rootRunId: RUN_ONE,
-      outcome: 'completed',
       by: 'operator',
       files: [
         { path: 'src/a.ts', change: 'created', sha256: sha256('new a\n'), status: 'written' },
@@ -1565,15 +1564,19 @@ test('apply refuses a run of another task, a replay, an unknown run and a malfor
   }
 });
 
-test('apply refuses a run that did not complete unless told, and records the outcome when allowed', async () => {
+test('apply refuses a run whose outcome is not completed, with no override', async () => {
   const root = await applyProject({});
   try {
-    await fakeRun(root, RUN_ONE, { outcome: 'timeout', after: { 'src/a.ts': 'complete candidate\n' } });
-    await assert.rejects(apply(root), { code: 'RUN_INCOMPLETE', details: { runId: RUN_ONE, outcome: 'timeout' } });
+    for (const outcome of ['timeout', 'failed', 'stopped', 'tool_limit']) {
+      await fakeRun(root, RUN_ONE, { outcome, after: { 'src/a.ts': 'complete candidate\n' } });
+      await assert.rejects(apply(root), { code: 'RUN_INCOMPLETE', details: { runId: RUN_ONE, outcome } }, outcome);
+      // The removed --allow-incomplete option is not honored through the library either.
+      await assert.rejects(apply(root, RUN_ONE, { allowIncomplete: true }), { code: 'RUN_INCOMPLETE' }, outcome);
+    }
     await assertNothingApplied(root, { 'src/a.ts': null });
-    await apply(root, RUN_ONE, { allowIncomplete: true });
-    assert.equal(await readProject(root, 'src/a.ts'), 'complete candidate\n');
-    assert.equal((await rawState(root)).tasks.one.applied.outcome, 'timeout');
+    // The same task's completed run still applies.
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'v1\n' } });
+    await apply(root);
   } finally {
     await cleanup(root);
   }
@@ -1583,7 +1586,7 @@ test('apply refuses scope violations even when the run is otherwise allowed', as
   const root = await applyProject({});
   try {
     await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n', 'src/evil.ts': 'y\n' }, scopeViolations: [{ path: 'src/evil.ts', change: 'created', reason: 'outside' }] });
-    await assert.rejects(apply(root, RUN_ONE, { allowIncomplete: true }), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_ONE, paths: ['src/evil.ts'] } });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_ONE, paths: ['src/evil.ts'] } });
     // A recorded change outside the allowlist counts even when scopeViolations was left empty.
     await fakeRun(root, RUN_TWO, { after: { 'src/a.ts': 'x\n' }, changedPaths: [{ path: 'src/a.ts', change: 'created' }, { path: 'src/evil.ts', change: 'created' }] });
     await assert.rejects(apply(root, RUN_TWO), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_TWO, paths: ['src/evil.ts'] } });
@@ -1714,7 +1717,6 @@ test('controller state validates the applied shape', async () => {
     const valid = {
       runId: RUN_ONE,
       rootRunId: RUN_ONE,
-      outcome: 'completed',
       appliedAt: '2026-01-01T00:00:00.000Z',
       by: 'operator',
       files: [
@@ -1730,7 +1732,6 @@ test('controller state validates the applied shape', async () => {
       { ...valid, runId: 'not-a-run' },
       { ...valid, runId: undefined },
       { ...valid, rootRunId: '../worker-x' },
-      { ...valid, outcome: '' },
       { ...valid, by: ' ' },
       { ...valid, appliedAt: 7 },
       { ...valid, files: 'src/one.ts' },
@@ -1754,6 +1755,10 @@ test('controller state validates the applied shape', async () => {
     state.tasks.one.applied = valid;
     await writeState(root, state);
     assert.deepEqual((await controllerStatus(root)).tasks[0].applied, { runId: RUN_ONE, appliedAt: valid.appliedAt, files: 2 });
+    // A record written while apply still stored an outcome stays valid.
+    state.tasks.one.applied = { ...valid, outcome: 'completed' };
+    await writeState(root, state);
+    assert.equal((await controllerStatus(root)).tasks[0].applied.files, 2);
     delete state.tasks.one.applied;
     await writeState(root, state);
     assert.equal((await controllerStatus(root)).tasks[0].applied, undefined);
@@ -1798,13 +1803,14 @@ test('CLI task apply prints one line, reports already-applied files and returns 
     assert.deepEqual(parsed.data.applied.files.map((file) => file.status), ['already-applied', 'already-applied']);
     const again = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
     assert.equal(again.stdout, `one: applied 2 file(s) from ${RUN_ONE} (2 already applied)\n`);
-    assert.match((await cli('--help')).stdout, /task apply --id ID --run RUN_ID --by LABEL \[--allow-incomplete\]/u);
+    assert.match((await cli('--help')).stdout, /task apply --id ID --run RUN_ID --by LABEL\n/u);
+    assert.doesNotMatch((await cli('--help')).stdout, /allow-incomplete/u);
   } finally {
     await cleanup(root);
   }
 });
 
-test('CLI task apply parses --allow-incomplete as a flag without a value and reports refusals', async () => {
+test('CLI task apply reports refusals and has no flags beyond id, run and by', async () => {
   const root = await applyProject({});
   try {
     const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
@@ -1812,25 +1818,23 @@ test('CLI task apply parses --allow-incomplete as a flag without a value and rep
     await fakeRun(root, RUN_ONE, { outcome: 'timeout', after: { 'src/a.ts': 'candidate\n' } });
     const refused = await cli('--json', 'task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
     assert.equal(refused.code, 1);
+    assert.equal(refused.stderr, '');
     assert.equal(JSON.parse(refused.stdout).error.code, 'RUN_INCOMPLETE');
     const humanRefused = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
     assert.match(humanRefused.stderr, /^ERROR \[RUN_INCOMPLETE\] /u);
-    const falsy = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', '--allow-incomplete=false').catch((error) => error);
-    assert.equal(falsy.code, 1);
-    const junk = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', '--allow-incomplete=maybe').catch((error) => error);
-    assert.match(junk.stderr, /--allow-incomplete takes no value/u);
-    // The flag must not swallow the next token, so a stray argument is still refused.
-    const stray = await cli('task', 'apply', '--allow-incomplete', 'stray', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
-    assert.match(stray.stderr, /unexpected argument: stray/u);
+    // --allow-incomplete was removed: it is an unknown option, not a silent override.
+    for (const flag of [['--allow-incomplete'], ['--allow-incomplete=true']]) {
+      const override = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', ...flag).catch((error) => error);
+      assert.equal(override.code, 1);
+      assert.match(override.stderr, /unknown option: --allow-incomplete/u);
+    }
     assert.equal((await rawState(root)).tasks.one.applied, undefined);
-    const flagFirst = await cli('task', 'apply', '--allow-incomplete', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
-    assert.equal(flagFirst.stdout, `one: applied 1 file(s) from ${RUN_ONE}\n`);
-    assert.equal((await rawState(root)).tasks.one.applied.outcome, 'timeout');
-    // Other commands still reject the flag, and valued flags still need their value.
-    const elsewhere = await cli('task', 'review', '--allow-incomplete', '--id', 'one').catch((error) => error);
-    assert.match(elsewhere.stderr, /unknown option: --allow-incomplete/u);
+    await assert.rejects(readProject(root, 'src/a.ts'), { code: 'ENOENT' });
+    // Valued flags still need their value, and stray arguments are refused.
     const noValue = await cli('task', 'apply', '--id', '--by', 'operator').catch((error) => error);
     assert.match(noValue.stderr, /--id requires a value/u);
+    const stray = await cli('task', 'apply', 'stray', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.match(stray.stderr, /unexpected argument: stray/u);
   } finally {
     await cleanup(root);
   }

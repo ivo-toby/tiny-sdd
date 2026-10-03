@@ -244,9 +244,8 @@ candidate. It follows the revision lineage back to the first run and refuses wit
 that run started from. A file that already equals the candidate (for example
 applied by hand) is recorded as `already-applied`. It refuses a run of another
 task, a benchmark replay, a run with scope violations and a run whose outcome is
-not `completed`; `--allow-incomplete` permits the last, for a complete candidate
-from a timed-out run, and records the outcome. The run is recorded under `applied`
-in `status --json`, and an accepting review adds `appliedFromRun`, with
+`completed`, such as a timed-out one, with no override. The run is recorded under
+`applied` in `status --json`, and an accepting review adds `appliedFromRun`, with
 `identical: false` when you edited the files after applying. Applying is not
 verification or acceptance.
 

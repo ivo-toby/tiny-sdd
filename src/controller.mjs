@@ -201,7 +201,7 @@ function validateApplied(id, applied) {
   for (const field of ['runId', 'rootRunId']) {
     if (typeof applied[field] !== 'string' || !RUN_ID_PATTERN.test(applied[field])) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a worker run id`);
   }
-  for (const field of ['outcome', 'by', 'appliedAt']) {
+  for (const field of ['by', 'appliedAt']) {
     if (typeof applied[field] !== 'string' || applied[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a nonempty string`);
   }
   if (!Array.isArray(applied.files)) throw tinyError('STATE_MALFORMED', `${label} files must be an array`);
@@ -625,7 +625,7 @@ async function loadRunResult(root, runId) {
 // revision. Returns the runs earliest first: the root's workspace-before is the
 // project state the lineage started from, the last run's workspace-after is the
 // candidate.
-async function loadApplyLineage(root, task, runId, allowIncomplete) {
+async function loadApplyLineage(root, task, runId) {
   const allowed = new Set(task.allow);
   const newestFirst = [];
   const seen = new Set();
@@ -637,11 +637,8 @@ async function loadApplyLineage(root, task, runId, allowIncomplete) {
     const result = await loadRunResult(root, currentId);
     if (result.taskId !== task.id) throw tinyError('RUN_TASK_MISMATCH', `run ${currentId} belongs to task ${result.taskId ?? '(none)'}, not ${task.id}`, { runId: currentId, taskId: result.taskId });
     if (result.baselineRun !== undefined) throw tinyError('RUN_IS_REPLAY', `run ${currentId} is a benchmark replay and is never applied`, { runId: currentId });
-    if (newestFirst.length === 0) {
-      if (typeof result.outcome !== 'string') throw tinyError('RUN_MALFORMED', `run ${currentId} result has no outcome`, { runId: currentId });
-      if (result.outcome !== 'completed' && !allowIncomplete) {
-        throw tinyError('RUN_INCOMPLETE', `run ${currentId} ended with outcome ${result.outcome}; pass --allow-incomplete to apply it anyway`, { runId: currentId, outcome: result.outcome });
-      }
+    if (newestFirst.length === 0 && result.outcome !== 'completed') {
+      throw tinyError('RUN_INCOMPLETE', `run ${currentId} ended with outcome ${result.outcome}; only a completed run is applied`, { runId: currentId, outcome: result.outcome });
     }
     if (!Array.isArray(result.scopeViolations) || !Array.isArray(result.changedPaths)) throw tinyError('RUN_MALFORMED', `run ${currentId} result lacks changedPaths or scopeViolations`, { runId: currentId });
     if (result.scopeViolations.length > 0) {
@@ -692,7 +689,6 @@ export async function applyTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const by = requireText(options.by, 'apply by');
   const runId = requireText(options.run, 'run id');
-  const allowIncomplete = options.allowIncomplete === true;
   const root = await canonicalProjectRoot(projectRoot);
   return mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
@@ -701,7 +697,7 @@ export async function applyTask(projectRoot, options = {}) {
     const status = await inspectTask(root, state, task);
     if (status.status !== 'ready') throw tinyError('TASK_NOT_READY', `task ${id} is ${status.status}`, { status: status.status, blockedBy: status.blockedBy });
     if (!RUN_ID_PATTERN.test(runId)) throw tinyError('INVALID_RUN_ID', 'run id must be a TinySDD worker run id such as worker-2026-01-01T00-00-00-000Z-0a1b2c3d');
-    const lineage = await loadApplyLineage(root, task, runId, allowIncomplete);
+    const lineage = await loadApplyLineage(root, task, runId);
     const rootRun = lineage[0];
     const finalRun = lineage[lineage.length - 1];
     await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
@@ -735,7 +731,6 @@ export async function applyTask(projectRoot, options = {}) {
     task.applied = {
       runId: finalRun.id,
       rootRunId: rootRun.id,
-      outcome: finalRun.result.outcome,
       appliedAt: nowIso(),
       by,
       files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
