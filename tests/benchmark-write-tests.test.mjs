@@ -295,6 +295,77 @@ test('write-tests verifier rejects an evaluator import failure as a mutant kill'
   }
 });
 
+test('write-tests verifier rejects evaluator syntax failures but keeps API SyntaxErrors substantive', async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-write-tests-syntax-failure-'));
+  const candidate = join(root, 'candidate');
+  await mkdir(join(candidate, 'src'), { recursive: true });
+  await mkdir(join(candidate, 'tests'), { recursive: true });
+  const expectedWitness = 'C3 enforces the inclusive timeout bounds';
+  const referenceTest = await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8');
+  const c3Start = referenceTest.indexOf(`test('${expectedWitness}'`);
+  const c4Start = referenceTest.indexOf("test('C4", c3Start);
+  assert.ok(c3Start >= 0 && c4Start > c3Start);
+  const syntaxFailureTest = `test('${expectedWitness}', () => {
+  try {
+    normalizeOptions({ timeoutMs: 1 });
+  } catch {
+    new Function('const invalid = ;');
+  }
+});
+
+`;
+  await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}${syntaxFailureTest}${referenceTest.slice(c4Start)}`);
+  const endpointMutant = resolve(SUITE_ROOT, 'candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs');
+  const apiSyntaxErrorSource = (await readFile(resolve(SUITE_ROOT, 'fixtures/amber-input-validation/src/options.mjs'), 'utf8'))
+    .replace(
+      "  const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;",
+      "  if (input.timeoutMs === 1) throw new SyntaxError('contract API failure');\n\n  const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;",
+    );
+  await cp(
+    resolve(SUITE_ROOT, 'fixtures/amber-input-validation/src/options.mjs'),
+    join(candidate, 'src/options.mjs'),
+  );
+  try {
+    const reference = await execFileAsync(process.execPath, [VERIFIER, 'reference', 'amber-input-validation'], {
+      cwd: candidate,
+      env: childEnvironment(),
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 10000,
+    });
+    assert.match(reference.stdout, /# tests 4\b/u);
+    assert.match(reference.stdout, /# pass 4\b/u);
+    await assert.rejects(
+      execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', endpointMutant, expectedWitness], {
+        cwd: candidate,
+        env: childEnvironment(),
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 10000,
+      }),
+      (error) => {
+        const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+        assert.notEqual(error.code, 0);
+        assert.match(output, /name: 'SyntaxError'/u);
+        assert.match(output, /new Function \(<anonymous>\)/u);
+        return true;
+      },
+    );
+
+    await writeFile(join(candidate, 'src/options.mjs'), apiSyntaxErrorSource);
+    await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}test('${expectedWitness}', () => {\n  normalizeOptions({ timeoutMs: 1 });\n});\n\n${referenceTest.slice(c4Start)}`);
+    const apiSyntaxError = await execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', 'src/options.mjs', expectedWitness], {
+      cwd: candidate,
+      env: childEnvironment(),
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 10000,
+    });
+    assert.match(apiSyntaxError.stdout, /name: 'SyntaxError'/u);
+    assert.match(apiSyntaxError.stdout, /# fail 1\b/u);
+    assert.match(apiSyntaxError.stdout, /candidate-sha256:[a-f0-9]{64}/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('write-tests verifier accepts extra tests and multiple mapped failures', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-write-tests-compound-'));
   const candidate = join(root, 'candidate');

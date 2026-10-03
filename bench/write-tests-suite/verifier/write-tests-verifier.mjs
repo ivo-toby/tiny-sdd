@@ -82,7 +82,8 @@ function witnessBlock(output, prefix, name) {
 function hasEvaluatorFailure(block) {
   return /\b(?:ERR_MODULE_[A-Z_]+|MODULE_NOT_FOUND|ERR_REQUIRE_ESM|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_DIR_IMPORT|ERR_INVALID_MODULE_SPECIFIER)\b/u.test(block)
     || /Cannot find (?:module|package)/u.test(block)
-    || /node:internal\/modules\/(?:esm|cjs)\//u.test(block);
+    || /node:internal\/modules\/(?:esm|cjs)\//u.test(block)
+    || (/name: 'SyntaxError'/u.test(block) && /\bnew Function \(<anonymous>\)/u.test(block));
 }
 
 function executionFailure(error) {
