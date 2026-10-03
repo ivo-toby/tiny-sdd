@@ -362,19 +362,32 @@ nothing calls it yet. It follows the sketch above, with these differences:
 
 - bwrap also gets `--clearenv` and `--cap-drop ALL`: run as root, bwrap keeps its
   capabilities otherwise. bwrap adds `PWD=/work` for `--chdir`, so the sandbox
-  environment is `PATH`, `HOME`, `CI`, `LANG` and `PWD`.
-- The scratch copy is a host directory, size-checked while copying (1 GiB), not a
-  tmpfs. What a check writes into `/work` afterwards is capped per file
-  (`RLIMIT_FSIZE`, 256 MiB) but not in total; the timeout is the only other bound.
-  `/tmp` and `/dev/shm` are 256 MiB tmpfs mounts and `/dev` is read-only, because
-  `RLIMIT_AS` does not cover memory-backed files.
-- `RLIMIT_NPROC` does not bind root (checked: 400 children ran under a limit of
-  274). Run as root, fork-bomb protection is the timeout plus the PID-namespace
-  teardown (checked: a fork storm was gone 0.5 s after a 2 s timeout). For other
-  users it counts every task of the uid on the host, threads included, not only
-  the sandbox's, so `maxProcesses` has to sit above what the uid already runs. If
-  it does not, bwrap fails to start and the runner throws
-  `CHECK_RUNNER_UNAVAILABLE`.
+  environment is `PATH`, `HOME`, `CI`, `LANG` and `PWD`. Where bwrap can
+  (0.8 or later, probed once with a real run), it also gets
+  `--unshare-user --disable-userns`, so the check cannot create nested user
+  namespaces; an older bwrap runs without it, and the result says which
+  (`sandbox.nestedUserNamespaces`).
+- `/work` is a tmpfs of `scratchBytes` (default 512 MiB), not a host bind. The
+  host scratch copy is bound read-only at `/input`, and a fixed
+  `/bin/sh -c 'cp -a /input/. /work/ ...; exec "$@"'` copies it in before the
+  check starts, so what the check writes is bounded while it runs, not only while
+  the candidate is copied. The candidate must fit: files are counted in 4 KiB
+  tmpfs pages, and a dependency mount target must not already exist in it (the
+  mount is read-only, so the copy could not merge into it). `/tmp` and
+  `/dev/shm` are 256 MiB tmpfs mounts and `/dev` is read-only. All of these are
+  RAM-backed and `RLIMIT_AS` does not cover them, so a check can hold up to
+  `scratchBytes + 2 * tmpfsBytes` (1 GiB by default) of memory in files. A failed
+  copy (`tinysdd-setup: ...`, exit 125) is `CHECK_RUNNER_UNAVAILABLE`.
+- `RLIMIT_NPROC` counts every task of the uid on the host, threads included, not
+  only the sandbox's, so a fixed limit would stop a busy account from starting
+  the sandbox at all. The runner counts the uid's current tasks and passes
+  `--nproc=<baseline + maxProcesses>`; `maxProcesses` (default 512) is what the
+  check may add, and the baseline is in `sandbox.processBaseline`. The limit
+  does not bind root (checked: 400 children ran under a limit of 274), and
+  `sandbox.processLimitEnforced` is `false` there. Run as root, fork-bomb
+  protection is the timeout plus the PID-namespace teardown (checked: a fork
+  storm was gone 0.5 s after a 2 s timeout). For other users a fork storm can
+  still starve the uid's other forks until the timeout.
 - The stored output is the last 1 MiB, not the first.
 - No cgroup scope is used.
 
