@@ -540,6 +540,7 @@ describe("Pi worker capture and scope", () => {
       const metadata = JSON.parse(await readFile(result.artifactPaths.context, "utf8"));
       assert.equal(metadata.compiledContext.manifest.path, ".tinysdd/tasks/task.context.json");
       assert.equal(metadata.compiledContext.resources[0].path, "src/allowed.txt");
+      assert.equal("matchedDigest" in metadata.compiledContext, false);
     } finally {
       await rm(project, { recursive: true, force: true });
     }
@@ -561,7 +562,7 @@ describe("Pi worker capture and scope", () => {
       const { context, compiled } = await approvedContextPacket(project);
       assert.match(compiled.legacySha256, /^[a-f0-9]{64}$/u);
       assert.notEqual(compiled.legacySha256, compiled.sha256);
-      for (const compiledSha256 of [compiled.sha256, compiled.legacySha256]) {
+      for (const [matchedDigest, compiledSha256] of [["sha256", compiled.sha256], ["legacySha256", compiled.legacySha256]]) {
         const result = await runWorker({
           projectRoot: project,
           packet: { ...packet(), context: { ...context, compiledSha256 } },
@@ -570,6 +571,9 @@ describe("Pi worker capture and scope", () => {
         });
         assert.equal(result.outcome, "completed");
         assert.equal(await readFile(result.artifactPaths.compiledContext, "utf8"), compiled.rendered);
+        const metadata = JSON.parse(await readFile(result.artifactPaths.context, "utf8"));
+        assert.equal(metadata.compiledContext.matchedDigest, matchedDigest);
+        assert.equal(metadata.compiledContext.sha256, compiled.sha256);
       }
     } finally {
       await rm(project, { recursive: true, force: true });
