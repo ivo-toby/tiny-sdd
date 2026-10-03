@@ -139,6 +139,15 @@ function normalizeAttribution(value, label, code = 'USAGE_INVALID') {
   return value;
 }
 
+function aliasedAttribution(input, primary, alias, label, code = 'USAGE_INVALID') {
+  const values = [];
+  for (const key of [primary, alias]) {
+    if (input[key] !== undefined) values.push(normalizeAttribution(input[key], label, code));
+  }
+  if (values.length === 2 && values[0] !== values[1]) throw tinyError(code, `${label} aliases must agree`);
+  return values[0];
+}
+
 function normalizeModel(value, { imported = false, code = 'USAGE_INVALID' } = {}) {
   if (value === undefined || value === null) {
     if (imported) return null;
@@ -169,6 +178,15 @@ function tokenValue(input, primary, alias, label, options) {
   return normalizeToken(input[primary] ?? input[alias], label, options);
 }
 
+function aliasedToken(input, primary, alias, label, options) {
+  const values = [];
+  for (const key of [primary, alias]) {
+    if (input[key] !== undefined) values.push(normalizeToken(input[key], label, options));
+  }
+  if (values.length === 2 && values[0] !== values[1]) throw tinyError(options.code ?? 'USAGE_INVALID', `${label} aliases must agree`);
+  return values.length === 0 ? null : values[0];
+}
+
 function optionalDigest(value, label, code = 'USAGE_INVALID') {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) throw tinyError(code, `${label} must be a lowercase SHA-256 digest`);
@@ -183,16 +201,30 @@ function provenanceForRecord(value, { imported = false, source = undefined, expo
     if (error?.code === code) throw error;
     throw tinyError(code, error instanceof Error ? error.message : 'record provenance has unknown fields');
   }
-  const normalizedSource = assertText(source ?? supplied.source ?? (imported ? undefined : 'tinysdd'), 'provenance.source', { code });
-  const exportValue = exportId ?? supplied.exportId;
-  const externalValue = externalRecordId ?? supplied.externalRecordId;
+  const suppliedSource = supplied.source === undefined
+    ? undefined
+    : assertText(supplied.source, 'provenance.source', { code });
+  const suppliedExportId = supplied.exportId === undefined
+    ? undefined
+    : normalizeId(supplied.exportId, 'provenance.exportId', code);
+  const suppliedExternalId = supplied.externalRecordId === undefined
+    ? undefined
+    : normalizeId(supplied.externalRecordId, 'provenance.externalRecordId', code);
+  const suppliedSourceDigest = optionalDigest(supplied.sourceDigest, 'provenance.sourceDigest', code);
+  if (source !== undefined && suppliedSource !== undefined && source !== suppliedSource) throw tinyError(code, 'provenance.source conflicts with the import envelope');
+  if (exportId !== undefined && suppliedExportId !== undefined && exportId !== suppliedExportId) throw tinyError(code, 'provenance.exportId conflicts with the import envelope');
+  if (externalRecordId !== undefined && suppliedExternalId !== undefined && externalRecordId !== suppliedExternalId) throw tinyError(code, 'provenance.externalRecordId conflicts with the record');
+  if (sourceDigest !== undefined && suppliedSourceDigest !== undefined && sourceDigest !== suppliedSourceDigest) throw tinyError(code, 'provenance.sourceDigest conflicts with the import envelope');
+  const normalizedSource = assertText(source ?? suppliedSource ?? (imported ? undefined : 'tinysdd'), 'provenance.source', { code });
+  const exportValue = exportId ?? suppliedExportId;
+  const externalValue = externalRecordId ?? suppliedExternalId;
   const normalizedExportId = exportValue === undefined
     ? undefined
     : normalizeId(exportValue, 'provenance.exportId', code);
   const normalizedExternalId = externalValue === undefined
     ? undefined
     : normalizeId(externalValue, 'provenance.externalRecordId', code);
-  const normalizedSourceDigest = optionalDigest(sourceDigest ?? supplied.sourceDigest, 'provenance.sourceDigest', code);
+  const normalizedSourceDigest = sourceDigest ?? suppliedSourceDigest;
   const result = { source: normalizedSource };
   if (normalizedExportId !== undefined) result.exportId = normalizedExportId;
   if (normalizedExternalId !== undefined) result.externalRecordId = normalizedExternalId;
@@ -243,20 +275,25 @@ function normalizeRecord(input, {
   if (!USAGE_PHASES.includes(phase)) throw tinyError(errorCode, `phase must be one of ${USAGE_PHASES.join(', ')}`);
   const model = normalizeModel(raw.model, { imported: allowUnknownModel, code: errorCode });
   const taskId = normalizeAttribution(raw.taskId, 'taskId', errorCode);
-  const feature = normalizeAttribution(raw.feature ?? raw.featureId, 'feature', errorCode);
+  const feature = aliasedAttribution(raw, 'feature', 'featureId', 'feature', errorCode);
   if (taskId === undefined && feature === undefined) throw tinyError(errorCode, 'taskId or feature attribution is required');
 
   const timestamp = normalizeTimestamp(raw.timestamp ?? new Date().toISOString(), 'timestamp', errorCode);
   const inputTokens = tokenValue(raw, 'input', 'inputTokens', 'input', { required: !allowUnknownTokens, code: errorCode });
   const outputTokens = tokenValue(raw, 'output', 'outputTokens', 'output', { required: !allowUnknownTokens, code: errorCode });
   const reasoning = tokenValue(raw, 'reasoning', 'reasoningTokens', 'reasoning', { code: errorCode });
-  const cacheRead = normalizeToken(raw.cacheRead ?? raw.cacheReadTokens, 'cacheRead', { code: errorCode });
-  const cacheWrite = normalizeToken(raw.cacheWrite ?? raw.cacheWriteTokens, 'cacheWrite', { code: errorCode });
+  const cacheRead = aliasedToken(raw, 'cacheRead', 'cacheReadTokens', 'cacheRead', { code: errorCode });
+  const cacheWrite = aliasedToken(raw, 'cacheWrite', 'cacheWriteTokens', 'cacheWrite', { code: errorCode });
   const totalTokens = tokenValue(raw, 'totalTokens', 'total', 'totalTokens', { code: errorCode });
 
-  const normalizedSource = source ?? raw.provenance?.source;
-  const normalizedExportId = exportId ?? raw.provenance?.exportId;
-  const normalizedExternalId = externalRecordId ?? raw.externalRecordId ?? raw.provenance?.externalRecordId;
+  const rawExternalId = raw.externalRecordId;
+  const provenanceExternalId = raw.provenance?.externalRecordId;
+  if (rawExternalId !== undefined && provenanceExternalId !== undefined && rawExternalId !== provenanceExternalId) {
+    throw tinyError(errorCode, 'externalRecordId conflicts with record provenance');
+  }
+  const normalizedSource = source;
+  const normalizedExportId = exportId;
+  const normalizedExternalId = externalRecordId ?? rawExternalId ?? provenanceExternalId;
   const provenance = provenanceForRecord(raw.provenance, {
     imported,
     source: normalizedSource,
@@ -301,17 +338,35 @@ export function normalizeUsageRecord(value, options = {}) {
 
 export function validateUsageRecord(value, { imported = false } = {}) {
   const raw = assertObject(value, 'usage record', imported ? 'USAGE_IMPORT_INVALID' : 'USAGE_INVALID');
+  const errorCode = imported ? 'USAGE_IMPORT_INVALID' : 'USAGE_LEDGER_INVALID';
   try {
-    assertExactKeys(raw, RECORD_KEYS, imported ? 'USAGE_IMPORT_INVALID' : 'USAGE_INVALID', 'usage record');
+    assertExactKeys(raw, RECORD_KEYS, errorCode, 'usage record');
   } catch (error) {
     if (error?.code) throw error;
-    throw tinyError(imported ? 'USAGE_IMPORT_INVALID' : 'USAGE_INVALID', 'usage record has unknown fields');
+    throw tinyError(errorCode, 'usage record has unknown fields');
   }
+  for (const field of ['schemaVersion', 'type', 'id', 'timestamp', 'phase', 'model', 'input', 'output', 'provenance']) {
+    if (!Object.hasOwn(raw, field)) throw tinyError(errorCode, `usage record requires ${field}`);
+  }
+  if (raw.id === undefined || raw.timestamp === undefined || raw.timestamp === null || raw.model === undefined) {
+    throw tinyError(errorCode, 'usage record contains missing mandatory metadata');
+  }
+  if (raw.schemaVersion !== USAGE_SCHEMA_VERSION) throw tinyError(errorCode, `usage record schemaVersion must be ${USAGE_SCHEMA_VERSION}`);
+  if (raw.type !== USAGE_RECORD_TYPE) throw tinyError(errorCode, 'usage record type must be usage');
+  if (raw.provenance === null || typeof raw.provenance !== 'object' || Array.isArray(raw.provenance)) {
+    throw tinyError(errorCode, 'usage record provenance must be an object');
+  }
+  if (!Object.hasOwn(raw.provenance, 'source') || raw.provenance.source === undefined || raw.provenance.source === null) {
+    throw tinyError(errorCode, 'usage record provenance.source is required');
+  }
+  const hasExportId = Object.hasOwn(raw.provenance, 'exportId');
+  const hasExternalRecordId = Object.hasOwn(raw.provenance, 'externalRecordId');
+  if (hasExportId !== hasExternalRecordId) throw tinyError(errorCode, 'usage record exportId and externalRecordId must appear together');
   return normalizeRecord(raw, {
     imported: false,
     allowUnknownModel: true,
     allowUnknownTokens: true,
-    errorCode: imported ? 'USAGE_IMPORT_INVALID' : 'USAGE_LEDGER_INVALID',
+    errorCode,
   });
 }
 

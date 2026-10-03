@@ -9,6 +9,7 @@ import {
   importUsageRecords,
   normalizeUsageImport,
   readUsageRecords,
+  validateUsageRecord,
   usageRecord,
 } from '../src/usage.mjs';
 
@@ -68,6 +69,36 @@ test('usageRecord validates phase, attribution, and nonnegative safe integer tok
   assert.throws(() => usageRecord({ phase: 'review', model: 'm', taskId: 'task-one', input: 1, output: 1, extra: true }), { code: 'USAGE_INVALID' });
 });
 
+test('persisted validation requires canonical metadata and paired external provenance', () => {
+  const record = localRecord();
+  for (const field of ['schemaVersion', 'type', 'id', 'timestamp', 'model', 'input', 'output', 'provenance']) {
+    const missing = { ...record };
+    delete missing[field];
+    assert.throws(() => validateUsageRecord(missing), { code: 'USAGE_LEDGER_INVALID' });
+  }
+  const missingSource = structuredClone(record);
+  delete missingSource.provenance.source;
+  assert.throws(() => validateUsageRecord(missingSource), { code: 'USAGE_LEDGER_INVALID' });
+  const unpaired = structuredClone(record);
+  unpaired.provenance.externalRecordId = 'entry-1';
+  assert.throws(() => validateUsageRecord(unpaired), { code: 'USAGE_LEDGER_INVALID' });
+  const incomplete = structuredClone(record);
+  incomplete.id = undefined;
+  incomplete.timestamp = undefined;
+  assert.throws(() => validateUsageRecord(incomplete), { code: 'USAGE_LEDGER_INVALID' });
+});
+
+test('every attribution and token alias is validated and aliases must agree', () => {
+  assert.throws(() => usageRecord({ ...localRecord(), feature: 'feature-one', featureId: 'Bad Id' }), { code: 'USAGE_INVALID' });
+  assert.throws(() => usageRecord({ ...localRecord(), feature: 'feature-one', featureId: 'feature-two' }), { code: 'USAGE_INVALID' });
+  assert.throws(() => usageRecord({ ...localRecord(), cacheRead: 1, cacheReadTokens: -1 }), { code: 'USAGE_INVALID' });
+  assert.throws(() => usageRecord({ ...localRecord(), cacheWrite: 1, cacheWriteTokens: 2 }), { code: 'USAGE_INVALID' });
+  const matching = usageRecord({ ...localRecord(), feature: 'feature-one', featureId: 'feature-one', cacheRead: 2, cacheReadTokens: 2, cacheWrite: 3, cacheWriteTokens: 3 });
+  assert.equal(matching.feature, 'feature-one');
+  assert.equal(matching.cacheRead, 2);
+  assert.equal(matching.cacheWrite, 3);
+});
+
 test('append and read preserve known zero and provenance under a bounded ledger', async () => {
   await withProject(async (root) => {
     const first = await appendUsageRecord(root, localRecord({ input: 0, output: 4 }));
@@ -103,6 +134,20 @@ test('normalized imports retain unknown usage and stable external provenance', a
     assert.equal(imported.length, 1);
     assert.deepEqual(await readUsageRecords(root), imported);
   });
+});
+
+test('imports validate supplied provenance before applying envelope provenance', () => {
+  const base = { externalRecordId: 'entry-1', phase: 'review', model: 'm', feature: 'f', input: 1, output: 2 };
+  const invalidSource = { ...base, provenance: { source: { invalid: true }, exportId: 'session-one', externalRecordId: 'entry-1' } };
+  assert.throws(() => normalizeUsageImport(importEnvelope([invalidSource])), { code: 'USAGE_IMPORT_INVALID' });
+  const invalidExport = { ...base, provenance: { source: 'pi-session', exportId: 'bad id', externalRecordId: 'entry-1' } };
+  assert.throws(() => normalizeUsageImport(importEnvelope([invalidExport])), { code: 'USAGE_IMPORT_INVALID' });
+  const conflictingExternal = { ...base, provenance: { source: 'pi-session', exportId: 'session-one', externalRecordId: 'entry-2' } };
+  assert.throws(() => normalizeUsageImport(importEnvelope([conflictingExternal])), { code: 'USAGE_IMPORT_INVALID' });
+  const conflictingSource = { ...base, provenance: { source: 'other-source', exportId: 'session-one', externalRecordId: 'entry-1' } };
+  assert.throws(() => normalizeUsageImport(importEnvelope([conflictingSource])), { code: 'USAGE_IMPORT_INVALID' });
+  const conflictingDigest = { ...base, provenance: { source: 'pi-session', exportId: 'session-one', externalRecordId: 'entry-1', sourceDigest: 'a'.repeat(64) } };
+  assert.throws(() => normalizeUsageImport({ ...importEnvelope([conflictingDigest]), sourceDigest: 'b'.repeat(64) }), { code: 'USAGE_IMPORT_INVALID' });
 });
 
 test('imports validate the complete envelope before appending and reject duplicate external ids', async () => {
@@ -154,4 +199,3 @@ test('refuses symlinked internal parents and ledger files', async () => {
     await assert.rejects(readUsageRecords(root), { code: 'SYMLINK_PATH' });
   });
 });
-
