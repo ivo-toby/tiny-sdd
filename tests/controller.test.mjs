@@ -1775,3 +1775,63 @@ test('applying leaves an existing approval fresh', async () => {
     await cleanup(root);
   }
 });
+
+test('CLI task apply prints one line, reports already-applied files and returns the record as JSON', async () => {
+  const files = { 'src/a.ts': 'a0\n' };
+  const root = await applyProject(files);
+  try {
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    const cli = (...args) => exec(process.execPath, [bin, '--project', root, ...args]);
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' } });
+    const human = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(human.stdout, `one: applied 2 file(s) from ${RUN_ONE}\n`);
+    assert.equal(human.stderr, '');
+
+    const json = await cli('--json', 'task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(json.stderr, '');
+    const lines = json.stdout.trim().split('\n');
+    assert.equal(lines.length, 1);
+    const parsed = JSON.parse(lines[0]);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.data.task.status, 'ready');
+    assert.deepEqual(parsed.data.task.applied, { runId: RUN_ONE, appliedAt: parsed.data.applied.appliedAt, files: 2 });
+    assert.deepEqual(parsed.data.applied.files.map((file) => file.status), ['already-applied', 'already-applied']);
+    const again = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(again.stdout, `one: applied 2 file(s) from ${RUN_ONE} (2 already applied)\n`);
+    assert.match((await cli('--help')).stdout, /task apply --id ID --run RUN_ID --by LABEL \[--allow-incomplete\]/u);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task apply parses --allow-incomplete as a flag without a value and reports refusals', async () => {
+  const root = await applyProject({});
+  try {
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    const cli = (...args) => exec(process.execPath, [bin, '--project', root, ...args]);
+    await fakeRun(root, RUN_ONE, { outcome: 'timeout', after: { 'src/a.ts': 'candidate\n' } });
+    const refused = await cli('--json', 'task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.equal(refused.code, 1);
+    assert.equal(JSON.parse(refused.stdout).error.code, 'RUN_INCOMPLETE');
+    const humanRefused = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.match(humanRefused.stderr, /^ERROR \[RUN_INCOMPLETE\] /u);
+    const falsy = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', '--allow-incomplete=false').catch((error) => error);
+    assert.equal(falsy.code, 1);
+    const junk = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', '--allow-incomplete=maybe').catch((error) => error);
+    assert.match(junk.stderr, /--allow-incomplete takes no value/u);
+    // The flag must not swallow the next token, so a stray argument is still refused.
+    const stray = await cli('task', 'apply', '--allow-incomplete', 'stray', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.match(stray.stderr, /unexpected argument: stray/u);
+    assert.equal((await rawState(root)).tasks.one.applied, undefined);
+    const flagFirst = await cli('task', 'apply', '--allow-incomplete', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(flagFirst.stdout, `one: applied 1 file(s) from ${RUN_ONE}\n`);
+    assert.equal((await rawState(root)).tasks.one.applied.outcome, 'timeout');
+    // Other commands still reject the flag, and valued flags still need their value.
+    const elsewhere = await cli('task', 'review', '--allow-incomplete', '--id', 'one').catch((error) => error);
+    assert.match(elsewhere.stderr, /unknown option: --allow-incomplete/u);
+    const noValue = await cli('task', 'apply', '--id', '--by', 'operator').catch((error) => error);
+    assert.match(noValue.stderr, /--id requires a value/u);
+  } finally {
+    await cleanup(root);
+  }
+});
