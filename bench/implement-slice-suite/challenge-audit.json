@@ -98,7 +98,7 @@
       "category": "bugfix",
       "reference": {
         "path": "candidates/cedar-receipt-fix/reference",
-        "sha256": "ac0133be0ba1dc1af8986065d132bf751b566b7d034fe0bc97e7dea292cab723"
+        "sha256": "a81311b1a5e2c67803d9680708baec1034d4851969dd016fc0832fe13db6e285"
       },
       "wrong": [
         {
