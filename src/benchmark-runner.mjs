@@ -778,13 +778,13 @@ async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, 
       const afterSnapshot = JSON.parse(await readFile(workerResult.artifactPaths.afterSnapshot, 'utf8'));
       if (Object.values(afterSnapshot).some((entry) => entry?.kind === 'symlink')) invalid('worker candidate contains a symlink; refusing verifier overlay');
       await assertRegularTree(workerResult.artifactPaths.candidate, 'worker candidate');
-      const runtimeMetadata = JSON.parse(await readFile(workerResult.artifactPaths.runtime, 'utf8'));
-      assertWorkerRunChecksIdentity(config, runtimeMetadata);
       const workerResultRef = await copyEvidence(outputRoot, join(workerResult.artifactPaths.directory, 'result.json'), `${caseRelativeDirectory}/worker-result.json`);
       artifacts.result = workerResultRef;
       artifacts.candidate = await copyEvidence(outputRoot, workerResult.artifactPaths.afterSnapshot, `${caseRelativeDirectory}/candidate-snapshot.json`);
       if (workerResult.artifactPaths.runtime) artifacts.runtime = await copyEvidence(outputRoot, workerResult.artifactPaths.runtime, `${caseRelativeDirectory}/runtime.json`);
       if (workerResult.artifactPaths.patch) artifacts.patch = await copyEvidence(outputRoot, workerResult.artifactPaths.patch, `${caseRelativeDirectory}/patch.diff`);
+      const runtimeMetadata = JSON.parse(await readFile(workerResult.artifactPaths.runtime, 'utf8'));
+      assertWorkerRunChecksIdentity(config, runtimeMetadata);
       const budgetState = { used: 0, limit: checkBudget };
       if (visibleDefinition) {
         const evaluator = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-evaluator-'));
