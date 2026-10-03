@@ -89,6 +89,9 @@ test('reports frontier phases and complete worker usage with zero distinct from 
     });
     assert.equal(report.frontier.byPhase.review.input, 0);
     assert.equal(report.frontier.byPhase.review.output, 0);
+    assert.equal(report.frontier.totals.input, USAGE_UNKNOWN);
+    assert.equal(report.frontier.totals.knownSubtotals.input, 0);
+    assert.ok(report.frontier.totals.missing.some((reason) => /plan:/u.test(reason)));
     assert.equal(report.local.byTask['task-a'].input, 10);
     assert.equal(report.local.byTask['task-a'].reasoning, 1);
     assert.equal(report.local.byTask['task-a'].cacheRead, 2);
@@ -126,6 +129,29 @@ test('uses message_end over turn_end, keeps partial totals unknown, and preserve
     assert.equal(task.knownSubtotals.output, 12);
     assert.ok(task.missing.some((reason) => /response coverage/u.test(reason)));
     assert.equal(report.local.runIds.length, 1);
+  });
+});
+
+test('uses a complete message_end response when turn_end disagrees', async () => {
+  await withProject(async (root) => {
+    await writeRun(
+      root,
+      'worker-authoritative',
+      workerResult('worker-authoritative', 'task-a', {
+        observed: {
+          processTermination: { elapsedMs: 40 },
+          cumulativeUsage: { assistantMessages: 1, input: 3, output: 1, reasoning: 0, totalTokens: 4 },
+        },
+      }),
+      `${eventMessage('message-end', { input: 3, output: 1, reasoning: 0, totalTokens: 4 })}${turnMessage('turn-end', { input: 99, output: 99, reasoning: 0, totalTokens: 198 })}`,
+    );
+    const report = await buildUsageReport({
+      projectRoot: root,
+      feature: 'talon-broker',
+      tasks: [{ id: 'task-a', feature: 'talon-broker', runIds: ['worker-authoritative'] }],
+    });
+    assert.equal(report.local.byTask['task-a'].input, 3);
+    assert.equal(report.local.byTask['task-a'].output, 1);
   });
 });
 
@@ -172,12 +198,14 @@ test('retains missing results and missing telemetry as explicit provenance', asy
     assert.ok(report.provenance.missing.some((entry) => entry.runId === 'worker-partial' && /stdout/u.test(entry.reason)));
     assert.ok(report.provenance.missing.some((entry) => entry.runId === 'worker-missing' && /result/u.test(entry.reason)));
     assert.deepEqual(report.local.runIds, ['worker-missing', 'worker-partial']);
+    assert.equal(report.local.totals.input, USAGE_UNKNOWN);
+    assert.equal(report.local.totals.knownSubtotals.input, 9);
   });
 });
 
 test('discovers attributable runs, retains in-flight attempts, and excludes unrelated directories', async () => {
   await withProject(async (root) => {
-    await writeRun(root, 'worker-discovered', workerResult('worker-discovered', 'task-a'), eventMessage('discovered-message', { input: 4, output: 2, reasoning: 1, totalTokens: 6 }));
+    await writeRun(root, 'worker-discovered', workerResult('worker-discovered', 'task-a', { baselineRun: { id: 'worker-baseline' } }), eventMessage('discovered-message', { input: 4, output: 2, reasoning: 1, totalTokens: 6 }));
     await writeFile(
       join(root, '.tinysdd', 'runs', 'worker-discovered', 'packet.json'),
       JSON.stringify({ taskId: 'task-a' }),
@@ -204,6 +232,7 @@ test('discovers attributable runs, retains in-flight attempts, and excludes unre
     assert.ok(report.provenance.missing.some((entry) => entry.runId === 'worker-unattributed'));
     assert.equal(report.provenance.runReferences.some((ref) => ref.runId === 'worker-outside'), false);
     assert.equal(report.provenance.runReferences.some((ref) => ref.runId === '.bench'), false);
+    assert.equal(report.provenance.runReferences.find((ref) => ref.runId === 'worker-discovered').baselineRunId, 'worker-baseline');
   });
 });
 
@@ -221,6 +250,64 @@ test('does not infer observed zero from an all-zero cumulative object without co
     assert.equal(report.local.byTask['task-a'].output, USAGE_UNKNOWN);
     assert.equal(report.local.byTask['task-a'].knownSubtotals.input, null);
   });
+
+  await withProject(async (root) => {
+    await writeRun(root, 'worker-empty', workerResult('worker-empty', 'task-a', {
+      observed: { processTermination: { elapsedMs: 2 }, cumulativeUsage: { assistantMessages: 0, input: 9, output: 0, reasoning: 0, totalTokens: 9 } },
+    }), '');
+    const report = await buildUsageReport({
+      projectRoot: root,
+      feature: 'talon-broker',
+      tasks: [{ id: 'task-a', feature: 'talon-broker', runIds: ['worker-empty'] }],
+    });
+    assert.equal(report.local.byTask['task-a'].input, USAGE_UNKNOWN);
+    assert.equal(report.local.byTask['task-a'].knownSubtotals.input, 9);
+    assert.ok(report.local.byTask['task-a'].missing.some((reason) => /response coverage/u.test(reason)));
+  });
+});
+
+test('propagates component coverage gaps into local and ledger provenance', async () => {
+  await withProject(async (root) => {
+    await writeRun(
+      root,
+      'worker-component-gap',
+      workerResult('worker-component-gap', 'task-a', {
+        observed: {
+          processTermination: { elapsedMs: 4 },
+          cumulativeUsage: { assistantMessages: 1, input: 3, output: 2, reasoning: 0, totalTokens: 5 },
+        },
+      }),
+      eventMessage('component-gap', { input: 3, reasoning: 0, totalTokens: 3 }),
+    );
+    const report = await buildUsageReport({
+      projectRoot: root,
+      feature: 'talon-broker',
+      tasks: [{ id: 'task-a', feature: 'talon-broker', runIds: ['worker-component-gap'] }],
+    });
+    assert.equal(report.local.byTask['task-a'].input, 3);
+    assert.equal(report.local.byTask['task-a'].output, USAGE_UNKNOWN);
+    assert.ok(report.local.byTask['task-a'].missing.some((reason) => /missing output usage coverage/u.test(reason)));
+    assert.ok(report.local.totals.missing.some((reason) => /missing output usage coverage/u.test(reason)));
+    assert.ok(report.provenance.missing.some((entry) => /missing output usage coverage/u.test(entry.reason)));
+  });
+});
+
+test('keeps elapsed totals unknown when safe integer durations overflow', async () => {
+  const elapsed = Number.MAX_SAFE_INTEGER;
+  const report = await buildUsageReport({
+    feature: 'talon-broker',
+    tasks: [{
+      id: 'task-a',
+      feature: 'talon-broker',
+      runIds: [
+        { runId: 'worker-duration-a', result: workerResult('worker-duration-a', 'task-a', { observed: { processTermination: { elapsedMs: elapsed }, cumulativeUsage: { assistantMessages: 1, input: 1, output: 1, reasoning: 0, totalTokens: 2 } } }), stdout: eventMessage('duration-a', { input: 1, output: 1, reasoning: 0, totalTokens: 2 }) },
+        { runId: 'worker-duration-b', result: workerResult('worker-duration-b', 'task-a', { observed: { processTermination: { elapsedMs: elapsed }, cumulativeUsage: { assistantMessages: 1, input: 1, output: 1, reasoning: 0, totalTokens: 2 } } }), stdout: eventMessage('duration-b', { input: 1, output: 1, reasoning: 0, totalTokens: 2 }) },
+      ],
+    }],
+  });
+  assert.equal(report.local.totals.elapsedMs, USAGE_UNKNOWN);
+  assert.equal(report.local.totals.knownElapsedMs, null);
+  assert.ok(report.local.totals.missing.includes('elapsed subtotal exceeds safe integer'));
 });
 
 test('refuses symlinked run paths and records bounded oversized result provenance', async () => {

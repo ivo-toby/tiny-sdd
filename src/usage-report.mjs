@@ -90,7 +90,7 @@ function isoNow() {
 }
 
 function emptyMetric() {
-  return { value: USAGE_UNKNOWN, knownSubtotal: null, coverage: { observed: 0, expected: null, complete: false }, missing: [] };
+  return { value: USAGE_UNKNOWN, knownSubtotal: null, coverage: { observed: 0, expected: null, complete: false }, missing: ['no observed usage coverage'] };
 }
 
 function metricFromObservations(observations, expected, component, fallback, extraMissing = []) {
@@ -109,7 +109,7 @@ function metricFromObservations(observations, expected, component, fallback, ext
   const fallbackSubtotal = safeToken(fallback);
   const knownSubtotal = fallbackSubtotal !== null ? fallbackSubtotal : observed > 0 && !subtotalOverflow ? subtotal : null;
   const mismatch = fallbackSubtotal !== null && observed === expected && observed > 0 && subtotal !== fallbackSubtotal;
-  const complete = expected !== null && observed === expected && extraMissing.length === 0 && !mismatch && !subtotalOverflow;
+  const complete = expected !== null && expected > 0 && observed === expected && extraMissing.length === 0 && !mismatch && !subtotalOverflow;
   const overflowMissing = subtotalOverflow ? [`${component} subtotal exceeds safe integer`] : [];
   return {
     value: complete ? subtotal : USAGE_UNKNOWN,
@@ -155,16 +155,23 @@ function metricValueShape(metrics) {
   }
   output.knownSubtotals = Object.fromEntries(USAGE_COMPONENTS.map((component) => [component, metrics[component].knownSubtotal]));
   output.coverage = Object.fromEntries(USAGE_COMPONENTS.map((component) => [component, metrics[component].coverage]));
-  output.missing = metrics.missing;
+  output.missing = [...new Set([
+    ...(metrics.missing ?? []),
+    ...USAGE_COMPONENTS.flatMap((component) => metrics[component].missing ?? []),
+  ])];
   return output;
 }
 
 function aggregateSimpleMetrics(metrics, missing = []) {
   const known = metrics.map((metric) => metric.knownSubtotal).filter((value) => Number.isSafeInteger(value));
-  const total = safeSum(metrics.map((metric) => metric.value));
+  const values = metrics.map((metric) => metric.value);
+  const allValuesKnown = values.every((value) => Number.isSafeInteger(value));
+  const total = allValuesKnown ? safeSum(values) : null;
   const knownTotal = safeSum(known);
   const complete = metrics.length > 0 && metrics.every((metric) => Number.isSafeInteger(metric.value)) && total !== null;
-  const overflowMissing = total === null || (known.length > 0 && knownTotal === null) ? ['elapsed subtotal exceeds safe integer'] : [];
+  const overflowMissing = (allValuesKnown && total === null) || (known.length > 0 && knownTotal === null)
+    ? ['elapsed subtotal exceeds safe integer']
+    : [];
   return {
     value: complete ? total : USAGE_UNKNOWN,
     knownSubtotal: known.length === 0 ? null : knownTotal,
@@ -254,18 +261,15 @@ function summarizeRunUsage(result, stdoutState) {
   if (stdoutState?.partial) missing.push(`malformed stdout lines: ${stdoutState.malformedLines}`);
   if (stdoutState?.messageLimitExceeded) missing.push(`stdout messages exceed ${MAX_WORKER_MESSAGES}`);
   if (expected !== null && messages.length !== expected) missing.push(`response coverage ${messages.length}/${expected}`);
+  if (stdoutState && expected === 0 && messages.length === 0) missing.push('no assistant response coverage');
   const observations = messages.map(usageObservation);
   const metrics = {};
   for (const component of USAGE_COMPONENTS) {
     const cumulativeSubtotal = cumulative?.[component] !== null && cumulative?.[component] > 0 ? cumulative[component] : null;
     metrics[component] = metricFromObservations(observations, expected, component, cumulativeSubtotal, missing);
   }
-  if (stdoutState && !stdoutState.partial && expected === 0) {
-    for (const component of USAGE_COMPONENTS) {
-      metrics[component] = { value: 0, knownSubtotal: 0, coverage: { observed: 0, expected: 0, complete: true }, missing: [] };
-    }
-  }
-  return { metrics, missing: [...new Set(missing)], responseMode: stdoutState?.mode ?? null };
+  const componentMissing = USAGE_COMPONENTS.flatMap((component) => metrics[component].missing);
+  return { metrics, missing: [...new Set([...missing, ...componentMissing])], responseMode: stdoutState?.mode ?? null };
 }
 
 function resultRef(runId, digest) {
@@ -345,7 +349,6 @@ export async function discoverWorkerRuns(projectRoot, { taskIds = undefined } = 
       reportError(`run ${runId} packet and result task attribution disagree`);
     }
     const taskId = packetTaskId === null ? (resultTaskId === null ? undefined : resultTaskId) : (resultTaskId === null ? packetTaskId : packetTaskId ?? resultTaskId);
-    if (result.value?.baselineRun !== undefined) continue;
     if (taskId === undefined || taskId === null) {
       const reason = packet.missing && result.missing
         ? 'run has no packet.json or result.json task attribution'
@@ -580,6 +583,7 @@ function selectUsageRecords(records, feature, tasks, missing) {
 
 function frontierSummary(records) {
   const byPhase = {};
+  const phaseMetrics = {};
   for (const phase of USAGE_PHASES) {
     const phaseRecords = records.filter((record) => record.phase === phase);
     const metrics = aggregateMetrics(phaseRecords.map((record) => {
@@ -599,23 +603,26 @@ function frontierSummary(records) {
       result.missing = missing;
       return result;
     }));
+    phaseMetrics[phase] = metrics;
     byPhase[phase] = { ...metricValueShape(metrics), ledgerRecordIds: phaseRecords.map((record) => record.id).sort() };
   }
-  const totals = aggregateMetrics(records.map((record) => {
-    const perRecord = {};
+  const totals = aggregateMetrics(USAGE_PHASES.map((phase) => {
+    const metrics = {};
     for (const component of USAGE_COMPONENTS) {
-      const value = safeToken(record[component]);
-      perRecord[component] = {
-        value: value === null ? USAGE_UNKNOWN : value,
-        knownSubtotal: value,
-        coverage: { observed: value === null ? 0 : 1, expected: 1, complete: value !== null },
-        missing: value === null ? [`missing ${component} usage`] : [],
+      const metric = phaseMetrics[phase][component];
+      metrics[component] = {
+        ...metric,
+        missing: metric.missing.map((reason) => `${phase}: ${reason}`),
       };
     }
-    perRecord.missing = USAGE_COMPONENTS.flatMap((component) => perRecord[component].missing);
-    return perRecord;
+    metrics.missing = USAGE_COMPONENTS.flatMap((component) => metrics[component].missing);
+    return metrics;
   }));
-  return { byPhase, totals: metricValueShape(totals), ledgerRecordIds: records.map((record) => record.id).sort() };
+  return {
+    byPhase,
+    totals: metricValueShape(totals),
+    ledgerRecordIds: records.map((record) => record.id).sort(),
+  };
 }
 
 function localSummary(tasks, runs) {
@@ -628,6 +635,12 @@ function localSummary(tasks, runs) {
     const elapsed = aggregateSimpleMetrics(elapsedValues, taskRuns.flatMap((run) => run.missing));
     const runIds = taskRuns.map((run) => run.runId).sort();
     const revisionRunIds = taskRuns.filter((run) => run.baseRunId !== null).map((run) => run.runId).sort();
+    const taskMissing = [...new Set([
+      ...(taskRuns.length === 0 ? ['no worker runs supplied'] : []),
+      ...metrics.missing,
+      ...elapsed.missing,
+      ...taskRuns.flatMap((run) => run.missing),
+    ])];
     byTask[task.taskId] = {
       taskId: task.taskId,
       retired: task.retired,
@@ -636,16 +649,43 @@ function localSummary(tasks, runs) {
       ...metricValueShape(metrics),
       elapsedMs: elapsed.value,
       knownElapsedMs: elapsed.knownSubtotal,
-      missing: [...new Set([...(taskRuns.length === 0 ? ['no worker runs supplied'] : []), ...taskRuns.flatMap((run) => run.missing)])],
+      missing: taskMissing,
     };
   }
-  const allSummaries = runs.map(runMetricSummary);
-  const totals = aggregateMetrics(allSummaries.map((summary) => summary.metrics), runs.flatMap((run) => run.missing));
-  const elapsedKnown = runs.map((run) => run.elapsedMs).filter((value) => Number.isSafeInteger(value));
-  const elapsedComplete = runs.length > 0 && elapsedKnown.length === runs.length;
+  const taskMetrics = tasks.map((task) => {
+    const summary = byTask[task.taskId];
+    const metrics = {};
+    for (const component of USAGE_COMPONENTS) {
+      metrics[component] = {
+        value: summary[component],
+        knownSubtotal: summary.knownSubtotals[component],
+        coverage: summary.coverage[component],
+        missing: summary.missing,
+      };
+    }
+    metrics.missing = summary.missing;
+    return metrics;
+  });
+  const totals = aggregateMetrics(taskMetrics, tasks.flatMap((task) => byTask[task.taskId].missing));
+  const elapsedMetrics = tasks.map((task) => {
+    const summary = byTask[task.taskId];
+    return {
+      value: summary.elapsedMs,
+      knownSubtotal: summary.knownElapsedMs,
+      coverage: { observed: summary.knownElapsedMs === null ? 0 : 1, expected: 1, complete: summary.elapsedMs !== USAGE_UNKNOWN },
+      missing: summary.missing,
+    };
+  });
+  const elapsed = aggregateSimpleMetrics(elapsedMetrics, tasks.flatMap((task) => byTask[task.taskId].missing));
+  const totalShape = metricValueShape(totals);
   return {
     byTask,
-    totals: { ...metricValueShape(totals), elapsedMs: elapsedComplete ? elapsedKnown.reduce((sum, value) => sum + value, 0) : USAGE_UNKNOWN, knownElapsedMs: elapsedKnown.length === 0 ? null : elapsedKnown.reduce((sum, value) => sum + value, 0) },
+    totals: {
+      ...totalShape,
+      missing: [...new Set([...totalShape.missing, ...elapsed.missing])],
+      elapsedMs: elapsed.value,
+      knownElapsedMs: elapsed.knownSubtotal,
+    },
     runIds: runs.map((run) => run.runId).sort(),
     revisionRunIds: runs.filter((run) => run.baseRunId !== null).map((run) => run.runId).sort(),
   };
