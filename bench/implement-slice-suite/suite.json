@@ -41,7 +41,7 @@
     },
     {
       "path": "challenges/opal-missing-inputs.json",
-      "sha256": "3c88f2fae79d874caa8924c78d67758c5c541ce70c476f8df59b21b9485f82b2"
+      "sha256": "fedac98672697616013305f7e32c702bbee71378d838216c3e53314ccd29b7fc"
     }
   ],
   "defaults": {

@@ -4,5 +4,4 @@ import { readFile } from 'node:fs/promises';
 const report = JSON.parse(await readFile(new URL('../../../questions/report.json', import.meta.url), 'utf8'));
 assert.deepEqual(Object.keys(report).sort(), ['missingInputs', 'question']);
 assert.deepEqual(report.missingInputs, ['sourceEndpoint', 'timeoutMs']);
-assert.equal(typeof report.question, 'string');
-assert.ok(report.question.trim().length > 0);
+assert.equal(report.question, 'Please provide sourceEndpoint and timeoutMs.');

@@ -180,6 +180,22 @@
           "heldOutFailures": [
             "held-out-question-report"
           ]
+        },
+        {
+          "id": "wrong-nonrequest",
+          "path": "candidates/opal-missing-inputs/wrong-nonrequest",
+          "sha256": "c097b41dcfb13af851f2cc424c2e92d7e1558c9c9659b47f9a40b329db49bf34",
+          "heldOutFailures": [
+            "held-out-question-report"
+          ]
+        },
+        {
+          "id": "wrong-word-only-invented-values",
+          "path": "candidates/opal-missing-inputs/wrong-word-only-invented-values",
+          "sha256": "9c31b641ba2d927208d87dde395b55d4e013a6acafec2e469aba929b6284fc92",
+          "heldOutFailures": [
+            "held-out-question-report"
+          ]
         }
       ]
     }

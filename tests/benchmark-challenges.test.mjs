@@ -37,7 +37,7 @@ const EXPECTED_VISIBLE_TESTS = new Map([
   ['ripple-batch-async', 1],
   ['ember-option-api', 2],
   ['linen-retry-lint', 2],
-  ['opal-missing-inputs', 1],
+  ['opal-missing-inputs', 2],
 ]);
 
 async function readJson(path) {
@@ -170,20 +170,20 @@ async function runVerifier({ check, candidateDir }) {
   }
 }
 
-async function candidateRootsFor(suiteRoot, kind) {
+async function candidateRootsFor(suiteRoot, kind, wrongIndex = 0) {
   const audit = await readJson(join(suiteRoot, 'challenge-audit.json'));
   return Object.fromEntries(audit.challenges.map((entry) => [
     entry.id,
-    resolve(suiteRoot, kind === 'reference' ? entry.reference.path : entry.wrong[0].path),
+    resolve(suiteRoot, kind === 'reference' ? entry.reference.path : (entry.wrong[wrongIndex] ?? entry.wrong[0]).path),
   ]));
 }
 
-async function runSuite(kind, { repeat = 1, mutations = {}, suiteMutation = null } = {}) {
+async function runSuite(kind, { repeat = 1, mutations = {}, suiteMutation = null, wrongIndex = 0 } = {}) {
   const root = await mkdtemp(join(await realpathTmpdir(), `tinysdd-challenges-${kind}-`));
   const suiteRoot = join(root, 'suite');
   await cp(SUITE_ROOT, suiteRoot, { recursive: true });
   if (suiteMutation) await suiteMutation(suiteRoot);
-  const candidateRoots = await candidateRootsFor(suiteRoot, kind);
+  const candidateRoots = await candidateRootsFor(suiteRoot, kind, wrongIndex);
   const runtime = await makeRuntime(root, candidateRoots, mutations);
   const outputRoot = join(root, 'results');
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
@@ -298,19 +298,31 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
     await rm(reference.root, { recursive: true, force: true });
   }
 
-  const wrong = await runSuite('wrong', { repeat: 1 });
+  const wrongRuns = [];
   try {
-    const cases = await caseResults(wrong);
-    assert.equal(cases.length, 10);
-    for (const { value } of cases) {
-      assert.equal(value.verifier.heldOut.length, 1, value.challenge.id);
-      assert.equal(value.verifier.heldOut[0].status, 'failed', value.challenge.id);
-      assert.equal(value.failure.category, 'verifier_failed', value.challenge.id);
-      assert.notEqual(value.verifier.heldOut[0].output.ref, 'UNKNOWN', value.challenge.id);
-      assert.notEqual(value.verifier.heldOut[0].output.sha256, 'UNKNOWN', value.challenge.id);
+    const audit = await readJson(join(SUITE_ROOT, 'challenge-audit.json'));
+    const opal = audit.challenges.find((entry) => entry.id === 'opal-missing-inputs');
+    for (let wrongIndex = 0; wrongIndex < opal.wrong.length; wrongIndex += 1) {
+      const wrong = await runSuite('wrong', { repeat: 1, wrongIndex });
+      wrongRuns.push(wrong);
+      const cases = await caseResults(wrong);
+      assert.equal(cases.length, 10);
+      for (const { value } of cases) {
+        assert.equal(value.verifier.heldOut.length, 1, value.challenge.id);
+        assert.equal(value.verifier.heldOut[0].status, 'failed', value.challenge.id);
+        assert.equal(value.failure.category, 'verifier_failed', value.challenge.id);
+        assert.notEqual(value.verifier.heldOut[0].output.ref, 'UNKNOWN', value.challenge.id);
+        assert.notEqual(value.verifier.heldOut[0].output.sha256, 'UNKNOWN', value.challenge.id);
+      }
+      const opalCase = cases.find(({ value }) => value.challenge.id === 'opal-missing-inputs').value;
+      assert.deepEqual(opalCase.changedPaths.map(({ path, change }) => ({ path, change })), [{ path: 'questions/report.json', change: 'created' }]);
+      assert.equal(opalCase.hardGates.outOfScopeEdit, false);
+      assert.equal(opalCase.hardGates.protectedFileEdit, false);
+      assert.equal(opalCase.hardGates.protectedTestEdit, false);
+      assert.equal(opalCase.hardGates.requiredPatchAbsent, false);
     }
   } finally {
-    await rm(wrong.root, { recursive: true, force: true });
+    await Promise.all(wrongRuns.map((wrong) => rm(wrong.root, { recursive: true, force: true })));
   }
 });
 

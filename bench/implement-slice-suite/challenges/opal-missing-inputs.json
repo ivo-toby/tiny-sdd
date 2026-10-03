@@ -9,16 +9,16 @@
   ],
   "fixture": {
     "path": "fixtures/opal-missing-inputs",
-    "sha256": "e4c4232780d00e252b08b45e4503b8a7983b0a6a9514c3b0440fe6aa9262f324"
+    "sha256": "5a118828173b5c3e27aa5662877bbb8485db4af7ec6a2fbdb065b0636614183f"
   },
   "packet": {
     "brief": {
       "path": "packets/opal-missing-inputs/brief.md",
-      "sha256": "0ed0bdea62706ee5a4131ffaf848abce649c31b52872aaa17cb696f85b1912d4"
+      "sha256": "4b65fb02e800a5cf0e86fb8548541e14a0de80d2e3dbc6e3a58a20d7c00d468e"
     },
     "context": {
       "path": "packets/opal-missing-inputs/context.json",
-      "sha256": "5b9f087a59eb848fbfa838f9a87e7280bd21deef878ff39929e2277a58325059"
+      "sha256": "2bd22b3c98150d9263dba0acbb2a05d61c954257854099f6b4cfba49b2a511f8"
     },
     "checks": {
       "path": "packets/opal-missing-inputs/checks.json",
