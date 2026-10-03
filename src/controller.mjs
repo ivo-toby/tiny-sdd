@@ -204,6 +204,9 @@ function validateApplied(id, applied) {
   for (const field of ['by', 'appliedAt']) {
     if (typeof applied[field] !== 'string' || applied[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a nonempty string`);
   }
+  if (applied.allowedDigest !== undefined && (typeof applied.allowedDigest !== 'string' || !/^[0-9a-f]{64}$/.test(applied.allowedDigest))) {
+    throw tinyError('STATE_MALFORMED', `${label} allowedDigest must be a digest`);
+  }
   if (!Array.isArray(applied.files)) throw tinyError('STATE_MALFORMED', `${label} files must be an array`);
   for (const file of applied.files) {
     assertPlainObject(file, 'STATE_MALFORMED', `${label} file`);
@@ -727,6 +730,9 @@ export async function applyTask(projectRoot, options = {}) {
       throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
     }
 
+    // The digest below reads every allowed file; refuse an unreadable or
+    // symlinked one now rather than after the writes.
+    await snapshotProjectFiles(root, task.allow);
     for (const item of plan) {
       if (item.status !== 'written') continue;
       if (item.change === 'deleted') await rm(item.absolute, { force: true });
@@ -737,6 +743,7 @@ export async function applyTask(projectRoot, options = {}) {
       rootRunId: rootRun.id,
       appliedAt: nowIso(),
       by,
+      allowedDigest: await allowedFilesDigest(root, task.allow),
       files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
     };
     return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
@@ -957,9 +964,16 @@ async function semanticGateDecision(root, { taskId, verdict, evidenceContent, ju
   return { mode: gate.mode, action };
 }
 
-// identical is false when the files were edited after `task apply`, which
-// review allows but records.
-async function appliedFilesIdentical(root, applied) {
+// The digest an acceptance binds: the allowed files' content right now.
+async function allowedFilesDigest(root, allow) {
+  return digestJson(await snapshotProjectFiles(root, allow));
+}
+
+// identical is false when an allowed file was edited after `task apply`, which
+// review allows but records. A record from before applied.allowedDigest existed
+// can only be checked against the files it wrote.
+async function appliedIdentical(root, applied, allowedDigest) {
+  if (applied.allowedDigest !== undefined) return applied.allowedDigest === allowedDigest;
   const snapshot = await snapshotProjectFiles(root, applied.files.map((file) => file.path));
   return applied.files.every((file, index) => (file.change === 'deleted' ? !snapshot[index].exists : snapshot[index].sha256 === file.sha256));
 }
@@ -990,7 +1004,7 @@ export async function reviewTask(projectRoot, options = {}) {
     if (!task.approval || !status.approvalFresh) throw tinyError('APPROVAL_STALE', `task ${id} does not have a current approval`);
     const evidenceContent = await readProjectFile(root, evidence, reviewEvidenceOptions());
     if (evidenceContent.trim().length === 0) throw tinyError('INVALID_EVIDENCE', 'evidence must be nonempty');
-    const allowedSnapshot = await snapshotProjectFiles(root, task.allow);
+    const allowedDigest = await allowedFilesDigest(root, task.allow);
     const reviewedAt = nowIso();
     const review = {
       verdict,
@@ -1000,10 +1014,10 @@ export async function reviewTask(projectRoot, options = {}) {
       evidenceDigest: sha256(evidenceContent),
       briefDigest: status.briefDigest,
       approvalDigest: task.approval.approvalDigest,
-      allowedDigest: digestJson(allowedSnapshot),
+      allowedDigest,
     };
     if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
-    if (verdict === 'accepted' && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedFilesIdentical(root, task.applied) };
+    if (verdict === 'accepted' && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedIdentical(root, task.applied, allowedDigest) };
     if (verdict === 'accepted') review.acceptanceDigest = digestJson({ ...review, taskId: id });
     task.review = review;
     return { task: publicTask(task, await inspectTask(root, state, task)) };

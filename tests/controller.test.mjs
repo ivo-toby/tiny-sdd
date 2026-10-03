@@ -1284,7 +1284,8 @@ test('apply writes created and modified files, records the run and leaves the ta
     assert.equal(await readProject(root, 'src/b.ts'), 'new b\n');
     assert.equal(result.task.status, 'ready');
     assert.equal(await taskStatus(root, 'one'), 'ready');
-    const { appliedAt, ...record } = (await rawState(root)).tasks.one.applied;
+    const { appliedAt, allowedDigest, ...record } = (await rawState(root)).tasks.one.applied;
+    assert.match(allowedDigest, /^[0-9a-f]{64}$/u);
     assert.match(appliedAt, /^\d{4}-\d{2}-\d{2}T/u);
     assert.deepEqual(record, {
       runId: RUN_ONE,
@@ -1295,12 +1296,14 @@ test('apply writes created and modified files, records the run and leaves the ta
         { path: 'src/b.ts', change: 'modified', sha256: sha256('new b\n'), status: 'written' },
       ],
     });
-    assert.deepEqual(result.applied, { ...record, appliedAt });
+    assert.deepEqual(result.applied, { ...record, appliedAt, allowedDigest });
     const publicApplied = (await controllerStatus(root)).tasks[0].applied;
     assert.deepEqual(publicApplied, { runId: RUN_ONE, appliedAt, files: 2 });
 
     await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
     assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    // Review binds exactly the digest apply recorded.
+    assert.equal((await rawState(root)).tasks.one.review.allowedDigest, allowedDigest);
     assert.equal(await taskStatus(root, 'one'), 'accepted');
     assert.deepEqual((await controllerStatus(root)).tasks[0].review.appliedFromRun, { runId: RUN_ONE, identical: true });
   } finally {
@@ -1319,6 +1322,64 @@ test('an edit between apply and review is allowed and recorded as not identical'
     assert.equal(await taskStatus(root, 'one'), 'accepted');
   } finally {
     await cleanup(root);
+  }
+});
+
+test('identical covers every allowed file, including ones the run did not change', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  const run = { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } };
+  const identicalAfter = async (edit) => {
+    const root = await applyProject(files);
+    try {
+      await fakeRun(root, RUN_ONE, run);
+      await apply(root);
+      await edit(root);
+      await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+      assert.equal(await taskStatus(root, 'one'), 'accepted');
+      return (await rawState(root)).tasks.one.review.appliedFromRun.identical;
+    } finally {
+      await cleanup(root);
+    }
+  };
+  assert.equal(await identicalAfter(async () => {}), true);
+  assert.equal(await identicalAfter((root) => writeFile(join(root, 'src', 'b.ts'), 'b edited\n')), false);
+  assert.equal(await identicalAfter((root) => writeFile(join(root, 'src', 'a.ts'), 'a edited\n')), false);
+  assert.equal(await identicalAfter((root) => rm(join(root, 'src', 'b.ts'))), false);
+});
+
+test('identical is not fooled by a run that changed nothing', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  for (const [edited, expected] of [[false, true], [true, false]]) {
+    const root = await applyProject(files);
+    try {
+      await fakeRun(root, RUN_ONE, { before: files, after: files });
+      const { applied } = await apply(root);
+      assert.deepEqual(applied.files, []);
+      if (edited) await writeFile(join(root, 'src', 'a.ts'), 'a edited\n');
+      await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+      assert.equal((await rawState(root)).tasks.one.review.appliedFromRun.identical, expected);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('a record without allowedDigest falls back to comparing the files it wrote', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  for (const [edited, expected] of [[false, true], [true, false]]) {
+    const root = await applyProject(files);
+    try {
+      await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+      await apply(root);
+      const state = await rawState(root);
+      delete state.tasks.one.applied.allowedDigest;
+      await writeState(root, state);
+      if (edited) await writeFile(join(root, 'src', 'a.ts'), 'a edited\n');
+      await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+      assert.equal((await rawState(root)).tasks.one.review.appliedFromRun.identical, expected);
+    } finally {
+      await cleanup(root);
+    }
   }
 });
 
@@ -1699,6 +1760,26 @@ test('apply refuses a symlinked parent directory or target and writes nothing', 
   }
 });
 
+test('apply refuses a symlinked allowed file the run did not change before writing anything', async (t) => {
+  const root = await applyProject({}, ['src/a.ts', 'src/b.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'a\n' } });
+    await mkdir(join(root, 'src'));
+    await writeFile(join(root, 'elsewhere.ts'), 'outside\n');
+    try {
+      await symlink(join(root, 'elsewhere.ts'), join(root, 'src', 'b.ts'));
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.message}`);
+      return;
+    }
+    await assert.rejects(apply(root), { code: 'SYMLINK_PATH' });
+    await assert.rejects(readProject(root, 'src/a.ts'), { code: 'ENOENT' });
+    assert.equal((await rawState(root)).tasks.one.applied, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('apply refuses a symlinked run directory', async (t) => {
   const root = await applyProject({});
   try {
@@ -1755,6 +1836,10 @@ test('controller state validates the applied shape', async () => {
       { ...valid, runId: 'not-a-run' },
       { ...valid, runId: undefined },
       { ...valid, rootRunId: '../worker-x' },
+      { ...valid, allowedDigest: 'abc' },
+      { ...valid, allowedDigest: null },
+      { ...valid, allowedDigest: 7 },
+      { ...valid, allowedDigest: 'A'.repeat(64) },
       { ...valid, by: ' ' },
       { ...valid, appliedAt: 7 },
       { ...valid, files: 'src/one.ts' },
@@ -1778,6 +1863,9 @@ test('controller state validates the applied shape', async () => {
     state.tasks.one.applied = valid;
     await writeState(root, state);
     assert.deepEqual((await controllerStatus(root)).tasks[0].applied, { runId: RUN_ONE, appliedAt: valid.appliedAt, files: 2 });
+    state.tasks.one.applied = { ...valid, allowedDigest: sha256('allowed') };
+    await writeState(root, state);
+    assert.equal((await controllerStatus(root)).tasks[0].applied.files, 2);
     // A record written while apply still stored an outcome stays valid.
     state.tasks.one.applied = { ...valid, outcome: 'completed' };
     await writeState(root, state);
