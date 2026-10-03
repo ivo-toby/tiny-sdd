@@ -848,6 +848,22 @@ test('enforce gate records a confirm warning in the review between thresholds', 
   }
 });
 
+test('enforce gate does not call the judge or log decisions for a retired task', async () => {
+  const root = await gateProject('enforce');
+  try {
+    await closeTask(root, { id: 'one', by: 'operator', reason: 're-cut' });
+    const judge = judgeStub({ C1: { noul: 0.9 }, C2: { noul: 0.9 } });
+    await assert.rejects(
+      reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer', judge: { fetch: judge.fetchImpl, retryDelayMs: 0 } }),
+      { code: 'TASK_CLOSED' },
+    );
+    assert.equal(judge.calls.length, 0);
+    await assert.rejects(readFile(join(root, '.tinysdd', 'runs', 'decisions', 'one.jsonl'), 'utf8'), { code: 'ENOENT' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('an unavailable judge behaves exactly like off and logs semantic-judge-unavailable', async () => {
   const root = await gateProject('enforce');
   const originalKey = process.env.TYPESAFE_API_KEY;
