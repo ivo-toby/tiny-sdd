@@ -18,6 +18,12 @@ Attribution and reason must reflect actual authority, not the example text.
 For dependent tasks use `--depends-on validation`. State and review artifacts
 live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
+A task may cite exact source lines with `--context MANIFEST`, a JSON file under
+`.tinysdd/tasks/` (format in `docs/context-compiler.md` of the TinySDD repository).
+Approval binds the cited lines, not the whole file, so slices that cite one shared
+spec by line range stay current when it is appended to or edited outside their
+ranges. Inserting lines above a cited range shifts it and stales the slice.
+
 Retire a task you abandoned or re-cut instead of leaving it open. `task close`
 and `task supersede` need no approval, so they work on a `stale_approval` task
 that `task review --verdict blocked` cannot reach. Both are terminal: the task

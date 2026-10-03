@@ -63,7 +63,10 @@ When a worker needs an exact API, schema, or acceptance oracle, add a reviewed
 context manifest under `.tinysdd/tasks/` and pass it with `--context`. TinySDD
 will compile only its declared source line ranges and record their digests; see
 [the context compiler guide](context-compiler.md). Omit it for genuinely simple
-tasks rather than padding prompts.
+tasks rather than padding prompts. Approval binds the cited lines, not the whole
+file, so slices that cite one shared spec by line range stay current when the
+spec is appended to or edited outside their ranges. Inserting lines above a
+cited range shifts it and makes the slice stale: append addenda at the end.
 
 When a task has fixed checks, declare them in a reviewed JSON file under
 `.tinysdd/tasks/` and pass it with `--checks`. TinySDD validates and binds the
