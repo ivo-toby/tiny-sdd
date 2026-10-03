@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { sha256 } from '../src/fs-utils.mjs';
-import { benchmarkFixtureDigest, runBenchmark } from '../src/benchmark-runner.mjs';
+import { benchmarkFixtureDigest, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
 import { parseBenchmarkInvocation } from '../src/benchmark-results.mjs';
 
 const digest = (value) => sha256(value);
@@ -67,7 +67,7 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',stopRea
   };
 }
 
-async function makeSuite(root, { heldOutInsideFixture = false } = {}) {
+async function makeSuite(root, { heldOutInsideFixture = false, pathFlagVerifier = false } = {}) {
   await mkdir(join(root, 'challenges'), { recursive: true });
   const challengeDefinitions = heldOutInsideFixture
     ? [{ id: 'hidden-slice', fixtureFiles: { 'src/index.mjs': 'before\n', 'tests/contract.test.mjs': 'export {};\n', 'held-out.test.mjs': 'hidden\n' }, heldOutInsideFixture: true }]
@@ -97,10 +97,14 @@ async function makeSuite(root, { heldOutInsideFixture = false } = {}) {
     await mkdir(verifierRoot, { recursive: true });
     await writeFile(join(verifierRoot, `${definition.id}-visible.test.mjs`), 'export {};\n');
     await writeFile(join(verifierRoot, `${definition.id}-held-out.test.mjs`), 'export {};\n');
+    if (pathFlagVerifier) await writeFile(join(verifierRoot, `${definition.id}-preload.cjs`), 'module.exports = {};\n');
+    const visibleArgv = pathFlagVerifier
+      ? ['node', '--require', `verifier/${definition.id}-preload.cjs`, '--test', `verifier/${definition.id}-visible.test.mjs`]
+      : ['node', '--test', `verifier/${definition.id}-visible.test.mjs`];
     const visible = await writeJson(join(verifierRoot, `${definition.id}-visible.json`), {
       schemaVersion: 1,
       dependencyMounts: [],
-      checks: [{ id: 'visible', argv: ['node', '--test', `verifier/${definition.id}-visible.test.mjs`], timeoutMs: 1000 }],
+      checks: [{ id: 'visible', argv: visibleArgv, timeoutMs: 1000 }],
     });
     const heldOut = await writeJson(join(verifierRoot, `${definition.id}-held-out.json`), {
       schemaVersion: 1,
@@ -231,8 +235,12 @@ test('binds effective model settings and checker limits into the config digest',
     const runtime = await makeRuntime(root);
     const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } };
     const verifier = async () => ({ status: 'passed', sandbox: { runner: 'test-only', network: 'none' } });
-    const first = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'first'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12345 } }, verifier });
-    const second = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'second'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, verifier });
+    const supplemental = { note: 'operator metadata', sandbox: undefined };
+    const first = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'first'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12345 } }, workerSettings: supplemental, verifier });
+    assert.equal(first.config.identity.worker.settings.note, 'operator metadata');
+    assert.equal(first.config.identity.worker.settings.sandbox, 'test-runtime');
+    assert.equal(first.config.identity.worker.settings.effectiveMaxTokens, 256);
+    const second = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'second'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(first.invocation.configDigest, second.invocation.configDigest);
     await writeJson(join(root, 'agent', 'models.json'), {
       providers: {
@@ -244,11 +252,50 @@ test('binds effective model settings and checker limits into the config digest',
         },
       },
     });
-    const third = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'third'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, verifier });
+    const third = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'third'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(second.invocation.configDigest, third.invocation.configDigest);
+    assert.equal(third.config.identity.worker.settings.effectiveMaxTokens, 128);
     await writeFile(join(root, 'verifier', 'slow-slice-visible.test.mjs'), 'changed verifier bytes\n');
-    const fourth = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'fourth'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, verifier });
+    const fourth = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'fourth'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(third.invocation.configDigest, fourth.invocation.configDigest);
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('stages and rewrites verifier path-flag operands before evaluation', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-verifier-flag-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root, { pathFlagVerifier: true });
+    const runtime = await makeRuntime(root);
+    const checks = [];
+    const rewrittenPreloads = [];
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker: { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } },
+      runtime,
+      repeat: 1,
+      verifier: async ({ visibility, check, candidateDir }) => {
+        checks.push({ visibility, argv: check.argv });
+        const requireIndex = check.argv.indexOf('--require');
+        if (requireIndex !== -1) {
+          const preload = check.argv[requireIndex + 1];
+          assert.match(preload, new RegExp(`^${RESERVED_VERIFIER_ROOT}/visible/[a-z-]+-preload\\.cjs$`, 'u'));
+          await access(join(candidateDir, preload));
+          rewrittenPreloads.push(preload);
+        }
+        return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
+      },
+    });
+    assert.ok(checks.length >= 1);
+    assert.equal(rewrittenPreloads.length, 1);
+    const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
+    assert.equal(firstCase.verifier.visible[0].status, 'passed');
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;

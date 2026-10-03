@@ -238,9 +238,8 @@ function resolveCheckRunnerConfig(checkLimits, runnerOptions) {
 }
 
 async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
-  if (workerSettings !== undefined) return workerSettings;
   const base = {
-    sandbox: runtime?.test === true ? 'test-runtime' : process.platform === 'darwin' ? 'seatbelt' : 'bubblewrap',
+    sandbox: runtime?.test === true ? 'test-runtime' : runtime?.sandbox ?? (process.platform === 'darwin' ? 'seatbelt' : 'bubblewrap'),
     effectiveMaxTokens: BENCHMARK_UNKNOWN,
     effectiveReasoning: BENCHMARK_UNKNOWN,
     effectiveThinkingControl: BENCHMARK_UNKNOWN,
@@ -256,7 +255,7 @@ async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
       sourceAgentDir: runtime?.sourceAgentDir ?? defaultPiAgentDir(),
       sourceEnv: runtime?.sourceEnv ?? process.env,
     });
-    return {
+    const observed = {
       sandbox: base.sandbox,
       effectiveMaxTokens: preflight.maxTokens.value,
       effectiveReasoning: preflight.effectiveReasoning ?? BENCHMARK_UNKNOWN,
@@ -266,8 +265,15 @@ async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
       effectiveThinkingBudgetValue: preflight.thinkingBudget?.tokens ?? BENCHMARK_UNKNOWN,
       effectiveCompat: preflight.effectiveCompat ?? BENCHMARK_UNKNOWN,
     };
+    if (workerSettings === undefined || workerSettings === BENCHMARK_UNKNOWN) return observed;
+    return workerSettings && typeof workerSettings === 'object' && !Array.isArray(workerSettings)
+      ? { ...workerSettings, ...observed }
+      : workerSettings;
   } catch {
-    return BENCHMARK_UNKNOWN;
+    if (workerSettings === undefined || workerSettings === BENCHMARK_UNKNOWN) return base;
+    return workerSettings && typeof workerSettings === 'object' && !Array.isArray(workerSettings)
+      ? { ...workerSettings, ...base }
+      : workerSettings;
   }
 }
 
@@ -411,7 +417,17 @@ function verifierResourceArguments(check) {
   for (let index = 1; index < check.argv.length; index += 1) {
     const argument = check.argv[index];
     const previous = check.argv[index - 1];
-    if (VALUE_FLAGS.has(previous) || PATH_FLAGS.has(previous)) continue;
+    const inlinePath = [...PATH_FLAGS].find((flag) => argument.startsWith(`${flag}=`));
+    if (inlinePath !== undefined) {
+      result.push(argument.slice(inlinePath.length + 1));
+      continue;
+    }
+    if (VALUE_FLAGS.has(previous)) continue;
+    if (PATH_FLAGS.has(previous)) {
+      if (!argument.startsWith('-')) result.push(argument);
+      continue;
+    }
+    if (PATH_FLAGS.has(argument)) continue;
     if (argument.startsWith('-')) continue;
     result.push(argument);
   }
@@ -533,6 +549,10 @@ function rewritePathToken(token, pathMap) {
     if (token === entry.original || token.startsWith(`${entry.original}/`)) {
       return `${entry.destination}${token.slice(entry.original.length)}`;
     }
+  }
+  for (const flag of PATH_FLAGS) {
+    const prefix = `${flag}=`;
+    if (token.startsWith(prefix)) return `${prefix}${rewritePathToken(token.slice(prefix.length), pathMap)}`;
   }
   return token;
 }
