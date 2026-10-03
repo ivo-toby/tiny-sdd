@@ -134,6 +134,10 @@ For a review revision, reuse a prior completed, scope-clean candidate explicitly
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new
 disposable workspace and records the lineage; it never changes the source project.
+For a benchmark replay, an intervening `task update` that changes the approved
+allow, protect, context, checks, or dependency shape is refused with
+`STALE_BENCHMARK_SHAPE`; re-approve the revised task before starting a new
+benchmark.
 
 Inspect the finished result envelope and patch. Process completion is not passing
 verification, and scope violations are review blockers. Use the outer harness

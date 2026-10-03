@@ -409,6 +409,17 @@ function contextDigestMatches(approved, current, legacy) {
   return approved === current || (legacy !== undefined && approved === legacy);
 }
 
+function approvalBindsTaskShape(approval, task) {
+  return Boolean(
+    approval
+      && stableStringify(approval.dependsOn) === stableStringify(task.dependsOn)
+      && stableStringify(approval.allow) === stableStringify(task.allow)
+      && (approval.context ?? null) === (task.context ?? null)
+      && (approval.checks ?? null) === (task.checks ?? null)
+      && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null),
+  );
+}
+
 async function inspectTask(projectRoot, state, task, seen = new Set()) {
   if (seen.has(task.id)) throw tinyError('STATE_MALFORMED', `dependency cycle reaches ${task.id}`);
   const nextSeen = new Set(seen).add(task.id);
@@ -433,14 +444,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   const approval = task.approval;
   const blockedAfterApproval = task.review?.verdict === 'blocked'
     && task.review.approvalDigest === approval?.approvalDigest;
-  const approvalBindsTaskShape = Boolean(
-    approval
-      && stableStringify(approval.dependsOn) === stableStringify(task.dependsOn)
-      && stableStringify(approval.allow) === stableStringify(task.allow)
-      && (approval.context ?? null) === (task.context ?? null)
-      && (approval.checks ?? null) === (task.checks ?? null)
-      && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null),
-  );
+  const shapeBindsApproval = approvalBindsTaskShape(approval, task);
   const approvalFresh = Boolean(
     approval
       && briefDigest
@@ -448,7 +452,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
       && contextDigestMatches(approval.contextDigest ?? null, contextDigest, compiledContext?.legacySha256)
       && (approval.checksDigest ?? null) === checksDigest
       && (approval.protectDigest ?? null) === protectDigest
-      && approvalBindsTaskShape
+      && shapeBindsApproval
       && task.dependsOn.every((dependency) => (
         Object.hasOwn(approval.dependencyAcceptances ?? {}, dependency)
         && approval.dependencyAcceptances[dependency] === dependencyAcceptances[dependency]
@@ -982,6 +986,9 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
   if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
   const task = state.tasks[id];
   if (!task.approval) throw tinyError('BENCHMARK_NOT_APPROVED', `task ${id} has no recorded approval to replay`);
+  if (!approvalBindsTaskShape(task.approval, task)) {
+    throw tinyError('STALE_BENCHMARK_SHAPE', `task ${id} shape has changed since the recorded approval`, { taskId: id });
+  }
   const text = await readProjectFile(root, task.brief, taskBriefOptions());
   if (sha256(text) !== task.approval.briefDigest) {
     throw tinyError('STALE_BENCHMARK_BRIEF', `brief has changed since the recorded approval: ${task.brief}`);

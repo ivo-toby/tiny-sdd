@@ -311,6 +311,46 @@ test('task checks manifests are validated, approved, and carried in packets', as
   }
 });
 
+test('benchmark replay refuses every task shape change after approval', async () => {
+  const cases = [
+    ['allow', { allow: ['src/expanded.ts'] }],
+    ['protect', { protect: [] }],
+    ['context', { context: '' }],
+    ['checks', { checks: '' }],
+    ['depends-on', { dependsOn: ['dependency'] }],
+  ];
+  for (const [label, update] of cases) {
+    const root = await project();
+    try {
+      await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+      await mkdir(join(root, 'src'), { recursive: true });
+      await writeFile(join(root, 'src', 'contract.ts'), 'export const boundary = 1;\n');
+      await writeFile(join(root, '.tinysdd', 'tasks', 'one.context.json'), JSON.stringify({ schemaVersion: 1, facts: ['approved context'], resources: [] }));
+      await writeFile(join(root, '.tinysdd', 'tasks', 'one.checks.json'), JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'unit', argv: ['node', '--test'] }] }));
+      await addTask(root, { id: 'dependency', brief: 'docs/brief.md', allow: ['src/dependency.ts'] });
+      await addTask(root, {
+        id: 'one',
+        brief: 'docs/brief.md',
+        context: '.tinysdd/tasks/one.context.json',
+        checks: '.tinysdd/tasks/one.checks.json',
+        allow: ['src/allowed.ts'],
+        protect: ['src/contract.ts'],
+      });
+      await approveTask(root, { id: 'one', by: 'operator', reason: 'approved benchmark shape' });
+      const approved = await resolveBenchmarkPacket(root, 'one');
+      assert.deepEqual(approved.allowedPaths, ['src/allowed.ts'], label);
+      assert.deepEqual(approved.protectedPaths, ['src/contract.ts'], label);
+      assert.equal(approved.context.path, '.tinysdd/tasks/one.context.json', label);
+      assert.equal(approved.checks.path, '.tinysdd/tasks/one.checks.json', label);
+
+      await updateTask(root, { id: 'one', by: 'operator', reason: `change ${label}`, ...update });
+      await assert.rejects(resolveBenchmarkPacket(root, 'one'), { code: 'STALE_BENCHMARK_SHAPE' }, label);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
 test('task add rejects invalid checks manifests without changing state', async () => {
   const root = await project();
   try {

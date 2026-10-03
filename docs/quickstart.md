@@ -261,6 +261,10 @@ tinysdd worker start --task first-change --worker gemma \
 
 Use a run from the same task. Do not use `--baseline-run` for a revision; use
 `--base-run` only when deliberately overlaying a reviewed prior candidate.
+If `task update` changes the approved allow, protect, context, checks, or
+dependency shape, benchmark replay refuses with `STALE_BENCHMARK_SHAPE` instead
+of silently replaying a different packet. Re-approve the revised task before
+starting a new benchmark.
 
 ## Review the result
 
