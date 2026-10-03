@@ -357,6 +357,51 @@ copy. A cgroup scope (`systemd-run --user --scope -p MemoryMax=…`) is stronger
 where the host has it. The runner refuses to start if it cannot apply the
 configured limits.
 
+**Check runner (`src/check-runner.mjs`, #26).** The host-side runner exists and
+nothing calls it yet. It follows the sketch above, with these differences:
+
+- The check never runs as root. A root caller drops to an unprivileged uid
+  first (`runAs`, default 65534:65534) with
+  `setpriv --reuid=<uid> --regid=<gid> --clear-groups --no-new-privs -- prlimit ... bwrap ...`,
+  located at a fixed path like the other binaries (`/usr/bin/setpriv`,
+  `/bin/setpriv`). Without setpriv the runner refuses to run
+  (`CHECK_RUNNER_UNAVAILABLE`); it never falls back to root. Any other caller
+  runs as itself, and `runAs` must then be absent or name itself. The scratch
+  copy is handed to the target uid (the scratch directory stays 0700), and the
+  uid is recorded in `sandbox.runAs`. Everything bwrap mounts from the host
+  (`nodeRoot`, the dependency mounts, the temporary directory) has to be
+  reachable by that uid; if not, bwrap fails to start and the runner throws
+  `CHECK_RUNNER_UNAVAILABLE` with bwrap's message.
+- bwrap also gets `--clearenv` and `--cap-drop ALL`. bwrap adds `PWD=/work` for
+  `--chdir`, so the sandbox environment is `PATH`, `HOME`, `CI`, `LANG` and
+  `PWD`. Where bwrap can
+  (0.8 or later, probed once with a real run), it also gets
+  `--unshare-user --disable-userns`, so the check cannot create nested user
+  namespaces; an older bwrap runs without it, and the result says which
+  (`sandbox.nestedUserNamespaces`).
+- `/work` is a tmpfs of `scratchBytes` (default 512 MiB), not a host bind. The
+  host scratch copy is bound read-only at `/input`, and a fixed
+  `/bin/sh -c 'cp -a /input/. /work/ ...; exec "$@"'` copies it in before the
+  check starts, so what the check writes is bounded while it runs, not only while
+  the candidate is copied. The candidate must fit: files are counted in 4 KiB
+  tmpfs pages, and a dependency mount target must not already exist in it (the
+  mount is read-only, so the copy could not merge into it). `/tmp` and
+  `/dev/shm` are 256 MiB tmpfs mounts and `/dev` is read-only. All of these are
+  RAM-backed and `RLIMIT_AS` does not cover them, so a check can hold up to
+  `scratchBytes + 2 * tmpfsBytes` (1 GiB by default) of memory in files. A failed
+  copy (`tinysdd-setup: ...`, exit 125) is `CHECK_RUNNER_UNAVAILABLE`.
+- `RLIMIT_NPROC` counts every task of the uid the check runs as, threads
+  included, on the whole host, not only the sandbox's, so a fixed limit would
+  stop a busy account from starting the sandbox at all. The runner counts that
+  uid's current tasks (not the caller's) and passes
+  `--nproc=<baseline + maxProcesses>`; `maxProcesses` (default 512) is what the
+  check may add, and the baseline is in `sandbox.processBaseline`. The limit is
+  always enforced, because the kernel does not apply it to root and the check
+  never runs as root. A fork storm can still starve the uid's other forks until
+  the timeout, so give `runAs` a uid that nothing else uses.
+- The stored output is the last 1 MiB, not the first.
+- No cgroup scope is used.
+
 **What the model sees.** Exit code, duration, run count against the budget, and
 the tail of the output with an explicit truncation marker:
 
