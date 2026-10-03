@@ -306,9 +306,10 @@ recorded identity; an older parent without that identity remains `unknown`.
 ## Review the result
 
 The worker edits a disposable copy using read/write/edit. Available declared
-checks add the fixed `run_checks` client. Its result points
-to local evidence and a patch under `.tinysdd/runs/`. It does not run tests,
-apply the patch, commit, or accept its own result. Inference can reach the selected
+checks add the fixed `run_checks` client. Its check results are worker feedback
+and point to local evidence and a patch under `.tinysdd/runs/`; the operator
+still owns independent verification. The worker does not apply the patch,
+commit, or accept its own result. Inference can reach the selected
 provider; use only source you are authorized to send there. Raw event files may
 contain source. Filename exclusions are not a general secret scanner.
 The candidate omits `.git`, `.tinysdd`, `node_modules` and common credential files;

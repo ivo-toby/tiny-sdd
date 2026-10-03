@@ -514,29 +514,38 @@ describe('check runner', { skip: SKIP }, () => {
     ].join('\n'));
     const prlimitPath = await stubExecutable('exit 0');
     const controller = new AbortController();
-    const abortTimer = setTimeout(() => controller.abort(), 100);
-    const started = Date.now();
-    try {
-      await assert.rejects(
-        run(candidate, {}, { bwrapPath, signal: controller.signal }),
-        (error) => {
-          assert.equal(error.code, 'CHECK_CANCELLED');
-          return true;
-        },
-      );
-      assert.ok(Date.now() - started < 1500, 'namespace preparation ignored cancellation');
-      let remaining = await processesMatching(token);
-      for (let attempt = 0; attempt < 20 && remaining.length > 0; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        remaining = await processesMatching(token);
+    const pending = run(candidate, {}, { bwrapPath, signal: controller.signal }).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    let settled = false;
+    pending.then(() => { settled = true; });
+    let probeStartedAt;
+    for (let attempt = 0; attempt < 200 && !settled; attempt += 1) {
+      if (await readFile(probeRuns, 'utf8').then((value) => value === '1\n', () => false)) {
+        probeStartedAt = Date.now();
+        break;
       }
-      assert.deepEqual(remaining, []);
-      const result = await run(candidate, {}, { bwrapPath, prlimitPath });
-      assert.equal(result.exitCode, 0);
-      assert.equal(await readFile(probeRuns, 'utf8'), '2\n');
-    } finally {
-      clearTimeout(abortTimer);
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
+    if (probeStartedAt === undefined) {
+      controller.abort();
+      await pending;
+      assert.fail('namespace probe did not start before the test deadline');
+    }
+    controller.abort();
+    const outcome = await pending;
+    assert.equal(outcome.error?.code, 'CHECK_CANCELLED');
+    assert.ok(Date.now() - probeStartedAt < 1500, 'namespace preparation ignored cancellation');
+    let remaining = await processesMatching(token);
+    for (let attempt = 0; attempt < 20 && remaining.length > 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      remaining = await processesMatching(token);
+    }
+    assert.deepEqual(remaining, []);
+    const result = await run(candidate, {}, { bwrapPath, prlimitPath });
+    assert.equal(result.exitCode, 0);
+    assert.equal(await readFile(probeRuns, 'utf8'), '2\n');
   });
 
   test('the address-space limit stops a runaway allocation without a timeout', async () => {
