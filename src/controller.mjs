@@ -638,7 +638,8 @@ async function semanticGateDecision(root, { taskId, verdict, evidenceContent, ju
   } catch {
     return null;
   }
-  if (!task || !task.approval) return null;
+  // A retired task is refused by reviewTask; don't spend a judge call on it.
+  if (!task || !task.approval || task.closure) return null;
   let briefText;
   try {
     briefText = await readProjectFile(root, task.brief, taskBriefOptions());
