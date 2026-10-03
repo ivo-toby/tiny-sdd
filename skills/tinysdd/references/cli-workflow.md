@@ -59,11 +59,29 @@ not deep-merge partial worker fields. Inspect effective configuration before
 dispatch. Copy a suitable profile into the project and set its relative path
 on the selected worker when needed. Profiles do not include credentials.
 
-Worker mode initially requires Linux, bubblewrap, Pi and the exact model in
-Pi's configured models. It uses only read/write/edit tools in a disposable copy.
+Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`, Pi in
+the same installation as the CLI's Node executable, and the exact model in Pi's
+configured models. Missing sandbox support fails closed. It uses only
+read/write/edit tools in a disposable copy.
 No generated code is run. Source files may appear in local raw events and sent
 model context: use only authorized projects and providers. Excluded filenames
 are a precaution, not a general detector for secrets embedded in source.
+
+On macOS, Seatbelt allows writes only to the candidate and temporary Pi state;
+the original project, original Pi configuration and other home files are denied.
+Only trusted Node/Pi code and system libraries are readable outside those copies.
+The `openai-completions` API needs an explicit HTTP(S) base URL. A per-run
+loopback relay forwards only the selected model's chat-completion requests to
+that endpoint; provider credentials remain outside Pi, redirects and other
+routes/models are rejected, and other network ports are denied. No provider or
+model fallback occurs. Inspect `runtime.json` (`sandbox: "seatbelt"`) and the
+retained `sandbox.sb` for the exact policy. Qualify each MLX, llama.cpp or LM
+Studio endpoint with a live run; a stubbed test is not that evidence.
+`node scripts/qualify-macos-sandbox.mjs` runs real Seatbelt escape checks with
+synthetic fixtures separately from the offline test suite.
+Use `node scripts/qualify-macos-worker.mjs --provider NAME --model EXACT_ID` for
+a live smoke of one configured endpoint, with its approved credential environment.
+The script retains artifacts and checks the candidate and source independently.
 
 Use `worker start` for real model calls from an orchestrating agent. It launches
 the controller in a detached process so short-lived agent shells cannot send an

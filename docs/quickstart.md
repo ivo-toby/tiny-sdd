@@ -1,8 +1,9 @@
 # Try TinySDD locally
 
 This is an early local prototype. The controller does not require a model.
-Spawned workers require Linux, bubblewrap and an existing Pi installation with
-the exact provider/model configured. No package installation is needed for the
+Spawned workers require Linux with bubblewrap or macOS with `sandbox-exec`, and
+an existing Pi installation with the exact provider/model configured. Missing
+sandbox support fails closed. No package installation is needed for the
 dependency-free CLI itself. Node24 is the development/test environment.
 The first adapter expects Pi in the same installation's `bin` directory as the
 Node executable running this CLI; other installation layouts are not qualified.
@@ -10,6 +11,39 @@ Workers create disposable candidate directories under `/tmp` by default. Set
 `TINYSDD_TMPDIR` to an existing real directory on a volume with enough free
 space when `/tmp` is small or shared; the worker removes its candidates after it
 has retained the run artifacts under the project.
+On macOS, the default system temporary directory is resolved through Apple's
+`/var` and `/tmp` aliases; an explicit `TINYSDD_TMPDIR` must still be a real path.
+
+The macOS adapter uses Seatbelt with read access to system libraries, the Node
+executable and the installed Pi package. Only the candidate and temporary Pi
+state are writable. The source project, original Pi state and other home files
+are inaccessible, including through symlinks. Pi receives only read/write/edit
+tools; process forks and shell execution are denied.
+
+macOS currently supports the `openai-completions` API with an explicit HTTP(S)
+base URL. A temporary loopback relay forwards only `POST /chat/completions` for
+the exact selected model to that configured URL. It retains provider credentials
+in the controller, rejects other routes/models and redirects, and closes when
+the run ends. Pi receives an ephemeral relay token and no provider credential
+environment variables. All other network ports are denied. MLX, llama.cpp and
+LM Studio servers can use their OpenAI-compatible endpoints; each deployment
+still needs a live smoke run. The Linux bubblewrap path is unchanged.
+
+`runtime.json` records `sandbox: "seatbelt"`, the executable, relay destination
+and retained `sandbox.sb` profile on macOS. Linux keeps `sandbox: "bubblewrap"`.
+Run the separate native escape qualification with the same Node installation:
+
+```sh
+node scripts/qualify-macos-sandbox.mjs
+node scripts/qualify-macos-worker.mjs --provider litellm --model code-local
+```
+
+The escape check uses synthetic source, home/SSH and Pi-state fixtures. The model
+smoke requires the exact configured provider/model and its credential environment;
+it retains a synthetic project and independently checks the candidate and
+unchanged source. Repeat it explicitly for each endpoint being qualified.
+The ordinary test suite
+uses stubs and requires no sandbox executable, network, Pi or model.
 
 From this checkout:
 

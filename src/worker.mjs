@@ -4,6 +4,7 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat,
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 import {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_TOOL_LIMIT,
@@ -15,6 +16,8 @@ import {
   validatePiWorker,
 } from "./pi-environment.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
+import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
+import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -94,7 +97,8 @@ async function ensureRoot(root) {
 }
 
 async function temporaryRoot() {
-  const requested = process.env.TINYSDD_TMPDIR ?? process.env.TMPDIR ?? "/tmp";
+  // macOS's system temp directory normally traverses /var -> /private/var.
+  const requested = process.env.TINYSDD_TMPDIR ?? (process.platform === "darwin" ? await realpath(process.env.TMPDIR ?? "/tmp") : process.env.TMPDIR ?? "/tmp");
   if (typeof requested !== "string" || requested.length === 0) fail("TINYSDD_TMPDIR must name an existing directory");
   const absolute = resolve(requested);
   let info;
@@ -693,7 +697,13 @@ async function chooseRuntime(runtime) {
     const pi = await executablePath(runtime.piExecutable, "test Pi executable");
     return { test: true, pi, bwrap: null, sourceAgentDir: runtime.sourceAgentDir, sourceEnv: runtime.sourceEnv };
   }
-  if (process.platform !== "linux") fail("Pi workers require Linux bubblewrap; refusing an unsandboxed run");
+  if (process.platform === "darwin") {
+    const sandboxExec = await executablePath(runtime?.sandboxExecExecutable ?? "/usr/bin/sandbox-exec", "macOS sandbox-exec");
+    const pi = await executablePath(runtime?.piExecutable ?? join(dirname(process.execPath), "pi"), "Pi executable");
+    const node = await executablePath(process.execPath, "Node executable");
+    return { test: false, sandbox: "seatbelt", pi, node, sandboxExec, bwrap: null, sourceAgentDir: undefined, sourceEnv: undefined };
+  }
+  if (process.platform !== "linux") fail("Pi workers require Linux bubblewrap or macOS sandbox-exec; refusing an unsandboxed run");
   const bwrapCandidates = runtime?.bwrapExecutable ? [runtime.bwrapExecutable] : ["/usr/bin/bwrap", "/bin/bwrap"];
   const bwrap = await findDefaultExecutable("bubblewrap", bwrapCandidates);
   const defaultPi = runtime?.piExecutable || join(dirname(process.execPath), "pi");
@@ -709,12 +719,12 @@ async function existingAbsoluteDirectory(path, label) {
   return canonical;
 }
 
-async function piPackageVersion(pi) {
+async function piPackageInfo(pi) {
   let current = dirname(pi.resolved);
   for (let count = 0; count < 8; count += 1) {
     try {
       const packageJson = JSON.parse(await readFile(join(current, "package.json"), "utf8"));
-      if (typeof packageJson.name === "string" && typeof packageJson.version === "string") return packageJson.version;
+      if (typeof packageJson.name === "string" && typeof packageJson.version === "string") return { version: packageJson.version, root: current };
     } catch {
       // Continue toward the bounded install root.
     }
@@ -722,7 +732,7 @@ async function piPackageVersion(pi) {
     if (parent === current) break;
     current = parent;
   }
-  return null;
+  return { version: null, root: null };
 }
 
 function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt }) {
@@ -857,7 +867,7 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, signal }) {
+async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
@@ -873,6 +883,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   let closed = false;
   let stopRequested = false;
   let stoppedBeforeSpawn = false;
+  const outputPipes = [];
   const stop = (reason) => {
     if (forcedOutcome) return;
     forcedOutcome = reason;
@@ -895,8 +906,18 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
         cwd,
         env,
         detached: true,
-        stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
+        stdio: ["ignore", pipeOutput ? "pipe" : stdoutHandle.fd, pipeOutput ? "pipe" : stderrHandle.fd],
       });
+      if (pipeOutput) {
+        for (const [stream, handle] of [[child.stdout, stdoutHandle], [child.stderr, stderrHandle]]) {
+          outputPipes.push(pipeline(stream, async (chunks) => {
+            for await (const chunk of chunks) await handle.writeFile(chunk);
+          }).catch(() => {
+            spawnError ??= "Cannot retain sandboxed Pi output";
+            killProcessGroup(child.pid, "SIGTERM");
+          }));
+        }
+      }
     } catch (error) {
       spawnError = error instanceof Error ? error.message : String(error);
     }
@@ -938,6 +959,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     timeoutTimer.unref?.();
   }
   const termination = await closePromise;
+  await Promise.all(outputPipes);
   closed = true;
   signal?.removeEventListener("abort", onAbort);
   if (pollTimer) clearInterval(pollTimer);
@@ -1142,13 +1164,14 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
   return {
     schemaVersion: 1,
     adapter: "pi",
-    sandbox: runtime.test ? "test-runtime" : "bubblewrap",
+    sandbox: runtime.test ? "test-runtime" : runtime.sandbox ?? "bubblewrap",
     sandboxRequired: true,
     provider: worker.provider,
     model: worker.model,
     piExecutable: runtime.test ? "test-harness" : pi.path,
     piVersion,
-    bubblewrap: runtime.test ? null : bwrap.path,
+    bubblewrap: bwrap?.path ?? null,
+    ...(runtime.sandbox === "seatbelt" ? { sandboxExec: runtime.sandboxExec.path } : {}),
     // `thinking` is the requested level; effectiveThinkingControl says whether
     // Pi will actually send a thinking parameter for it (talon run 2 recorded
     // "off" while no toggle was sent and the model thought anyway).
@@ -1187,7 +1210,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
  *
  * The optional `runtime` member is test-only and is rejected unless the test
  * harness explicitly enables it.  Production callers use the four documented
- * arguments and therefore always require Linux bubblewrap.
+ * arguments and therefore require Linux bubblewrap or macOS Seatbelt.
  */
 export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
@@ -1240,6 +1263,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let artifactDir;
   let workspace;
   let baseline;
+  let inferenceRelay;
   try {
     artifactDir = await createArtifactDir(sourceRoot, runId);
     workspace = await mkdtemp(join(tempRoot, "tinysdd-worker-"));
@@ -1260,7 +1284,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeJson(join(artifactDir, "packet.json"), normalizedPacket);
     await writeFile(join(artifactDir, "prompt.txt"), prompt.rendered, { mode: 0o600 });
     if (compiledContext) await writeFile(join(artifactDir, "compiled-context.md"), compiledContext.rendered, { mode: 0o600 });
-    const piVersion = await piPackageVersion(runtimeChoice.pi);
+    const piPackage = await piPackageInfo(runtimeChoice.pi);
+    const piVersion = piPackage.version;
     await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion));
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
@@ -1287,11 +1312,13 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeFile(systemPromptPath, prompt.system, { mode: 0o600 });
 
     const thinking = resolvedProfile.value?.runtime?.thinking ?? "off";
-    const sessionPath = runtimeChoice.test ? join(prepared.stateDir, "session.jsonl") : "/pi-state/session.jsonl";
+    const nativePaths = runtimeChoice.test || runtimeChoice.sandbox === "seatbelt";
+    const promptStateDir = runtimeChoice.sandbox === "seatbelt" ? await realpath(prepared.stateDir) : prepared.stateDir;
+    const sessionPath = nativePaths ? join(promptStateDir, "session.jsonl") : "/pi-state/session.jsonl";
     const userPromptPath = join(prepared.stateDir, "task-prompt.txt");
     await writeFile(userPromptPath, prompt.user, { mode: 0o600 });
-    const promptArgumentPath = runtimeChoice.test ? userPromptPath : "/pi-state/task-prompt.txt";
-    const appendPromptPath = runtimeChoice.test ? systemPromptPath : "/pi-state/system-prompt.txt";
+    const promptArgumentPath = nativePaths ? join(promptStateDir, "task-prompt.txt") : "/pi-state/task-prompt.txt";
+    const appendPromptPath = nativePaths ? join(promptStateDir, "system-prompt.txt") : "/pi-state/system-prompt.txt";
     const piArgs = buildPiArgs({ provider: worker.provider, model: worker.model, sessionPath, thinking, systemPromptPath: appendPromptPath, userPrompt: promptArgumentPath.startsWith("/") ? `@${promptArgumentPath}` : prompt.user });
     let command;
     let args;
@@ -1304,6 +1331,28 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         if (!key.startsWith("TINYSDD_TEST_")) fail("Test runtime may only add TINYSDD_TEST_* environment values");
         childEnv[key] = String(value);
       }
+    } else if (runtimeChoice.sandbox === "seatbelt") {
+      if (!piPackage.root) fail("Cannot identify the installed Pi package for the macOS sandbox");
+      const stateDir = await realpath(prepared.stateDir);
+      const sourceAgentDir = await realpath(dirname(prepared.sourceModelsPath));
+      const models = JSON.parse(await readFile(join(stateDir, "models.json"), "utf8"));
+      const provider = models.providers[worker.provider];
+      let sandboxProfile;
+      try {
+        inferenceRelay = await startInferenceRelay({ provider, model: provider.models[0], env: prepared.env });
+        sandboxProfile = buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, nodeExecutable: runtimeChoice.node.resolved, piExecutable: runtimeChoice.pi.resolved, piRoot: piPackage.root, inferencePort: inferenceRelay.port });
+      } catch (error) {
+        fail(`Cannot prepare macOS sandbox: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const sandboxPath = join(artifactDir, "sandbox.sb");
+      await writeFile(sandboxPath, sandboxProfile, { mode: 0o600 });
+      await mkdir(join(stateDir, "home"), { mode: 0o700 });
+      await mkdir(join(stateDir, "tmp"), { mode: 0o700 });
+      await writeJson(join(stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceRelay.baseUrl) } });
+      command = runtimeChoice.sandboxExec.path;
+      args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
+      childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
+      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
@@ -1311,7 +1360,9 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
       args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv });
     }
-    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, signal });
+    capture = await captureProcess({ command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
+    if (inferenceRelay) await inferenceRelay.close();
+    inferenceRelay = null;
     after = await snapshotTree(workspace);
     await copySnapshotTree(workspace, afterArtifact);
     await writeJson(join(artifactDir, "after-snapshot.json"), after);
@@ -1381,11 +1432,12 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;
   } finally {
+    if (inferenceRelay) await inferenceRelay.close().catch(() => {});
     await prepared.cleanup().catch(() => {});
     if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (baseline) await rm(baseline, { recursive: true, force: true }).catch(() => {});
