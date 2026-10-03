@@ -1,5 +1,12 @@
 {
   "schemaVersion": 1,
   "dependencyMounts": [],
-  "checks": [{ "id": "submitted-tests", "argv": ["node", "--test", "--test-reporter=tap"], "timeoutMs": 120000, "criteria": ["C1", "C2", "C3", "C4"] }]
+  "checks": [
+    { "id": "mutant-wrong-string-timeout", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "amber-input-validation", "candidates/amber-input-validation/wrong-string-timeout/src/options.mjs", "C2 rejects non-integer timeout values instead of coercing them"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-fraction-timeout", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "amber-input-validation", "candidates/amber-input-validation/wrong-fraction-timeout/src/options.mjs", "C2 rejects non-integer timeout values instead of coercing them"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-zero-timeout", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "amber-input-validation", "candidates/amber-input-validation/wrong-zero-timeout/src/options.mjs", "C3 enforces the inclusive timeout bounds"], "timeoutMs": 120000, "criteria": ["C3"] },
+    { "id": "mutant-wrong-endpoint-timeout", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "amber-input-validation", "candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs", "C3 enforces the inclusive timeout bounds"], "timeoutMs": 120000, "criteria": ["C3"] },
+    { "id": "mutant-wrong-header-case", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "amber-input-validation", "candidates/amber-input-validation/wrong-header-case/src/options.mjs", "C4 canonicalizes header names while retaining their values"], "timeoutMs": 120000, "criteria": ["C4"] },
+    { "id": "mutant-wrong-missing-default", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "amber-input-validation", "candidates/amber-input-validation/wrong-missing-default/src/options.mjs", "C1 defaults omitted options without dropping explicit values"], "timeoutMs": 120000, "criteria": ["C1"] }
+  ]
 }

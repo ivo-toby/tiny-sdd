@@ -1,5 +1,9 @@
 {
   "schemaVersion": 1,
   "dependencyMounts": [],
-  "checks": [{ "id": "submitted-tests", "argv": ["node", "--test", "--test-reporter=tap"], "timeoutMs": 120000, "criteria": ["C1", "C2", "C3"] }]
+  "checks": [
+    { "id": "mutant-wrong-duplicate-subscribe", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "dune-emitter-edge", "candidates/dune-emitter-edge/wrong-duplicate-subscribe/src/emitter.mjs", "C1 deduplicates the same subscription"], "timeoutMs": 120000, "criteria": ["C1"] },
+    { "id": "mutant-wrong-live-dispatch", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "dune-emitter-edge", "candidates/dune-emitter-edge/wrong-live-dispatch/src/emitter.mjs", "C2 dispatches a snapshot in subscription order"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-unsubscribe-all", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "dune-emitter-edge", "candidates/dune-emitter-edge/wrong-unsubscribe-all/src/emitter.mjs", "C3 removes only the target subscription and is idempotent"], "timeoutMs": 120000, "criteria": ["C3"] }
+  ]
 }

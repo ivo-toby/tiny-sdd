@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
   "dependencyMounts": [],
-  "checks": [{ "id": "submitted-tests", "argv": ["node", "--test", "--test-reporter=tap"], "timeoutMs": 120000, "criteria": ["C1", "C2", "C3"] }]
+  "checks": [{ "id": "reference-tests", "argv": ["node", "verifier/write-tests-verifier.mjs", "reference", "cobalt-state-machine"], "timeoutMs": 120000, "criteria": ["C1", "C2", "C3"] }]
 }

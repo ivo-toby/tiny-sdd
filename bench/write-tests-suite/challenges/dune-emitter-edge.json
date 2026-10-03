@@ -35,11 +35,11 @@
   "verifier": {
     "visible": {
       "path": "verifier/dune-emitter-edge/visible.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "ed44d274433755a674448a1556c7c88849090d4ad7acecab934da39dbef38872"
     },
     "heldOut": {
       "path": "verifier/dune-emitter-edge/held-out.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "f9ef01f53a6c95c09001b41f33a43518ef971749bce227dac434d15e47346a7f"
     }
   }
 }

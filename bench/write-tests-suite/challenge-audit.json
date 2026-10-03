@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "suiteId": "write-tests-v1",
-  "phase": "phase-1",
+  "phase": "phase-2",
   "challenges": [
     {
       "id": "amber-input-validation",
       "category": "input-validation",
       "referenceTest": {
         "path": "candidates/amber-input-validation/reference/tests/contract.test.mjs",
-        "sha256": "7f2f6dc2a1e4cd83101241fb241213fd6499113e76994e03774d35fc6f257856"
+        "sha256": "bc2475b4ac1208c7be89a443e3f4726ac232b14e95bcb5880eab3d025c399a2e"
       },
       "witnesses": [
         { "id": "C1", "testName": "C1 defaults omitted options without dropping explicit values", "invariant": "omitted fields use defaults and explicit values remain explicit" },
@@ -24,9 +24,21 @@
           "kills": ["C2"]
         },
         {
+          "id": "wrong-fraction-timeout",
+          "path": "candidates/amber-input-validation/wrong-fraction-timeout/src/options.mjs",
+          "sha256": "25ed982f2139e2bcad2350c3abd58b6d272115e7e9f0b54acfddade3f048e79e",
+          "kills": ["C2"]
+        },
+        {
           "id": "wrong-zero-timeout",
           "path": "candidates/amber-input-validation/wrong-zero-timeout/src/options.mjs",
           "sha256": "a27977f9f71d6fa6ce731b3899770fd2185c5c847f82603395b0befca9ca4154",
+          "kills": ["C3"]
+        },
+        {
+          "id": "wrong-endpoint-timeout",
+          "path": "candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs",
+          "sha256": "4e3c0015937ae35e8c0ee99c57f81dbf2c2ce3ea126ab97ffbfd23f5e4c46fc5",
           "kills": ["C3"]
         },
         {
@@ -38,7 +50,7 @@
         {
           "id": "wrong-missing-default",
           "path": "candidates/amber-input-validation/wrong-missing-default/src/options.mjs",
-          "sha256": "966b59d2ad916256821ccb96407578a945dc00b84aaf72c714d3706c62c87bb5",
+          "sha256": "32ebf096b80cb8bc974e585c716c3e6adaf5450bb4fbbc42fc5bd21fa2afa01b",
           "kills": ["C1"]
         }
       ]
@@ -81,7 +93,7 @@
       "category": "state-transition",
       "referenceTest": {
         "path": "candidates/cobalt-state-machine/reference/tests/contract.test.mjs",
-        "sha256": "51d77ea0474212e95d282cf26760bbb534647212864504f8646eaadc1b316263"
+        "sha256": "6d5d45f4ed156938f632cc5df51a2cc176e67fa03003d2a688faa84c86726c10"
       },
       "witnesses": [
         { "id": "C1", "testName": "C1 accepts only legal state transitions", "invariant": "only the declared idle and running transitions are legal" },
@@ -96,9 +108,21 @@
           "kills": ["C1"]
         },
         {
+          "id": "wrong-reject-failure",
+          "path": "candidates/cobalt-state-machine/wrong-reject-failure/src/state-machine.mjs",
+          "sha256": "6ffab21374ef18f4777d039ae4fee427b8cd24cb7637a574f02d2c4ea202ff74",
+          "kills": ["C1"]
+        },
+        {
           "id": "wrong-terminal-restart",
           "path": "candidates/cobalt-state-machine/wrong-terminal-restart/src/state-machine.mjs",
           "sha256": "6afa2cc32d1b40bc0a731c05abeb1d348d5d31464b69534dddb3780c5a024dc3",
+          "kills": ["C2"]
+        },
+        {
+          "id": "wrong-terminal-succeed",
+          "path": "candidates/cobalt-state-machine/wrong-terminal-succeed/src/state-machine.mjs",
+          "sha256": "57957aff970c88a8a9ed2ccef436f15c58338ceecb32098a4373c617c72dcee1",
           "kills": ["C2"]
         },
         {
@@ -114,7 +138,7 @@
       "category": "async-settlement",
       "referenceTest": {
         "path": "candidates/crimson-settlement/reference/tests/contract.test.mjs",
-        "sha256": "84898b203a0cd10abc50330b155fba584885af312626cc973a37e817da88ab24"
+        "sha256": "324432491dc986ab86e4c5ede32929595c881c22758f7f45a809ed41b57b13a2"
       },
       "witnesses": [
         { "id": "C1", "testName": "C1 records fulfillment and rejection without rejecting the batch", "invariant": "all task outcomes become settlement records" },

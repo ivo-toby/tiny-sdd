@@ -35,11 +35,11 @@
   "verifier": {
     "visible": {
       "path": "verifier/crimson-settlement/visible.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "19f6c1f1d20737a7d25b02754bd4b39caf1d621d6dd095f62cc47ddc9d6122e2"
     },
     "heldOut": {
       "path": "verifier/crimson-settlement/held-out.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "0a7b984914f55ae0ca56b9f038f3a17638a0be70a898b3ba8ab6d289506bef45"
     }
   }
 }

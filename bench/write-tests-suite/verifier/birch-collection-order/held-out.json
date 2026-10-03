@@ -1,5 +1,9 @@
 {
   "schemaVersion": 1,
   "dependencyMounts": [],
-  "checks": [{ "id": "submitted-tests", "argv": ["node", "--test", "--test-reporter=tap"], "timeoutMs": 120000, "criteria": ["C1", "C2", "C3"] }]
+  "checks": [
+    { "id": "mutant-wrong-sorted-groups", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "birch-collection-order", "candidates/birch-collection-order/wrong-sorted-groups/src/group-by.mjs", "C1 preserves first-seen group order"], "timeoutMs": 120000, "criteria": ["C1"] },
+    { "id": "mutant-wrong-sorted-members", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "birch-collection-order", "candidates/birch-collection-order/wrong-sorted-members/src/group-by.mjs", "C2 preserves member order within each group"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-mutates-input", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "birch-collection-order", "candidates/birch-collection-order/wrong-mutates-input/src/group-by.mjs", "C3 does not mutate the input collection"], "timeoutMs": 120000, "criteria": ["C3"] }
+  ]
 }

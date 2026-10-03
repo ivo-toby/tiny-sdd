@@ -9,7 +9,7 @@
     {
       "path": "src/options.mjs",
       "startLine": 1,
-      "endLine": 24,
+      "endLine": 22,
       "purpose": "Exact implementation interface and current behavior for contract tests."
     }
   ]

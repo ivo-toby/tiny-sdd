@@ -4,7 +4,9 @@ import { settleTasks } from '../src/settle.mjs';
 
 test('C1 records fulfillment and rejection without rejecting the batch', async () => {
   const error = new Error('boom');
-  assert.deepEqual(await settleTasks([() => 3, () => Promise.reject(error)]), [
+  let settled;
+  await assert.doesNotReject(async () => { settled = await settleTasks([() => 3, () => Promise.reject(error)]); });
+  assert.deepEqual(settled, [
     { status: 'fulfilled', value: 3 },
     { status: 'rejected', reason: error },
   ]);

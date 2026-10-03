@@ -35,11 +35,11 @@
   "verifier": {
     "visible": {
       "path": "verifier/birch-collection-order/visible.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "213d34b660c1c96a1c4b9b899cf3b2bf6dac0d2941dc9dce095e7e5f150d3b85"
     },
     "heldOut": {
       "path": "verifier/birch-collection-order/held-out.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "85472603be8d27233f3131b4a00839a30bb263acccd4a86d24630aa641e96bb9"
     }
   }
 }

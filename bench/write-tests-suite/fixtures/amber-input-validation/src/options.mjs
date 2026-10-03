@@ -14,11 +14,10 @@ export function normalizeOptions(input = {}) {
   if (headers === null || typeof headers !== 'object' || Array.isArray(headers)) {
     throw new TypeError('headers must be an object');
   }
-  const normalizedHeaders = {};
-  for (const [name, value] of Object.entries(headers)) {
+  const normalizedHeaders = Object.fromEntries(Object.entries(headers).map(([name, value]) => {
     if (typeof value !== 'string') throw new TypeError('header values must be strings');
-    normalizedHeaders[name.toLowerCase()] = value;
-  }
+    return [name.toLowerCase(), value];
+  }));
 
   return { timeoutMs, headers: normalizedHeaders };
 }

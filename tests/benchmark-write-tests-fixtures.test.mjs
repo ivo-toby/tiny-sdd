@@ -81,7 +81,7 @@ test('write-tests suite manifests, resources, and audit map are complete and iso
   const audit = await readJson(join(SUITE_ROOT, 'challenge-audit.json'));
   assert.equal(audit.schemaVersion, 1);
   assert.equal(audit.suiteId, suite.id);
-  assert.equal(audit.phase, 'phase-1');
+  assert.equal(audit.phase, 'phase-2');
   assert.equal(audit.challenges.length, suite.challenges.length);
 
   const auditById = new Map(audit.challenges.map((entry) => [entry.id, entry]));
@@ -126,7 +126,22 @@ test('write-tests suite manifests, resources, and audit map are complete and iso
     for (const ref of [challenge.verifier.visible, challenge.verifier.heldOut]) {
       assert.equal(await sha256(await readFile(join(SUITE_ROOT, ref.path))), ref.sha256, ref.path);
       const manifest = parseChecksManifest(await readFile(join(SUITE_ROOT, ref.path), 'utf8'));
-      assert.deepEqual(manifest.checks[0].argv, ['node', '--test', '--test-reporter=tap']);
+      assert.ok(manifest.checks.length >= 1);
+      assert.equal(manifest.checks[0].argv[0], 'node');
+      assert.equal(manifest.checks[0].argv[1], 'verifier/write-tests-verifier.mjs');
+      assert.equal(manifest.checks[0].argv[2], ref === challenge.verifier.visible ? 'reference' : 'mutant');
+      if (ref === challenge.verifier.visible) {
+        assert.equal(manifest.checks.length, 1);
+        assert.equal(manifest.checks[0].argv[3], challenge.id);
+      } else {
+        assert.equal(manifest.checks.length, auditChallenge.wrongSources.length);
+        assert.deepEqual(new Set(manifest.checks.map((check) => check.id)), new Set(auditChallenge.wrongSources.map((mutant) => `mutant-${mutant.id}`)));
+        for (const check of manifest.checks) {
+          assert.equal(check.argv[3], challenge.id);
+          assert.equal(check.argv[4].startsWith(`candidates/${challenge.id}/`), true);
+          assert.equal(typeof check.argv[5], 'string');
+        }
+      }
     }
     assert.doesNotMatch(JSON.stringify(challenge), /candidate|mutant|wrong/u);
   }

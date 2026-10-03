@@ -9,7 +9,7 @@
   ],
   "fixture": {
     "path": "fixtures/amber-input-validation",
-    "sha256": "0b1d62e22bb6e4b1271d8cb22817c8c41e4898b73649f7096f702e9339c1bac6"
+    "sha256": "f914d86f1d0c73774132ace317333f43d471384cf5f71611d87f8bb125f444f2"
   },
   "packet": {
     "brief": {
@@ -18,7 +18,7 @@
     },
     "context": {
       "path": "packets/amber-input-validation/context.json",
-      "sha256": "8a2991261adc6ccea238a2b6a176671c0fcf6d7fe07764e70f81ae8f1b0f12a7"
+      "sha256": "2206ea1f9a9611c7f8a8e11c80cfec11b3a99dbf5d0041ba2a33bc04baa1b814"
     },
     "checks": {
       "path": "packets/amber-input-validation/checks.json",
@@ -35,11 +35,11 @@
   "verifier": {
     "visible": {
       "path": "verifier/amber-input-validation/visible.json",
-      "sha256": "d3a7dddf2f0364524947898abf3974d4645a3c1ee4e4db04235dd50e54255253"
+      "sha256": "66142b95d1a3ca6ecf600419e8984fd93714cbed4010beeee728bea28c32dd09"
     },
     "heldOut": {
       "path": "verifier/amber-input-validation/held-out.json",
-      "sha256": "d3a7dddf2f0364524947898abf3974d4645a3c1ee4e4db04235dd50e54255253"
+      "sha256": "3c3fda78caa509da63c1d635ab8e14504fa2954a1422356818ac58a6f0989aa6"
     }
   }
 }

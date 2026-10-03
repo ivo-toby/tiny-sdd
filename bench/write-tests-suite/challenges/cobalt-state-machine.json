@@ -35,11 +35,11 @@
   "verifier": {
     "visible": {
       "path": "verifier/cobalt-state-machine/visible.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "f1ff8bfb0341adfe29f084408973b1109a1d2c6377042b102fa84bc92d3ab2e7"
     },
     "heldOut": {
       "path": "verifier/cobalt-state-machine/held-out.json",
-      "sha256": "be6ad29ceaf18631539e8d8b6bbaaa8f8ac5f12201ca35d7750cc002d9b92d61"
+      "sha256": "dcd2ba076027a0360d49101da6297ffb5b4fd92d684067aa8da72ac0e7f34550"
     }
   }
 }
