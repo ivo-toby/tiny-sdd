@@ -167,6 +167,10 @@ longer, `data.status` is `stopping`; poll `worker status` until it is `finished`
 (Linux `/proc`), and otherwise fails with `LAUNCH_NOT_OURS` without sending a
 signal. Stopping an already stopping launch only waits.
 
+Every non-completed worker result includes `candidateState`: the number of
+allowed paths changed and the sorted allowed paths left untouched. A non-completed
+result with changed paths is a candidate for review, not a reason to discard it.
+
 ## Controlled benchmark replay
 
 To compare workers fairly after the live project has moved on, replay the

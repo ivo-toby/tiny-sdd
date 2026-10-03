@@ -696,7 +696,7 @@ contexts grow.
 | Plan-level approval | Designed (3.2) | Changes approval meaning; operator decision first. |
 | `worker stop` with `stopped` outcome | **Implemented** (#10) | Finalizes the run with outcome `stopped` (evidence, candidate and patch kept); only signals a launcher verified through `/proc/<pid>/cmdline`. |
 | `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |
-| Timeout candidate state | Designed (3.3) | `candidateState` on timeout/stopped; S4 timed out with a complete candidate. |
+| Timeout candidate state | **Implemented** (#11) | Non-completed results report allowed paths touched and untouched; S4 timed out with a complete candidate. |
 | Shared briefs going stale | Designed (3.2) | One brief per task plus cited spec ranges; addenda as the alternative. |
 | Behavior-split sizing signal | Designed (3.2) | Test characteristics (fake timers, deferred promises, races) recommend a behavior split. |
 | Standard manifest facts | Designed (3.2) | Lint rules and confusable library accessors, prompted by the skill. |

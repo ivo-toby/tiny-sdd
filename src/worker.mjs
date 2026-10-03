@@ -1306,6 +1306,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const scopeViolations = changes.filter((change) => !allowedSet.has(slash(change.path))).map((change) => ({ path: slash(change.path), change: change.change, reason: "changed path is outside packet.allowedPaths" }));
     const outcome = classifyOutcome(capture);
     const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);
+    const touchedAllowedPaths = new Set(changes.filter((change) => allowedSet.has(slash(change.path))).map((change) => slash(change.path)));
     result = {
       schemaVersion: 1,
       runId,
@@ -1321,6 +1322,13 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       taskShape: { allowedFiles: selectedAllowed.length, ...contextSizeMetrics(compiledContext) },
       workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
       outcome,
+      ...(outcome !== "completed" ? {
+        candidateState: {
+          allowedPaths: selectedAllowed.length,
+          allowedPathsTouched: touchedAllowedPaths.size,
+          untouchedPaths: selectedAllowed.filter((path) => !touchedAllowedPaths.has(path)).sort(),
+        },
+      } : {}),
       model: { provider: worker.provider, id: worker.model },
       observed: {
         processTermination: capture.processTermination,

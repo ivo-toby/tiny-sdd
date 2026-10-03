@@ -120,6 +120,12 @@ if (action === "write-late") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Wrote the file."}]}}));
   process.exit(0);
 }
+if (action === "write-then-hang") {
+  writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
+  console.log(JSON.stringify({type:"tool_execution_start",toolName:"write",args:{path:"src/allowed.txt"}}));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  process.exit(0);
+}
 if (action === "reread") {
   for (const path of [join(process.cwd(), "src", "allowed.txt"), "./src/allowed.txt", "src/allowed.txt", "TASK.md"]) {
     console.log(JSON.stringify({type:"tool_execution_start",toolName:"read",args:{path}}));
@@ -295,6 +301,7 @@ describe("Pi worker capture and scope", () => {
     try {
       const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
       assert.equal(result.outcome, "completed");
+      assert.equal(Object.hasOwn(result, "candidateState"), false);
       assert.equal(result.observed.assistantTermination.stopReason, "stop");
       assert.deepEqual(result.scopeViolations, []);
       assert.deepEqual(result.changedPaths.map((entry) => entry.path), ["src/allowed.txt"]);
@@ -590,6 +597,28 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.observed.firstWriteAtMs, null);
       assert.deepEqual(result.observed.toolCallsByName, { read: 2 });
       assert.match(await readFile(result.artifactPaths.stdout, "utf8"), /tool_execution_start/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("reports allowed paths touched by a timed-out candidate", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker({ timeoutMs: 500 }), runtime: runtime(undefined, "write-then-hang") });
+      assert.equal(result.outcome, "timeout");
+      assert.deepEqual(result.candidateState, { allowedPaths: 1, allowedPathsTouched: 1, untouchedPaths: [] });
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("reports untouched allowed paths when a timed-out candidate has no writes", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker({ timeoutMs: 500 }), runtime: runtime(undefined, "think") });
+      assert.equal(result.outcome, "timeout");
+      assert.deepEqual(result.candidateState, { allowedPaths: 1, allowedPathsTouched: 0, untouchedPaths: ["src/allowed.txt"] });
     } finally {
       await rm(project, { recursive: true, force: true });
     }

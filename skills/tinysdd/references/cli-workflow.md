@@ -70,6 +70,9 @@ longer, `data.status` is `stopping`; keep polling `worker status` until it is
 `finished`. `worker stop` signals only a process it can verify is that launch's
 launcher (Linux `/proc`), and otherwise fails with `LAUNCH_NOT_OURS` without
 sending a signal. Stopping an already stopping launch only waits.
+Every non-completed worker result includes `candidateState`, which reports the
+allowed paths changed and the sorted allowed paths left untouched. If any
+allowed path changed, review the candidate before discarding it.
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new
