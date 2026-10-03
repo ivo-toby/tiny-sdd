@@ -223,15 +223,52 @@ whether it is committed, untracked or ignored. Put needed dependency interfaces 
 selected instruction resources rather than assuming the worker can inspect an
 installed dependency tree.
 
-Have your outer agent inspect scope violations and the diff, verify in an
-appropriate credential-free disposable environment, and apply only the reviewed
-patch. Preserve the observed checks and review findings in a project file. Then:
+Have your outer agent inspect scope violations and the diff and verify in an
+appropriate credential-free disposable environment. Then apply the reviewed run
+to the project before recording acceptance: acceptance binds the allowed files'
+content, so accepting first and applying later makes the task `stale` and blocks
+its dependents. Preserve the observed checks and review findings in a project
+file. Then:
 
 ```sh
+tinysdd task apply --id first-change --run WORKER_RUN_ID --by ivo
 tinysdd task review --id first-change --verdict accepted --evidence docs/reviews/first-change.md --by ivo
 tinysdd status
 tinysdd next
 ```
+
+`task apply` copies the run's allowed files by content, not by patch, so it also
+works for a `--base-run` revision, whose `patch.diff` is a delta against the prior
+candidate. It follows the revision lineage back to the first run and applies only
+the paths those runs recorded as changed. It refuses with `APPLY_CONFLICT`,
+writing nothing, when one of those project files no longer matches the state the
+lineage started from. A file that already equals the candidate (for example
+applied by hand) is recorded as `already-applied`. It refuses a run of another
+task, a benchmark replay, a run with scope violations and a run whose outcome is
+not `completed` (a timed-out one included), with no override. It also refuses,
+with `APPLY_CHANGES_TASK_INPUT` and nothing written, a run that would rewrite the
+task's own brief, context manifest or checks manifest when those are in `--allow`:
+the approval they were dispatched under would go stale. The run is recorded
+under `applied` in `status --json`, and an accepting review adds `appliedFromRun`,
+with `identical: false` when any allowed file differs from what apply left, not
+only the files the run changed. Applying is not verification or acceptance.
+
+After an apply the approval keeps binding the context the worker started from:
+the cited lines of a file apply wrote are read from the first run's starting copy,
+so applying does not make the approval stale, and nothing re-approves the new
+source. Every other cited file, including an allowed file the run did not change
+and a path that was already applied, is read from the project, so editing it still
+makes the approval stale. If a written file's run directory is gone the approval
+reads stale, and an apply that would leave the approval stale is refused with
+`APPLY_WOULD_STALE` before anything is written. While an apply is
+recorded, `task packet` and `worker run` refuse with `TASK_APPLIED`; record the
+review first. An accepted or blocked review keeps the apply record. A `revision`
+review records `appliedFromRun` and clears the apply record, because the next
+attempt builds on the applied project; if the context cites a file apply wrote
+whose cited lines changed, the approval then reads `stale_approval` and you re-approve
+it explicitly. A later run made with `--base-run` of an already applied run
+conflicts, because the project no longer matches the lineage's starting state;
+dispatch the next attempt from the applied project instead.
 
 Use `revision` or `blocked` instead of accepting an incomplete result. Caller
 evidence is labeled as such; the CLI does not claim to have executed its tests.
@@ -244,5 +281,6 @@ Controller mutations use an exclusive lock. If a crash leaves a stale lock, the
 CLI stops for manual inspection; it does not guess that another writer is safe
 to remove. Do not remove a lock while its owning process is still active.
 
-This version deliberately leaves verification/application in the outer harness.
+This version deliberately leaves verification in the outer harness; the CLI
+copies a run into the project only when you call `task apply`.
 It is suitable for controlled testing, not unsupervised production changes.

@@ -92,15 +92,49 @@ disposable workspace and records the lineage; it never changes the source projec
 
 Inspect the finished result envelope and patch. Process completion is not passing
 verification, and scope violations are review blockers. Use the outer harness
-to verify the candidate in an appropriate isolated environment, apply the
-reviewed patch, and retain observed test results plus review findings in a file.
-Then record the decision explicitly:
+to verify the candidate in an appropriate isolated environment, and retain observed
+test results plus review findings in a file. Apply the reviewed run to the project
+with `task apply` before recording acceptance, because acceptance binds the
+project's allowed-file content: accepting first makes the task `stale` and blocks
+its dependents. Then record the decision explicitly:
 
 ```sh
+tinysdd task apply --id validation --run WORKER_RUN_ID --by operator
 tinysdd task review --id validation --verdict accepted --evidence docs/reviews/validation.md --by operator
 tinysdd status
 tinysdd next
 ```
+
+`task apply` copies the run's allowed files by content, so it works for a
+`--base-run` revision too (a revision's `patch.diff` is a delta against the prior
+candidate, not the project). It follows the lineage to the first run, applies only
+the paths those runs recorded as changed, and refuses with `APPLY_CONFLICT`,
+writing nothing, if one of those project files no longer matches the state the
+lineage started from; files that already equal the candidate are recorded as
+`already-applied`. It refuses another task's run, a benchmark replay, scope
+violations and a run whose outcome is not `completed` (a timed-out run included),
+with no override. It also refuses, with `APPLY_CHANGES_TASK_INPUT` and nothing
+written, a run that would rewrite the task's own brief, context manifest or checks
+manifest (possible when they are in `--allow`), since that would leave the approval
+it was dispatched under stale. The record shows under `applied` in `status --json`; an
+accepting review adds `appliedFromRun` with `identical: false` if any allowed
+file differs from what apply left. Apply is neither verification nor acceptance.
+
+After an apply the approval keeps binding the context the worker started from
+(the cited lines of a file apply wrote are read from the first run's starting
+copy), so applying does not stale it and nothing re-approves the new source. Every
+other cited file, including an allowed file the run did not change and an
+already-applied path, is read from the project, so editing it still stales the
+approval. If a written file's run directory is deleted the approval reads stale,
+and an apply that would leave it stale is refused with `APPLY_WOULD_STALE` before
+anything is written. While an apply is recorded,
+`task packet` and `worker run` refuse with `TASK_APPLIED`: record the review
+first. Accepted and blocked reviews keep the record. A `revision` review records
+`appliedFromRun` and clears it, since the next attempt builds on the applied
+project; if the context cites a file apply wrote whose cited lines changed, the
+approval then reads `stale_approval` and must be re-approved explicitly. Do not
+start a `--base-run` revision from an already applied run: the project no longer
+matches the lineage's starting state, so its apply conflicts.
 
 Use `revision` for a bounded repair or `blocked` for missing authority/context.
 The next revision packet includes the recorded review evidence as feedback;

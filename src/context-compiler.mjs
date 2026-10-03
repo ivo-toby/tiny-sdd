@@ -137,7 +137,7 @@ function renderCompiledContext({ manifestPath, manifestSha256, facts, resources,
   ].join('\n');
 }
 
-export async function compileContext(projectRoot, packetContext) {
+export async function compileContext(projectRoot, packetContext, { readSource } = {}) {
   if (packetContext === null || packetContext === undefined) return null;
   assertPlainObject(packetContext, 'CONTEXT_MANIFEST_INVALID', 'packet context');
   if (typeof packetContext.path !== 'string' || typeof packetContext.text !== 'string' || typeof packetContext.sha256 !== 'string') {
@@ -151,7 +151,7 @@ export async function compileContext(projectRoot, packetContext) {
   for (const selection of manifest.resources) {
     let text;
     try {
-      text = await readProjectFile(projectRoot, selection.path);
+      text = readSource ? await readSource(selection.path) : await readProjectFile(projectRoot, selection.path);
     } catch (error) {
       invalid(`selected context resource is not readable: ${selection.path}`, { cause: error?.code });
     }

@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { hostname } from 'node:os';
 import {
   addTask,
+  applyTask,
   approveTask,
   BEHAVIOR_SPLIT_THRESHOLDS,
   closeTask,
@@ -1217,6 +1218,1088 @@ test('gate stays inactive for non-accepted verdicts and off mode', async () => {
     assert.equal(judge.calls.length, 0);
     assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
     await assert.rejects(readFile(join(root, '.tinysdd', 'runs', 'decisions', 'one.jsonl'), 'utf8'));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// task apply: runs are faked on disk (result.json plus the two workspaces); no worker runs.
+const RUN_ONE = 'worker-2026-09-01T10-00-00-000Z-11111111';
+const RUN_TWO = 'worker-2026-09-01T11-00-00-000Z-22222222';
+const RUN_OTHER = 'worker-2026-09-01T12-00-00-000Z-33333333';
+
+async function writeTree(directory, files) {
+  await mkdir(directory, { recursive: true });
+  for (const [path, content] of Object.entries(files)) {
+    if (content === null) continue;
+    await mkdir(dirname(join(directory, path)), { recursive: true });
+    await writeFile(join(directory, path), content);
+  }
+}
+
+function changesBetween(before, after) {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().flatMap((path) => {
+    const was = before[path] ?? null;
+    const now = after[path] ?? null;
+    if (was === now) return [];
+    return [{ path, change: now === null ? 'deleted' : was === null ? 'created' : 'modified' }];
+  });
+}
+
+// before/after map a project path to its content, or null for an absent file.
+async function fakeRun(root, runId, { taskId = 'one', before = {}, after = {}, outcome = 'completed', scopeViolations = [], changedPaths, ...extra } = {}) {
+  const directory = join(root, '.tinysdd', 'runs', runId);
+  await writeTree(join(directory, 'workspace-before'), before);
+  await writeTree(join(directory, 'workspace-after'), after);
+  await writeFile(join(directory, 'result.json'), JSON.stringify({
+    schemaVersion: 1, runId, taskId, outcome, changedPaths: changedPaths ?? changesBetween(before, after), scopeViolations, ...extra,
+  }));
+  return directory;
+}
+
+async function applyProject(files, allow = ['src/a.ts', 'src/b.ts']) {
+  const root = await project();
+  await writeTree(root, files);
+  await addApprovedTask(root, 'one', { allow });
+  return root;
+}
+
+const apply = (root, run = RUN_ONE, options = {}) => applyTask(root, { id: 'one', run, by: 'operator', ...options });
+const readProject = (root, path) => readFile(join(root, ...path.split('/')), 'utf8');
+
+async function assertNothingApplied(root, files) {
+  assert.equal((await rawState(root)).tasks.one.applied, undefined);
+  for (const [path, content] of Object.entries(files)) {
+    if (content === null) await assert.rejects(readProject(root, path), { code: 'ENOENT' }, path);
+    else assert.equal(await readProject(root, path), content, path);
+  }
+}
+
+test('apply writes created and modified files, records the run and leaves the task ready', async () => {
+  const root = await applyProject({ 'src/b.ts': 'old b\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/b.ts': 'old b\n' }, after: { 'src/a.ts': 'new a\n', 'src/b.ts': 'new b\n' } });
+    const result = await apply(root);
+    assert.equal(await readProject(root, 'src/a.ts'), 'new a\n');
+    assert.equal(await readProject(root, 'src/b.ts'), 'new b\n');
+    assert.equal(result.task.status, 'ready');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    const { appliedAt, allowedDigest, ...record } = (await rawState(root)).tasks.one.applied;
+    assert.match(allowedDigest, /^[0-9a-f]{64}$/u);
+    assert.match(appliedAt, /^\d{4}-\d{2}-\d{2}T/u);
+    assert.deepEqual(record, {
+      runId: RUN_ONE,
+      rootRunId: RUN_ONE,
+      by: 'operator',
+      files: [
+        { path: 'src/a.ts', change: 'created', sha256: sha256('new a\n'), status: 'written' },
+        { path: 'src/b.ts', change: 'modified', sha256: sha256('new b\n'), status: 'written' },
+      ],
+    });
+    assert.deepEqual(result.applied, { ...record, appliedAt, allowedDigest });
+    const publicApplied = (await controllerStatus(root)).tasks[0].applied;
+    assert.deepEqual(publicApplied, { runId: RUN_ONE, appliedAt, files: 2 });
+
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    // Review binds exactly the digest apply recorded.
+    assert.equal((await rawState(root)).tasks.one.review.allowedDigest, allowedDigest);
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+    assert.deepEqual((await controllerStatus(root)).tasks[0].review.appliedFromRun, { runId: RUN_ONE, identical: true });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an edit between apply and review is allowed and recorded as not identical', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'new a\n', 'src/b.ts': 'new b\n' } });
+    await apply(root);
+    await writeFile(join(root, 'src', 'b.ts'), 'edited during review\n');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: false });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('identical covers every allowed file, including ones the run did not change', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  const run = { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } };
+  const identicalAfter = async (edit) => {
+    const root = await applyProject(files);
+    try {
+      await fakeRun(root, RUN_ONE, run);
+      await apply(root);
+      await edit(root);
+      await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+      assert.equal(await taskStatus(root, 'one'), 'accepted');
+      return (await rawState(root)).tasks.one.review.appliedFromRun.identical;
+    } finally {
+      await cleanup(root);
+    }
+  };
+  assert.equal(await identicalAfter(async () => {}), true);
+  assert.equal(await identicalAfter((root) => writeFile(join(root, 'src', 'b.ts'), 'b edited\n')), false);
+  assert.equal(await identicalAfter((root) => writeFile(join(root, 'src', 'a.ts'), 'a edited\n')), false);
+  assert.equal(await identicalAfter((root) => rm(join(root, 'src', 'b.ts'))), false);
+});
+
+test('identical is not fooled by a run that changed nothing', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  for (const [edited, expected] of [[false, true], [true, false]]) {
+    const root = await applyProject(files);
+    try {
+      await fakeRun(root, RUN_ONE, { before: files, after: files });
+      const { applied } = await apply(root);
+      assert.deepEqual(applied.files, []);
+      if (edited) await writeFile(join(root, 'src', 'a.ts'), 'a edited\n');
+      await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+      assert.equal((await rawState(root)).tasks.one.review.appliedFromRun.identical, expected);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('a record without allowedDigest falls back to comparing the files it wrote', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  for (const [edited, expected] of [[false, true], [true, false]]) {
+    const root = await applyProject(files);
+    try {
+      await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+      await apply(root);
+      const state = await rawState(root);
+      delete state.tasks.one.applied.allowedDigest;
+      await writeState(root, state);
+      if (edited) await writeFile(join(root, 'src', 'a.ts'), 'a edited\n');
+      await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+      assert.equal((await rawState(root)).tasks.one.review.appliedFromRun.identical, expected);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('a revision review records appliedFromRun and spends the applied record; blocked leaves it', async () => {
+  const revised = await applyProject({});
+  try {
+    await fakeRun(revised, RUN_ONE, { after: { 'src/a.ts': 'new a\n' } });
+    await apply(revised);
+    await writeFile(join(revised, 'src', 'a.ts'), 'edited before the verdict\n');
+    await reviewTask(revised, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(revised)).tasks.one;
+    assert.deepEqual(task.review.appliedFromRun, { runId: RUN_ONE, identical: false });
+    assert.equal(task.review.acceptanceDigest, undefined);
+    assert.equal(task.applied, undefined);
+    assert.equal((await controllerStatus(revised)).tasks[0].applied, undefined);
+    assert.deepEqual((await controllerStatus(revised)).tasks[0].review.appliedFromRun, { runId: RUN_ONE, identical: false });
+    assert.equal(await taskStatus(revised, 'one'), 'ready');
+  } finally {
+    await cleanup(revised);
+  }
+  const blocked = await applyProject({});
+  try {
+    await fakeRun(blocked, RUN_ONE, { after: { 'src/a.ts': 'new a\n' } });
+    await apply(blocked);
+    await reviewTask(blocked, { id: 'one', verdict: 'blocked', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(blocked)).tasks.one;
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(task.review.appliedFromRun, undefined);
+  } finally {
+    await cleanup(blocked);
+  }
+});
+
+// Task `one` allows src/a.ts only. Its context cites line 1 of src/a.ts (allowed)
+// and, when asked, of src/other.ts (not allowed). The fake run rewrites src/a.ts.
+async function contextApplyProject({ citeAllowed = true, citeOther = false, start = 'one\n', candidate = 'two\n' } = {}) {
+  const root = await project();
+  await writeTree(root, { 'src/a.ts': start, 'src/other.ts': 'ctx\n' });
+  await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+  const cited = [...(citeAllowed ? ['src/a.ts'] : []), ...(citeOther ? ['src/other.ts'] : [])];
+  await writeFile(join(root, '.tinysdd', 'tasks', 'one.context.json'), JSON.stringify({
+    schemaVersion: 1,
+    facts: [],
+    resources: cited.map((path) => ({ path, startLine: 1, endLine: 1, purpose: `Rules in ${path}.` })),
+  }));
+  await addApprovedTask(root, 'one', { allow: ['src/a.ts'], context: '.tinysdd/tasks/one.context.json' });
+  await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': start }, after: { 'src/a.ts': candidate } });
+  return root;
+}
+
+test('applying a run that rewrites a cited allowed file keeps the approval current, and review accepts', async () => {
+  const root = await contextApplyProject();
+  try {
+    const approved = (await rawState(root)).tasks.one.approval.contextDigest;
+    await apply(root);
+    assert.equal(await readProject(root, 'src/a.ts'), 'two\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    assert.equal((await controllerStatus(root)).tasks[0].approval.current, true);
+    assert.equal((await rawState(root)).tasks.one.approval.contextDigest, approved);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(root)).tasks.one;
+    assert.deepEqual(task.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('after apply the approval still binds the starting context: outside edits stale it, allowed-file edits do not', async () => {
+  const root = await contextApplyProject({ citeOther: true });
+  try {
+    await apply(root);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    // The allowed file is the candidate now; editing it by hand is review's business, not the approval's.
+    await writeFile(join(root, 'src', 'a.ts'), 'edited by hand\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await writeFile(join(root, 'src', 'other.ts'), 'ctx, changed\n');
+    assert.equal(await taskStatus(root, 'one'), 'stale_approval');
+    await assert.rejects(reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPROVAL_STALE' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a missing or unsafe root run makes an applied approval stale instead of trusting the project', async (t) => {
+  // The cited line 1 is not what the run changed, so the project alone would still match the approval:
+  // the approval goes stale because the starting source can no longer be shown, not because the text moved.
+  const missing = await contextApplyProject({ start: 'one\nlater\n', candidate: 'one\nrewritten\n' });
+  try {
+    await apply(missing);
+    assert.equal(await taskStatus(missing, 'one'), 'ready');
+    await rm(join(missing, '.tinysdd', 'runs', RUN_ONE), { recursive: true });
+    assert.equal(await taskStatus(missing, 'one'), 'stale_approval');
+    await assert.rejects(reviewTask(missing, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPROVAL_STALE' });
+  } finally {
+    await cleanup(missing);
+  }
+  const unsafe = await contextApplyProject({ start: 'one\nlater\n', candidate: 'one\nrewritten\n' });
+  try {
+    await apply(unsafe);
+    const cited = join(unsafe, '.tinysdd', 'runs', RUN_ONE, 'workspace-before', 'src', 'a.ts');
+    await rm(cited);
+    try {
+      await symlink(join(unsafe, 'src', 'a.ts'), cited);
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.message}`);
+      return;
+    }
+    assert.equal(await taskStatus(unsafe, 'one'), 'stale_approval');
+  } finally {
+    await cleanup(unsafe);
+  }
+});
+
+test('approving again after apply records the same context digest and stays ready', async () => {
+  const root = await contextApplyProject();
+  try {
+    const first = (await rawState(root)).tasks.one.approval;
+    await apply(root);
+    await approveTask(root, { id: 'one', by: 'second-operator', reason: 'looked again' });
+    const task = (await rawState(root)).tasks.one;
+    assert.equal(task.approval.contextDigest, first.contextDigest);
+    assert.equal(task.approval.by, 'second-operator');
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an approval holding the legacy context digest stays ready through apply', async () => {
+  const root = await contextApplyProject();
+  try {
+    const { legacy, current } = await makeApprovalLegacy(root, 'one');
+    assert.notEqual(legacy, current);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await apply(root);
+    assert.equal((await rawState(root)).tasks.one.approval.contextDigest, legacy);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('dispatch is refused while an applied run is recorded', async () => {
+  const root = await contextApplyProject();
+  try {
+    assert.equal((await resolveTaskPacket(root, 'one')).taskId, 'one');
+    await apply(root);
+    await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_APPLIED', details: { runId: RUN_ONE }, message: /review it/u });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a revision review after apply reopens dispatch, after re-approval when the cited allowed file changed', async () => {
+  const stale = await contextApplyProject();
+  try {
+    await apply(stale);
+    await reviewTask(stale, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal((await rawState(stale)).tasks.one.applied, undefined);
+    assert.deepEqual((await rawState(stale)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    // The cited line of an allowed file changed with the apply, so the operator re-approves it explicitly.
+    assert.equal(await taskStatus(stale, 'one'), 'stale_approval');
+    await assert.rejects(resolveTaskPacket(stale, 'one'), { code: 'TASK_NOT_READY', details: { status: 'stale_approval', blockedBy: [] } });
+    await approveTask(stale, { id: 'one', by: 'operator', reason: 'reviewed the applied source' });
+    const packet = await resolveTaskPacket(stale, 'one');
+    assert.equal(packet.review.verdict, 'revision');
+    assert.match(packet.context.text, /src\/a\.ts/u);
+  } finally {
+    await cleanup(stale);
+  }
+  const ready = await contextApplyProject({ citeAllowed: false, citeOther: true });
+  try {
+    await apply(ready);
+    await reviewTask(ready, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(ready, 'one'), 'ready');
+    assert.equal((await resolveTaskPacket(ready, 'one')).review.verdict, 'revision');
+  } finally {
+    await cleanup(ready);
+  }
+});
+
+// Task `one` is approved with a context that cites line 1 of each path in `cite`.
+async function citedProject({ files, allow, cite }) {
+  const root = await project();
+  await writeTree(root, files);
+  await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+  await writeFile(join(root, '.tinysdd', 'tasks', 'one.context.json'), JSON.stringify({
+    schemaVersion: 1,
+    facts: [],
+    resources: cite.map((path) => ({ path, startLine: 1, endLine: 1, purpose: `Rules in ${path}.` })),
+  }));
+  await addApprovedTask(root, 'one', { allow, context: '.tinysdd/tasks/one.context.json' });
+  return root;
+}
+
+test('apply keeps the approved current text of a cited allowed file the lineage never changed', async () => {
+  const root = await citedProject({ files: { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' }, allow: ['src/a.ts', 'src/b.ts'], cite: ['src/b.ts'] });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+    // B changes after the run and the operator approves the task as it now reads.
+    await writeFile(join(root, 'src', 'b.ts'), 'b1\n');
+    await approveTask(root, { id: 'one', by: 'operator', reason: 're-approved after editing b' });
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'written']]);
+    assert.equal(await readProject(root, 'src/b.ts'), 'b1\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an already-applied cited path is not displaced by apply, so the approval keeps its current text', async () => {
+  const root = await citedProject({ files: { 'src/a.ts': 'a1\n' }, allow: ['src/a.ts'], cite: ['src/a.ts'] });
+  try {
+    // The project already holds the candidate (applied by hand) and the task was approved in that state.
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'a0\n' }, after: { 'src/a.ts': 'a1\n' } });
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'already-applied']]);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('after apply only the paths apply wrote are pinned: editing another cited allowed file stales the approval', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  const root = await citedProject({ files, allow: ['src/a.ts', 'src/b.ts'], cite: ['src/a.ts', 'src/b.ts'] });
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+    await apply(root);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    // A was written by apply: it is pinned to the run's starting copy, so editing it is review's business.
+    await writeFile(join(root, 'src', 'a.ts'), 'a edited by hand\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    // B was not written: the approval binds its current text.
+    await writeFile(join(root, 'src', 'b.ts'), 'b edited\n');
+    assert.equal(await taskStatus(root, 'one'), 'stale_approval');
+    await assert.rejects(reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPROVAL_STALE' });
+    await writeFile(join(root, 'src', 'b.ts'), 'b0\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses before writing when the recorded pins would leave the approval stale', async () => {
+  // Reachable with real inputs: the first apply pinned A. A second run from the same start is then
+  // hand-applied, so A is already-applied and unpinned and the project text no longer matches the approval.
+  const root = await citedProject({ files: { 'src/a.ts': 'one\n' }, allow: ['src/a.ts'], cite: ['src/a.ts'] });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'one\n' }, after: { 'src/a.ts': 'two\n' } });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'one\n' }, after: { 'src/a.ts': 'three\n' } });
+    await apply(root);
+    await writeFile(join(root, 'src', 'a.ts'), 'three\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await assert.rejects(apply(root, RUN_TWO), { code: 'APPLY_WOULD_STALE', details: { runId: RUN_TWO, rootRunId: RUN_TWO }, message: /task one/u });
+    const task = (await rawState(root)).tasks.one;
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(await readProject(root, 'src/a.ts'), 'three\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// Task `one` allows its own brief, context manifest and checks manifest (all project-local) plus src/a.ts.
+const TASK_INPUTS = { brief: 'docs/brief.md', context: 'docs/context.json', checks: 'docs/checks.json' };
+const contextManifest = (fact) => JSON.stringify({ schemaVersion: 1, facts: [fact], resources: [] });
+const checksManifest = (timeoutMs) => JSON.stringify({ schemaVersion: 1, dependencyMounts: ['node_modules'], checks: [{ id: 'unit', argv: ['node_modules/.bin/vitest'], timeoutMs }] });
+
+async function inputsProject(files = {}) {
+  const start = { 'docs/brief.md': '# Brief\n', 'docs/context.json': contextManifest('fact one'), 'docs/checks.json': checksManifest(5000), 'src/a.ts': 'a0\n', ...files };
+  const root = await project();
+  await writeTree(root, start);
+  await addApprovedTask(root, 'one', { allow: Object.keys(start).sort(), context: TASK_INPUTS.context, checks: TASK_INPUTS.checks });
+  return { root, start };
+}
+
+test('apply refuses a run that rewrites its own brief, context manifest or checks, and writes nothing', async () => {
+  const rewrites = {
+    'docs/brief.md': '# Brief, rewritten by the run\n',
+    'docs/context.json': contextManifest('a different fact'),
+    'docs/checks.json': checksManifest(9000),
+  };
+  for (const [path, rewritten] of Object.entries(rewrites)) {
+    const { root, start } = await inputsProject();
+    try {
+      await fakeRun(root, RUN_ONE, { before: start, after: { ...start, [path]: rewritten, 'src/a.ts': 'a1\n' } });
+      await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT', details: { paths: [path], runId: RUN_ONE }, message: /docs\//u }, path);
+      await assertNothingApplied(root, start);
+      assert.equal(await taskStatus(root, 'one'), 'ready', path);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('apply names every task input the run rewrites', async () => {
+  const { root, start } = await inputsProject();
+  try {
+    await fakeRun(root, RUN_ONE, { before: start, after: { ...start, 'docs/brief.md': '# New brief\n', 'docs/checks.json': checksManifest(7000), 'src/a.ts': 'a1\n' } });
+    await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT', details: { paths: ['docs/brief.md', 'docs/checks.json'], runId: RUN_ONE } });
+    await assertNothingApplied(root, start);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task inputs that are allowed but left unchanged by the run do not stop apply', async () => {
+  const { root, start } = await inputsProject();
+  try {
+    await fakeRun(root, RUN_ONE, { before: start, after: { ...start, 'src/a.ts': 'a1\n' } });
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'written']]);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a task input the project already holds in its candidate form is already-applied, not refused', async () => {
+  // The task was approved with the rewritten manifest already in the project, so nothing is written for it.
+  const rewritten = contextManifest('a different fact');
+  const { root, start } = await inputsProject({ 'docs/context.json': rewritten });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { ...start, 'docs/context.json': contextManifest('fact one') }, after: { ...start, 'docs/context.json': rewritten, 'src/a.ts': 'a1\n' } });
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['docs/context.json', 'already-applied'], ['src/a.ts', 'written']]);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply removes a deleted file only, and review checks it stays absent', async () => {
+  const files = { 'src/a.ts': 'keep\n', 'src/b.ts': 'remove\n' };
+  const root = await applyProject(files);
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'keep\n' } });
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files, [{ path: 'src/b.ts', change: 'deleted', sha256: null, status: 'written' }]);
+    await assert.rejects(readProject(root, 'src/b.ts'), { code: 'ENOENT' });
+    assert.equal(await readProject(root, 'src/a.ts'), 'keep\n');
+    await writeFile(join(root, 'src', 'b.ts'), 'came back\n');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal((await rawState(root)).tasks.one.review.appliedFromRun.identical, false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply never touches a project path outside the allowlist and leaves emptied directories', async () => {
+  const files = { 'src/a.ts': 'one\n', 'src/other.ts': 'not allowed\n', 'solo/b.ts': 'solo\n' };
+  const root = await applyProject(files, ['solo/b.ts', 'src/a.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'two\n', 'src/other.ts': 'not allowed\n' } });
+    await apply(root);
+    assert.equal(await readProject(root, 'src/a.ts'), 'two\n');
+    assert.equal(await readProject(root, 'src/other.ts'), 'not allowed\n');
+    await assert.rejects(readProject(root, 'solo/b.ts'), { code: 'ENOENT' });
+    assert.ok((await stat(join(root, 'solo'))).isDirectory());
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply preserves the file mode of the candidate', async () => {
+  const root = await applyProject({});
+  try {
+    const directory = await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': '#!/bin/sh\n' } });
+    await chmod(join(directory, 'workspace-after', 'src', 'a.ts'), 0o755);
+    await apply(root);
+    assert.equal((await stat(join(root, 'src', 'a.ts'))).mode & 0o777, 0o755 & ~process.umask());
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply writes bytes unchanged, including content that is not UTF-8', async () => {
+  const root = await applyProject({});
+  try {
+    const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x0a]);
+    const directory = await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'text\n' } });
+    await writeFile(join(directory, 'workspace-after', 'src', 'a.ts'), bytes);
+    const { applied } = await apply(root);
+    assert.deepEqual(await readFile(join(root, 'src', 'a.ts')), bytes);
+    assert.equal(applied.files[0].sha256, sha256(bytes));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply follows a --base-run chain from the root run and ends at the final candidate', async () => {
+  const root = await applyProject({ 'src/a.ts': 'v0\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'v0\n' }, after: { 'src/a.ts': 'v1\n', 'src/b.ts': 'b1\n' } });
+    // The revision's workspace-before is the project plus run one's candidate files.
+    await fakeRun(root, RUN_TWO, {
+      before: { 'src/a.ts': 'v1\n', 'src/b.ts': 'b1\n' },
+      after: { 'src/a.ts': 'v2\n', 'src/b.ts': 'b1\n' },
+      baseRun: { id: RUN_ONE, paths: ['src/a.ts', 'src/b.ts'] },
+    });
+    const { applied } = await apply(root, RUN_TWO);
+    assert.equal(await readProject(root, 'src/a.ts'), 'v2\n');
+    assert.equal(await readProject(root, 'src/b.ts'), 'b1\n');
+    assert.equal(applied.runId, RUN_TWO);
+    assert.equal(applied.rootRunId, RUN_ONE);
+    assert.deepEqual(applied.files.map(({ path, change, status }) => [path, change, status]), [
+      ['src/a.ts', 'modified', 'written'],
+      ['src/b.ts', 'created', 'written'],
+    ]);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a --base-run revision of an already applied run conflicts, because the project left the lineage start', async () => {
+  const root = await applyProject({ 'src/a.ts': 'v0\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'v0\n' }, after: { 'src/a.ts': 'v1\n' } });
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
+    await assert.rejects(apply(root, RUN_TWO), { code: 'APPLY_CONFLICT', details: { paths: ['src/a.ts'], runId: RUN_TWO, rootRunId: RUN_ONE } });
+    assert.equal(await readProject(root, 'src/a.ts'), 'v1\n');
+    // The next attempt dispatched from the applied project applies cleanly.
+    await fakeRun(root, RUN_OTHER, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' } });
+    await apply(root, RUN_OTHER);
+    assert.equal(await readProject(root, 'src/a.ts'), 'v2\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a three-run chain applies from the earliest run', async () => {
+  const root = await applyProject({ 'src/a.ts': 'v0\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'v0\n' }, after: { 'src/a.ts': 'v1\n' } });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
+    await fakeRun(root, RUN_OTHER, {
+      before: { 'src/a.ts': 'v2\n' },
+      after: { 'src/a.ts': 'v3\n' },
+      baseRun: { id: RUN_TWO, paths: ['src/a.ts'], chain: [{ id: RUN_ONE, paths: ['src/a.ts'] }, { id: RUN_TWO, paths: ['src/a.ts'] }] },
+    });
+    const { applied } = await apply(root, RUN_OTHER);
+    assert.equal(applied.rootRunId, RUN_ONE);
+    assert.equal(await readProject(root, 'src/a.ts'), 'v3\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply plans only the paths the lineage recorded as changed, whatever the project held at a later dispatch', async () => {
+  // B changed in the project between the two dispatches, so the revision's
+  // workspaces carry the new B although neither run touched it.
+  for (const projectB of ['b1\n', 'b2\n', 'b0\n']) {
+    const root = await applyProject({ 'src/a.ts': 'a0\n', 'src/b.ts': projectB });
+    try {
+      await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+      await fakeRun(root, RUN_TWO, {
+        before: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' },
+        after: { 'src/a.ts': 'a2\n', 'src/b.ts': 'b1\n' },
+        changedPaths: [{ path: 'src/a.ts', change: 'modified' }],
+        baseRun: { id: RUN_ONE, paths: ['src/a.ts'] },
+      });
+      const { applied } = await apply(root, RUN_TWO);
+      assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'written']], projectB);
+      assert.equal(await readProject(root, 'src/a.ts'), 'a2\n');
+      assert.equal(await readProject(root, 'src/b.ts'), projectB);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('apply refuses a lineage that is cyclic, too deep, foreign, scope-violating or missing a run', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n' }, baseRun: { id: RUN_TWO, paths: [] } });
+    await fakeRun(root, RUN_TWO, { after: { 'src/a.ts': 'x\n' }, baseRun: { id: RUN_ONE, paths: [] } });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_MALFORMED', message: /cycle/u });
+
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n' }, baseRun: { id: RUN_OTHER, paths: [] } });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_NOT_FOUND' });
+
+    await fakeRun(root, RUN_OTHER, { taskId: 'elsewhere', after: { 'src/a.ts': 'x\n' } });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_TASK_MISMATCH' });
+
+    await fakeRun(root, RUN_OTHER, { after: { 'src/a.ts': 'x\n' }, scopeViolations: [{ path: 'src/evil.ts', change: 'created' }] });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_OTHER, paths: ['src/evil.ts'] } });
+
+    await fakeRun(root, RUN_OTHER, { after: { 'src/a.ts': 'x\n' }, baselineRun: { id: RUN_TWO } });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_IS_REPLAY' });
+
+    const deepIds = Array.from({ length: 34 }, (_, index) => `worker-deep-${String(index).padStart(2, '0')}`);
+    for (const [index, runId] of deepIds.entries()) {
+      await fakeRun(root, runId, { after: { 'src/a.ts': 'x\n' }, ...(index > 0 ? { baseRun: { id: deepIds[index - 1], paths: [] } } : {}) });
+    }
+    await assert.rejects(apply(root, deepIds[33]), { code: 'RUN_MALFORMED', message: /depth/u });
+    await assertNothingApplied(root, { 'src/a.ts': null });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a project file that drifted from the lineage start refuses the whole apply and writes nothing', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n', 'src/c.ts': 'c0\n' };
+  const root = await applyProject(files, ['src/a.ts', 'src/b.ts', 'src/c.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n', 'src/c.ts': 'c1\n' } });
+    await writeFile(join(root, 'src', 'b.ts'), 'edited by hand\n');
+    await assert.rejects(apply(root), (error) => {
+      assert.equal(error.code, 'APPLY_CONFLICT');
+      assert.deepEqual(error.details.paths, ['src/b.ts']);
+      return true;
+    });
+    await assertNothingApplied(root, { 'src/a.ts': 'a0\n', 'src/b.ts': 'edited by hand\n', 'src/c.ts': 'c0\n' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('drift is detected for absent and unexpectedly present files and lists every conflict', async () => {
+  const root = await applyProject({ 'src/b.ts': 'b0\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': null } });
+    await writeFile(join(root, 'src', 'a.ts'), 'someone else created this\n');
+    await writeFile(join(root, 'src', 'b.ts'), 'b changed\n');
+    await assert.rejects(apply(root), (error) => {
+      assert.equal(error.code, 'APPLY_CONFLICT');
+      assert.deepEqual(error.details.paths, ['src/a.ts', 'src/b.ts']);
+      return true;
+    });
+    await assertNothingApplied(root, { 'src/a.ts': 'someone else created this\n', 'src/b.ts': 'b changed\n' });
+    // A file deleted by hand where the run expected content is drift too.
+    await rm(join(root, 'src', 'b.ts'));
+    await rm(join(root, 'src', 'a.ts'));
+    await fakeRun(root, RUN_TWO, { before: { 'src/b.ts': 'b0\n' }, after: { 'src/b.ts': 'b2\n' } });
+    await assert.rejects(apply(root, RUN_TWO), (error) => error.code === 'APPLY_CONFLICT' && error.details.paths[0] === 'src/b.ts');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a hand-applied project is recorded with already-applied entries and not rewritten', async () => {
+  const before = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n', 'src/c.ts': 'c0\n' };
+  const after = { 'src/a.ts': 'a1\n', 'src/b.ts': null, 'src/c.ts': 'c1\n' };
+  const root = await applyProject({ 'src/a.ts': 'a1\n', 'src/c.ts': 'c0\n' }, ['src/a.ts', 'src/b.ts', 'src/c.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { before, after });
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, change, status }) => [path, change, status]), [
+      ['src/a.ts', 'modified', 'already-applied'],
+      ['src/b.ts', 'deleted', 'already-applied'],
+      ['src/c.ts', 'modified', 'written'],
+    ]);
+    assert.equal(await readProject(root, 'src/c.ts'), 'c1\n');
+    assert.deepEqual((await rawState(root)).tasks.one.applied.files, applied.files);
+    // Applying again changes nothing on disk and replaces the record.
+    const again = await apply(root);
+    assert.deepEqual(again.applied.files.map((file) => file.status), ['already-applied', 'already-applied', 'already-applied']);
+    assert.equal((await rawState(root)).tasks.one.applied.files[2].status, 'already-applied');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a later apply replaces the earlier record', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'one\n' } });
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'one\n' }, after: { 'src/a.ts': 'two\n' } });
+    await apply(root, RUN_TWO, { by: 'other-operator' });
+    const { applied } = (await rawState(root)).tasks.one;
+    assert.equal(applied.runId, RUN_TWO);
+    assert.equal(applied.by, 'other-operator');
+    assert.equal(await readProject(root, 'src/a.ts'), 'two\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a run of another task, a replay, an unknown run and a malformed id', async () => {
+  const root = await applyProject({});
+  try {
+    const files = { 'src/a.ts': null, 'src/b.ts': null };
+    await fakeRun(root, RUN_ONE, { taskId: 'elsewhere', after: { 'src/a.ts': 'x\n' } });
+    await assert.rejects(apply(root), { code: 'RUN_TASK_MISMATCH' });
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n' }, baselineRun: { id: RUN_TWO } });
+    await assert.rejects(apply(root), { code: 'RUN_IS_REPLAY' });
+    await assert.rejects(apply(root, RUN_TWO), { code: 'RUN_NOT_FOUND' });
+    await mkdir(join(root, '.tinysdd', 'runs', RUN_TWO));
+    await assert.rejects(apply(root, RUN_TWO), { code: 'RUN_NOT_FOUND' });
+    for (const bad of ['../worker-x', 'worker-', 'run-1', 'worker-a/b', 'worker-a b', '.']) {
+      await assert.rejects(apply(root, bad), { code: 'INVALID_RUN_ID' }, bad);
+    }
+    await assert.rejects(apply(root, ''), { code: 'INVALID_ARGUMENT' });
+    await assertNothingApplied(root, files);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a run whose outcome is not completed, with no override', async () => {
+  const root = await applyProject({});
+  try {
+    for (const outcome of ['timeout', 'failed', 'stopped', 'tool_limit']) {
+      await fakeRun(root, RUN_ONE, { outcome, after: { 'src/a.ts': 'complete candidate\n' } });
+      await assert.rejects(apply(root), { code: 'RUN_INCOMPLETE', details: { runId: RUN_ONE, outcome } }, outcome);
+      // The removed --allow-incomplete option is not honored through the library either.
+      await assert.rejects(apply(root, RUN_ONE, { allowIncomplete: true }), { code: 'RUN_INCOMPLETE' }, outcome);
+    }
+    await assertNothingApplied(root, { 'src/a.ts': null });
+    // The same task's completed run still applies.
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'v1\n' } });
+    await apply(root);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses scope violations even when the run is otherwise allowed', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n', 'src/evil.ts': 'y\n' }, scopeViolations: [{ path: 'src/evil.ts', change: 'created', reason: 'outside' }] });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_ONE, paths: ['src/evil.ts'] } });
+    // A recorded change outside the allowlist counts even when scopeViolations was left empty.
+    await fakeRun(root, RUN_TWO, { after: { 'src/a.ts': 'x\n' }, changedPaths: [{ path: 'src/a.ts', change: 'created' }, { path: 'src/evil.ts', change: 'created' }] });
+    await assert.rejects(apply(root, RUN_TWO), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_TWO, paths: ['src/evil.ts'] } });
+    await assertNothingApplied(root, { 'src/a.ts': null, 'src/evil.ts': null });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a malformed result.json without writing', async () => {
+  const root = await applyProject({});
+  try {
+    const directory = await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n' } });
+    await writeFile(join(directory, 'result.json'), '{not json');
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED' });
+    await writeFile(join(directory, 'result.json'), JSON.stringify({ taskId: 'one', outcome: 'completed' }));
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED' });
+    await rm(join(directory, 'workspace-after'), { recursive: true });
+    await writeFile(join(directory, 'result.json'), JSON.stringify({ taskId: 'one', outcome: 'completed', changedPaths: [], scopeViolations: [] }));
+    await assert.rejects(apply(root), { code: 'RUN_NOT_FOUND' });
+    await assertNothingApplied(root, { 'src/a.ts': null });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a retired task, an unknown task, and a task that is not ready', async () => {
+  const root = await project();
+  try {
+    await addOpenTask(root, 'one', { allow: ['src/a.ts'] });
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n' } });
+    await assert.rejects(apply(root), { code: 'TASK_NOT_READY', details: { status: 'pending_approval', blockedBy: [] } });
+    await assert.rejects(applyTask(root, { id: 'nope', run: RUN_ONE, by: 'operator' }), { code: 'TASK_NOT_FOUND' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'scope' });
+    await writeFile(join(root, 'docs', 'brief.md'), '# Brief, changed\n');
+    await assert.rejects(apply(root), { code: 'TASK_NOT_READY', details: { status: 'stale_approval', blockedBy: [] } });
+    await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    await assert.rejects(apply(root), { code: 'TASK_NOT_READY', details: { status: 'accepted', blockedBy: [] } });
+    await addApprovedTask(root, 'two');
+    await closeTask(root, { id: 'two', by: 'operator', reason: 'dropped' });
+    await assert.rejects(applyTask(root, { id: 'two', run: RUN_ONE, by: 'operator' }), { code: 'TASK_CLOSED' });
+    assert.equal((await rawState(root)).tasks.two.applied, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply requires a task id, a label and a run id', async () => {
+  const root = await applyProject({});
+  try {
+    await assert.rejects(applyTask(root, { run: RUN_ONE, by: 'operator' }), { code: 'INVALID_ARGUMENT' });
+    await assert.rejects(applyTask(root, { id: 'one', run: RUN_ONE }), { code: 'INVALID_ARGUMENT', message: /apply by/u });
+    await assert.rejects(applyTask(root, { id: 'one', by: 'operator' }), { code: 'INVALID_ARGUMENT', message: /run id/u });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a symlinked parent directory or target and writes nothing', async (t) => {
+  const root = await applyProject({}, ['lib/ok.ts', 'src/a.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'lib/ok.ts': 'ok\n', 'src/a.ts': 'a\n' } });
+    const elsewhere = join(root, 'elsewhere');
+    await mkdir(elsewhere);
+    try {
+      await symlink(elsewhere, join(root, 'src'), 'dir');
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.message}`);
+      return;
+    }
+    await assert.rejects(apply(root), { code: 'SYMLINK_PATH' });
+    await assert.rejects(readFile(join(elsewhere, 'a.ts')), { code: 'ENOENT' });
+    await assert.rejects(readProject(root, 'lib/ok.ts'), { code: 'ENOENT' });
+
+    await rm(join(root, 'src'));
+    await mkdir(join(root, 'src'));
+    await writeFile(join(elsewhere, 'target.ts'), 'untouched\n');
+    await symlink(join(elsewhere, 'target.ts'), join(root, 'src', 'a.ts'));
+    await assert.rejects(apply(root), { code: 'SYMLINK_PATH' });
+    assert.equal(await readFile(join(elsewhere, 'target.ts'), 'utf8'), 'untouched\n');
+    await assert.rejects(readProject(root, 'lib/ok.ts'), { code: 'ENOENT' });
+    assert.equal((await rawState(root)).tasks.one.applied, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a symlinked allowed file the run did not change before writing anything', async (t) => {
+  const root = await applyProject({}, ['src/a.ts', 'src/b.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'a\n' } });
+    await mkdir(join(root, 'src'));
+    await writeFile(join(root, 'elsewhere.ts'), 'outside\n');
+    try {
+      await symlink(join(root, 'elsewhere.ts'), join(root, 'src', 'b.ts'));
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.message}`);
+      return;
+    }
+    await assert.rejects(apply(root), { code: 'SYMLINK_PATH' });
+    await assert.rejects(readProject(root, 'src/a.ts'), { code: 'ENOENT' });
+    assert.equal((await rawState(root)).tasks.one.applied, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a symlinked run directory', async (t) => {
+  const root = await applyProject({});
+  try {
+    const real = await fakeRun(root, RUN_TWO, { after: { 'src/a.ts': 'x\n' } });
+    try {
+      await symlink(real, join(root, '.tinysdd', 'runs', RUN_ONE), 'dir');
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.message}`);
+      return;
+    }
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_NOT_FOUND' });
+    await assertNothingApplied(root, { 'src/a.ts': null });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('state without applied stays valid and an unapplied acceptance has no appliedFromRun', async () => {
+  const root = await project();
+  try {
+    await addApprovedTask(root, 'one');
+    assert.equal((await controllerStatus(root)).tasks[0].applied, undefined);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    const state = await rawState(root);
+    assert.equal('applied' in state.tasks.one, false);
+    assert.equal('appliedFromRun' in state.tasks.one.review, false);
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+    const publicReview = (await controllerStatus(root)).tasks[0].review;
+    assert.equal('appliedFromRun' in publicReview, false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('controller state validates the applied shape', async () => {
+  const root = await project();
+  try {
+    await addOpenTask(root, 'one');
+    const valid = {
+      runId: RUN_ONE,
+      rootRunId: RUN_ONE,
+      appliedAt: '2026-01-01T00:00:00.000Z',
+      by: 'operator',
+      files: [
+        { path: 'src/one.ts', change: 'created', sha256: sha256('x'), status: 'written' },
+        { path: 'src/two.ts', change: 'deleted', sha256: null, status: 'already-applied' },
+      ],
+    };
+    const file = valid.files[0];
+    const cases = [
+      null,
+      'applied',
+      [],
+      { ...valid, runId: 'not-a-run' },
+      { ...valid, runId: undefined },
+      { ...valid, rootRunId: '../worker-x' },
+      { ...valid, allowedDigest: 'abc' },
+      { ...valid, allowedDigest: null },
+      { ...valid, allowedDigest: 7 },
+      { ...valid, allowedDigest: 'A'.repeat(64) },
+      { ...valid, by: ' ' },
+      { ...valid, appliedAt: 7 },
+      { ...valid, files: 'src/one.ts' },
+      { ...valid, files: [null] },
+      { ...valid, files: [{ ...file, path: '../escape' }] },
+      { ...valid, files: [{ ...file, path: '.tinysdd/runs/controller.json' }] },
+      { ...valid, files: [{ ...file, path: undefined }] },
+      { ...valid, files: [{ ...file, change: 'renamed' }] },
+      { ...valid, files: [{ ...file, status: 'skipped' }] },
+      { ...valid, files: [{ ...file, sha256: null }] },
+      { ...valid, files: [{ ...file, sha256: 'abc' }] },
+      { ...valid, files: [{ ...file, change: 'deleted', sha256: sha256('x') }] },
+    ];
+    for (const applied of cases) {
+      const state = await rawState(root);
+      state.tasks.one.applied = applied;
+      await writeState(root, state);
+      await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED' }, JSON.stringify(applied));
+    }
+    const state = await rawState(root);
+    state.tasks.one.applied = valid;
+    await writeState(root, state);
+    assert.deepEqual((await controllerStatus(root)).tasks[0].applied, { runId: RUN_ONE, appliedAt: valid.appliedAt, files: 2 });
+    state.tasks.one.applied = { ...valid, allowedDigest: sha256('allowed') };
+    await writeState(root, state);
+    assert.equal((await controllerStatus(root)).tasks[0].applied.files, 2);
+    // A record written while apply still stored an outcome stays valid.
+    state.tasks.one.applied = { ...valid, outcome: 'completed' };
+    await writeState(root, state);
+    assert.equal((await controllerStatus(root)).tasks[0].applied.files, 2);
+    delete state.tasks.one.applied;
+    await writeState(root, state);
+    assert.equal((await controllerStatus(root)).tasks[0].applied, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('applying leaves an existing approval fresh', async () => {
+  const root = await project();
+  try {
+    await addApprovedTask(root, 'one', { allow: ['src/a.ts'] });
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n' } });
+    const before = (await rawState(root)).tasks.one.approval;
+    await apply(root);
+    assert.deepEqual((await rawState(root)).tasks.one.approval, before);
+    assert.equal((await controllerStatus(root)).tasks[0].approval.current, true);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task apply prints one line, reports already-applied files and returns the record as JSON', async () => {
+  const files = { 'src/a.ts': 'a0\n' };
+  const root = await applyProject(files);
+  try {
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    const cli = (...args) => exec(process.execPath, [bin, '--project', root, ...args]);
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' } });
+    const human = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(human.stdout, `one: applied 2 file(s) from ${RUN_ONE}\n`);
+    assert.equal(human.stderr, '');
+
+    const json = await cli('--json', 'task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(json.stderr, '');
+    const lines = json.stdout.trim().split('\n');
+    assert.equal(lines.length, 1);
+    const parsed = JSON.parse(lines[0]);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.data.task.status, 'ready');
+    assert.deepEqual(parsed.data.task.applied, { runId: RUN_ONE, appliedAt: parsed.data.applied.appliedAt, files: 2 });
+    assert.deepEqual(parsed.data.applied.files.map((file) => file.status), ['already-applied', 'already-applied']);
+    const again = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
+    assert.equal(again.stdout, `one: applied 2 file(s) from ${RUN_ONE} (2 already applied)\n`);
+    assert.match((await cli('--help')).stdout, /task apply --id ID --run RUN_ID --by LABEL\n/u);
+    assert.doesNotMatch((await cli('--help')).stdout, /allow-incomplete/u);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task apply reports refusals and has no flags beyond id, run and by', async () => {
+  const root = await applyProject({});
+  try {
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    const cli = (...args) => exec(process.execPath, [bin, '--project', root, ...args]);
+    await fakeRun(root, RUN_ONE, { outcome: 'timeout', after: { 'src/a.ts': 'candidate\n' } });
+    const refused = await cli('--json', 'task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.equal(refused.code, 1);
+    assert.equal(refused.stderr, '');
+    assert.equal(JSON.parse(refused.stdout).error.code, 'RUN_INCOMPLETE');
+    const humanRefused = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.match(humanRefused.stderr, /^ERROR \[RUN_INCOMPLETE\] /u);
+    // --allow-incomplete was removed: it is an unknown option, not a silent override.
+    for (const flag of [['--allow-incomplete'], ['--allow-incomplete=true']]) {
+      const override = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', ...flag).catch((error) => error);
+      assert.equal(override.code, 1);
+      assert.match(override.stderr, /unknown option: --allow-incomplete/u);
+    }
+    assert.equal((await rawState(root)).tasks.one.applied, undefined);
+    await assert.rejects(readProject(root, 'src/a.ts'), { code: 'ENOENT' });
+    // Valued flags still need their value, and stray arguments are refused.
+    const noValue = await cli('task', 'apply', '--id', '--by', 'operator').catch((error) => error);
+    assert.match(noValue.stderr, /--id requires a value/u);
+    const stray = await cli('task', 'apply', 'stray', '--id', 'one', '--run', RUN_ONE, '--by', 'operator').catch((error) => error);
+    assert.match(stray.stderr, /unexpected argument: stray/u);
   } finally {
     await cleanup(root);
   }

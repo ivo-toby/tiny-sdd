@@ -8,6 +8,7 @@ import { lstat, readFile, unlink } from 'node:fs/promises';
 
 import {
   addTask,
+  applyTask,
   approveTask,
   closeTask,
   configShow,
@@ -35,6 +36,7 @@ Usage:
   tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
+  tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
   tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL
   tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
@@ -46,6 +48,8 @@ Usage:
 Retired (closed or superseded) tasks leave \`next\`, cannot be approved, reviewed or
 dispatched, and are refused while open tasks depend on them.
 Workers return isolated candidates and patches; they never apply or accept them.
+\`task apply\` copies a reviewed run's allowed files into the project and records the
+run; apply before \`task review\`, because acceptance binds the project's files.
 Use \`worker start\` for real model calls from an agent: it detaches the controller
 from short-lived interactive shells. Poll it with \`worker status\`.
 Stopping a launch with \`worker stop\` finalizes the run with outcome \`stopped\`,
@@ -131,11 +135,12 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'task') {
-    if (!['add', 'approve', 'packet', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, approve, packet, review, close, or supersede');
+    if (!['add', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, approve, packet, apply, review, close, or supersede');
     const allowedByCommand = {
       add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
+      apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
       review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value']]),
       close: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       supersede: new Map([['id', 'value'], ['with', 'list'], ['by', 'value'], ['reason', 'value']]),
@@ -367,6 +372,11 @@ async function run(argv) {
     reason: parsed.values.reason,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'packet') data = await resolveTaskPacket(project, parsed.values.id);
+  else if (parsed.command === 'task' && parsed.subcommand === 'apply') data = await applyTask(project, {
+    id: parsed.values.id,
+    run: parsed.values.run,
+    by: parsed.values.by,
+  });
   else if (parsed.command === 'task' && parsed.subcommand === 'review') data = await reviewTask(project, {
     id: parsed.values.id,
     verdict: parsed.values.verdict,
@@ -455,6 +465,9 @@ function writeResult(result, json) {
         process.stdout.write(`${task.id}: ${describeTask(task)}${task.blockedBy?.length && !task.closure ? ` (requires ${task.blockedBy.join(', ')})` : ''}\n`);
       }
       if (Object.hasOwn(data, 'next')) process.stdout.write(data.next ? `Next: ${data.next.taskId} — ${data.next.action}\n` : 'No pending task.\n');
+    } else if (Array.isArray(data?.applied?.files)) {
+      const already = data.applied.files.filter((file) => file.status === 'already-applied').length;
+      process.stdout.write(`${data.task.id}: applied ${data.applied.files.length} file(s) from ${data.applied.runId}${already > 0 ? ` (${already} already applied)` : ''}\n`);
     } else if (data?.task?.id) {
       process.stdout.write(`${data.task.id}: ${describeTask(data.task)}\n`);
       for (const warning of data.sizing?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);

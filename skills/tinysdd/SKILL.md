@@ -47,8 +47,11 @@ it and makes that slice stale, so append addenda at the end of the spec. The
 manifest format is in `docs/context-compiler.md` of the TinySDD repository.
 `task add` reports allowed files, compiled-context bytes and cited test lines;
 split when it warns. Apply an accepted slice's reviewed patch to the project
-before recording acceptance: acceptance binds the project's allowed-file content,
-and the next slice's worker copies the project.
+with `task apply` before recording acceptance: acceptance binds the project's
+allowed-file content, and the next slice's worker copies the project. The
+approval keeps binding the context the worker started from (only the files apply
+wrote are read from the run's starting copy), dispatch is refused (`TASK_APPLIED`)
+until the applied run is reviewed, and a `revision` review clears the apply record.
 
 Before delegating a nontrivial implementation task, prepare a compact context
 manifest under `.tinysdd/tasks/` when exact repository facts would prevent

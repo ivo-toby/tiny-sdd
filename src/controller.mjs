@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readFile, rm } from 'node:fs/promises';
 import {
   assertInternalPath,
   assertPlainObject,
@@ -13,6 +13,7 @@ import {
   publicError,
   readJsonFile,
   readProjectFile,
+  resolveProjectPath,
   sha256,
   snapshotProjectFiles,
   stableStringify,
@@ -47,6 +48,10 @@ export const CONTROLLER_SCHEMA_VERSION = 1;
 const TASK_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const TASKS_PREFIX = '.tinysdd/tasks/';
 const REVIEWS_PREFIX = '.tinysdd/reviews/';
+const RUN_ID_PATTERN = /^worker-[0-9A-Za-z-]+$/;
+const MAX_APPLY_LINEAGE = 32;
+const APPLY_CHANGES = ['created', 'modified', 'deleted'];
+const APPLY_STATUSES = ['written', 'already-applied'];
 
 function normalizeTaskBrief(value, field) {
   return normalizeProjectRelative(value, field, { tinysddArtifactPrefix: TASKS_PREFIX });
@@ -76,9 +81,36 @@ function reviewEvidenceOptions() {
   return { tinysddArtifactPrefix: REVIEWS_PREFIX };
 }
 
-async function compileTaskContext(projectRoot, path) {
+async function compileTaskContext(projectRoot, path, options) {
   const text = await readProjectFile(projectRoot, path, taskBriefOptions());
-  return compileContext(projectRoot, { path, text, sha256: sha256(text) });
+  return compileContext(projectRoot, { path, text, sha256: sha256(text) }, options);
+}
+
+// The approval bound the context the worker started from, but an apply moves the
+// files it writes to the candidate. Only those paths are displaced: while the
+// apply is recorded they are read from the lineage root's workspace-before, which
+// is what the project held there (the drift check requires it). Every other cited
+// file, including allowed files the lineage never changed and already-applied
+// paths, is read from the project, so the approval keeps binding its current text.
+// A missing run artifact fails closed (stale).
+function pinnedPaths(entries) {
+  return new Set(entries.filter((entry) => entry.status === 'written').map((entry) => entry.path));
+}
+
+function compilePinnedContext(root, task, rootRunId, pinned) {
+  if (pinned.size === 0) return compileTaskContext(root, task.context);
+  const readSource = async (path) => {
+    if (!pinned.has(path)) return readProjectFile(root, path);
+    const start = await readRunFile(root, rootRunId, 'workspace-before', path);
+    if (start === null) throw tinyError('RUN_NOT_FOUND', `run ${rootRunId} no longer holds ${path}`, { runId: rootRunId });
+    return start.bytes.toString('utf8');
+  };
+  return compileTaskContext(root, task.context, { readSource });
+}
+
+function compileApprovedContext(root, task) {
+  if (!task.applied) return compileTaskContext(root, task.context);
+  return compilePinnedContext(root, task, task.applied.rootRunId, pinnedPaths(task.applied.files));
 }
 
 // Provisional advisory thresholds from one observed failure (talon
@@ -190,6 +222,33 @@ function validateClosure(id, closure) {
   }
 }
 
+function validateApplied(id, applied) {
+  const label = `task ${id} applied`;
+  assertPlainObject(applied, 'STATE_MALFORMED', label);
+  for (const field of ['runId', 'rootRunId']) {
+    if (typeof applied[field] !== 'string' || !RUN_ID_PATTERN.test(applied[field])) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a worker run id`);
+  }
+  for (const field of ['by', 'appliedAt']) {
+    if (typeof applied[field] !== 'string' || applied[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a nonempty string`);
+  }
+  if (applied.allowedDigest !== undefined && (typeof applied.allowedDigest !== 'string' || !/^[0-9a-f]{64}$/.test(applied.allowedDigest))) {
+    throw tinyError('STATE_MALFORMED', `${label} allowedDigest must be a digest`);
+  }
+  if (!Array.isArray(applied.files)) throw tinyError('STATE_MALFORMED', `${label} files must be an array`);
+  for (const file of applied.files) {
+    assertPlainObject(file, 'STATE_MALFORMED', `${label} file`);
+    try {
+      normalizeProjectRelative(file.path, `${label} file path`);
+    } catch {
+      throw tinyError('STATE_MALFORMED', `${label} file path is invalid`);
+    }
+    if (!APPLY_CHANGES.includes(file.change)) throw tinyError('STATE_MALFORMED', `${label} file change must be created, modified or deleted`);
+    if (!APPLY_STATUSES.includes(file.status)) throw tinyError('STATE_MALFORMED', `${label} file status must be written or already-applied`);
+    const digestOk = file.change === 'deleted' ? file.sha256 === null : typeof file.sha256 === 'string' && /^[0-9a-f]{64}$/.test(file.sha256);
+    if (!digestOk) throw tinyError('STATE_MALFORMED', `${label} file sha256 must be a digest, or null for a deletion`);
+  }
+}
+
 function closureLabel(task) {
   return task.closure.kind === 'superseded' ? `superseded by ${task.closure.supersededBy.join(', ')}` : 'closed';
 }
@@ -231,6 +290,7 @@ function validateState(value) {
       throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
     }
     if (task.closure !== undefined) validateClosure(id, task.closure);
+    if (task.applied !== undefined) validateApplied(id, task.applied);
   }
   return value;
 }
@@ -272,7 +332,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   }
   const briefDigest = await digestProjectFile(projectRoot, task.brief, taskBriefOptions()).catch(() => undefined);
   const compiledContext = task.context
-    ? await compileTaskContext(projectRoot, task.context).catch(() => undefined)
+    ? await compileApprovedContext(projectRoot, task).catch(() => undefined)
     : null;
   const contextDigest = compiledContext === null ? null : compiledContext?.sha256;
   const checksDigest = task.checks
@@ -387,7 +447,9 @@ function publicTask(task, stateInfo) {
       by: task.review.by,
       reviewedAt: task.review.reviewedAt,
       current: task.review.verdict === 'accepted' ? Boolean(stateInfo.acceptanceDigest) : undefined,
+      ...(task.review.appliedFromRun ? { appliedFromRun: { ...task.review.appliedFromRun } } : {}),
     } : undefined,
+    ...(task.applied ? { applied: { runId: task.applied.runId, appliedAt: task.applied.appliedAt, files: task.applied.files.length } } : {}),
     ...(task.closure ? { closure: publicClosure(task.closure) } : {}),
   };
 }
@@ -503,7 +565,7 @@ export async function approveTask(projectRoot, options = {}) {
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     const briefDigest = await digestProjectFile(root, task.brief, taskBriefOptions()).catch(() => { throw tinyError('BRIEF_MISSING', `brief is missing: ${task.brief}`); });
     const compiled = task.context
-      ? await compileTaskContext(root, task.context).catch((error) => {
+      ? await compileApprovedContext(root, task).catch((error) => {
         if (error?.code === 'ENOENT' || error?.code === 'PATH_NOT_FOUND') throw tinyError('CONTEXT_MISSING', `context manifest is missing: ${task.context}`);
         throw error;
       })
@@ -569,6 +631,166 @@ export function supersedeTask(projectRoot, options = {}) {
   return retireTask(projectRoot, options, 'superseded');
 }
 
+// A run's artifacts are controller evidence; anything unsafe or unreadable in
+// them reads as a missing or malformed run, never as something to follow.
+async function runArtifactPath(root, runId, segments, { allowMissing = false, requireDirectory = false, code = 'RUN_NOT_FOUND' } = {}) {
+  try {
+    return await assertInternalPath(root, ['.tinysdd', 'runs', runId, ...segments], { allowMissing, requireDirectory });
+  } catch (error) {
+    if (['PATH_NOT_FOUND', 'SYMLINK_PATH', 'INVALID_PATH'].includes(error?.code)) {
+      throw tinyError(code, `run ${runId} is missing or not a plain directory tree: ${segments.join('/') || runId}`, { runId });
+    }
+    throw error;
+  }
+}
+
+async function loadRunResult(root, runId) {
+  const file = await runArtifactPath(root, runId, ['result.json']);
+  const read = await readJsonFile(file, { code: 'RUN_MALFORMED' });
+  if (!read) throw tinyError('RUN_NOT_FOUND', `run ${runId} has no result.json`, { runId });
+  return assertPlainObject(read.value, 'RUN_MALFORMED', `run ${runId} result`);
+}
+
+// Follows result.baseRun.id parents the way the worker does when it builds a
+// revision. Returns the runs earliest first: the root's workspace-before is the
+// project state the lineage started from, the last run's workspace-after is the
+// candidate.
+async function loadApplyLineage(root, task, runId) {
+  const allowed = new Set(task.allow);
+  const newestFirst = [];
+  const seen = new Set();
+  let currentId = runId;
+  while (currentId !== undefined) {
+    if (seen.has(currentId)) throw tinyError('RUN_MALFORMED', 'base run lineage contains a cycle', { runId: currentId });
+    seen.add(currentId);
+    if (seen.size > MAX_APPLY_LINEAGE) throw tinyError('RUN_MALFORMED', 'base run lineage exceeds the supported depth', { runId });
+    const result = await loadRunResult(root, currentId);
+    if (result.taskId !== task.id) throw tinyError('RUN_TASK_MISMATCH', `run ${currentId} belongs to task ${result.taskId ?? '(none)'}, not ${task.id}`, { runId: currentId, taskId: result.taskId });
+    if (result.baselineRun !== undefined) throw tinyError('RUN_IS_REPLAY', `run ${currentId} is a benchmark replay and is never applied`, { runId: currentId });
+    if (newestFirst.length === 0 && result.outcome !== 'completed') {
+      throw tinyError('RUN_INCOMPLETE', `run ${currentId} ended with outcome ${result.outcome}; only a completed run is applied`, { runId: currentId, outcome: result.outcome });
+    }
+    if (!Array.isArray(result.scopeViolations) || !Array.isArray(result.changedPaths)) throw tinyError('RUN_MALFORMED', `run ${currentId} result lacks changedPaths or scopeViolations`, { runId: currentId });
+    if (result.scopeViolations.length > 0) {
+      throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} changed paths outside the task allowlist`, { runId: currentId, paths: result.scopeViolations.map((violation) => violation?.path) });
+    }
+    // A revision's base can predate unrelated project changes, so the recorded
+    // changes are checked here instead of diffing whole workspaces.
+    const outside = result.changedPaths.map((change) => change?.path).filter((path) => typeof path !== 'string' || !allowed.has(path));
+    if (outside.length > 0) throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} changed paths outside the task allowlist`, { runId: currentId, paths: outside });
+    newestFirst.push({ id: currentId, result });
+    const parentId = result.baseRun?.id;
+    if (parentId === undefined || parentId === null) break;
+    if (typeof parentId !== 'string' || !RUN_ID_PATTERN.test(parentId)) throw tinyError('RUN_MALFORMED', `run ${currentId} has an invalid base run id`, { runId: currentId });
+    currentId = parentId;
+  }
+  return newestFirst.reverse();
+}
+
+async function readRegularFile(absolute) {
+  let info;
+  try {
+    info = await lstat(absolute);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (info.isSymbolicLink()) throw tinyError('SYMLINK_PATH', `symlinked paths are not allowed: ${absolute}`);
+  if (!info.isFile()) throw tinyError('INVALID_FILE', `not a regular file: ${absolute}`);
+  return { bytes: await readFile(absolute), mode: info.mode & 0o777 };
+}
+
+async function readRunFile(root, runId, workspace, path) {
+  const absolute = await runArtifactPath(root, runId, [workspace, ...path.split('/')], { allowMissing: true, code: 'RUN_MALFORMED' });
+  try {
+    return await readRegularFile(absolute);
+  } catch (error) {
+    if (['SYMLINK_PATH', 'INVALID_FILE'].includes(error?.code)) throw tinyError('RUN_MALFORMED', `run ${runId} ${workspace}/${path} is not a regular file`, { runId, path });
+    throw error;
+  }
+}
+
+function sameContent(left, right) {
+  if (left === null || right === null) return left === right;
+  return left.bytes.equals(right.bytes);
+}
+
+export async function applyTask(projectRoot, options = {}) {
+  const id = validateTaskId(options.id);
+  const by = requireText(options.by, 'apply by');
+  const runId = requireText(options.run, 'run id');
+  const root = await canonicalProjectRoot(projectRoot);
+  return mutateState(root, async (state) => {
+    if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
+    const task = state.tasks[id];
+    assertOpen(task);
+    const status = await inspectTask(root, state, task);
+    if (status.status !== 'ready') throw tinyError('TASK_NOT_READY', `task ${id} is ${status.status}`, { status: status.status, blockedBy: status.blockedBy });
+    if (!RUN_ID_PATTERN.test(runId)) throw tinyError('INVALID_RUN_ID', 'run id must be a TinySDD worker run id such as worker-2026-01-01T00-00-00-000Z-0a1b2c3d');
+    const lineage = await loadApplyLineage(root, task, runId);
+    const rootRun = lineage[0];
+    const finalRun = lineage[lineage.length - 1];
+    await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
+    await runArtifactPath(root, finalRun.id, ['workspace-after'], { requireDirectory: true });
+
+    // Plan everything, and refuse on drift, before the first write. Only paths
+    // the lineage recorded as changed are applied: a revision's workspaces also
+    // carry whatever the project held at its dispatch, which is not the run's work.
+    const recorded = new Set(lineage.flatMap((run) => run.result.changedPaths.map((change) => change.path)));
+    const plan = [];
+    const conflicts = [];
+    for (const path of task.allow) {
+      if (!recorded.has(path)) continue;
+      const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
+      const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
+      if (sameContent(before, after)) continue;
+      const absolute = (await resolveProjectPath(root, path, { allowMissing: true })).absolutePath;
+      const current = await readRegularFile(absolute);
+      let applyStatus = 'written';
+      if (!sameContent(current, before)) {
+        if (sameContent(current, after)) applyStatus = 'already-applied';
+        else conflicts.push(path);
+      }
+      plan.push({ path, absolute, change: after === null ? 'deleted' : before === null ? 'created' : 'modified', after, digest: after === null ? null : sha256(after.bytes), status: applyStatus });
+    }
+    if (conflicts.length > 0) {
+      throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
+    }
+
+    // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
+    const inputs = new Set([task.brief, task.context, task.checks].filter(Boolean));
+    const rewritten = plan.filter((item) => item.status === 'written' && inputs.has(item.path)).map((item) => item.path);
+    if (rewritten.length > 0) {
+      throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
+    }
+    // Compile the context as inspectTask will read it once this apply is recorded,
+    // and refuse now if that would leave the approval stale.
+    if (task.context) {
+      const after = await compilePinnedContext(root, task, rootRun.id, pinnedPaths(plan)).catch(() => undefined);
+      if (!after || !contextDigestMatches(task.approval.contextDigest ?? null, after.sha256, after.legacySha256)) {
+        throw tinyError('APPLY_WOULD_STALE', `applying run ${finalRun.id} would leave task ${id} with a stale approval; nothing was written`, { runId: finalRun.id, rootRunId: rootRun.id });
+      }
+    }
+    // The digest below reads every allowed file; refuse an unreadable or
+    // symlinked one now rather than after the writes.
+    await snapshotProjectFiles(root, task.allow);
+    for (const item of plan) {
+      if (item.status !== 'written') continue;
+      if (item.change === 'deleted') await rm(item.absolute, { force: true });
+      else await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
+    }
+    task.applied = {
+      runId: finalRun.id,
+      rootRunId: rootRun.id,
+      appliedAt: nowIso(),
+      by,
+      allowedDigest: await allowedFilesDigest(root, task.allow),
+      files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
+    };
+    return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
+  });
+}
+
 export async function resolveTaskPacket(projectRoot, taskId) {
   const id = validateTaskId(taskId);
   const root = await canonicalProjectRoot(projectRoot);
@@ -581,6 +803,10 @@ export async function resolveTaskPacket(projectRoot, taskId) {
   if (status.status === 'accepted') throw tinyError('TASK_ALREADY_ACCEPTED', `task ${id} is already accepted`);
   if (status.status !== 'ready') {
     throw tinyError('TASK_NOT_READY', `task ${id} is ${status.status}`, { status: status.status, blockedBy: status.blockedBy });
+  }
+  // Context excerpts of an allowed file would no longer match the applied project the worker copies.
+  if (task.applied) {
+    throw tinyError('TASK_APPLIED', `task ${id} has an applied run (${task.applied.runId}); review it, accepted or revision, before dispatching again`, { runId: task.applied.runId });
   }
   const text = await readProjectFile(root, task.brief, taskBriefOptions());
   let context;
@@ -783,6 +1009,20 @@ async function semanticGateDecision(root, { taskId, verdict, evidenceContent, ju
   return { mode: gate.mode, action };
 }
 
+// The digest an acceptance binds: the allowed files' content right now.
+async function allowedFilesDigest(root, allow) {
+  return digestJson(await snapshotProjectFiles(root, allow));
+}
+
+// identical is false when an allowed file was edited after `task apply`, which
+// review allows but records. A record from before applied.allowedDigest existed
+// can only be checked against the files it wrote.
+async function appliedIdentical(root, applied, allowedDigest) {
+  if (applied.allowedDigest !== undefined) return applied.allowedDigest === allowedDigest;
+  const snapshot = await snapshotProjectFiles(root, applied.files.map((file) => file.path));
+  return applied.files.every((file, index) => (file.change === 'deleted' ? !snapshot[index].exists : snapshot[index].sha256 === file.sha256));
+}
+
 export async function reviewTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const verdict = options.verdict;
@@ -809,7 +1049,7 @@ export async function reviewTask(projectRoot, options = {}) {
     if (!task.approval || !status.approvalFresh) throw tinyError('APPROVAL_STALE', `task ${id} does not have a current approval`);
     const evidenceContent = await readProjectFile(root, evidence, reviewEvidenceOptions());
     if (evidenceContent.trim().length === 0) throw tinyError('INVALID_EVIDENCE', 'evidence must be nonempty');
-    const allowedSnapshot = await snapshotProjectFiles(root, task.allow);
+    const allowedDigest = await allowedFilesDigest(root, task.allow);
     const reviewedAt = nowIso();
     const review = {
       verdict,
@@ -819,11 +1059,15 @@ export async function reviewTask(projectRoot, options = {}) {
       evidenceDigest: sha256(evidenceContent),
       briefDigest: status.briefDigest,
       approvalDigest: task.approval.approvalDigest,
-      allowedDigest: digestJson(allowedSnapshot),
+      allowedDigest,
     };
     if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
+    if ((verdict === 'accepted' || verdict === 'revision') && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedIdentical(root, task.applied, allowedDigest) };
     if (verdict === 'accepted') review.acceptanceDigest = digestJson({ ...review, taskId: id });
     task.review = review;
+    // The next attempt builds on the applied project, so the record is spent;
+    // an accepted or blocked review leaves it, since the files are still applied.
+    if (verdict === 'revision') delete task.applied;
     return { task: publicTask(task, await inspectTask(root, state, task)) };
   });
 }
@@ -885,6 +1129,7 @@ export function createController(projectRoot) {
     init: (options) => initProject(projectRoot, options),
     addTask: (options) => addTask(projectRoot, options),
     approveTask: (options) => approveTask(projectRoot, options),
+    applyTask: (options) => applyTask(projectRoot, options),
     closeTask: (options) => closeTask(projectRoot, options),
     supersedeTask: (options) => supersedeTask(projectRoot, options),
     reviewTask: (options) => reviewTask(projectRoot, options),
