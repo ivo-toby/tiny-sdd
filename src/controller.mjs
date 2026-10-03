@@ -101,13 +101,13 @@ function validateTaskId(value) {
   return value;
 }
 
-function parseIds(value) {
+function parseIds(value, label = 'depends-on') {
   if (value === undefined || value === '') return [];
-  if (!Array.isArray(value) && typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', 'depends-on must be a string or array of strings');
+  if (!Array.isArray(value) && typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', `${label} must be a string or array of strings`);
   const values = Array.isArray(value) ? value : String(value).split(',');
   const result = [];
   for (const item of values) {
-    if (typeof item !== 'string') throw tinyError('INVALID_ARGUMENT', 'depends-on must contain only strings');
+    if (typeof item !== 'string') throw tinyError('INVALID_ARGUMENT', `${label} must contain only strings`);
     const id = validateTaskId(item.trim());
     if (!result.includes(id)) result.push(id);
   }
@@ -149,6 +149,43 @@ function emptyState() {
   return { schemaVersion: CONTROLLER_SCHEMA_VERSION, tasks: {}, updatedAt: nowIso() };
 }
 
+const CLOSURE_KINDS = ['closed', 'superseded'];
+// Statuses with nothing left to do, so `next` skips them.
+const SETTLED_STATUSES = ['accepted', ...CLOSURE_KINDS];
+
+function validateClosure(id, closure) {
+  const label = `task ${id} closure`;
+  assertPlainObject(closure, 'STATE_MALFORMED', label);
+  if (!CLOSURE_KINDS.includes(closure.kind)) throw tinyError('STATE_MALFORMED', `${label} kind must be closed or superseded`);
+  for (const field of ['by', 'reason', 'closedAt']) {
+    if (typeof closure[field] !== 'string' || closure[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a nonempty string`);
+  }
+  if (closure.kind === 'closed') {
+    if (closure.supersededBy !== undefined) throw tinyError('STATE_MALFORMED', `${label} supersededBy is only valid for a superseded task`);
+    return;
+  }
+  if (!Array.isArray(closure.supersededBy) || closure.supersededBy.length === 0) throw tinyError('STATE_MALFORMED', `${label} supersededBy must be a nonempty array`);
+  try {
+    for (const successor of closure.supersededBy) validateTaskId(successor);
+  } catch {
+    throw tinyError('STATE_MALFORMED', `${label} supersededBy contains an invalid task id`);
+  }
+}
+
+function closureLabel(task) {
+  return task.closure.kind === 'superseded' ? `superseded by ${task.closure.supersededBy.join(', ')}` : 'closed';
+}
+
+function publicClosure(closure) {
+  const { kind, by, reason, closedAt, supersededBy } = closure;
+  return { kind, by, reason, closedAt, ...(supersededBy ? { supersededBy: [...supersededBy] } : {}) };
+}
+
+// A retired task takes no further approval, review or dispatch.
+function assertOpen(task) {
+  if (task.closure) throw tinyError('TASK_CLOSED', `task ${task.id} is ${closureLabel(task)}`, publicClosure(task.closure));
+}
+
 function validateState(value) {
   assertPlainObject(value, 'STATE_MALFORMED', 'controller state');
   if (value.schemaVersion !== CONTROLLER_SCHEMA_VERSION) throw tinyError('STATE_MALFORMED', `controller state schemaVersion must be ${CONTROLLER_SCHEMA_VERSION}`);
@@ -174,6 +211,7 @@ function validateState(value) {
     } catch {
       throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
     }
+    if (task.closure !== undefined) validateClosure(id, task.closure);
   }
   return value;
 }
@@ -260,6 +298,8 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   else if (!approval) status = 'pending_approval';
   else if (!approvalFresh) status = 'stale_approval';
   else status = 'ready';
+  // A retired task never satisfies a dependency, whatever its review says.
+  if (task.closure) status = task.closure.kind;
   return {
     id: task.id,
     status,
@@ -268,7 +308,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     approvalFresh,
     blockedBy,
     dependencyAcceptances,
-    acceptanceDigest,
+    acceptanceDigest: task.closure ? undefined : acceptanceDigest,
     allowedSnapshot,
     allowedDigest,
     evidenceDigest,
@@ -279,6 +319,9 @@ function assertDependenciesExist(state, id, dependencies) {
   for (const dependency of dependencies) {
     if (dependency === id) throw tinyError('DEPENDENCY_CYCLE', `task ${id} cannot depend on itself`);
     if (!Object.hasOwn(state.tasks, dependency)) throw tinyError('DEPENDENCY_NOT_FOUND', `dependency task does not exist: ${dependency}`);
+    // A retired dependency never becomes accepted, so the new task would stay blocked.
+    const retired = state.tasks[dependency];
+    if (retired.closure) throw tinyError('DEPENDENCY_CLOSED', `dependency task ${dependency} is ${closureLabel(retired)}`, publicClosure(retired.closure));
   }
   const graph = Object.create(null);
   for (const [taskId, task] of Object.entries(state.tasks)) graph[taskId] = task.dependsOn;
@@ -312,6 +355,7 @@ function publicTask(task, stateInfo) {
       reviewedAt: task.review.reviewedAt,
       current: task.review.verdict === 'accepted' ? Boolean(stateInfo.acceptanceDigest) : undefined,
     } : undefined,
+    ...(task.closure ? { closure: publicClosure(task.closure) } : {}),
   };
 }
 
@@ -415,6 +459,7 @@ export async function approveTask(projectRoot, options = {}) {
   return mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
+    assertOpen(task);
     const status = await inspectTask(root, state, task);
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     const briefDigest = await digestProjectFile(root, task.brief, taskBriefOptions()).catch(() => { throw tinyError('BRIEF_MISSING', `brief is missing: ${task.brief}`); });
@@ -438,6 +483,42 @@ export async function approveTask(projectRoot, options = {}) {
   });
 }
 
+// close and supersede share one transition: a terminal status that needs no
+// approval, is refused while open tasks depend on it, and discards no acceptance.
+async function retireTask(projectRoot, options, kind) {
+  const id = validateTaskId(options.id);
+  const by = requireText(options.by, 'closure by');
+  const reason = requireText(options.reason, 'closure reason');
+  const successors = kind === 'superseded' ? parseIds(options.with, 'with') : [];
+  if (kind === 'superseded' && successors.length === 0) throw tinyError('INVALID_ARGUMENT', 'supersede requires at least one successor task (--with)');
+  const root = await canonicalProjectRoot(projectRoot);
+  return mutateState(root, async (state) => {
+    if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
+    const task = state.tasks[id];
+    assertOpen(task);
+    for (const successor of successors) {
+      if (successor === id) throw tinyError('INVALID_ARGUMENT', `task ${id} cannot supersede itself`);
+      if (!Object.hasOwn(state.tasks, successor)) throw tinyError('TASK_NOT_FOUND', `unknown successor task: ${successor}`);
+      assertOpen(state.tasks[successor]);
+    }
+    if ((await inspectTask(root, state, task)).status === 'accepted') {
+      throw tinyError('TASK_ACCEPTED', `task ${id} is accepted; closing it would discard a current acceptance`);
+    }
+    const dependents = Object.values(state.tasks).filter((other) => !other.closure && other.dependsOn.includes(id)).map((other) => other.id).sort();
+    if (dependents.length > 0) throw tinyError('TASK_HAS_DEPENDENTS', `task ${id} is still required by open tasks: ${dependents.join(', ')}`, { dependents });
+    task.closure = { kind, by, reason, closedAt: nowIso(), ...(kind === 'superseded' ? { supersededBy: successors } : {}) };
+    return { task: publicTask(task, await inspectTask(root, state, task)) };
+  });
+}
+
+export function closeTask(projectRoot, options = {}) {
+  return retireTask(projectRoot, options, 'closed');
+}
+
+export function supersedeTask(projectRoot, options = {}) {
+  return retireTask(projectRoot, options, 'superseded');
+}
+
 export async function resolveTaskPacket(projectRoot, taskId) {
   const id = validateTaskId(taskId);
   const root = await canonicalProjectRoot(projectRoot);
@@ -445,6 +526,7 @@ export async function resolveTaskPacket(projectRoot, taskId) {
   const state = await readState(info);
   if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
   const task = state.tasks[id];
+  assertOpen(task);
   const status = await inspectTask(root, state, task);
   if (status.status === 'accepted') throw tinyError('TASK_ALREADY_ACCEPTED', `task ${id} is already accepted`);
   if (status.status !== 'ready') {
@@ -647,6 +729,7 @@ export async function reviewTask(projectRoot, options = {}) {
   return mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
+    assertOpen(task);
     const status = await inspectTask(root, state, task);
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     if (!task.approval || !status.approvalFresh) throw tinyError('APPROVAL_STALE', `task ${id} does not have a current approval`);
@@ -682,7 +765,7 @@ export async function controllerStatus(projectRoot) {
 
 export async function controllerNext(projectRoot) {
   const result = await controllerStatus(projectRoot);
-  const candidate = result.tasks.find((task) => task.status !== 'accepted');
+  const candidate = result.tasks.find((task) => !SETTLED_STATUSES.includes(task.status));
   if (!candidate) return { ...result, next: null };
   const action = candidate.status === 'ready' ? 'ready' : candidate.status;
   return { ...result, next: { action, taskId: candidate.id } };
@@ -728,6 +811,8 @@ export function createController(projectRoot) {
     init: (options) => initProject(projectRoot, options),
     addTask: (options) => addTask(projectRoot, options),
     approveTask: (options) => approveTask(projectRoot, options),
+    closeTask: (options) => closeTask(projectRoot, options),
+    supersedeTask: (options) => supersedeTask(projectRoot, options),
     reviewTask: (options) => reviewTask(projectRoot, options),
     status: () => controllerStatus(projectRoot),
     next: () => controllerNext(projectRoot),

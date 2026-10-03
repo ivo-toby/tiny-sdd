@@ -689,7 +689,7 @@ contexts grow.
 | Thinking budget in profiles | **Implemented** | `runtime.compat.thinkingTokenBudgetField`, `runtime.thinkingBudgets`; written to the worker's temporary Pi settings; reported by the preflight. |
 | Timeout cap | **Implemented (single source)** | `MAX_TIMEOUT_MS` was declared in config.mjs and pi-environment.mjs: 15 min on `main`, 60 min since the Jev gate commit. Now one constant in config.mjs, kept at 60 min. `main` stays at 15 min until this branch merges. |
 | Run measurements | **Implemented** | `taskShape`, `observed.toolCallsByName`, `writeCalls`, `firstWriteAtMs`, `reads`, `citedRereads`, `repeatedReads`, `compactions`, `cumulativeUsage`. |
-| `task close` / `task supersede` | Designed (3.2) | Smallest controller fix; next after `worker stop`. |
+| `task close` / `task supersede` | **Implemented** (#14) | Terminal `closed`/`superseded` status; refused while open tasks depend on it; supersede records successors. |
 | `task apply` + `appliedFromRun` | Designed (3.2) | Requested by the operator. |
 | Slice-DAG `status`, `--feature` | Designed (3.2) | |
 | `--protect`, `task update` | Designed (3.2) | Controller semantics, so the open questions come first. |
