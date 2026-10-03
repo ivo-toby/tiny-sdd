@@ -36,6 +36,25 @@ function normalizeSourcePath(value, label) {
 
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$/u;
 
+// Provisional text heuristics, not a parser.
+const FAKE_TIMERS = /\b(?:useFakeTimers|advanceTimersByTime|runAllTimers|runOnlyPendingTimers)\b|\bmock\.timers\b|\bclock\.tick(?:Async)?\b/gu;
+const PROMISE_RESOLVERS = /\bPromise\.withResolvers\s*\(/gu;
+const DEFERRED_HELPERS = /\b(?:createDeferred|deferred|defer)\s*(?:<[^>(]*>)?\s*\(/gu;
+const CAPTURED_RESOLVERS = /new\s+Promise\s*(?:<[^>(]*>)?\s*\(\s*(?:async\s*)?(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)[^)]{0,80}\)?\s*(?:=>)?\s*\{\s*[A-Za-z_$][\w$.]*\s*=\s*\1\b/gu;
+const CONCURRENCY_MARKERS = /\bPromise\.(?:race|all|allSettled)\s*\(|\bnew\s+AbortController\b/gu;
+const ORDERING_ASSERTIONS = /\b(?:deepStrictEqual|deepEqual|toEqual|toStrictEqual)\b/gu;
+const ORDERING_IDENTIFIERS = /\b(?:events?|order|calls?|log)\b|\b[a-z]+(?:Events?|Order|Calls?|Log)\b|\b(?:events?|order|calls?|log)[A-Z_]\w*/gu;
+
+export function analyzeTestSource(text) {
+  const count = (pattern) => text.match(pattern)?.length ?? 0;
+  return {
+    fakeTimers: count(FAKE_TIMERS),
+    deferredPromises: count(PROMISE_RESOLVERS) + count(DEFERRED_HELPERS) + count(CAPTURED_RESOLVERS),
+    concurrencyMarkers: count(CONCURRENCY_MARKERS),
+    orderingAssertions: text.split(/\r?\n/u).filter((line) => line.match(ORDERING_ASSERTIONS) && line.match(ORDERING_IDENTIFIERS)).length,
+  };
+}
+
 /**
  * Size of a compiled context, shared by the controller's sizing report and
  * the worker result so a run's behavior can be paired with its input size.
@@ -49,6 +68,10 @@ export function contextSizeMetrics(compiled) {
     citedResources: resources.length,
     citedLines: resources.reduce((sum, resource) => sum + lines(resource), 0),
     citedTestLines: resources.filter((resource) => TEST_PATH.test(resource.path)).reduce((sum, resource) => sum + lines(resource), 0),
+    citedFakeTimers: compiled?.testCharacteristics?.fakeTimers ?? 0,
+    citedDeferredPromises: compiled?.testCharacteristics?.deferredPromises ?? 0,
+    citedConcurrencyMarkers: compiled?.testCharacteristics?.concurrencyMarkers ?? 0,
+    citedOrderingAssertions: compiled?.testCharacteristics?.orderingAssertions ?? 0,
   };
 }
 
@@ -124,6 +147,7 @@ export async function compileContext(projectRoot, packetContext) {
   if (sha256(packetContext.text) !== packetContext.sha256) invalid(`context manifest digest does not match packet: ${packetContext.path}`);
   const manifest = parseContextManifest(packetContext.text);
   const resources = [];
+  const testCharacteristics = analyzeTestSource('');
   for (const selection of manifest.resources) {
     let text;
     try {
@@ -138,6 +162,10 @@ export async function compileContext(projectRoot, packetContext) {
     const sourceLineCount = text.endsWith('\n') ? lines.length - 1 : lines.length;
     if (selection.endLine > sourceLineCount) invalid(`selected context range exceeds source: ${selection.path}:${selection.startLine}-${selection.endLine}`);
     const excerpt = numberedExcerpt(lines, selection.startLine, selection.endLine);
+    if (TEST_PATH.test(selection.path)) {
+      const counts = analyzeTestSource(lines.slice(selection.startLine - 1, selection.endLine).join('\n'));
+      for (const [key, count] of Object.entries(counts)) testCharacteristics[key] += count;
+    }
     resources.push({
       ...selection,
       sourceSha256: sha256(text),
@@ -156,6 +184,7 @@ export async function compileContext(projectRoot, packetContext) {
     schemaVersion: 1,
     manifest: { path: packetContext.path, sha256: packetContext.sha256, bytes: Buffer.byteLength(packetContext.text) },
     facts: [...manifest.facts],
+    testCharacteristics,
     resources: resources.map(({ excerpt, ...resource }) => resource),
     rendered,
     sha256: sha256(rendered),

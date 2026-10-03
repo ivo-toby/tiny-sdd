@@ -9,6 +9,7 @@ import { hostname } from 'node:os';
 import {
   addTask,
   approveTask,
+  BEHAVIOR_SPLIT_THRESHOLDS,
   closeTask,
   controllerNext,
   controllerStatus,
@@ -384,6 +385,50 @@ test('task add and approve report advisory sizing without blocking', async () =>
     await cleanup(root);
   }
 });
+
+for (const [name, source, counts, reasonCount] of [
+  ['fake timers with deferred promises', 'vi.useFakeTimers();\nPromise.withResolvers();', [1, 1, 0, 0], 1],
+  ['fake timers with races', 't.mock.timers.enable({ apis: ["setTimeout"] });\nPromise.race([]);', [1, 0, 1, 0], 1],
+  ['fake timers alone', 'vi.useFakeTimers();', [1, 0, 0, 0], 0],
+  ['deferred promises and races without fake timers', 'deferred();\nPromise.race([]);', [0, 1, 1, 0], 0],
+  ['eight ordering assertions', Array(8).fill('assert.deepEqual(events, []);').join('\n'), [0, 0, 0, 8], 1],
+  ['seven ordering assertions', Array(7).fill('expect(callOrder).toEqual([]);').join('\n'), [0, 0, 0, 7], 0],
+  ['both behavior split conditions', ['vi.useFakeTimers();', 'deferred();', ...Array(8).fill('assert.deepEqual(events, []);')].join('\n'), [1, 1, 0, 8], 2],
+  ['plain synchronous tests', 'assert.equal(sum(1, 2), 3);', [0, 0, 0, 0], 0],
+]) {
+  test(`task sizing for ${name} remains advisory on add and approve`, async () => {
+    const root = await project();
+    try {
+      await mkdir(join(root, 'tests'));
+      await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+      await writeFile(join(root, 'tests', 'timers.test.ts'), `${source}\n`);
+      const context = '.tinysdd/tasks/one.context.json';
+      await writeFile(join(root, context), JSON.stringify({
+        schemaVersion: 1, facts: [],
+        resources: [{ path: 'tests/timers.test.ts', startLine: 1, endLine: source.split('\n').length, purpose: 'Acceptance tests.' }],
+      }));
+      const added = await addTask(root, { id: 'one', brief: 'docs/brief.md', context, allow: ['src/one.ts'] });
+      assert.equal((await controllerStatus(root)).tasks[0].status, 'pending_approval');
+      const approved = await approveTask(root, { id: 'one', by: 'operator', reason: 'reviewed the behavior split advice' });
+      assert.equal(approved.task.status, 'ready');
+      assert.deepEqual(added.sizing, approved.sizing);
+      const sizing = approved.sizing;
+      assert.deepEqual([sizing.citedFakeTimers, sizing.citedDeferredPromises, sizing.citedConcurrencyMarkers, sizing.citedOrderingAssertions], counts);
+      assert.equal(sizing.behaviorSplit.recommended, reasonCount > 0);
+      assert.equal(sizing.behaviorSplit.reasons.length, reasonCount);
+      assert.equal(sizing.thresholds.citedOrderingAssertions, BEHAVIOR_SPLIT_THRESHOLDS.citedOrderingAssertions);
+      assert.equal(sizing.warnings.length, reasonCount > 0 ? 1 : 0);
+      if (reasonCount > 0) {
+        assert.match(sizing.warnings[0], /behavior split recommended/u);
+        assert.match(sizing.warnings[0], /separate the sequential core from the async edge, each with its own test file; fewer files alone will not help/u);
+      } else {
+        assert.deepEqual(sizing.warnings, []);
+      }
+    } finally {
+      await cleanup(root);
+    }
+  });
+}
 
 test('allows an approved path below parent directories that do not exist yet', async () => {
   const root = await project();
