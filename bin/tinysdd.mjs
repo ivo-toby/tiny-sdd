@@ -471,6 +471,10 @@ function writeResult(result, json) {
   } else {
     process.stderr.write(`ERROR [${result.error.code}] ${result.error.message}\n`);
     if (result.data?.artifactPaths?.directory) process.stderr.write(`Evidence: ${result.data.artifactPaths.directory}\n`);
+    if (result.data?.candidateState?.allowedPathsTouched > 0) {
+      const { allowedPathsTouched, allowedPaths } = result.data.candidateState;
+      process.stderr.write(`Candidate: ${allowedPathsTouched} of ${allowedPaths} allowed paths changed; review it before discarding.\n`);
+    }
   }
 }
 
