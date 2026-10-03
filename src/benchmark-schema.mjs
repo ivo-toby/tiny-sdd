@@ -19,7 +19,7 @@ export const BENCHMARK_ROLES = Object.freeze([
   'stop-and-ask',
   'judge',
 ]);
-export const BENCHMARK_RUNNABLE_ROLES = Object.freeze(['implement-slice']);
+export const BENCHMARK_RUNNABLE_ROLES = Object.freeze(['implement-slice', 'stop-and-ask']);
 export const BENCHMARK_DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;

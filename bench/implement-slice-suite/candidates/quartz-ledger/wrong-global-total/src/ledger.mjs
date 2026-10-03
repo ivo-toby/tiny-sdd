@@ -1,0 +1,11 @@
+export function sumEntries(entries) {
+  return entries.reduce((total, entry) => total + entry.amount, 0);
+}
+
+export function entriesForAccount(entries, account) {
+  return entries.filter((entry) => entry.account === account);
+}
+
+export function balanceByAccount(entries) {
+  return { all: sumEntries(entries) };
+}

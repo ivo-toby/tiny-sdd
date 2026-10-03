@@ -1,0 +1,4 @@
+{
+  "missingInputs": ["sourceEndpoint", "timeoutMs"],
+  "question": "sourceEndpoint is internal-default; timeoutMs is standard-default. Proceed with implementation."
+}

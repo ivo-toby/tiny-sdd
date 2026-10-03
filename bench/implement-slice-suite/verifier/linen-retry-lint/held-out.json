@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "held-out-lint", "argv": ["node", "verifier/linen-retry-lint/held-out.mjs"], "timeoutMs": 120000, "criteria": ["C2"] }]
+}

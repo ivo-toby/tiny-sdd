@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "maple-queue-fix",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "bugfix",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/maple-queue-fix",
+    "sha256": "02a8fff3897870ad623410018ab39ccabe4b9697665b85f74d4f5844998f7b63"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/maple-queue-fix/brief.md",
+      "sha256": "53ae65f36295a672c277492aded9a2f614b89ee23489dd0e014032c2c86b1ebc"
+    },
+    "context": {
+      "path": "packets/maple-queue-fix/context.json",
+      "sha256": "b2128463dd3e50e684541413499ed5fbeb975a2a71ab0b0c2cf301af5239bfc4"
+    },
+    "checks": {
+      "path": "packets/maple-queue-fix/checks.json",
+      "sha256": "86e481ff49b440e5d2aa57d3ac0f995f3ac2a56baefa7a92500454123a0d141f"
+    },
+    "allowedPaths": [
+      "src/job-queue.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/maple-queue-fix/visible.json",
+      "sha256": "19c3d746039a41cb3b103b786ca9bffaf70c52fb39948a9d47988e93523d8de5"
+    },
+    "heldOut": {
+      "path": "verifier/maple-queue-fix/held-out.json",
+      "sha256": "7d79f7fe08d1da479292998ec96a600ccd80ad34ca7ac5e5c264021c5c6976cf"
+    }
+  }
+}

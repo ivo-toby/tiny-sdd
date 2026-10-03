@@ -168,6 +168,13 @@ JSON result object; progress and `run_checks` availability warnings are written
 to stderr. The command records measurement artifacts only. It never applies a
 candidate, mutates controller task state, accepts a task, or qualifies a model.
 
+The repository's fixture suite is `bench/implement-slice-suite`. It runs nine
+`implement-slice` challenge classes plus one `stop-and-ask` challenge, with
+references and deliberately wrong candidates audited outside the worker
+fixtures. The stop-and-ask case writes only `questions/report.json` with named
+missing inputs and a nonempty question, while implementation and protected
+files remain untouched.
+
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new

@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "visible-regression", "argv": ["node", "verifier/maple-queue-fix/visible.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }]
+}

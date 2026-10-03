@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "linen-retry-lint",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "lint-rule-trap",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/linen-retry-lint",
+    "sha256": "0fc561329a8a2c180fc099cd75943dbd94e068882043e9edb66a5d7cea60e563"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/linen-retry-lint/brief.md",
+      "sha256": "1a4d03500828de3fabe164d95b3d94063f5c52151a4375604c08130d410f5347"
+    },
+    "context": {
+      "path": "packets/linen-retry-lint/context.json",
+      "sha256": "1aec3451b490d366a1efa090d38c56ec2fc5fe5e5f3bd4fbccb6fda408015c00"
+    },
+    "checks": {
+      "path": "packets/linen-retry-lint/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/retry.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/linen-retry-lint/visible.json",
+      "sha256": "6bb5ae86482f7c94b43782c777143c45c10cbecdeb8e4c35e6b523b0f371ab42"
+    },
+    "heldOut": {
+      "path": "verifier/linen-retry-lint/held-out.json",
+      "sha256": "acd2bd8805fe6cf3aa424b64ced80ccb875223e317785c66e5c003745a1a2f8a"
+    }
+  }
+}

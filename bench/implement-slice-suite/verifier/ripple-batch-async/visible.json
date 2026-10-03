@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "visible-order", "argv": ["node", "verifier/ripple-batch-async/visible.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }]
+}

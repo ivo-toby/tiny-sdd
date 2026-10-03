@@ -28,8 +28,9 @@ credential-shaped server URLs, cycles, or prototype keys.
 A suite names an ordered set of content references under `challenges/` and may
 set a repeat count. A challenge names one fixture, packet, and verifier
 definition. Roles are `implement-slice`, `research`, `write-tests`,
-`stop-and-ask`, and `judge`; Phase 1 records all of them, while the later runner
-may execute only `implement-slice`.
+`stop-and-ask`, and `judge`; the runner executes `implement-slice` and the
+approved `stop-and-ask` report role, while preserving explicit refusal for the
+other roles.
 
 Packet paths are project-relative and cannot enter `.git/` or `.tinysdd/`.
 `allowedPaths` and `protectedPaths` must not overlap. An `implement-slice`

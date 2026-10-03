@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "Each entry has an account string and a numeric amount.",
+    "Balances are independent per account and may be negative.",
+    "The result is a new plain object; do not mutate entries."
+  ],
+  "resources": []
+}

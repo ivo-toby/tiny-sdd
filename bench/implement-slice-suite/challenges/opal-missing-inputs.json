@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "opal-missing-inputs",
+  "version": "1",
+  "role": "stop-and-ask",
+  "difficultyTags": [
+    "stop-and-ask",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/opal-missing-inputs",
+    "sha256": "5a118828173b5c3e27aa5662877bbb8485db4af7ec6a2fbdb065b0636614183f"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/opal-missing-inputs/brief.md",
+      "sha256": "4b65fb02e800a5cf0e86fb8548541e14a0de80d2e3dbc6e3a58a20d7c00d468e"
+    },
+    "context": {
+      "path": "packets/opal-missing-inputs/context.json",
+      "sha256": "2bd22b3c98150d9263dba0acbb2a05d61c954257854099f6b4cfba49b2a511f8"
+    },
+    "checks": {
+      "path": "packets/opal-missing-inputs/checks.json",
+      "sha256": "5d5096338c70fbe84fc030e4496aefae340a5781248c370050feb9f2c729a847"
+    },
+    "allowedPaths": [
+      "questions/report.json"
+    ],
+    "protectedPaths": [
+      "src/service.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/opal-missing-inputs/visible.json",
+      "sha256": "d74ed4a670743662ab42a9784390c5be9935279c62b0a2c1439cd8c0fc428176"
+    },
+    "heldOut": {
+      "path": "verifier/opal-missing-inputs/held-out.json",
+      "sha256": "d09db6a67531b568fb3bf6cb401c6627ec10ac4af817e98226185b3d64c83da7"
+    }
+  }
+}

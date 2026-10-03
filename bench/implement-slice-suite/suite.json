@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "implement-slice-v1",
+  "version": "2026-10-03.2",
+  "challenges": [
+    {
+      "path": "challenges/copper-tokenize.json",
+      "sha256": "6f389790888509a84b6861bc0bcdff156f0e775664ccc3a9deb8c4f654b537b9"
+    },
+    {
+      "path": "challenges/orbit-window.json",
+      "sha256": "aca8ef9deaf0bb406f88e9632498ad6a9b75b5f4fcf834d4feeea60bab8d3bc9"
+    },
+    {
+      "path": "challenges/harbor-playlist.json",
+      "sha256": "5fc4c36b3306c0f2d484b60dc0393299448b3137409b64db5f7d9ce5cedeb8f5"
+    },
+    {
+      "path": "challenges/quartz-ledger.json",
+      "sha256": "56c2b0c43998072c464fdc73f54adb8204b863bb67ab320ed0c4e3259970a7f4"
+    },
+    {
+      "path": "challenges/maple-queue-fix.json",
+      "sha256": "999b4b677ee2bb2f77d668ba675bb9980e1ef6ee190b2b164d4ac4ba2ee7204c"
+    },
+    {
+      "path": "challenges/cedar-receipt-fix.json",
+      "sha256": "c68ebdbe8d17914b56b461e91998c633938c5dffb411f34db18af57f59ef2aa0"
+    },
+    {
+      "path": "challenges/ripple-batch-async.json",
+      "sha256": "25bc796ded6cd28302070cf6039c66b0897f140c5da37bb5a8cdcdd33c089138"
+    },
+    {
+      "path": "challenges/ember-option-api.json",
+      "sha256": "450574d9d8cb16f507621b6d95d09c161fc94036f757ff0b37917a7cf3709284"
+    },
+    {
+      "path": "challenges/linen-retry-lint.json",
+      "sha256": "3a01667968b03457f3a05c8d10254671de3b56a67c64e2a0bd49e6cddfa53686"
+    },
+    {
+      "path": "challenges/opal-missing-inputs.json",
+      "sha256": "fedac98672697616013305f7e32c702bbee71378d838216c3e53314ccd29b7fc"
+    }
+  ],
+  "defaults": {
+    "repeat": 1
+  }
+}

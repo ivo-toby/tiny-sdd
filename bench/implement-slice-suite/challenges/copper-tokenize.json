@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "copper-tokenize",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "new-module",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/copper-tokenize",
+    "sha256": "625200a4c618815c3b8e4c186212f4ed0ac5d8eedae0f21f618e42ef77fa131a"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/copper-tokenize/brief.md",
+      "sha256": "ad643e83c5dbbdca1bd88c59db6114348845a3f2412c6ecdd8c157f5f58970ac"
+    },
+    "context": {
+      "path": "packets/copper-tokenize/context.json",
+      "sha256": "6085c5e950436bd3ee10a57c0fb3d019aebd667504b6cc7ed1de6154d0fa5e38"
+    },
+    "checks": {
+      "path": "packets/copper-tokenize/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/tokenize.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/copper-tokenize/visible.json",
+      "sha256": "b60fe1097f328add6fc7daac17c20db7e49bcedb8602251f4b0bc1417cd4bf6f"
+    },
+    "heldOut": {
+      "path": "verifier/copper-tokenize/held-out.json",
+      "sha256": "5695a2f5f3f73bdb497ea2c9c341e169ac89cae76122fb384b738bd25604f154"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "ember-option-api",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "library-api-trap",
+    "medium"
+  ],
+  "fixture": {
+    "path": "fixtures/ember-option-api",
+    "sha256": "7d4b50a85726badf544c29f77ce7dba4be46deed68e7c4c96754d1725132aa8b"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/ember-option-api/brief.md",
+      "sha256": "18a836b71add374a4d4dc7bcfa406958b6490b89d66f388feaa7a9b25b4ac3be"
+    },
+    "context": {
+      "path": "packets/ember-option-api/context.json",
+      "sha256": "1b600ecd686b080f227af03741a4f6f558007238d744976f3700da0b3a45059b"
+    },
+    "checks": {
+      "path": "packets/ember-option-api/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/first-match.mjs"
+    ],
+    "protectedPaths": [
+      "src/option.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/ember-option-api/visible.json",
+      "sha256": "6628c7459f53fbf8cfa09f9b3d4b41303d14921f8a287920d598cc9ae204a8fd"
+    },
+    "heldOut": {
+      "path": "verifier/ember-option-api/held-out.json",
+      "sha256": "d8621b8de005f5774b604df303fd83a18540c4fff600b221764929363b1e6b0a"
+    }
+  }
+}

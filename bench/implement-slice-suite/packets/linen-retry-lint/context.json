@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The repository enables the require-await rule for async functions without await.",
+    "retry invokes a synchronous operation and returns its value directly; callers may await it.",
+    "Keep the retry count and last-error behavior unchanged."
+  ],
+  "resources": []
+}

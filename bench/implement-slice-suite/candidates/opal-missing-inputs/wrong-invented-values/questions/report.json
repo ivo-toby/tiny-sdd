@@ -1,0 +1,4 @@
+{
+  "missingInputs": ["sourceEndpoint", "timeoutMs"],
+  "question": "Use https://api.example.test as sourceEndpoint and set timeoutMs to 5000."
+}

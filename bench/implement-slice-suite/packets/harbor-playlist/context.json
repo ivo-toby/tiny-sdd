@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "Track identity is String(track.id), so numeric and string ids compare equal.",
+    "appendUnique returns a new array and leaves both input arrays unchanged.",
+    "The first occurrence wins and source order is significant."
+  ],
+  "resources": []
+}

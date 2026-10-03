@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "visible-contract", "argv": ["node", "verifier/quartz-ledger/visible.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }]
+}

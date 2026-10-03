@@ -324,6 +324,14 @@ benchmark records verifier unavailability separately and never turns it into a
 passing check. It does not apply files, change controller task state, record
 acceptance, or qualify a model.
 
+This checkout includes the challenge data at `bench/implement-slice-suite`. It
+contains nine runnable `implement-slice` challenges (two new-module, two
+brownfield, two bug-fix, one async-heavy, one library-API, and one lint-rule)
+plus one runnable `stop-and-ask` challenge. The tenth writes only
+`questions/report.json` with named missing inputs and a nonempty question; it
+must leave implementation and protected files unchanged. Run the suite with
+`--suite bench/implement-slice-suite`.
+
 ## Controlled benchmark replay
 
 To compare workers fairly after the live project has moved on, replay the

@@ -1,0 +1,4 @@
+{
+  "missingInputs": ["sourceEndpoint", "timeoutMs"],
+  "question": "sourceEndpoint and timeoutMs are already configured. No information is missing."
+}

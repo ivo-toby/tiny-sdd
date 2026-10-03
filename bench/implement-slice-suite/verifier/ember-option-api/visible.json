@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "visible-none", "argv": ["node", "verifier/ember-option-api/visible.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }]
+}

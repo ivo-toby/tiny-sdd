@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "orbit-window",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "new-module",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/orbit-window",
+    "sha256": "7e090f14e8bfe949912215cd78c58e64ec179498eb0fb4ee645040a85330b029"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/orbit-window/brief.md",
+      "sha256": "bbd15fc0657853421d8afa1119ceea4d1e791e167e8936dc4cde3f7912a79d5e"
+    },
+    "context": {
+      "path": "packets/orbit-window/context.json",
+      "sha256": "068f7b4bff1323cf097cbd1aaa261f44489941e90d8f81e8a78dff3993768a32"
+    },
+    "checks": {
+      "path": "packets/orbit-window/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/window.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/orbit-window/visible.json",
+      "sha256": "931ddf03d80b9bceacce1553df4aac54e1c254ed61ecd9dcfb3e12b4348261e7"
+    },
+    "heldOut": {
+      "path": "verifier/orbit-window/held-out.json",
+      "sha256": "c7b2786d7f71a3479d9c9bb736e75180e05a5f0081cd2686e947c30b9a5741bc"
+    }
+  }
+}
