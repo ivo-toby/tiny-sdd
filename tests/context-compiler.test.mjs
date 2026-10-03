@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 
-import { analyzeTestSource, compileContext, contextSizeMetrics, parseContextManifest } from '../src/context-compiler.mjs';
+import { analyzeTestSource, compileContext, contextSizeMetrics, MAX_CONTEXT_SOURCE_BYTES, parseContextManifest } from '../src/context-compiler.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 
 // Project roots may not resolve through a symlink, and tmpdir() does on macOS
@@ -24,6 +25,7 @@ test('analyzes provisional test characteristics deterministically', () => {
     ['t.mock.timers.enable({ apis: ["setTimeout"] }); clock.tick(1); clock.tickAsync(1);', { fakeTimers: 3 }],
     ['Promise.withResolvers(); deferred(); new Promise((resolve) => { release = resolve; });', { deferredPromises: 3 }],
     ['createDeferred<void>(); defer(); new Promise<void>((resolve) => { state.release = resolve; });', { deferredPromises: 3 }],
+    ['deferred<Result>(); new Promise<void>((resolve) => { release = resolve; });', { deferredPromises: 2 }],
     ['new Promise((resolve) => setTimeout(resolve, 1));', {}],
     ['Promise.race([]); Promise.all([]); Promise.allSettled([]); new AbortController();', { concurrencyMarkers: 4 }],
     ['assert.deepEqual(events, []);\nexpect(callOrder).toEqual([]);\nexpect(result).toEqual({});\nassert.deepEqual(catalog, []);', { orderingAssertions: 2 }],
@@ -36,6 +38,18 @@ test('analyzes provisional test characteristics deterministically', () => {
     assert.deepEqual(analyzeTestSource(source), expected, 'Repeated calls must not retain regex state.');
   }
 });
+
+for (const marker of ['new Promise<', 'deferred <']) {
+  test(`bounds generic matching on 512 KB of ${marker}`, (t) => {
+    const source = marker.repeat(Math.ceil(MAX_CONTEXT_SOURCE_BYTES / marker.length)).slice(0, MAX_CONTEXT_SOURCE_BYTES);
+    const started = performance.now();
+    const counts = analyzeTestSource(source);
+    const elapsedMs = performance.now() - started;
+    t.diagnostic(`Analyzed ${source.length} bytes in ${elapsedMs.toFixed(1)} ms`);
+    assert.ok(elapsedMs < 2000, `Expected analysis under 2000 ms, took ${elapsedMs.toFixed(1)} ms`);
+    assert.deepEqual(counts, { fakeTimers: 0, deferredPromises: 0, concurrencyMarkers: 0, orderingAssertions: 0 });
+  });
+}
 
 test('counts only cited test ranges and aggregates resources without changing context digests', async () => {
   const root = await project();

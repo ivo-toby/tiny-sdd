@@ -39,8 +39,8 @@ const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$/u
 // Provisional text heuristics, not a parser.
 const FAKE_TIMERS = /\b(?:useFakeTimers|advanceTimersByTime|runAllTimers|runOnlyPendingTimers)\b|\bmock\.timers\b|\bclock\.tick(?:Async)?\b/gu;
 const PROMISE_RESOLVERS = /\bPromise\.withResolvers\s*\(/gu;
-const DEFERRED_HELPERS = /\b(?:createDeferred|deferred|defer)\s*(?:<[^>(]*>)?\s*\(/gu;
-const CAPTURED_RESOLVERS = /new\s+Promise\s*(?:<[^>(]*>)?\s*\(\s*(?:async\s*)?(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)[^)]{0,80}\)?\s*(?:=>)?\s*\{\s*[A-Za-z_$][\w$.]*\s*=\s*\1\b/gu;
+const DEFERRED_HELPERS = /\b(?:createDeferred|deferred|defer)\s*(?:<[^>(]{0,80}>)?\s*\(/gu;
+const CAPTURED_RESOLVERS = /new\s+Promise\s*(?:<[^>(]{0,80}>)?\s*\(\s*(?:async\s*)?(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)[^)]{0,80}\)?\s*(?:=>)?\s*\{\s*[A-Za-z_$][\w$.]*\s*=\s*\1\b/gu;
 const CONCURRENCY_MARKERS = /\bPromise\.(?:race|all|allSettled)\s*\(|\bnew\s+AbortController\b/gu;
 const ORDERING_ASSERTIONS = /\b(?:deepStrictEqual|deepEqual|toEqual|toStrictEqual)\b/gu;
 const ORDERING_IDENTIFIERS = /\b(?:events?|order|calls?|log)\b|\b[a-z]+(?:Events?|Order|Calls?|Log)\b|\b(?:events?|order|calls?|log)[A-Z_]\w*/gu;
