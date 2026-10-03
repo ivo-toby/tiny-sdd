@@ -270,6 +270,33 @@ test('rejects report task run references outside frozen provenance', async () =>
   }
 });
 
+test('rejects complete elapsed values whose known subtotals disagree', async () => {
+  const mutations = [
+    (event) => {
+      event.report.local.totals.elapsedMs = 5;
+      event.report.local.totals.knownElapsedMs = 6;
+    },
+    (event) => {
+      event.report.local.byTask.one.elapsedMs = 5;
+      event.report.local.byTask.one.knownElapsedMs = 6;
+    },
+  ];
+  for (const mutate of mutations) {
+    const root = await project();
+    try {
+      await acceptedTask(root, 'one', { feature: 'broker' });
+      await acceptFeature(root, { feature: 'broker', by: 'operator', reason: 'feature complete' });
+      const ledgerPath = join(root, '.tinysdd', 'runs', 'feature-events.jsonl');
+      const event = JSON.parse((await readFile(ledgerPath, 'utf8')).trim());
+      mutate(event);
+      await writeFile(ledgerPath, `${JSON.stringify(event)}\n`, 'utf8');
+      await assert.rejects(reportFeature(root, { feature: 'broker' }), { code: 'FEATURE_EVENT_INVALID' });
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
 test('feature acceptance and report refuse symlinked event ledger paths', async () => {
   const root = await project();
   try {

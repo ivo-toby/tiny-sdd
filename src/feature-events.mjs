@@ -152,6 +152,10 @@ function validateMissing(value, label) {
   });
 }
 
+function validateElapsedConsistency(value, known, label) {
+  if (Number.isSafeInteger(value) && known !== value) eventError(`${label}.knownElapsedMs must match its complete value`);
+}
+
 function validateReport(value, feature) {
   const report = exactObject(value, REPORT_KEYS, 'report');
   if (report.schemaVersion !== USAGE_REPORT_SCHEMA_VERSION || report.type !== USAGE_REPORT_TYPE) eventError('report has an unsupported schema');
@@ -200,10 +204,12 @@ function validateReport(value, feature) {
     boundedIdentifierList(task.revisionRunIds, `${label}.revisionRunIds`);
     if (task.elapsedMs !== USAGE_UNKNOWN && (!Number.isSafeInteger(task.elapsedMs) || task.elapsedMs < 0)) eventError(`${label}.elapsedMs must be a nonnegative safe integer or UNKNOWN`);
     if (task.knownElapsedMs !== null && (!Number.isSafeInteger(task.knownElapsedMs) || task.knownElapsedMs < 0)) eventError(`${label}.knownElapsedMs must be a nonnegative safe integer or null`);
+    validateElapsedConsistency(task.elapsedMs, task.knownElapsedMs, label);
   }
   validateMetric(local.totals, 'report.local.totals', [...METRIC_KEYS, 'elapsedMs', 'knownElapsedMs']);
   if (local.totals.elapsedMs !== USAGE_UNKNOWN && (!Number.isSafeInteger(local.totals.elapsedMs) || local.totals.elapsedMs < 0)) eventError('report.local.totals.elapsedMs must be a nonnegative safe integer or UNKNOWN');
   if (local.totals.knownElapsedMs !== null && (!Number.isSafeInteger(local.totals.knownElapsedMs) || local.totals.knownElapsedMs < 0)) eventError('report.local.totals.knownElapsedMs must be a nonnegative safe integer or null');
+  validateElapsedConsistency(local.totals.elapsedMs, local.totals.knownElapsedMs, 'report.local.totals');
   const reportTaskIds = new Set(reportTasks.map((task) => task.taskId));
   const localTaskIds = Object.keys(byTask);
   if (localTaskIds.length !== reportTaskIds.size || localTaskIds.some((taskId) => !reportTaskIds.has(taskId))) eventError('report.local.byTask must match report.tasks');
