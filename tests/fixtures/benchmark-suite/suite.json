@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "contract-fixture",
+  "version": "2026-10-03.1",
+  "challenges": [
+    { "path": "challenges/implement-slice.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "path": "challenges/implement-slice-2.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  ],
+  "defaults": { "repeat": 2 }
+}

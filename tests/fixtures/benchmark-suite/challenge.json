@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "implement-slice",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": ["brownfield", "small"],
+  "fixture": { "path": "fixtures/implement-slice", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+  "packet": {
+    "brief": { "path": "packets/implement-slice/brief.md", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    "context": { "path": "packets/implement-slice/context.json", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+    "checks": { "path": "packets/implement-slice/checks.json", "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
+    "allowedPaths": ["src/index.mjs"],
+    "protectedPaths": ["tests/held-out.test.mjs"]
+  },
+  "verifier": {
+    "visible": { "path": "verifier/implement-slice-visible.json", "sha256": "1111111111111111111111111111111111111111111111111111111111111111" },
+    "heldOut": { "path": "verifier/implement-slice-held-out.json", "sha256": "2222222222222222222222222222222222222222222222222222222222222222" }
+  }
+}
