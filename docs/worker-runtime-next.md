@@ -736,7 +736,7 @@ contexts grow.
 | Run measurements | **Implemented** | `taskShape`, `observed.toolCallsByName`, `writeCalls`, `firstWriteAtMs`, `reads`, `citedRereads`, `repeatedReads`, `compactions`, `cumulativeUsage`. |
 | `task close` / `task supersede` | **Implemented** (#14) | Terminal `closed`/`superseded` status; refused while open tasks depend on it; supersede records successors. |
 | `task apply` + `appliedFromRun` | **Implemented** (#15) | Requested by the operator. |
-| Slice-DAG `status`, `--feature` | Designed (3.2) | |
+| Slice-DAG `status`, `--feature` | **Implemented** (#27) | Stable global topological order and non-retired dependents in JSON; deterministic open-task tree, applied run text, feature filtering, and retired-task section in human status. |
 | `--protect`, `task update` | **Implemented** (#17) | Read-only contract paths bind approval; changes are scope violations and stale accepted slices through approval freshness. Audited updates retain shape and apply history, stale bound approvals, and refuse accepted or retired tasks. |
 | Plan-level approval | Designed (3.2) | Changes approval meaning; operator decision first. |
 | `worker stop` with `stopped` outcome | **Implemented** (#10) | Finalizes the run with outcome `stopped` (evidence, candidate and patch kept); only signals a launcher verified through `/proc/<pid>/cmdline`. |
