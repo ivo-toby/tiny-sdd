@@ -548,6 +548,67 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(await readFile(probeRuns, 'utf8'), '2\n');
   });
 
+  test('concurrent namespace preparation keeps cancellation scoped to its probe', async () => {
+    const firstToken = `tinysdd-probe-first-${process.pid}-${Date.now()}`;
+    const secondToken = `tinysdd-probe-second-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const probeRuns = join(fixtures, `${firstToken}.runs`);
+    const bwrapPath = await stubExecutable([
+      `count=$(cat '${probeRuns}' 2>/dev/null || printf '0')`,
+      'count=$((count + 1))',
+      `printf '%s\\n' "$count" > '${probeRuns}'`,
+      `if [ "$count" -eq 1 ]; then exec /bin/sh -c 'sleep 3; exit 0' '${firstToken}'; fi`,
+      `if [ "$count" -eq 2 ]; then exec /bin/sh -c 'sleep 3; exit 0' '${secondToken}'; fi`,
+      'exit 0',
+    ].join('\n'));
+    const prlimitPath = await stubExecutable('exit 0');
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let firstSettled = false;
+    const first = run(candidate, {}, { bwrapPath, prlimitPath, signal: firstController.signal }).then(
+      (value) => { firstSettled = true; return { value }; },
+      (error) => { firstSettled = true; return { error }; },
+    );
+    let second;
+    try {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (await readFile(probeRuns, 'utf8').then((value) => value === '1\n', () => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        if (attempt === 199) assert.fail('first namespace probe did not start before the test deadline');
+      }
+      second = run(candidate, {}, { bwrapPath, prlimitPath, signal: secondController.signal }).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (await readFile(probeRuns, 'utf8').then((value) => value === '2\n', () => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        if (attempt === 199) assert.fail('second namespace probe did not start before the test deadline');
+      }
+      const abortedAt = Date.now();
+      secondController.abort();
+      const secondOutcome = await second;
+      assert.equal(secondOutcome.error?.code, 'CHECK_CANCELLED');
+      assert.ok(Date.now() - abortedAt < 1500, 'the second probe shared the first probe cancellation owner');
+      assert.equal(firstSettled, false, 'cancelling the second probe cancelled the first probe');
+
+      const secondRemaining = await processesMatching(secondToken);
+      assert.deepEqual(secondRemaining, []);
+      const firstRemaining = await processesMatching(firstToken);
+      assert.ok(firstRemaining.length > 0, 'the first probe was reaped by the second cancellation');
+
+      const firstOutcome = await first;
+      assert.equal(firstOutcome.error, undefined);
+      assert.equal(firstOutcome.value.exitCode, 0);
+      assert.deepEqual(await processesMatching(firstToken), []);
+    } finally {
+      firstController.abort();
+      secondController.abort();
+      await first;
+      if (second) await second;
+    }
+  });
+
   test('the address-space limit stops a runaway allocation without a timeout', async () => {
     const candidate = await makeDir({
       'alloc.mjs': [

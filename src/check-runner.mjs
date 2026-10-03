@@ -416,6 +416,7 @@ function runNamespaceProbe(command, args, { signal, deadline } = {}) {
   return new Promise((resolve, reject) => {
     let child;
     let timer;
+    let stopError;
     let settled = false;
     const finish = (callback) => {
       if (settled) return;
@@ -424,10 +425,16 @@ function runNamespaceProbe(command, args, { signal, deadline } = {}) {
       signal?.removeEventListener('abort', abort);
       callback();
     };
-    const abort = () => {
+    const stop = (error = undefined) => {
+      if (settled || stopError !== undefined) return;
+      stopError = error;
       killProbe(child);
-      finish(() => reject(tinyError('CHECK_CANCELLED', 'check cancelled before execution')));
     };
+    const abort = () => stop(tinyError('CHECK_CANCELLED', 'check cancelled before execution'));
+    const complete = (callback) => finish(() => {
+      if (stopError !== undefined) reject(stopError);
+      else callback();
+    });
     try {
       checkPreparation(signal, deadline);
       // Keep the probe in its own process group so cancellation cannot leave
@@ -446,15 +453,11 @@ function runNamespaceProbe(command, args, { signal, deadline } = {}) {
       abort();
       return;
     }
-    child.on('error', () => finish(() => resolve('allowed')));
-    child.on('close', (code) => finish(() => resolve(code === 0 ? 'disabled' : 'allowed')));
+    child.on('error', () => complete(() => resolve('allowed')));
+    child.on('close', (code) => complete(() => resolve(code === 0 ? 'disabled' : 'allowed')));
     const timeoutMs = deadline === undefined ? 10000 : Math.max(1, Math.min(10000, deadline - Date.now()));
     timer = setTimeout(() => {
-      killProbe(child);
-      finish(() => {
-        if (cancellable) reject(tinyError('CHECK_DEADLINE', 'check deadline expired before execution'));
-        else resolve('allowed');
-      });
+      stop(cancellable ? tinyError('CHECK_DEADLINE', 'check deadline expired before execution') : undefined);
     }, timeoutMs);
   });
 }
@@ -463,21 +466,11 @@ function nestedUserNamespaces(binaries, runAs, signal, deadline) {
   const key = [binaries.setpriv, binaries.bwrap, runAs.drop ? `${runAs.uid}:${runAs.gid}` : 'self'].join('\0');
   const { command, prefix } = launcher(binaries, runAs);
   const args = [...prefix, ...(command ? [binaries.bwrap] : []), ...USERNS_PROBE_ARGS];
-  if (signal !== undefined || deadline !== undefined) {
-    if (usernsProbes.has(key)) return usernsProbes.get(key);
-    const probe = runNamespaceProbe(command ?? binaries.bwrap, args, { signal, deadline });
-    const cached = probe.then((value) => {
-      if (usernsProbes.get(key) === cached) usernsProbes.set(key, Promise.resolve(value));
-      return value;
-    }, (error) => {
-      if (usernsProbes.get(key) === cached) usernsProbes.delete(key);
-      throw error;
-    });
-    usernsProbes.set(key, cached);
-    return cached;
-  }
-  if (!usernsProbes.has(key)) usernsProbes.set(key, runNamespaceProbe(command ?? binaries.bwrap, args));
-  return usernsProbes.get(key);
+  if (usernsProbes.has(key)) return Promise.resolve(usernsProbes.get(key));
+  return runNamespaceProbe(command ?? binaries.bwrap, args, { signal, deadline }).then((value) => {
+    usernsProbes.set(key, value);
+    return value;
+  });
 }
 
 function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit, nestedUserns }) {
