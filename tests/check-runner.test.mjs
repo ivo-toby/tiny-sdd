@@ -297,9 +297,9 @@ describe('check runner', { skip: SKIP }, () => {
         '',
       ].join('\n'),
       'overwrite.mjs': [
-        "import { writeFileSync, rmSync } from 'node:fs';",
+        "import { writeFileSync, unlinkSync } from 'node:fs';",
         "const outcomes = [];",
-        "for (const action of [() => writeFileSync('/work/node_modules/pkg/index.js', 'changed'), () => rmSync('/work/node_modules/pkg/index.js')]) {",
+        "for (const action of [() => writeFileSync('/work/node_modules/pkg/index.js', 'changed'), () => unlinkSync('/work/node_modules/pkg/index.js')]) {",
         "  try { action(); outcomes.push('done'); } catch (error) { outcomes.push(error.code); }",
         '}',
         'console.log(outcomes.join(","));',
