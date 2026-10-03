@@ -357,6 +357,27 @@ copy. A cgroup scope (`systemd-run --user --scope -p MemoryMax=…`) is stronger
 where the host has it. The runner refuses to start if it cannot apply the
 configured limits.
 
+**Check runner (`src/check-runner.mjs`, #26).** The host-side runner exists and
+nothing calls it yet. It follows the sketch above, with these differences:
+
+- bwrap also gets `--clearenv` and `--cap-drop ALL`: run as root, bwrap keeps its
+  capabilities otherwise. bwrap adds `PWD=/work` for `--chdir`, so the sandbox
+  environment is `PATH`, `HOME`, `CI`, `LANG` and `PWD`.
+- The scratch copy is a host directory, size-checked while copying (1 GiB), not a
+  tmpfs. What a check writes into `/work` afterwards is capped per file
+  (`RLIMIT_FSIZE`, 256 MiB) but not in total; the timeout is the only other bound.
+  `/tmp` and `/dev/shm` are 256 MiB tmpfs mounts and `/dev` is read-only, because
+  `RLIMIT_AS` does not cover memory-backed files.
+- `RLIMIT_NPROC` does not bind root (checked: 400 children ran under a limit of
+  274). Run as root, fork-bomb protection is the timeout plus the PID-namespace
+  teardown (checked: a fork storm was gone 0.5 s after a 2 s timeout). For other
+  users it counts every task of the uid on the host, threads included, not only
+  the sandbox's, so `maxProcesses` has to sit above what the uid already runs. If
+  it does not, bwrap fails to start and the runner throws
+  `CHECK_RUNNER_UNAVAILABLE`.
+- The stored output is the last 1 MiB, not the first.
+- No cgroup scope is used.
+
 **What the model sees.** Exit code, duration, run count against the budget, and
 the tail of the output with an explicit truncation marker:
 
