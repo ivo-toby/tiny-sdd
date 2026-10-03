@@ -98,9 +98,32 @@ async function makeRuntime() {
   await writeFile(join(sourceAgentDir, "models.json"), `${JSON.stringify(models)}\n`);
   fakePi = join(root, "fake-pi.mjs");
   await writeFile(fakePi, `#!/usr/bin/env node
-import { appendFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const action = process.env.TINYSDD_TEST_ACTION || "complete";
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const checkChannel = process.env.TINYSDD_CHECK_CHANNEL;
+function writeCheckRequest(toolCallId, params) {
+  const name = \`${'${'}createHash("sha256").update(toolCallId).digest("hex")}.json\`;
+  const temporary = join(checkChannel, "requests", \`${'${'}name}.tmp\`);
+  writeFileSync(temporary, JSON.stringify(params), { flag: "wx", mode: 0o600 });
+  renameSync(temporary, join(checkChannel, "requests", name));
+  return name;
+}
+async function requestCheck(toolCallId, params) {
+  const name = writeCheckRequest(toolCallId, params);
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try { return JSON.parse(readFileSync(join(checkChannel, "responses", name), "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    await delay(10);
+  }
+  throw new Error("check response timeout");
+}
+async function runCheckTool(toolCallId, params) {
+  console.log(JSON.stringify({ type: "tool_execution_start", toolName: "run_checks", args: params }));
+  return requestCheck(toolCallId, params);
+}
 if (action === "allowed") writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
 if (action === "protected") writeFileSync(join(process.cwd(), "src", "contract.txt"), "changed\\n");
 if (action === "outside") writeFileSync(join(process.cwd(), "outside.txt"), "outside\\n");
@@ -145,6 +168,25 @@ if (action === "tools") {
   await new Promise((resolve) => setTimeout(resolve, 1000));
   process.exit(0);
 }
+if (action === "checks") {
+  const individual = await runCheckTool("checks-individual", { checkId: "first" });
+  const all = await runCheckTool("checks-all", {});
+  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ individual, all }) }] } }));
+  process.exit(0);
+}
+if (action === "check-watchdog") {
+  await runCheckTool("check-watchdog", { checkId: "first" });
+  await delay(3000);
+  process.exit(0);
+}
+if (action === "check-hang") {
+  await runCheckTool("check-hang", { checkId: "first" });
+}
+if (action === "check-exit") {
+  writeCheckRequest("check-exit", { checkId: "first" });
+  await delay(250);
+  process.exit(0);
+}
 console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Changed the file; verification is unrun."}]}}));
 `);
   await chmod(fakePi, 0o755);
@@ -157,6 +199,11 @@ function worker(limits = {}) {
 
 function packet(allowedPaths = ["src/allowed.txt"]) {
   return { schemaVersion: 1, taskId: "task-worker-test", briefText: "Implement the exact bounded change. Do not broaden scope.", allowedPaths };
+}
+
+function checksPacket(ids = ["first", "second"]) {
+  const text = JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: ids.map((id) => ({ id, argv: ["node", "-e", "0"], timeoutMs: 1000 })) });
+  return { path: ".tinysdd/tasks/checks.json", text, sha256: createHash("sha256").update(text).digest("hex") };
 }
 
 function runtime(runtimeRoot, action = "complete") {
@@ -642,6 +689,178 @@ describe("Pi worker capture and scope", () => {
       assert.deepEqual(saved.checks, { path: ".tinysdd/tasks/checks.json", text, sha256: digest });
     } finally {
       await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("records an unavailable declared runner without exposing a check tool", async () => {
+    const project = await makeProject();
+    try {
+      const text = "declared checks\n";
+      const digest = createHash("sha256").update(text).digest("hex");
+      const result = await runWorker({
+        projectRoot: await realpath(project),
+        packet: { ...packet(), checks: { path: ".tinysdd/tasks/checks.json", text, sha256: digest } },
+        worker: worker(),
+        runtime: runtime(undefined, "complete"),
+      });
+      const runtimeMetadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.equal(runtimeMetadata.runChecks.declared, true);
+      assert.equal(runtimeMetadata.runChecks.available, false);
+      assert.equal(runtimeMetadata.capabilities.tools.includes("run_checks"), false);
+      assert.equal(runtimeMetadata.capabilities.extensions, false);
+      assert.equal(runtimeMetadata.limits.maxCheckRuns, 12);
+      assert.match(result.warnings.find((warning) => warning.startsWith("run_checks unavailable: ")), /requires Linux|test runtime did not provide/u);
+      assert.equal(result.artifactPaths.checks, undefined);
+      assert.equal(result.runChecks.available, false);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("uses live dependency mounts and compares their identity on a replay", async () => {
+    const project = await makeProject();
+    try {
+      await mkdir(join(project, "node_modules"), { recursive: true });
+      await writeFile(join(project, "node_modules", "package.json"), '{"name":"fixture"}\n');
+      const checksText = JSON.stringify({ schemaVersion: 1, dependencyMounts: ["node_modules"], checks: [{ id: "unit", argv: ["node", "-e", "0"], timeoutMs: 1000 }] });
+      const checks = { path: ".tinysdd/tasks/checks.json", text: checksText, sha256: createHash("sha256").update(checksText).digest("hex") };
+      const checkRuntime = { ...runtime(undefined, "complete"), checkRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok", tail: "ok", totalBytes: 2, truncated: false } }) };
+      const first = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime });
+      const firstRuntime = JSON.parse(await readFile(first.artifactPaths.runtime, "utf8"));
+      assert.equal(firstRuntime.runChecks.available, true);
+      assert.equal(firstRuntime.runChecks.maxCheckRuns, 12);
+      assert.equal(firstRuntime.runChecks.dependencyIdentity.provenance, "live-source-root");
+      assert.equal(firstRuntime.capabilities.tools.includes("run_checks"), true);
+      const replay = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime, baselineRunId: first.runId });
+      const replayRuntime = JSON.parse(await readFile(replay.artifactPaths.runtime, "utf8"));
+      assert.equal(replayRuntime.runChecks.baselineComparison.status, "identical");
+      assert.equal(replay.runChecks.baselineComparison.status, "identical");
+      await rm(first.artifactPaths.runtime);
+      const oldReplay = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime, baselineRunId: first.runId });
+      assert.equal(oldReplay.runChecks.baselineComparison.status, "unknown");
+      const parent = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: { ...checkRuntime, testEnv: { TINYSDD_TEST_ACTION: "allowed" } } });
+      await writeFile(join(project, "node_modules", "package.json"), '{"name":"changed"}\n');
+      const revision = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime, baseRunId: parent.runId });
+      assert.equal(revision.runChecks.baselineComparison.status, "different");
+      await rm(parent.artifactPaths.runtime);
+      const oldRevision = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime, baseRunId: parent.runId });
+      assert.equal(oldRevision.runChecks.baselineComparison.status, "unknown");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("runs individual and all checks through the Pi channel and retains budget errors", async () => {
+    const project = await makeProject();
+    const calls = [];
+    try {
+      const checks = checksPacket();
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks },
+        worker: worker({ maxCheckRuns: 2 }),
+        runtime: {
+          ...runtime(undefined, "checks"),
+          checkRunner: async ({ check }) => {
+            calls.push(check.id);
+            return { exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: `passed ${check.id}\n`, tail: `passed ${check.id}\n`, totalBytes: 14, truncated: false } };
+          },
+        },
+      });
+      assert.equal(result.outcome, "completed");
+      assert.deepEqual(calls, ["first", "first"]);
+      assert.equal(result.runChecks.maxCheckRuns, 2);
+      assert.equal(result.workerObservedChecks.runs.length, 3);
+      assert.equal(result.workerObservedChecks.runs.at(-1).error.code, "CHECK_BUDGET_EXHAUSTED");
+      assert.equal(result.workerObservedChecks.runs.at(-1).checkId, "second");
+      const log = (await readFile(result.artifactPaths.checks, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      assert.equal(log.length, 3);
+      assert.equal(log.at(-1).error.code, "CHECK_BUDGET_EXHAUSTED");
+      assert.ok(result.artifactPaths.checks);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("counts a run_checks call toward the worker tool limit", async () => {
+    const project = await makeProject();
+    try {
+      const checks = checksPacket(["first"]);
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks },
+        worker: worker({ maxToolCalls: 1, timeoutMs: 5_000 }),
+        runtime: {
+          ...runtime(undefined, "checks"),
+          checkRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok\n", tail: "ok\n", totalBytes: 3, truncated: false } }),
+        },
+      });
+      assert.equal(result.outcome, "tool_limit");
+      assert.equal(result.limitDetails.maxToolCalls, 1);
+      assert.ok(result.observed.toolCallsByName.run_checks >= 1);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("does not treat check-only activity as a first write", async () => {
+    const project = await makeProject();
+    try {
+      const checks = checksPacket(["first"]);
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks },
+        worker: worker({ timeoutMs: 5_000, firstWriteMs: 400 }),
+        runtime: {
+          ...runtime(undefined, "check-watchdog"),
+          checkRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok\n", tail: "ok\n", totalBytes: 3, truncated: false } }),
+        },
+      });
+      assert.equal(result.outcome, "no_progress");
+      assert.equal(result.observed.writeCalls, 0);
+      assert.equal(result.observed.firstWriteAtMs, null);
+      assert.equal(result.observed.toolCallsByName.run_checks, 1);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels an in-flight check on timeout, abort, and Pi exit", async () => {
+    for (const mode of ["timeout", "abort", "exit"]) {
+      const project = await makeProject();
+      let runnerStarted;
+      let markStarted;
+      let runnerCancelled = false;
+      runnerStarted = new Promise((resolve) => { markStarted = resolve; });
+      const checkRunner = async ({ signal }) => {
+        markStarted();
+        await new Promise((resolve, reject) => {
+          const cancel = () => {
+            runnerCancelled = true;
+            reject(Object.assign(new Error("check cancelled"), { code: "CHECK_CANCELLED" }));
+          };
+          if (signal.aborted) cancel();
+          else signal.addEventListener("abort", cancel, { once: true });
+        });
+      };
+      try {
+        const controller = new AbortController();
+        const action = mode === "exit" ? "check-exit" : "check-hang";
+        const promise = runWorker({
+          projectRoot: project,
+          packet: { ...packet(), checks: checksPacket(["first"]) },
+          worker: worker({ timeoutMs: mode === "timeout" ? 1_500 : 5_000 }),
+          runtime: { ...runtime(undefined, action), checkRunner },
+          ...(mode === "abort" ? { signal: controller.signal } : {}),
+        });
+        await runnerStarted;
+        if (mode === "abort") controller.abort();
+        const result = await promise;
+        assert.equal(runnerCancelled, true, mode);
+        assert.equal(result.outcome, mode === "timeout" ? "timeout" : mode === "abort" ? "stopped" : "failed");
+      } finally {
+        await rm(project, { recursive: true, force: true });
+      }
     }
   });
 

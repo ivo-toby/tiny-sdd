@@ -8,7 +8,7 @@
 // runner refuses to run. Nothing here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
 import { lchown, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { TinySDDError, isPlainObject, normalizeProjectRelative, tinyError } from './fs-utils.mjs';
@@ -37,7 +37,7 @@ const HEAD_BYTES = 1024;
 const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
 const SETPRIV_DEFAULTS = ['/usr/bin/setpriv', '/bin/setpriv'];
-const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'tempRoot'];
+const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'tempRoot', 'signal'];
 // nobody and nogroup: the uid a root caller drops to unless runAs says otherwise.
 const DEFAULT_DROP_ID = 65534;
 const MAX_ID = 4294967294;
@@ -214,6 +214,7 @@ function parseRequest(options) {
     if (options[key] !== undefined && typeof options[key] !== 'string') throw invalid(`${key} must be a string`);
   }
   if (typeof options.candidateDir !== 'string') throw invalid('candidateDir must be an absolute path');
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) throw invalid('signal must be an AbortSignal');
   const mounts = parseMounts(options.dependencyMounts);
   return {
     candidateDir: options.candidateDir,
@@ -261,7 +262,13 @@ function pageFootprint(bytes) {
   return Math.ceil(bytes / 4096) * 4096;
 }
 
-async function copyRegularFile(from, to, info, budget, label) {
+function checkPreparation(signal, deadline) {
+  if (signal?.aborted) throw tinyError('CHECK_CANCELLED', 'check cancelled before execution');
+  if (deadline !== undefined && Date.now() >= deadline) throw tinyError('CHECK_DEADLINE', 'check deadline expired before execution');
+}
+
+async function copyRegularFile(from, to, info, budget, label, signal, deadline) {
+  checkPreparation(signal, deadline);
   let input;
   try {
     // O_NOFOLLOW and O_NONBLOCK close the window between lstat and open in
@@ -282,6 +289,7 @@ async function copyRegularFile(from, to, info, budget, label) {
       input.createReadStream(),
       async function* countBytes(source) {
         for await (const chunk of source) {
+          checkPreparation(signal, deadline);
           copied += chunk.length;
           if (budget.used + pageFootprint(copied) > budget.limit) throw refuse();
           yield chunk;
@@ -296,8 +304,10 @@ async function copyRegularFile(from, to, info, budget, label) {
   }
 }
 
-async function copyDirectory(from, to, budget, prefix = '') {
+async function copyDirectory(from, to, budget, prefix = '', signal, deadline) {
+  checkPreparation(signal, deadline);
   for (const entry of await readdir(from, { withFileTypes: true })) {
+    checkPreparation(signal, deadline);
     const label = `${prefix}${entry.name}`;
     const source = join(from, entry.name);
     const target = join(to, entry.name);
@@ -305,9 +315,9 @@ async function copyDirectory(from, to, budget, prefix = '') {
     if (info.isDirectory()) {
       // Owner rwx is forced so the copy can be filled and later removed.
       await mkdir(target, { mode: (info.mode & 0o777) | 0o700 });
-      await copyDirectory(source, target, budget, `${label}/`);
+      await copyDirectory(source, target, budget, `${label}/`, signal, deadline);
     } else if (info.isFile()) {
-      await copyRegularFile(source, target, info, budget, label);
+      await copyRegularFile(source, target, info, budget, label, signal, deadline);
     } else {
       const kind = info.isSymbolicLink() ? 'symlink' : 'special file';
       throw invalid(`candidateDir contains a ${kind}; only regular files and directories are copied: ${label}`, { path: label });
@@ -317,14 +327,17 @@ async function copyDirectory(from, to, budget, prefix = '') {
 
 // The sandbox runs as the target uid, which has to read the host copy. The
 // scratch directory stays 0700, so nobody else can.
-async function giveToUser(path, uid, gid) {
+async function giveToUser(path, uid, gid, signal, deadline) {
+  checkPreparation(signal, deadline);
   await lchown(path, uid, gid);
   if (!(await lstat(path)).isDirectory()) return;
-  for (const entry of await readdir(path)) await giveToUser(join(path, entry), uid, gid);
+  for (const entry of await readdir(path)) await giveToUser(join(path, entry), uid, gid, signal, deadline);
 }
 
 function copyFailure(error) {
   if (error instanceof TinySDDError) return error;
+  if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') return tinyError('CHECK_CANCELLED', 'check cancelled before execution');
+  if (error?.code === 'CHECK_DEADLINE') return tinyError('CHECK_DEADLINE', 'check deadline expired before execution');
   if (error?.code === 'ENOSPC' || error?.code === 'EDQUOT') return unavailable(`scratch space ran out while copying candidateDir (${error.code})`);
   return invalid(`candidateDir could not be copied: ${error?.code ?? error?.message}`);
 }
@@ -332,11 +345,13 @@ function copyFailure(error) {
 // A dependency mount is read-only, so the candidate cannot also have something
 // at the target: copying into it would fail inside the sandbox, and a file or
 // directory there would otherwise be hidden by the mount.
-async function assertMountPointsFree(input, mounts) {
+async function assertMountPointsFree(input, mounts, signal, deadline) {
   for (const { target } of mounts) {
+    checkPreparation(signal, deadline);
     const segments = target.split('/');
     let current = input;
     for (const [index, segment] of segments.entries()) {
+      checkPreparation(signal, deadline);
       current = join(current, segment);
       let info;
       try {
@@ -356,7 +371,8 @@ async function assertMountPointsFree(input, mounts) {
 // from starting the sandbox at all, so the limit is this baseline plus the
 // extra tasks the check may create. The uid counted is the one the check runs
 // as, which is not the caller's when a root caller drops privileges.
-async function countUserTasks(uid) {
+async function countUserTasks(uid, signal, deadline) {
+  checkPreparation(signal, deadline);
   let entries;
   try {
     entries = await readdir('/proc');
@@ -365,6 +381,7 @@ async function countUserTasks(uid) {
   }
   let tasks = 0;
   for (const entry of entries) {
+    checkPreparation(signal, deadline);
     if (!/^\d+$/u.test(entry)) continue;
     let status;
     try {
@@ -388,16 +405,72 @@ function launcher(binaries, runAs) {
   };
 }
 
-function nestedUserNamespaces(binaries, runAs) {
+function killProbe(child) {
+  if (!child?.pid) return;
+  try { process.kill(-child.pid, 'SIGKILL'); }
+  catch { try { child.kill('SIGKILL'); } catch { /* already exited */ } }
+}
+
+function runNamespaceProbe(command, args, { signal, deadline } = {}) {
+  const cancellable = signal !== undefined || deadline !== undefined;
+  return new Promise((resolve, reject) => {
+    let child;
+    let timer;
+    let stopError;
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      callback();
+    };
+    const stop = (error = undefined) => {
+      if (settled || stopError !== undefined) return;
+      stopError = error;
+      killProbe(child);
+    };
+    const abort = () => stop(tinyError('CHECK_CANCELLED', 'check cancelled before execution'));
+    const complete = (callback) => finish(() => {
+      if (stopError !== undefined) reject(stopError);
+      else callback();
+    });
+    try {
+      checkPreparation(signal, deadline);
+      // Keep the probe in its own process group so cancellation cannot leave
+      // a bwrap/setpriv child running after the check has returned.
+      child = spawn(command, args, { env: {}, detached: true, stdio: 'ignore' });
+    } catch (error) {
+      if (error instanceof TinySDDError) {
+        reject(error);
+        return;
+      }
+      resolve('allowed');
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    child.on('error', () => complete(() => resolve('allowed')));
+    child.on('close', (code) => complete(() => resolve(code === 0 ? 'disabled' : 'allowed')));
+    const timeoutMs = deadline === undefined ? 10000 : Math.max(1, Math.min(10000, deadline - Date.now()));
+    timer = setTimeout(() => {
+      stop(cancellable ? tinyError('CHECK_DEADLINE', 'check deadline expired before execution') : undefined);
+    }, timeoutMs);
+  });
+}
+
+function nestedUserNamespaces(binaries, runAs, signal, deadline) {
   const key = [binaries.setpriv, binaries.bwrap, runAs.drop ? `${runAs.uid}:${runAs.gid}` : 'self'].join('\0');
-  if (!usernsProbes.has(key)) {
-    const { command, prefix } = launcher(binaries, runAs);
-    usernsProbes.set(key, new Promise((resolve) => {
-      const args = [...prefix, ...(command ? [binaries.bwrap] : []), ...USERNS_PROBE_ARGS];
-      execFile(command ?? binaries.bwrap, args, { env: {}, timeout: 10000 }, (error) => resolve(error ? 'allowed' : 'disabled'));
-    }));
-  }
-  return usernsProbes.get(key);
+  const { command, prefix } = launcher(binaries, runAs);
+  const args = [...prefix, ...(command ? [binaries.bwrap] : []), ...USERNS_PROBE_ARGS];
+  if (usernsProbes.has(key)) return Promise.resolve(usernsProbes.get(key));
+  return runNamespaceProbe(command ?? binaries.bwrap, args, { signal, deadline }).then((value) => {
+    usernsProbes.set(key, value);
+    return value;
+  });
 }
 
 function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit, nestedUserns }) {
@@ -470,12 +543,13 @@ function summarizeOutput(capture, limits) {
     totalBytes: capture.total,
     storedBytes: stored.length,
     truncated: capture.total > stored.length,
+    tailTruncated: tailBytes.length < stored.length,
     text: stored.toString('utf8'),
     tail: `${omitted > 0 ? `[... ${omitted} earlier bytes omitted ...]\n` : ''}${tailBytes.toString('utf8')}`,
   };
 }
 
-function runSandbox({ command, args, timeoutMs, capture }) {
+function runSandbox({ command, args, timeoutMs, capture, signal }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
     let settled = false;
@@ -488,8 +562,14 @@ function runSandbox({ command, args, timeoutMs, capture }) {
       settled = true;
       clearTimeout(killTimer);
       clearTimeout(graceTimer);
+      signal?.removeEventListener('abort', abort);
       callback();
     };
+    const abort = () => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      graceTimer = setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, KILL_GRACE_MS);
+    };
+    if (signal?.aborted) { reject(invalid('check cancelled before execution')); return; }
     try {
       // env: {} so prlimit and bwrap inherit nothing from the host, and
       // detached so the whole group can be killed on timeout.
@@ -498,6 +578,8 @@ function runSandbox({ command, args, timeoutMs, capture }) {
       reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }));
       return;
     }
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     child.on('error', (error) => finish(() => reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }))));
     child.stdout.on('data', (chunk) => capture.push(chunk));
     child.stderr.on('data', (chunk) => capture.push(chunk));
@@ -545,11 +627,16 @@ export async function runCheck(options) {
   const platform = unsupportedPlatform();
   if (platform) throw unavailable(platform);
   const request = parseRequest(options);
+  const setupDeadline = options.signal === undefined ? undefined : Date.now() + request.check.timeoutMs;
+  checkPreparation(options.signal, setupDeadline);
   const binaries = locateBinaries(options);
   if (binaries.reason) throw unavailable(binaries.reason);
 
   await assertRealDirectory(request.candidateDir, 'candidateDir');
-  for (const mount of request.mounts) await assertRealDirectory(mount.source, `dependency mount source for ${mount.target}`);
+  for (const mount of request.mounts) {
+    checkPreparation(options.signal, setupDeadline);
+    await assertRealDirectory(mount.source, `dependency mount source for ${mount.target}`);
+  }
   await assertRealDirectory(request.nodeRoot, 'nodeRoot');
   try {
     accessSync(join(request.nodeRoot, 'bin', 'node'), fsConstants.X_OK);
@@ -557,6 +644,7 @@ export async function runCheck(options) {
     throw invalid(`nodeRoot has no executable bin/node: ${request.nodeRoot}`);
   }
   const tempRoot = await resolveTempRoot(options.tempRoot);
+  checkPreparation(options.signal, setupDeadline);
   if (tempRoot === request.candidateDir || tempRoot.startsWith(`${request.candidateDir}/`)) {
     throw invalid('tempRoot must not be inside candidateDir');
   }
@@ -570,17 +658,18 @@ export async function runCheck(options) {
   try {
     const input = join(scratch, 'input');
     await mkdir(input, { mode: 0o700 });
-    await copyDirectory(request.candidateDir, input, { used: 0, limit: request.limits.scratchBytes }).catch((error) => {
+    await copyDirectory(request.candidateDir, input, { used: 0, limit: request.limits.scratchBytes }, '', options.signal, setupDeadline).catch((error) => {
       throw copyFailure(error);
     });
-    await assertMountPointsFree(input, request.mounts);
+    await assertMountPointsFree(input, request.mounts, options.signal, setupDeadline);
 
     const { runAs } = request;
-    if (runAs.drop) await giveToUser(scratch, runAs.uid, runAs.gid);
+    if (runAs.drop) await giveToUser(scratch, runAs.uid, runAs.gid, options.signal, setupDeadline);
 
     // Measured right before the spawn, so the baseline is as current as it can be.
-    const processBaseline = await countUserTasks(runAs.uid);
-    const nestedUserns = await nestedUserNamespaces(binaries, runAs);
+    const processBaseline = await countUserTasks(runAs.uid, options.signal, setupDeadline);
+    const nestedUserns = await nestedUserNamespaces(binaries, runAs, options.signal, setupDeadline);
+    checkPreparation(options.signal, setupDeadline);
     const capture = new OutputCapture(request.limits.storedOutputBytes);
     const { command: dropCommand, prefix: dropPrefix } = launcher(binaries, runAs);
     const sandboxArgs = sandboxArguments({
@@ -593,11 +682,14 @@ export async function runCheck(options) {
       processLimit: processBaseline + request.limits.maxProcesses,
       nestedUserns,
     });
+    const remainingTimeout = setupDeadline === undefined ? request.check.timeoutMs : setupDeadline - Date.now();
+    checkPreparation(options.signal, setupDeadline);
     const run = await runSandbox({
       command: dropCommand ?? binaries.prlimit,
       args: dropCommand ? [...dropPrefix, binaries.prlimit, ...sandboxArgs] : sandboxArgs,
-      timeoutMs: request.check.timeoutMs,
+      timeoutMs: remainingTimeout,
       capture,
+      signal: options.signal,
     });
     const setupFailure = sandboxSetupFailure(run, capture.head);
     if (setupFailure) throw unavailable('the check sandbox could not be created; the check did not run', { output: setupFailure });

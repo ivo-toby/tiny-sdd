@@ -79,7 +79,7 @@ test('local config replaces named workers as a whole and records sources', async
     const resolved = await resolveConfig(root);
     assert.equal(resolved.worker.provider, 'provider-local');
     assert.equal(resolved.worker.model, 'model-local');
-    assert.deepEqual(resolved.worker.limits, { timeoutMs: 300000, maxToolCalls: 40 });
+    assert.deepEqual(resolved.worker.limits, { timeoutMs: 300000, maxToolCalls: 40, maxCheckRuns: 12 });
     assert.equal(resolved.worker.profile, undefined);
     assert.equal(resolved.provenance.workers['pi-one'].source, 'config.local.json');
   } finally {
@@ -110,11 +110,17 @@ test('rejects unknown, null, unsupported, and out-of-range config values', () =>
       workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 300000, firstWriteMs } } },
     }), { code: 'CONFIG_INVALID' });
   }
+  for (const maxCheckRuns of [0, 21, null, 1.5]) {
+    assert.throws(() => validateConfigDocument({
+      schemaVersion: 1,
+      workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { maxCheckRuns } } },
+    }), { code: 'CONFIG_INVALID' });
+  }
   const watched = validateConfigDocument({
     schemaVersion: 1,
     workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 1200000, firstWriteMs: 480000 } } },
   });
-  assert.deepEqual(watched.workers.pi.limits, { timeoutMs: 1200000, maxToolCalls: 40, firstWriteMs: 480000 });
+  assert.deepEqual(watched.workers.pi.limits, { timeoutMs: 1200000, maxToolCalls: 40, maxCheckRuns: 12, firstWriteMs: 480000 });
 });
 
 test('rejects symlinked profile paths', async (t) => {

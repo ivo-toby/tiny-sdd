@@ -297,9 +297,9 @@ describe('check runner', { skip: SKIP }, () => {
         '',
       ].join('\n'),
       'overwrite.mjs': [
-        "import { writeFileSync, rmSync } from 'node:fs';",
+        "import { writeFileSync, unlinkSync } from 'node:fs';",
         "const outcomes = [];",
-        "for (const action of [() => writeFileSync('/work/node_modules/pkg/index.js', 'changed'), () => rmSync('/work/node_modules/pkg/index.js')]) {",
+        "for (const action of [() => writeFileSync('/work/node_modules/pkg/index.js', 'changed'), () => unlinkSync('/work/node_modules/pkg/index.js')]) {",
         "  try { action(); outcomes.push('done'); } catch (error) { outcomes.push(error.code); }",
         '}',
         'console.log(outcomes.join(","));',
@@ -464,6 +464,149 @@ describe('check runner', { skip: SKIP }, () => {
       remaining = await processesMatching(token);
     }
     assert.deepEqual(remaining, []);
+  });
+
+  test('an abort cancels the sandbox process group and removes its scratch copy', async () => {
+    const token = `tinysdd-abort-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({
+      'loop.mjs': [
+        "import { spawn } from 'node:child_process';",
+        "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', process.argv[2]], { stdio: 'ignore' });",
+        "console.log('started');",
+        'for (;;) {}',
+        '',
+      ].join('\n'),
+    });
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 700);
+    try {
+      let result;
+      try {
+        result = await run(candidate, { argv: ['node', 'loop.mjs', token], timeoutMs: 60_000 }, { signal: controller.signal });
+      } catch (error) {
+        assert.equal(error.code, 'CHECK_CANCELLED');
+      }
+      if (result) {
+        assert.equal(result.signal, 'SIGKILL');
+        assert.equal(result.timedOut, false);
+      }
+      let remaining = await processesMatching(token);
+      for (let attempt = 0; attempt < 30 && remaining.length > 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        remaining = await processesMatching(token);
+      }
+      assert.deepEqual(remaining, []);
+    } finally {
+      clearTimeout(abortTimer);
+    }
+  });
+
+  test('an abort during namespace preparation stops the probe before spawning the sandbox', async () => {
+    const token = `tinysdd-probe-abort-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const probeRuns = join(fixtures, `${token}.runs`);
+    const bwrapPath = await stubExecutable([
+      `count=$(cat '${probeRuns}' 2>/dev/null || printf '0')`,
+      'count=$((count + 1))',
+      `printf '%s\\n' "$count" > '${probeRuns}'`,
+      `if [ "$count" -eq 1 ]; then exec /bin/sh -c 'sleep 2' '${token}'; fi`,
+      'exit 0',
+    ].join('\n'));
+    const prlimitPath = await stubExecutable('exit 0');
+    const controller = new AbortController();
+    const pending = run(candidate, {}, { bwrapPath, signal: controller.signal }).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    let settled = false;
+    pending.then(() => { settled = true; });
+    let probeStartedAt;
+    for (let attempt = 0; attempt < 200 && !settled; attempt += 1) {
+      if (await readFile(probeRuns, 'utf8').then((value) => value === '1\n', () => false)) {
+        probeStartedAt = Date.now();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (probeStartedAt === undefined) {
+      controller.abort();
+      await pending;
+      assert.fail('namespace probe did not start before the test deadline');
+    }
+    controller.abort();
+    const outcome = await pending;
+    assert.equal(outcome.error?.code, 'CHECK_CANCELLED');
+    assert.ok(Date.now() - probeStartedAt < 1500, 'namespace preparation ignored cancellation');
+    let remaining = await processesMatching(token);
+    for (let attempt = 0; attempt < 20 && remaining.length > 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      remaining = await processesMatching(token);
+    }
+    assert.deepEqual(remaining, []);
+    const result = await run(candidate, {}, { bwrapPath, prlimitPath });
+    assert.equal(result.exitCode, 0);
+    assert.equal(await readFile(probeRuns, 'utf8'), '2\n');
+  });
+
+  test('concurrent namespace preparation keeps cancellation scoped to its probe', async () => {
+    const firstToken = `tinysdd-probe-first-${process.pid}-${Date.now()}`;
+    const secondToken = `tinysdd-probe-second-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const probeRuns = join(fixtures, `${firstToken}.runs`);
+    const bwrapPath = await stubExecutable([
+      `count=$(cat '${probeRuns}' 2>/dev/null || printf '0')`,
+      'count=$((count + 1))',
+      `printf '%s\\n' "$count" > '${probeRuns}'`,
+      `if [ "$count" -eq 1 ]; then exec /bin/sh -c 'sleep 3; exit 0' '${firstToken}'; fi`,
+      `if [ "$count" -eq 2 ]; then exec /bin/sh -c 'sleep 3; exit 0' '${secondToken}'; fi`,
+      'exit 0',
+    ].join('\n'));
+    const prlimitPath = await stubExecutable('exit 0');
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let firstSettled = false;
+    const first = run(candidate, {}, { bwrapPath, prlimitPath, signal: firstController.signal }).then(
+      (value) => { firstSettled = true; return { value }; },
+      (error) => { firstSettled = true; return { error }; },
+    );
+    let second;
+    try {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (await readFile(probeRuns, 'utf8').then((value) => value === '1\n', () => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        if (attempt === 199) assert.fail('first namespace probe did not start before the test deadline');
+      }
+      second = run(candidate, {}, { bwrapPath, prlimitPath, signal: secondController.signal }).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (await readFile(probeRuns, 'utf8').then((value) => value === '2\n', () => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        if (attempt === 199) assert.fail('second namespace probe did not start before the test deadline');
+      }
+      const abortedAt = Date.now();
+      secondController.abort();
+      const secondOutcome = await second;
+      assert.equal(secondOutcome.error?.code, 'CHECK_CANCELLED');
+      assert.ok(Date.now() - abortedAt < 1500, 'the second probe shared the first probe cancellation owner');
+      assert.equal(firstSettled, false, 'cancelling the second probe cancelled the first probe');
+
+      const secondRemaining = await processesMatching(secondToken);
+      assert.deepEqual(secondRemaining, []);
+      const firstRemaining = await processesMatching(firstToken);
+      assert.ok(firstRemaining.length > 0, 'the first probe was reaped by the second cancellation');
+
+      const firstOutcome = await first;
+      assert.equal(firstOutcome.error, undefined);
+      assert.equal(firstOutcome.value.exitCode, 0);
+      assert.deepEqual(await processesMatching(firstToken), []);
+    } finally {
+      firstController.abort();
+      secondController.abort();
+      await first;
+      if (second) await second;
+    }
   });
 
   test('the address-space limit stops a runaway allocation without a timeout', async () => {
