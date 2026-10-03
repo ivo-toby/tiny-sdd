@@ -9,19 +9,21 @@ import {
   DEFAULT_TOOL_LIMIT,
   MAX_TIMEOUT_MS,
   MAX_TOOL_LIMIT,
+  PI_DEFAULT_MAX_TOKENS,
   PiEnvironmentError,
   preparePiEnvironment,
   validatePiWorker,
 } from "./pi-environment.mjs";
-import { compileContext } from "./context-compiler.mjs";
+import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 
-const MAX_RAW_OUTPUT_BYTES = 16 * 1024 * 1024;
+const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const MAX_USER_PROMPT_BYTES = 128 * 1024;
 const MAX_RESOURCE_BYTES = 512 * 1024;
 const MAX_PATCH_BYTES = 32 * 1024 * 1024;
 const MAX_COPY_FILES = 20_000;
 const MAX_COPY_BYTES = 512 * 1024 * 1024;
+const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
 const MAX_CLAIM_BYTES = 128 * 1024;
 const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
@@ -137,8 +139,66 @@ function excludedName(name, directory) {
   return PROJECT_SECRET_NAME.test(name);
 }
 
-async function copyProjectTree(sourceRoot, destinationRoot) {
+function gitEnvironment() {
+  // Repository discovery must depend only on the project directory, never on
+  // an inherited GIT_DIR/GIT_WORK_TREE that points somewhere else.
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+}
+
+async function gitCopyList(sourceRoot) {
+  const child = spawn("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: sourceRoot, env: gitEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+  const chunks = [];
+  let bytes = 0;
+  let overflow = false;
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_GIT_LIST_BYTES) chunks.push(chunk);
+    else overflow = true;
+  });
+  child.stderr.on("data", (chunk) => {
+    if (stderr.length < 1024) stderr += chunk.toString("utf8").slice(0, 1024 - stderr.length);
+  });
+  const termination = await new Promise((resolvePromise) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already exited */ }
+      finish({ code: null, error: "git ls-files timed out" });
+    }, 30_000);
+    timer.unref?.();
+    child.once("error", (error) => finish({ code: null, error: error?.code === "ENOENT" ? "git is unavailable" : (error instanceof Error ? error.message : String(error)) }));
+    child.once("close", (code) => finish({ code, error: null }));
+  });
+  if (termination.error) return { paths: null, reason: termination.error };
+  if (termination.code !== 0) return { paths: null, reason: stderr.trim().split("\n")[0] || `git ls-files exited ${termination.code}` };
+  if (overflow) fail("git ls-files output exceeds the bounded worker copy list");
+  const listed = Buffer.concat(chunks).toString("utf8").split("\0").filter((path) => path.length > 0);
+  // Unmerged index entries are listed once per stage.
+  return { paths: [...new Set(listed)].sort(), reason: null };
+}
+
+/**
+ * Copy the worker's view of a source tree.
+ *
+ * A live project inside a Git work tree is copied from `git ls-files --cached
+ * --others --exclude-standard`, so gitignored runtime state never reaches the
+ * worker while new untracked source does.  Everything else (no Git, Git
+ * unavailable, or an immutable baseline snapshot) uses the recursive walk.
+ */
+export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = true, maxFiles = MAX_COPY_FILES, maxBytes = MAX_COPY_BYTES } = {}) {
   const counters = { files: 0, bytes: 0 };
+  const copied = new Set();
+  const count = (size) => {
+    counters.files += 1;
+    counters.bytes += size;
+    if (counters.files > maxFiles || counters.bytes > maxBytes) fail("Project copy exceeds bounded worker input size");
+  };
   async function visit(source, destination, relativePath) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
@@ -154,14 +214,92 @@ async function copyProjectTree(sourceRoot, destinationRoot) {
         continue;
       }
       if (!info.isFile()) fail(`Source contains unsupported filesystem entry: ${rel}`);
-      counters.files += 1;
-      counters.bytes += info.size;
-      if (counters.files > MAX_COPY_FILES || counters.bytes > MAX_COPY_BYTES) fail("Project copy exceeds bounded worker input size");
+      count(info.size);
       await copyFile(sourcePath, destinationPath);
+      copied.add(rel);
     }
   }
-  await visit(sourceRoot, destinationRoot, "");
-  return counters;
+  const listing = useGit ? await gitCopyList(sourceRoot) : { paths: null, reason: "immutable baseline snapshot" };
+  if (!listing.paths) {
+    await visit(sourceRoot, destinationRoot, "");
+    return { mode: "walk", fallbackReason: listing.reason, files: counters.files, bytes: counters.bytes, missingSkipped: 0, copied };
+  }
+  await mkdir(destinationRoot, { recursive: true, mode: 0o700 });
+  const checkedDirectories = new Set();
+  let missingSkipped = 0;
+  for (const listed of listing.paths) {
+    // Apply the walk's name exclusions (.git, .tinysdd, node_modules, secret
+    // names) before path validation: a committed or unignored .tinysdd/ is
+    // normal and must be skipped, not rejected as controller state.
+    const listedParts = listed.split("/");
+    if (listedParts.some((part, index) => excludedName(part, index < listedParts.length - 1))) continue;
+    const rel = projectRelative(listed, "git-listed path");
+    const parts = rel.split("/");
+    let parentMissing = false;
+    for (let index = 1; index < parts.length; index += 1) {
+      const directory = parts.slice(0, index).join("/");
+      if (checkedDirectories.has(directory)) continue;
+      let info;
+      try {
+        info = await lstat(join(sourceRoot, ...parts.slice(0, index)));
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        parentMissing = true;
+        break;
+      }
+      if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${directory}`);
+      if (!info.isDirectory()) fail(`Source contains unsupported filesystem entry: ${directory}`);
+      checkedDirectories.add(directory);
+    }
+    const sourcePath = join(sourceRoot, ...parts);
+    let info = null;
+    if (!parentMissing) {
+      try {
+        info = await lstat(sourcePath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+    if (!info) {
+      // Tracked but deleted in the working tree (not yet staged).
+      missingSkipped += 1;
+      continue;
+    }
+    if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${rel}`);
+    const destinationPath = join(destinationRoot, ...parts);
+    if (info.isDirectory()) {
+      // A gitlink (submodule) is listed as a directory; copy its working tree
+      // with the walk rules rather than dropping source the task may need.
+      await visit(sourcePath, destinationPath, rel);
+      continue;
+    }
+    if (!info.isFile()) fail(`Source contains unsupported filesystem entry: ${rel}`);
+    count(info.size);
+    await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
+    await copyFile(sourcePath, destinationPath);
+    copied.add(rel);
+  }
+  if (copied.size === 0) fail("git ls-files listed no copyable files under projectRoot; refusing an empty worker workspace (is the project directory gitignored by an enclosing repository?)");
+  return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
+}
+
+async function assertCopiedInputs(sourceRoot, copy, allowedPaths, compiledContext) {
+  for (const resource of compiledContext?.resources ?? []) {
+    if (!copy.copied.has(resource.path)) fail(`Context resource is not part of the worker copy (gitignored or excluded): ${resource.path}`);
+  }
+  for (const path of allowedPaths) {
+    if (copy.copied.has(path)) continue;
+    let info;
+    try {
+      info = await lstat(join(sourceRoot, ...path.split("/")));
+    } catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "ENOTDIR") continue;
+      throw error;
+    }
+    // An existing allowed file missing from the copy would come back as a
+    // "created" file and produce a patch that cannot apply to the project.
+    if (info.isFile()) fail(`Allowed path exists but is not part of the worker copy (gitignored or excluded): ${path}`);
+  }
 }
 
 async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId) {
@@ -371,13 +509,21 @@ function validateProfile(value) {
   if (value.instructions !== undefined && typeof value.instructions !== "string") fail("Worker profile.instructions must be a string");
   if (value.runtime !== undefined) {
     if (!value.runtime || typeof value.runtime !== "object" || Array.isArray(value.runtime)) fail("Worker profile.runtime must be an object");
-    const allowed = new Set(["thinking", "reasoning", "compat"]);
+    const allowed = new Set(["thinking", "reasoning", "compat", "thinkingBudgets"]);
     for (const key of Object.keys(value.runtime)) if (!allowed.has(key)) fail(`Worker profile.runtime.${key} is unsupported`);
     if (value.runtime.thinking !== undefined && !["off", "minimal", "low", "medium", "high"].includes(value.runtime.thinking)) fail("Worker profile.runtime.thinking is invalid");
     if (value.runtime.reasoning !== undefined && typeof value.runtime.reasoning !== "boolean") fail("Worker profile.runtime.reasoning must be boolean");
     if (value.runtime.compat !== undefined) {
       if (!value.runtime.compat || typeof value.runtime.compat !== "object" || Array.isArray(value.runtime.compat)) fail("Worker profile.runtime.compat must be an object");
-      for (const key of Object.keys(value.runtime.compat)) if (!["thinkingFormat", "supportsDeveloperRole"].includes(key)) fail(`Worker profile.runtime.compat.${key} is unsupported`);
+      for (const key of Object.keys(value.runtime.compat)) if (!["thinkingFormat", "supportsDeveloperRole", "thinkingTokenBudgetField"].includes(key)) fail(`Worker profile.runtime.compat.${key} is unsupported`);
+    }
+    if (value.runtime.thinkingBudgets !== undefined) {
+      const budgets = value.runtime.thinkingBudgets;
+      if (!budgets || typeof budgets !== "object" || Array.isArray(budgets)) fail("Worker profile.runtime.thinkingBudgets must be an object");
+      for (const [level, tokens] of Object.entries(budgets)) {
+        if (!["minimal", "low", "medium", "high"].includes(level)) fail(`Worker profile.runtime.thinkingBudgets.${level} is unsupported`);
+        if (!Number.isInteger(tokens) || tokens <= 0) fail(`Worker profile.runtime.thinkingBudgets.${level} must be a positive integer`);
+      }
     }
   }
   for (const key of ["evidence", "limitations"]) {
@@ -621,10 +767,16 @@ function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalP
   return args;
 }
 
+const WRITE_TOOLS = new Set(["write", "edit"]);
+
 function parseEvents(text) {
   const assistant = [];
   const turnEnds = [];
   let toolCalls = 0;
+  let writeCalls = 0;
+  const toolCallsByName = {};
+  const readPaths = [];
+  const compactions = [];
   for (const line of text.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let event;
@@ -633,7 +785,25 @@ function parseEvents(text) {
     } catch {
       continue;
     }
-    if (event.type === "tool_execution_start") toolCalls += 1;
+    if (event.type === "tool_execution_start") {
+      toolCalls += 1;
+      const name = typeof event.toolName === "string" ? event.toolName : "unknown";
+      toolCallsByName[name] = (toolCallsByName[name] ?? 0) + 1;
+      if (WRITE_TOOLS.has(name)) writeCalls += 1;
+      if (name === "read" && typeof event.args?.path === "string") readPaths.push(event.args.path);
+    }
+    if (event.type === "compaction_end") {
+      const summary = typeof event.result?.summary === "string" ? event.result.summary : null;
+      compactions.push({
+        reason: event.reason ?? null,
+        aborted: event.aborted === true,
+        tokensBefore: Number.isFinite(event.result?.tokensBefore) ? event.result.tokensBefore : null,
+        estimatedTokensAfter: Number.isFinite(event.result?.estimatedTokensAfter) ? event.result.estimatedTokensAfter : null,
+        summarySha256: summary === null ? null : createHash("sha256").update(summary).digest("hex"),
+        summaryBytes: summary === null ? null : Buffer.byteLength(summary),
+        errorMessage: typeof event.errorMessage === "string" ? event.errorMessage : null,
+      });
+    }
     if (event.type === "message_end" && event.message?.role === "assistant") assistant.push(event.message);
     else if (event.type === "turn_end" && event.message?.role === "assistant") turnEnds.push(event.message);
     if (event.type === "toolCall" || event.type === "tool_call") toolCalls += 1;
@@ -645,6 +815,14 @@ function parseEvents(text) {
     if (!Array.isArray(message.content)) continue;
     for (const part of message.content) if (part?.type === "text" && typeof part.text === "string") textParts.push(part.text);
   }
+  // Sum of per-response usage. Input is re-counted on every response because
+  // each request resends the context; it is not unique prompt tokens.
+  const cumulativeUsage = { assistantMessages: authoritative.length, input: 0, output: 0, reasoning: null, totalTokens: 0 };
+  for (const message of authoritative) {
+    const usage = message.usage ?? {};
+    for (const key of ["input", "output", "totalTokens"]) if (Number.isFinite(usage[key])) cumulativeUsage[key] += usage[key];
+    if (Number.isFinite(usage.reasoning)) cumulativeUsage.reasoning = (cumulativeUsage.reasoning ?? 0) + usage.reasoning;
+  }
   let claims = textParts.join("\n\n");
   let truncated = false;
   if (Buffer.byteLength(claims) > MAX_CLAIM_BYTES) {
@@ -653,7 +831,7 @@ function parseEvents(text) {
   }
   const stopReason = finalMessage?.stopReason ?? finalMessage?.rawStopReason ?? null;
   const errorMessage = finalMessage?.errorMessage ?? finalMessage?.error?.message ?? null;
-  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, claims, claimsTruncated: truncated };
+  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, cumulativeUsage, claims, claimsTruncated: truncated };
 }
 
 function killProcessGroup(pid, signal) {
@@ -669,7 +847,7 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, direct }) {
+async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, signal }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
@@ -681,6 +859,10 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   let timeoutTimer;
   let killTimer;
   let latest = { bytes: 0, toolCalls: 0 };
+  let firstWriteAtMs = null;
+  let closed = false;
+  let stopRequested = false;
+  let stoppedBeforeSpawn = false;
   const stop = (reason) => {
     if (forcedOutcome) return;
     forcedOutcome = reason;
@@ -688,15 +870,27 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     killTimer = setTimeout(() => killProcessGroup(child?.pid, "SIGKILL"), 250);
     killTimer.unref?.();
   };
-  try {
-    child = spawn(command, args, {
-      cwd,
-      env,
-      detached: true,
-      stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
-    });
-  } catch (error) {
-    spawnError = error instanceof Error ? error.message : String(error);
+  const onAbort = () => {
+    stopRequested = true;
+    stop("stopped");
+  };
+  if (signal?.aborted) {
+    // Stopped before Pi started: spawn nothing, but still finalize the run.
+    stopRequested = true;
+    stoppedBeforeSpawn = true;
+    forcedOutcome = "stopped";
+  } else {
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
+      });
+    } catch (error) {
+      spawnError = error instanceof Error ? error.message : String(error);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
   }
   const closePromise = new Promise((resolvePromise) => {
     if (!child) return resolvePromise({ code: null, signal: null });
@@ -711,10 +905,15 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     try {
       const [outInfo, errInfo] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
       latest.bytes = outInfo.size + errInfo.size;
-      if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("output_limit");
+      if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("raw_output_limit");
       const text = await readFile(stdoutPath, "utf8");
-      latest.toolCalls = parseEvents(text).toolCalls;
+      const parsedNow = parseEvents(text);
+      latest.toolCalls = parsedNow.toolCalls;
       if (latest.toolCalls >= maxToolCalls) stop("tool_limit");
+      // Poll-granular (100 ms): when the first write/edit start was seen.
+      if (firstWriteAtMs === null && parsedNow.writeCalls > 0) firstWriteAtMs = Date.now() - startedAt;
+      // A worker that ended on its own is classified from its own stop reason.
+      if (!closed && firstWriteMs !== null && firstWriteAtMs === null && Date.now() - startedAt >= firstWriteMs) stop("no_progress");
     } catch {
       // The files remain authoritative after process close; transient stat
       // failures are classified from the final capture below.
@@ -729,6 +928,8 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     timeoutTimer.unref?.();
   }
   const termination = await closePromise;
+  closed = true;
+  signal?.removeEventListener("abort", onAbort);
   if (pollTimer) clearInterval(pollTimer);
   if (timeoutTimer) clearTimeout(timeoutTimer);
   if (killTimer) clearTimeout(killTimer);
@@ -739,7 +940,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   const stderr = await readFile(stderrPath, "utf8");
   const parsed = parseEvents(stdout);
   const bytes = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
-  const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : null);
+  const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "raw_output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : null);
   return {
     stdout,
     stderr,
@@ -750,7 +951,10 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
       spawnError,
       elapsedMs: Date.now() - startedAt,
       directTestRuntime: direct === true,
+      stopRequested,
+      ...(stoppedBeforeSpawn ? { stoppedBeforeSpawn } : {}),
     },
+    firstWriteAtMs,
     forcedOutcome: reason,
     rawBytes: bytes,
   };
@@ -847,11 +1051,48 @@ async function writeJson(path, value) {
 
 function classifyOutcome(capture) {
   if (capture.forcedOutcome) return capture.forcedOutcome;
-  if (capture.parsed.stopReason === "length" || capture.parsed.stopReason === "max_tokens") return "output_limit";
+  if (capture.parsed.stopReason === "length" || capture.parsed.stopReason === "max_tokens") return "response_token_limit";
   if (capture.parsed.stopReason === "error" || capture.parsed.errorMessage) return "failed";
   if (capture.processTermination.spawnError || capture.processTermination.exitCode !== 0) return "failed";
   if (["stop", "completed", "end_turn"].includes(capture.parsed.stopReason)) return "completed";
   return "failed";
+}
+
+function outcomeLimitDetails(outcome, capture, metadata, limits) {
+  if (outcome === "response_token_limit") {
+    const usage = capture.parsed.usage ?? {};
+    return {
+      maxTokens: metadata.maxTokens ?? PI_DEFAULT_MAX_TOKENS,
+      maxTokensSource: metadata.maxTokens === null ? "pi-default" : "model",
+      outputTokens: Number.isFinite(usage.output) ? usage.output : null,
+      reasoningTokens: Number.isFinite(usage.reasoning) ? usage.reasoning : null,
+    };
+  }
+  if (outcome === "raw_output_limit") return { maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES, rawOutputBytes: capture.rawBytes };
+  if (outcome === "tool_limit") return { maxToolCalls: limits.maxToolCalls, toolCalls: capture.parsed.toolCalls };
+  if (outcome === "timeout") return { timeoutMs: limits.timeoutMs, elapsedMs: capture.processTermination.elapsedMs };
+  if (outcome === "no_progress") return { firstWriteMs: limits.firstWriteMs, elapsedMs: capture.processTermination.elapsedMs, toolCalls: capture.parsed.toolCalls };
+  if (outcome === "stopped") return { elapsedMs: capture.processTermination.elapsedMs, toolCalls: capture.parsed.toolCalls };
+  return null;
+}
+
+function workspaceRelativeRead(path, workspace) {
+  for (const prefix of [`${workspace}/`, "/work/"]) if (path.startsWith(prefix)) return path.slice(prefix.length);
+  return path.replace(/^(?:\.\/)+/u, "");
+}
+
+// Reads are measured, not blocked: the worker contract asks the model not to
+// re-read cited excerpts, and this makes compliance visible per run.
+function readObservations(readPaths, workspace, compiledContext) {
+  const counts = {};
+  for (const path of readPaths) {
+    const rel = workspaceRelativeRead(path, workspace);
+    counts[rel] = (counts[rel] ?? 0) + 1;
+  }
+  const cited = new Set((compiledContext?.resources ?? []).map((resource) => resource.path));
+  const citedRereads = Object.entries(counts).filter(([path]) => cited.has(path)).reduce((sum, [, count]) => sum + count, 0);
+  const repeatedReads = Object.fromEntries(Object.entries(counts).filter(([, count]) => count > 1));
+  return { reads: readPaths.length, citedRereads, repeatedReads };
 }
 
 async function resolveBrief(projectRoot, packet) {
@@ -898,7 +1139,17 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     piExecutable: runtime.test ? "test-harness" : pi.path,
     piVersion,
     bubblewrap: runtime.test ? null : bwrap.path,
+    // `thinking` is the requested level; effectiveThinkingControl says whether
+    // Pi will actually send a thinking parameter for it (talon run 2 recorded
+    // "off" while no toggle was sent and the model thought anyway).
     thinking: profile?.runtime?.thinking ?? "off",
+    effectiveThinkingControl: prepared.metadata.preflight.thinking.control,
+    effectiveThinkingReason: prepared.metadata.preflight.thinking.reason,
+    effectiveMaxTokens: prepared.metadata.preflight.maxTokens.value,
+    maxTokensSource: prepared.metadata.preflight.maxTokens.source,
+    thinkingTokenBudgetField: prepared.metadata.preflight.thinkingTokenBudgetField,
+    effectiveThinkingBudget: prepared.metadata.preflight.thinkingBudget,
+    preflight: { basis: prepared.metadata.preflight.basis, warnings: prepared.metadata.preflight.warnings },
     reasoningRequested: profile?.runtime?.reasoning ?? null,
     rawReasoning: prepared.metadata.rawReasoning,
     effectiveReasoning: prepared.metadata.effectiveReasoning,
@@ -915,7 +1166,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
       generatedCodeExecution: false,
       inferenceNetwork: true,
     },
-    limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
     credentialEnvironmentNames: prepared.metadata.credentialEnvironmentNames,
     generatedCredentialReferenceCount: prepared.metadata.generatedCredentialReferenceCount,
   };
@@ -928,7 +1179,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
  * harness explicitly enables it.  Production callers use the four documented
  * arguments and therefore always require Linux bubblewrap.
  */
-export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId } = {}) {
+export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
@@ -985,7 +1236,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let capture;
   let patchInfo;
   let result;
-    await copyProjectTree(executionSource, workspace);
+    const workspaceCopy = await copyProjectTree(executionSource, workspace, { useGit: !frozenBaseline });
+    await assertCopiedInputs(executionSource, workspaceCopy, selectedAllowed, compiledContext);
     await overlayRevisionBase(revisionBase, workspace);
     await copyRegularTree(workspace, baseline);
     before = await snapshotTree(workspace);
@@ -1043,7 +1295,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
       args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv });
     }
-    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, direct: runtimeChoice.test });
+    capture = await captureProcess({ command, args, cwd: runtimeChoice.test ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, signal });
     after = await snapshotTree(workspace);
     await copySnapshotTree(workspace, afterArtifact);
     await writeJson(join(artifactDir, "after-snapshot.json"), after);
@@ -1053,6 +1305,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const allowedSet = new Set(selectedAllowed);
     const scopeViolations = changes.filter((change) => !allowedSet.has(slash(change.path))).map((change) => ({ path: slash(change.path), change: change.change, reason: "changed path is outside packet.allowedPaths" }));
     const outcome = classifyOutcome(capture);
+    const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);
     result = {
       schemaVersion: 1,
       runId,
@@ -1065,6 +1318,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         },
       } : {}),
       ...(frozenBaseline ? { baselineRun: { id: frozenBaseline.id } } : {}),
+      taskShape: { allowedFiles: selectedAllowed.length, ...contextSizeMetrics(compiledContext) },
+      workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
       outcome,
       model: { provider: worker.provider, id: worker.model },
       observed: {
@@ -1072,9 +1327,16 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         assistantTermination: { observed: Boolean(capture.parsed.finalMessage), stopReason: capture.parsed.stopReason, errorMessage: capture.parsed.errorMessage },
         usage: capture.parsed.usage,
         usageScope: "final-assistant-message",
+        cumulativeUsage: capture.parsed.cumulativeUsage,
         toolCalls: capture.parsed.toolCalls,
+        toolCallsByName: capture.parsed.toolCallsByName,
+        writeCalls: capture.parsed.writeCalls,
+        firstWriteAtMs: capture.firstWriteAtMs,
+        ...readObservations(capture.parsed.readPaths, workspace, compiledContext),
+        compactions: capture.parsed.compactions,
         rawOutputBytes: capture.rawBytes,
       },
+      ...(limitDetails ? { limitDetails } : {}),
       changedPaths: changes,
       scopeViolations,
       artifactPaths: {
@@ -1095,7 +1357,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed bubblewrap; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;

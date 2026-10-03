@@ -14,15 +14,25 @@ import {
 
 export const CONFIG_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 300_000;
-export const MAX_TIMEOUT_MS = 900_000;
+export const MAX_TIMEOUT_MS = 3_600_000;
 export const DEFAULT_MAX_TOOL_CALLS = 40;
 export const MAX_TOOL_CALLS = 100;
 
 const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits'];
-const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls'];
+const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs'];
 const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
-const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat'];
-const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole'];
+const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets'];
+const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole', 'thinkingTokenBudgetField'];
+const THINKING_BUDGET_KEYS = ['minimal', 'low', 'medium', 'high'];
+const SEMANTIC_GATE_KEYS = ['mode', 'endpoint', 'model', 'thresholds'];
+const SEMANTIC_GATE_MODES = ['off', 'shadow', 'enforce'];
+const SEMANTIC_GATE_THRESHOLD_KEYS = ['accept', 'reject'];
+
+// The thresholds ship in config and are provisional placeholders until the
+// benchmark shadow data calibrates them; they are not hardcoded truths.
+export const DEFAULT_SEMANTIC_GATE_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
+export const DEFAULT_SEMANTIC_GATE_MODEL = 'jev-latest';
+export const DEFAULT_SEMANTIC_GATE_THRESHOLDS = { accept: 0.75, reject: 0.40 };
 
 function assertString(value, label) {
   if (typeof value !== 'string' || value.length === 0) throw tinyError('CONFIG_INVALID', `${label} must be a nonempty string`);
@@ -70,7 +80,12 @@ function validateLimits(value, label) {
   if (!Number.isInteger(maxToolCalls) || maxToolCalls <= 0 || maxToolCalls > MAX_TOOL_CALLS) {
     throw tinyError('CONFIG_INVALID', `${label}.maxToolCalls must be an integer from 1 to ${MAX_TOOL_CALLS}`);
   }
-  return { timeoutMs, maxToolCalls };
+  if (value.firstWriteMs === undefined) return { timeoutMs, maxToolCalls };
+  // Optional no-progress watchdog: stop when no write/edit has started by then.
+  if (!Number.isInteger(value.firstWriteMs) || value.firstWriteMs <= 0 || value.firstWriteMs >= timeoutMs) {
+    throw tinyError('CONFIG_INVALID', `${label}.firstWriteMs must be a positive integer below timeoutMs`);
+  }
+  return { timeoutMs, maxToolCalls, firstWriteMs: value.firstWriteMs };
 }
 
 function validateWorker(raw, name, label = `workers.${name}`) {
@@ -103,9 +118,46 @@ function validateWorkers(value, label) {
   return workers;
 }
 
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateSemanticThresholds(value, label) {
+  assertPlainObject(value, 'CONFIG_INVALID', label);
+  assertExactKeys(value, SEMANTIC_GATE_THRESHOLD_KEYS, 'CONFIG_INVALID', label);
+  for (const key of SEMANTIC_GATE_THRESHOLD_KEYS) {
+    const threshold = value[key];
+    if (typeof threshold !== 'number' || !Number.isFinite(threshold) || threshold <= 0 || threshold >= 1) {
+      throw tinyError('CONFIG_INVALID', `${label}.${key} must be a number in (0,1)`);
+    }
+  }
+  if (value.reject >= value.accept) {
+    throw tinyError('CONFIG_INVALID', `${label}.reject must be less than ${label}.accept`);
+  }
+  return { accept: value.accept, reject: value.reject };
+}
+
+function validateSemanticGate(raw) {
+  assertPlainObject(raw, 'CONFIG_INVALID', 'config.semanticGate');
+  assertExactKeys(raw, SEMANTIC_GATE_KEYS, 'CONFIG_INVALID', 'config.semanticGate');
+  if (!SEMANTIC_GATE_MODES.includes(raw.mode)) {
+    throw tinyError('CONFIG_INVALID', 'config.semanticGate.mode must be off, shadow, or enforce');
+  }
+  const endpoint = raw.endpoint === undefined ? DEFAULT_SEMANTIC_GATE_ENDPOINT : assertString(raw.endpoint, 'config.semanticGate.endpoint');
+  if (!isHttpUrl(endpoint)) throw tinyError('CONFIG_INVALID', 'config.semanticGate.endpoint must be an http(s) URL');
+  const model = raw.model === undefined ? DEFAULT_SEMANTIC_GATE_MODEL : assertString(raw.model, 'config.semanticGate.model');
+  const thresholds = raw.thresholds === undefined ? { ...DEFAULT_SEMANTIC_GATE_THRESHOLDS } : validateSemanticThresholds(raw.thresholds, 'config.semanticGate.thresholds');
+  return { mode: raw.mode, endpoint, model, thresholds };
+}
+
 export function validateConfigDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config');
-  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers'], 'CONFIG_INVALID', 'config');
+  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate'], 'CONFIG_INVALID', 'config');
   if (raw.schemaVersion !== CONFIG_SCHEMA_VERSION) {
     throw tinyError('CONFIG_INVALID', `config.schemaVersion must be ${CONFIG_SCHEMA_VERSION}`);
   }
@@ -114,10 +166,12 @@ export function validateConfigDocument(raw) {
   if (defaultWorker !== undefined && !Object.hasOwn(workers, defaultWorker)) {
     throw tinyError('CONFIG_INVALID', `config.defaultWorker is not defined: ${defaultWorker}`);
   }
+  const semanticGate = raw.semanticGate === undefined ? undefined : validateSemanticGate(raw.semanticGate);
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     workers,
+    ...(semanticGate === undefined ? {} : { semanticGate }),
   };
 }
 
@@ -161,7 +215,20 @@ function validateProfileDocument(raw, path) {
         if (typeof raw.runtime.compat.supportsDeveloperRole !== 'boolean') throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.compat.supportsDeveloperRole must be boolean`);
         compat.supportsDeveloperRole = raw.runtime.compat.supportsDeveloperRole;
       }
+      if (raw.runtime.compat.thinkingTokenBudgetField !== undefined) {
+        compat.thinkingTokenBudgetField = assertString(raw.runtime.compat.thinkingTokenBudgetField, `profile ${path}.runtime.compat.thinkingTokenBudgetField`);
+      }
       runtime.compat = compat;
+    }
+    if (raw.runtime.thinkingBudgets !== undefined) {
+      // Per-level reasoning caps, written into the worker's temporary Pi
+      // settings; Pi sends them only with compat.thinkingTokenBudgetField.
+      assertPlainObject(raw.runtime.thinkingBudgets, 'PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets`);
+      assertExactKeys(raw.runtime.thinkingBudgets, THINKING_BUDGET_KEYS, 'PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets`);
+      for (const [level, tokens] of Object.entries(raw.runtime.thinkingBudgets)) {
+        if (!Number.isInteger(tokens) || tokens <= 0) throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets.${level} must be a positive integer`);
+      }
+      runtime.thinkingBudgets = { ...raw.runtime.thinkingBudgets };
     }
     profile.runtime = runtime;
   }
@@ -242,6 +309,7 @@ export async function resolveConfig(projectRoot, options = {}) {
   const effective = {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
+    ...(base.semanticGate === undefined ? {} : { semanticGate: base.semanticGate }),
     workers: effectiveWorkers,
   };
   const selectedWorkerName = selectedName ?? defaultWorker;

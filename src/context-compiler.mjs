@@ -36,6 +36,24 @@ function normalizeSourcePath(value, label) {
   return parts.join('/');
 }
 
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[^/]+$/u;
+
+/**
+ * Size of a compiled context, shared by the controller's sizing report and
+ * the worker result so a run's behavior can be paired with its input size.
+ */
+export function contextSizeMetrics(compiled) {
+  const resources = compiled?.resources ?? [];
+  const lines = (resource) => resource.endLine - resource.startLine + 1;
+  return {
+    contextFacts: compiled?.facts?.length ?? 0,
+    compiledContextBytes: compiled?.bytes ?? 0,
+    citedResources: resources.length,
+    citedLines: resources.reduce((sum, resource) => sum + lines(resource), 0),
+    citedTestLines: resources.filter((resource) => TEST_PATH.test(resource.path)).reduce((sum, resource) => sum + lines(resource), 0),
+  };
+}
+
 export function parseContextManifest(text) {
   let value;
   try {

@@ -25,7 +25,20 @@ import {
   resolveConfig,
   validateConfigDocument,
 } from './config.mjs';
-import { compileContext } from './context-compiler.mjs';
+import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
+import {
+  extractAcceptanceCriteria,
+  extractEvidenceChecks,
+  judgeEvidenceSufficiency,
+} from './jev.mjs';
+import {
+  aggregateGateOutcome,
+  appendDecisionRecords,
+  buildDecisionRecord,
+  computeBand,
+  JUDGE_UNAVAILABLE_ACTION,
+  SHADOW_POLICY_ACTION,
+} from './semantic-policy.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -61,6 +74,18 @@ async function compileTaskContext(projectRoot, path) {
   return compileContext(projectRoot, { path, text, sha256: sha256(text) });
 }
 
+// Provisional advisory thresholds from one observed failure (talon
+// broker-contract: 8 files, 43 KB context, 64 tests, zero worker writes).
+// They warn; they never block registration or approval.
+export const TASK_SIZE_THRESHOLDS = Object.freeze({ allowedFiles: 3, compiledContextBytes: 40 * 1024, citedTestLines: 300 });
+function taskSizing(allow, compiled) {
+  const metrics = { allowedFiles: allow.length, ...contextSizeMetrics(compiled) };
+  const warnings = Object.entries(TASK_SIZE_THRESHOLDS)
+    .filter(([key, limit]) => metrics[key] > limit)
+    .map(([key, limit]) => `${key} ${metrics[key]} exceeds the advisory limit ${limit}; consider splitting the task`);
+  return { ...metrics, thresholds: { ...TASK_SIZE_THRESHOLDS }, warnings };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -76,13 +101,13 @@ function validateTaskId(value) {
   return value;
 }
 
-function parseIds(value) {
+function parseIds(value, label = 'depends-on') {
   if (value === undefined || value === '') return [];
-  if (!Array.isArray(value) && typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', 'depends-on must be a string or array of strings');
+  if (!Array.isArray(value) && typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', `${label} must be a string or array of strings`);
   const values = Array.isArray(value) ? value : String(value).split(',');
   const result = [];
   for (const item of values) {
-    if (typeof item !== 'string') throw tinyError('INVALID_ARGUMENT', 'depends-on must contain only strings');
+    if (typeof item !== 'string') throw tinyError('INVALID_ARGUMENT', `${label} must contain only strings`);
     const id = validateTaskId(item.trim());
     if (!result.includes(id)) result.push(id);
   }
@@ -124,6 +149,43 @@ function emptyState() {
   return { schemaVersion: CONTROLLER_SCHEMA_VERSION, tasks: {}, updatedAt: nowIso() };
 }
 
+const CLOSURE_KINDS = ['closed', 'superseded'];
+// Statuses with nothing left to do, so `next` skips them.
+const SETTLED_STATUSES = ['accepted', ...CLOSURE_KINDS];
+
+function validateClosure(id, closure) {
+  const label = `task ${id} closure`;
+  assertPlainObject(closure, 'STATE_MALFORMED', label);
+  if (!CLOSURE_KINDS.includes(closure.kind)) throw tinyError('STATE_MALFORMED', `${label} kind must be closed or superseded`);
+  for (const field of ['by', 'reason', 'closedAt']) {
+    if (typeof closure[field] !== 'string' || closure[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a nonempty string`);
+  }
+  if (closure.kind === 'closed') {
+    if (closure.supersededBy !== undefined) throw tinyError('STATE_MALFORMED', `${label} supersededBy is only valid for a superseded task`);
+    return;
+  }
+  if (!Array.isArray(closure.supersededBy) || closure.supersededBy.length === 0) throw tinyError('STATE_MALFORMED', `${label} supersededBy must be a nonempty array`);
+  try {
+    for (const successor of closure.supersededBy) validateTaskId(successor);
+  } catch {
+    throw tinyError('STATE_MALFORMED', `${label} supersededBy contains an invalid task id`);
+  }
+}
+
+function closureLabel(task) {
+  return task.closure.kind === 'superseded' ? `superseded by ${task.closure.supersededBy.join(', ')}` : 'closed';
+}
+
+function publicClosure(closure) {
+  const { kind, by, reason, closedAt, supersededBy } = closure;
+  return { kind, by, reason, closedAt, ...(supersededBy ? { supersededBy: [...supersededBy] } : {}) };
+}
+
+// A retired task takes no further approval, review or dispatch.
+function assertOpen(task) {
+  if (task.closure) throw tinyError('TASK_CLOSED', `task ${task.id} is ${closureLabel(task)}`, publicClosure(task.closure));
+}
+
 function validateState(value) {
   assertPlainObject(value, 'STATE_MALFORMED', 'controller state');
   if (value.schemaVersion !== CONTROLLER_SCHEMA_VERSION) throw tinyError('STATE_MALFORMED', `controller state schemaVersion must be ${CONTROLLER_SCHEMA_VERSION}`);
@@ -149,6 +211,7 @@ function validateState(value) {
     } catch {
       throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
     }
+    if (task.closure !== undefined) validateClosure(id, task.closure);
   }
   return value;
 }
@@ -235,6 +298,8 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   else if (!approval) status = 'pending_approval';
   else if (!approvalFresh) status = 'stale_approval';
   else status = 'ready';
+  // A retired task never satisfies a dependency, whatever its review says.
+  if (task.closure) status = task.closure.kind;
   return {
     id: task.id,
     status,
@@ -243,7 +308,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     approvalFresh,
     blockedBy,
     dependencyAcceptances,
-    acceptanceDigest,
+    acceptanceDigest: task.closure ? undefined : acceptanceDigest,
     allowedSnapshot,
     allowedDigest,
     evidenceDigest,
@@ -254,6 +319,9 @@ function assertDependenciesExist(state, id, dependencies) {
   for (const dependency of dependencies) {
     if (dependency === id) throw tinyError('DEPENDENCY_CYCLE', `task ${id} cannot depend on itself`);
     if (!Object.hasOwn(state.tasks, dependency)) throw tinyError('DEPENDENCY_NOT_FOUND', `dependency task does not exist: ${dependency}`);
+    // A retired dependency never becomes accepted, so the new task would stay blocked.
+    const retired = state.tasks[dependency];
+    if (retired.closure) throw tinyError('DEPENDENCY_CLOSED', `dependency task ${dependency} is ${closureLabel(retired)}`, publicClosure(retired.closure));
   }
   const graph = Object.create(null);
   for (const [taskId, task] of Object.entries(state.tasks)) graph[taskId] = task.dependsOn;
@@ -287,6 +355,7 @@ function publicTask(task, stateInfo) {
       reviewedAt: task.review.reviewedAt,
       current: task.review.verdict === 'accepted' ? Boolean(stateInfo.acceptanceDigest) : undefined,
     } : undefined,
+    ...(task.closure ? { closure: publicClosure(task.closure) } : {}),
   };
 }
 
@@ -352,7 +421,9 @@ export async function addTask(projectRoot, options = {}) {
   }))].sort();
   const root = await canonicalProjectRoot(projectRoot);
   await readProjectFile(root, brief, taskBriefOptions());
-  if (context !== undefined) await readProjectFile(root, context, taskBriefOptions());
+  // Validate the manifest schema, source ranges and budget now rather than
+  // first discovering an invalid manifest at approval.
+  const compiled = context === undefined ? null : await compileTaskContext(root, context);
   for (const path of allow) {
     const absolute = await assertInternalPath(root, path.split('/'), { allowMissing: true });
     try {
@@ -376,7 +447,7 @@ export async function addTask(projectRoot, options = {}) {
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, brief, ...(context === undefined ? {} : { context }), dependsOn, allow } };
+    return { task: { id, brief, ...(context === undefined ? {} : { context }), dependsOn, allow }, sizing: taskSizing(allow, compiled) };
   });
 }
 
@@ -388,15 +459,17 @@ export async function approveTask(projectRoot, options = {}) {
   return mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
+    assertOpen(task);
     const status = await inspectTask(root, state, task);
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     const briefDigest = await digestProjectFile(root, task.brief, taskBriefOptions()).catch(() => { throw tinyError('BRIEF_MISSING', `brief is missing: ${task.brief}`); });
-    const contextDigest = task.context
-      ? await compileTaskContext(root, task.context).then((compiled) => compiled.sha256).catch((error) => {
+    const compiled = task.context
+      ? await compileTaskContext(root, task.context).catch((error) => {
         if (error?.code === 'ENOENT' || error?.code === 'PATH_NOT_FOUND') throw tinyError('CONTEXT_MISSING', `context manifest is missing: ${task.context}`);
         throw error;
       })
       : null;
+    const contextDigest = compiled ? compiled.sha256 : null;
     const dependencyAcceptances = {};
     for (const dependency of task.dependsOn) {
       const dependencyState = await inspectTask(root, state, state.tasks[dependency]);
@@ -406,8 +479,44 @@ export async function approveTask(projectRoot, options = {}) {
     const approvedAt = nowIso();
     const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
+    return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
+  });
+}
+
+// close and supersede share one transition: a terminal status that needs no
+// approval, is refused while open tasks depend on it, and discards no acceptance.
+async function retireTask(projectRoot, options, kind) {
+  const id = validateTaskId(options.id);
+  const by = requireText(options.by, 'closure by');
+  const reason = requireText(options.reason, 'closure reason');
+  const successors = kind === 'superseded' ? parseIds(options.with, 'with') : [];
+  if (kind === 'superseded' && successors.length === 0) throw tinyError('INVALID_ARGUMENT', 'supersede requires at least one successor task (--with)');
+  const root = await canonicalProjectRoot(projectRoot);
+  return mutateState(root, async (state) => {
+    if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
+    const task = state.tasks[id];
+    assertOpen(task);
+    for (const successor of successors) {
+      if (successor === id) throw tinyError('INVALID_ARGUMENT', `task ${id} cannot supersede itself`);
+      if (!Object.hasOwn(state.tasks, successor)) throw tinyError('TASK_NOT_FOUND', `unknown successor task: ${successor}`);
+      assertOpen(state.tasks[successor]);
+    }
+    if ((await inspectTask(root, state, task)).status === 'accepted') {
+      throw tinyError('TASK_ACCEPTED', `task ${id} is accepted; closing it would discard a current acceptance`);
+    }
+    const dependents = Object.values(state.tasks).filter((other) => !other.closure && other.dependsOn.includes(id)).map((other) => other.id).sort();
+    if (dependents.length > 0) throw tinyError('TASK_HAS_DEPENDENTS', `task ${id} is still required by open tasks: ${dependents.join(', ')}`, { dependents });
+    task.closure = { kind, by, reason, closedAt: nowIso(), ...(kind === 'superseded' ? { supersededBy: successors } : {}) };
     return { task: publicTask(task, await inspectTask(root, state, task)) };
   });
+}
+
+export function closeTask(projectRoot, options = {}) {
+  return retireTask(projectRoot, options, 'closed');
+}
+
+export function supersedeTask(projectRoot, options = {}) {
+  return retireTask(projectRoot, options, 'superseded');
 }
 
 export async function resolveTaskPacket(projectRoot, taskId) {
@@ -417,6 +526,7 @@ export async function resolveTaskPacket(projectRoot, taskId) {
   const state = await readState(info);
   if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
   const task = state.tasks[id];
+  assertOpen(task);
   const status = await inspectTask(root, state, task);
   if (status.status === 'accepted') throw tinyError('TASK_ALREADY_ACCEPTED', `task ${id} is already accepted`);
   if (status.status !== 'ready') {
@@ -506,6 +616,100 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
 
 export const resolvePacket = resolveTaskPacket;
 
+// The semantic gate judges, the controller decides. It runs outside
+// mutateState so the Jev HTTP call never holds the controller lock, and it
+// only constrains an accepted verdict: enforce can block it, shadow never
+// does, and a judge failure falls back to exactly the mode-off behavior.
+async function semanticGateDecision(root, { taskId, verdict, evidenceContent, judge }) {
+  if (verdict !== 'accepted') return null;
+  let resolved;
+  try {
+    resolved = await resolveConfig(root);
+  } catch {
+    return null;
+  }
+  const gate = resolved.config.semanticGate;
+  if (!gate || gate.mode === 'off') return null;
+  let task;
+  try {
+    const info = await layout(root, { create: false });
+    const state = await readState(info);
+    task = Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
+  } catch {
+    return null;
+  }
+  // A retired task is refused by reviewTask; don't spend a judge call on it.
+  if (!task || !task.approval || task.closure) return null;
+  let briefText;
+  try {
+    briefText = await readProjectFile(root, task.brief, taskBriefOptions());
+  } catch {
+    return null;
+  }
+  const artifactDigests = { briefDigest: sha256(briefText), evidenceDigest: sha256(evidenceContent) };
+  const criteria = extractAcceptanceCriteria(briefText);
+  const checks = extractEvidenceChecks(evidenceContent);
+  const timestamp = nowIso();
+  const baseRecord = { taskId, mode: gate.mode, model: gate.model, artifactDigests };
+  const shortCircuit = criteria.length === 0 ? 'brief has no C-prefixed acceptance criteria' : !checks.present ? 'evidence has no ## Checks section' : null;
+  if (shortCircuit !== null) {
+    // Warn-only boundary: confirm, never block, no judge call.
+    await appendDecisionRecords(root, taskId, [buildDecisionRecord({
+      timestamp,
+      ...baseRecord,
+      band: 'confirm',
+      policyAction: gate.mode === 'shadow' ? 'ignored-shadow' : 'confirm',
+      reason: shortCircuit,
+    })]);
+    if (gate.mode !== 'enforce') return { mode: gate.mode, action: 'confirm' };
+    return { mode: gate.mode, action: 'confirm', reviewField: { mode: gate.mode, action: 'confirm', evaluatedAt: timestamp, warnings: [shortCircuit] } };
+  }
+  let judged;
+  try {
+    judged = await judgeEvidenceSufficiency({ taskId, criteria, checks: checks.checks, endpoint: gate.endpoint, model: gate.model, judge });
+  } catch (error) {
+    if (!(error instanceof TinySDDError) || error.code !== 'JEV_UNAVAILABLE') throw error;
+    // Judge down: behave exactly as mode off plus an unavailable record.
+    await appendDecisionRecords(root, taskId, [buildDecisionRecord({
+      timestamp,
+      ...baseRecord,
+      policyAction: JUDGE_UNAVAILABLE_ACTION,
+      reason: error.details?.reason ?? error.code,
+    })]);
+    return null;
+  }
+  const evaluated = criteria.map((criterion) => {
+    const noul = judged.answers[criterion.id];
+    return { id: criterion.id, text: criterion.text, noul, band: computeBand(noul, gate.thresholds) };
+  });
+  const { action } = aggregateGateOutcome({ evaluated, mode: gate.mode });
+  await appendDecisionRecords(root, taskId, evaluated.map((item) => buildDecisionRecord({
+    timestamp,
+    ...baseRecord,
+    modelVersion: judged.modelVersion,
+    questionId: item.id,
+    criterionDigest: sha256(item.text),
+    noul: item.noul,
+    band: item.band,
+    // Per-criterion action in enforce; shadow collapses every line to ignored-shadow.
+    policyAction: gate.mode === 'shadow' ? SHADOW_POLICY_ACTION : item.band,
+  })));
+  if (action === 'block') return { mode: gate.mode, action, evaluated, thresholds: gate.thresholds };
+  if (gate.mode === 'enforce' && action === 'confirm') {
+    return {
+      mode: gate.mode,
+      action,
+      reviewField: {
+        mode: gate.mode,
+        action,
+        evaluatedAt: timestamp,
+        warnings: evaluated.filter((item) => item.band !== 'allow').map((item) => `criterion ${item.id} noul ${item.noul} is below the accept threshold ${gate.thresholds.accept}`),
+      },
+    };
+  }
+  return { mode: gate.mode, action };
+}
+
 export async function reviewTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const verdict = options.verdict;
@@ -513,10 +717,20 @@ export async function reviewTask(projectRoot, options = {}) {
   const by = requireText(options.by, 'review by');
   const evidence = normalizeReviewEvidence(requireText(options.evidence, 'evidence'), 'evidence');
   const root = await canonicalProjectRoot(projectRoot);
-  await readProjectFile(root, evidence, reviewEvidenceOptions());
+  const gateEvidence = await readProjectFile(root, evidence, reviewEvidenceOptions());
+  const gate = await semanticGateDecision(root, { taskId: id, verdict, evidenceContent: gateEvidence, judge: options.judge });
+  if (gate !== null && gate.mode === 'enforce' && gate.action === 'block') {
+    const blocked = gate.evaluated.filter((item) => item.band === 'block');
+    throw tinyError('SEMANTIC_GATE_REJECTED', `semantic gate rejected the accepted verdict: ${blocked.map((item) => `${item.id} noul ${item.noul} < reject threshold ${gate.thresholds.reject}`).join(', ')}`, {
+      mode: gate.mode,
+      thresholds: gate.thresholds,
+      criteria: blocked.map((item) => ({ id: item.id, noul: item.noul, band: item.band })),
+    });
+  }
   return mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
+    assertOpen(task);
     const status = await inspectTask(root, state, task);
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     if (!task.approval || !status.approvalFresh) throw tinyError('APPROVAL_STALE', `task ${id} does not have a current approval`);
@@ -534,6 +748,7 @@ export async function reviewTask(projectRoot, options = {}) {
       approvalDigest: task.approval.approvalDigest,
       allowedDigest: digestJson(allowedSnapshot),
     };
+    if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
     if (verdict === 'accepted') review.acceptanceDigest = digestJson({ ...review, taskId: id });
     task.review = review;
     return { task: publicTask(task, await inspectTask(root, state, task)) };
@@ -551,7 +766,7 @@ export async function controllerStatus(projectRoot) {
 
 export async function controllerNext(projectRoot) {
   const result = await controllerStatus(projectRoot);
-  const candidate = result.tasks.find((task) => task.status !== 'accepted');
+  const candidate = result.tasks.find((task) => !SETTLED_STATUSES.includes(task.status));
   if (!candidate) return { ...result, next: null };
   const action = candidate.status === 'ready' ? 'ready' : candidate.status;
   return { ...result, next: { action, taskId: candidate.id } };
@@ -588,6 +803,7 @@ export async function dispatchWorker(projectRoot, options = {}) {
     profile: resolved.profile,
     baseRunId: options.baseRunId,
     baselineRunId: options.baselineRunId,
+    signal: options.signal,
   });
 }
 
@@ -596,6 +812,8 @@ export function createController(projectRoot) {
     init: (options) => initProject(projectRoot, options),
     addTask: (options) => addTask(projectRoot, options),
     approveTask: (options) => approveTask(projectRoot, options),
+    closeTask: (options) => closeTask(projectRoot, options),
+    supersedeTask: (options) => supersedeTask(projectRoot, options),
     reviewTask: (options) => reviewTask(projectRoot, options),
     status: () => controllerStatus(projectRoot),
     next: () => controllerNext(projectRoot),

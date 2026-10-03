@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "deepseek-v4-flash-lowthinking-v1",
+  "runtime": {
+    "thinking": "low",
+    "reasoning": true
+  },
+  "instructions": "Use the task's exact source interfaces. Report missing facts and unrun checks explicitly. Do not modify files outside the allowed set.",
+  "evidence": [
+    "Prepared 2026-09-22 for the Jev gate implementation task (worker model per operator instruction: opencode-go/deepseek-v4-flash).",
+    "Live dispatch 2026-09-22, launch-731746c7: medium thinking observed live (rawReasoning true, 15.8K reasoning tokens) but two runs ended outcome=output_limit ~311s — deepseek-v4-flash has a 16.4K per-response output cap and medium thinking exhausts it before tool output. Thinking lowered to low as a measured correction; verify low thinking streams on next dispatch."
+  ],
+  "limitations": [
+    "Direct model ID opencode-go/deepseek-v4-flash; no fallback alias, so fallback cannot contaminate results.",
+    "Two recorded output_limit runs under medium thinking: .tinysdd/runs/worker-2026-09-22T16-55-49* (timeout 300s, reading) and .tinysdd/runs/worker-2026-09-22T17-02-44* (output_limit, 6 turns, 0 writes)."
+  ]
+}

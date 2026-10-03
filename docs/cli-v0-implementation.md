@@ -22,7 +22,8 @@ No worker bash or arbitrary extensions in this initial adapter. MCP is deferred.
 Each named worker: `type:"pi"`, exact `provider`, exact `model`, optional
 `profile` (project-relative JSON path), `skills` (project-relative SKILL.md
 paths), `instructions` (project-relative text paths), `limits` with timeoutMs
-(default300000, max900000), maxToolCalls(default40,max100).
+(default300000, max900000; later raised to 3600000, now a single constant in
+src/config.mjs), maxToolCalls(default40,max100).
 No credentials or endpoint configuration in this schema; Pi supplies connection
 data. No guessed aliases or fallback. Unknown adapter types fail explicitly.
 
@@ -32,7 +33,8 @@ null and unknown keys are errors. All effective workers are validated. Explicit
 `--worker` selects a name; it does not rewrite config. Profiles contain
 schemaVersion1, id, optional instructions string, optional runtime object with
 thinking (`off|minimal|low|medium|high`), reasoning boolean and compat object
-(only thinkingFormat and supportsDeveloperRole allowed). Descriptive evidence
+(initially only thinkingFormat and supportsDeveloperRole; thinkingTokenBudgetField
+and runtime.thinkingBudgets were added later). Descriptive evidence
 and limitations arrays of strings are optional. Profile is guidance/settings,
 never permission or a replacement for repository instructions.
 
@@ -87,7 +89,8 @@ is Linux-only for worker execution; controller is portable Node.
 
 The adapter API accepts `{projectRoot, packet, worker, profile}` and returns a
 schemaVersion1 result envelope: runId, taskId, outcome
-(`completed|failed|timeout|tool_limit|output_limit`), model identity, observed
+(`completed|failed|timeout|tool_limit|output_limit`; `output_limit` was later split
+into `raw_output_limit` and `response_token_limit`, and `no_progress` added), model identity, observed
 process/assistant termination, changed paths, scope violations, artifact paths,
 and separately labeled model claims. It never records acceptance or invokes
 checks under inference credentials. Preserve raw events locally; warn they can

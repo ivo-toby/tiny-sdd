@@ -50,6 +50,12 @@ tinysdd task add --id publish-job \
 The manifest, its source paths, and the exact line ranges should be reviewed as
 part of task approval. It is not a place to smuggle extra scope into a task.
 
+`task add` compiles the manifest immediately, so an unknown key, a missing file,
+an out-of-range line or an over-budget packet fails registration instead of
+surfacing first at approval. `task add` and `task approve` also return an
+advisory `sizing` report (allowed-file count, compiled-context bytes, cited test
+lines) with warnings above provisional thresholds; the warnings never block.
+
 ## Guarantees and limits
 
 - The manifest schema is strict: only `schemaVersion`, `facts`, and `resources`
