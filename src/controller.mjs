@@ -758,6 +758,30 @@ async function loadRunResult(root, runId) {
   return assertPlainObject(read.value, 'RUN_MALFORMED', `run ${runId} result`);
 }
 
+async function assertFinalRunApproval(root, task, finalRun) {
+  const file = await runArtifactPath(root, finalRun.id, ['packet.json'], { code: 'RUN_MALFORMED' });
+  const read = await readJsonFile(file, { code: 'RUN_MALFORMED' });
+  if (!read) throw tinyError('RUN_MALFORMED', `run ${finalRun.id} has no packet.json`, { runId: finalRun.id });
+  const packet = assertPlainObject(read.value, 'RUN_MALFORMED', `run ${finalRun.id} packet`);
+  const runApproval = packet.approval;
+  const runApprovalDigest = runApproval && typeof runApproval === 'object' && !Array.isArray(runApproval)
+    ? runApproval.approvalDigest
+    : undefined;
+  const currentApprovalDigest = task.approval?.approvalDigest;
+  const isDigest = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  if (!isDigest(runApprovalDigest) || !isDigest(currentApprovalDigest) || runApprovalDigest !== currentApprovalDigest) {
+    throw tinyError(
+      'RUN_APPROVAL_MISMATCH',
+      `run ${finalRun.id} approval digest ${runApprovalDigest ?? '(missing)'} does not match current task ${task.id} approval digest ${currentApprovalDigest ?? '(missing)'}; dispatch a fresh run before applying`,
+      {
+        runId: finalRun.id,
+        runApprovalDigest: runApprovalDigest ?? null,
+        currentApprovalDigest: currentApprovalDigest ?? null,
+      },
+    );
+  }
+}
+
 // Follows result.baseRun.id parents the way the worker does when it builds a
 // revision. Returns the runs earliest first: the root's workspace-before is the
 // project state the lineage started from, the last run's workspace-after is the
@@ -837,6 +861,7 @@ export async function applyTask(projectRoot, options = {}) {
     const lineage = await loadApplyLineage(root, task, runId);
     const rootRun = lineage[0];
     const finalRun = lineage[lineage.length - 1];
+    await assertFinalRunApproval(root, task, finalRun);
     await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
     await runArtifactPath(root, finalRun.id, ['workspace-after'], { requireDirectory: true });
 

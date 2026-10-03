@@ -317,6 +317,7 @@ the approval they were dispatched under would go stale. The run is recorded
 under `applied` in `status --json`, and an accepting review adds `appliedFromRun`,
 with `identical: false` when any allowed file differs from what apply left, not
 only the files the run changed. Applying is not verification or acceptance.
+It also refuses with `RUN_APPROVAL_MISMATCH` when the final run packet was dispatched under a different approval digest; dispatch a fresh run after re-approval.
 
 After an apply the approval keeps binding the context the worker started from:
 the cited lines of a file apply wrote are read from the first run's starting copy,

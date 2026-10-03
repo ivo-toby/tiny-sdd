@@ -168,6 +168,7 @@ manifest (possible when they are in `--allow`), since that would leave the appro
 it was dispatched under stale. The record shows under `applied` in `status --json`; an
 accepting review adds `appliedFromRun` with `identical: false` if any allowed
 file differs from what apply left. Apply is neither verification nor acceptance.
+It also refuses with `RUN_APPROVAL_MISMATCH` when the final run packet was dispatched under a different approval digest; dispatch a fresh run after re-approval.
 
 After an apply the approval keeps binding the context the worker started from
 (the cited lines of a file apply wrote are read from the first run's starting
