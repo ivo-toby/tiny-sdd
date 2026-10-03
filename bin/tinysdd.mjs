@@ -35,8 +35,9 @@ const HELP = `TinySDD ${VERSION}
 Usage:
   tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID]
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
-  tinysdd [--json] [--project PATH] status|next
-  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--depends-on ID[,ID]]
+  tinysdd [--json] [--project PATH] status [--feature NAME]
+  tinysdd [--json] [--project PATH] next
+  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME]
   tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
@@ -144,7 +145,7 @@ function parseCommand(args) {
   if (command === 'task') {
     if (!['add', 'update', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, update, approve, packet, apply, review, close, or supersede');
     const allowedByCommand = {
-      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list']]),
+      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list'], ['feature', 'value']]),
       update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['depends-on', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
@@ -171,7 +172,12 @@ function parseCommand(args) {
     if (subcommand === 'stop') values['wait-ms'] = parseWaitMs(values['wait-ms']);
     return { command, subcommand, values };
   }
-  if (command === 'status' || command === 'next') {
+  if (command === 'status') {
+    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['feature', 'value']]));
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, values };
+  }
+  if (command === 'next') {
     if (subcommand !== undefined) throw cliError(`unexpected argument: ${subcommand}`);
     return { command, values: {} };
   }
@@ -391,7 +397,10 @@ async function run(argv) {
   else if (parsed.command === 'config') data = parsed.subcommand === 'show'
     ? await configShow(project, { worker: parsed.values.worker })
     : await configValidate(project, { worker: parsed.values.worker });
-  else if (parsed.command === 'status') data = await controllerStatus(project);
+  else if (parsed.command === 'status') {
+    data = await controllerStatus(project, { feature: parsed.values.feature });
+    return { ok: true, data, presentation: 'status' };
+  }
   else if (parsed.command === 'next') data = await controllerNext(project);
   else if (parsed.command === 'task' && parsed.subcommand === 'add') data = await addTask(project, {
     id: parsed.values.id,
@@ -401,6 +410,7 @@ async function run(argv) {
     dependsOn: parsed.values['depends-on'],
     allow: parsed.values.allow,
     protect: parsed.values.protect,
+    feature: parsed.values.feature,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'update') data = await updateTask(project, {
     id: parsed.values.id,
@@ -477,6 +487,50 @@ function describeTask(task) {
   return task.status ?? 'registered';
 }
 
+function describeStatusTask(task) {
+  let description = `${task.id}  ${describeTask(task)}`;
+  if (task.status === 'accepted' && task.applied) description += ` (applied from ${task.applied.runId})`;
+  if (task.blockedBy?.length) description += ` (requires ${task.blockedBy.join(', ')})`;
+  return description;
+}
+
+function renderStatusTree(data) {
+  const tasks = data.tasks ?? [];
+  if (tasks.length === 0) {
+    process.stdout.write(`${Object.hasOwn(data, 'feature') ? `No tasks in feature ${data.feature}.` : 'No tasks registered.'}\n`);
+    return;
+  }
+  const open = tasks.filter((task) => !task.closure);
+  const openById = new Map(open.map((task) => [task.id, task]));
+  const children = new Map(open.map((task) => [task.id, []]));
+  const roots = [];
+  for (const task of open) {
+    const parent = task.dependsOn
+      .filter((dependency) => openById.has(dependency))
+      .sort((left, right) => openById.get(left).order - openById.get(right).order)[0];
+    if (parent === undefined) roots.push(task);
+    else children.get(parent).push(task);
+  }
+  const byOrder = (left, right) => left.order - right.order;
+  roots.sort(byOrder);
+  for (const childList of children.values()) childList.sort(byOrder);
+  const lines = [];
+  const draw = (task, prefix, connector) => {
+    lines.push(`${prefix}${connector}${describeStatusTask(task)}`);
+    const childPrefix = connector === '' ? prefix : `${prefix}${connector === '└─ ' ? '   ' : '│  '}`;
+    const childList = children.get(task.id);
+    childList.forEach((child, index) => draw(child, childPrefix, index === childList.length - 1 ? '└─ ' : '├─ '));
+  };
+  roots.forEach((task) => draw(task, '', ''));
+  const retired = tasks.filter((task) => task.closure).sort(byOrder);
+  if (retired.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('Closed or superseded:');
+    for (const task of retired) lines.push(`${task.id}: ${describeTask(task)}`);
+  }
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
 function writeRunCheckWarnings(result) {
   const warnings = [
     ...(result.warnings ?? []),
@@ -500,6 +554,10 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'help') {
     process.stdout.write(`${HELP}`);
+    return;
+  }
+  if (result.presentation === 'status') {
+    renderStatusTree(result.data);
     return;
   }
   if (result.ok) {

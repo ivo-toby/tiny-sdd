@@ -82,6 +82,29 @@ identifies its useful contents. Use actual approval attribution, not copied
 example text. Allowed paths are exact files, including not-yet-created files;
 no globs. Dependencies use `--depends-on first-change` on a later task.
 
+Use the optional `--feature NAME` label to group slices of one feature:
+
+```sh
+tinysdd task add --id validation --feature reservations --brief docs/tasks/validation.md --allow src/validation.ts,tests/validation.test.mjs
+tinysdd status --feature reservations
+```
+
+`status` renders open tasks as a dependency tree. Each task also has a global
+topological `order` and sorted `dependents` in `status --json`; filtering by a
+feature keeps those positions global. Accepted tasks show the applied worker
+run, and closed or superseded tasks appear after the tree with their successors:
+
+```text
+broker-s1  accepted (applied from worker-…)
+├─ broker-s2  ready
+│  ├─ broker-s4  blocked (requires broker-s2)
+│  └─ broker-s5  blocked (requires broker-s2, broker-s3, broker-s4)
+└─ broker-s3  pending_approval
+
+Closed or superseded:
+broker-contract: superseded by broker-s1, broker-s2
+```
+
 You can implement the packet in your current agent without invoking a worker.
 The controller never changes the model in that outer agent.
 

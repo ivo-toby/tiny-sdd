@@ -927,6 +927,111 @@ test('controller state validates the closure shape and still accepts tasks witho
   }
 });
 
+test('status exposes a stable global slice DAG and renders applied runs', async () => {
+  const root = await project();
+  try {
+    await addOpenTask(root, 'broker-s1', { feature: 'broker' });
+    await approveTask(root, { id: 'broker-s1', by: 'operator', reason: 'scope' });
+    await reviewTask(root, { id: 'broker-s1', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    await addApprovedTask(root, 'broker-s2', { feature: 'broker', dependsOn: ['broker-s1'] });
+    await addOpenTask(root, 'broker-s3', { feature: 'broker', dependsOn: ['broker-s1'] });
+    await addOpenTask(root, 'broker-s4', { feature: 'broker', dependsOn: ['broker-s2'] });
+    await addOpenTask(root, 'broker-s5', { feature: 'broker', dependsOn: ['broker-s2', 'broker-s3', 'broker-s4'] });
+    const state = await rawState(root);
+    state.tasks['broker-s1'].applied = {
+      runId: 'worker-2026-09-01T10-00-00-000Z-11111111',
+      rootRunId: 'worker-2026-09-01T10-00-00-000Z-11111111',
+      by: 'operator',
+      appliedAt: '2026-09-01T10:00:00.000Z',
+      files: [{ path: 'src/broker-s1.ts', change: 'created', status: 'written', sha256: '0'.repeat(64) }],
+    };
+    await writeState(root, state);
+    const status = await controllerStatus(root);
+    assert.deepEqual(Object.fromEntries(status.tasks.map((task) => [task.id, task.order])), {
+      'broker-s1': 1,
+      'broker-s2': 2,
+      'broker-s3': 3,
+      'broker-s4': 4,
+      'broker-s5': 5,
+    });
+    assert.deepEqual(Object.fromEntries(status.tasks.map((task) => [task.id, task.dependents])), {
+      'broker-s1': ['broker-s2', 'broker-s3'],
+      'broker-s2': ['broker-s4', 'broker-s5'],
+      'broker-s3': ['broker-s5'],
+      'broker-s4': ['broker-s5'],
+      'broker-s5': [],
+    });
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    const cli = (...args) => exec(process.execPath, [bin, '--project', root, ...args]);
+    const human = await cli('status');
+    assert.equal(human.stdout, [
+      'broker-s1  accepted (applied from worker-2026-09-01T10-00-00-000Z-11111111)',
+      '├─ broker-s2  ready',
+      '│  ├─ broker-s4  blocked (requires broker-s2)',
+      '│  └─ broker-s5  blocked (requires broker-s2, broker-s3, broker-s4)',
+      '└─ broker-s3  pending_approval',
+      '',
+    ].join('\n'));
+    const json = JSON.parse((await cli('--json', 'status')).stdout);
+    assert.equal(json.data.tasks.find((task) => task.id === 'broker-s1').applied.runId, 'worker-2026-09-01T10-00-00-000Z-11111111');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('status uses lexical tie-breaks and feature filters preserve global order', async () => {
+  const root = await project();
+  try {
+    await addOpenTask(root, 'b-root', { feature: 'other' });
+    await addOpenTask(root, 'a-root', { feature: 'broker' });
+    const status = await controllerStatus(root, { feature: 'broker' });
+    assert.equal(status.feature, 'broker');
+    assert.deepEqual(status.tasks.map((task) => ({ id: task.id, order: task.order })), [{ id: 'a-root', order: 1 }]);
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    const cli = (...args) => exec(process.execPath, [bin, '--project', root, ...args]);
+    assert.equal((await cli('status', '--feature', 'broker')).stdout, 'a-root  pending_approval\n');
+    const json = JSON.parse((await cli('--json', 'status', '--feature', 'broker')).stdout);
+    assert.equal(json.data.feature, 'broker');
+    assert.deepEqual(json.data.tasks.map((task) => task.id), ['a-root']);
+    assert.equal((await cli('status', '--feature', 'missing')).stdout, 'No tasks in feature missing.\n');
+    const invalid = await cli('status', '--feature', 'Bad Name').catch((error) => error);
+    assert.equal(invalid.code, 1);
+    assert.match(invalid.stderr, /^ERROR \[INVALID_FEATURE\]/u);
+    const missing = await cli('status', '--feature').catch((error) => error);
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /^ERROR \[INVALID_ARGUMENT\] --feature requires a value$/mu);
+    const next = await cli('next', '--feature', 'broker').catch((error) => error);
+    assert.equal(next.code, 1);
+    assert.match(next.stderr, /^ERROR \[INVALID_ARGUMENT\] unexpected argument: --feature$/mu);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('feature labels are optional, validate state, and do not stale approval', async () => {
+  const root = await project();
+  try {
+    await addOpenTask(root, 'one');
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'scope' });
+    const before = await controllerStatus(root);
+    assert.equal(Object.hasOwn(before.tasks[0], 'feature'), false);
+    assert.equal(before.tasks[0].order, 1);
+    assert.deepEqual(before.tasks[0].dependents, []);
+    const state = await rawState(root);
+    state.tasks.one.feature = 'broker';
+    await writeState(root, state);
+    const relabeled = await controllerStatus(root);
+    assert.equal(relabeled.tasks[0].feature, 'broker');
+    assert.equal(relabeled.tasks[0].status, 'ready');
+    state.tasks.one.feature = 'Bad Name';
+    await writeState(root, state);
+    await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED' });
+    await assert.rejects(addTask(root, { id: 'bad-feature', brief: 'docs/brief.md', allow: ['src/bad.ts'], feature: 'Bad Name' }), { code: 'INVALID_FEATURE' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('CLI supersede returns the closure as JSON and status prints how the task ended', async () => {
   const root = await project();
   try {
@@ -947,7 +1052,9 @@ test('CLI supersede returns the closure as JSON and status prints how the task e
     assert.deepEqual(closure, { kind: 'superseded', by: 'operator', reason: 're-cut into slices', supersededBy: ['broker-s1', 'broker-s2'] });
     const status = await cli('status');
     assert.match(status.stdout, /^broker-contract: superseded by broker-s1, broker-s2$/mu);
-    assert.match(status.stdout, /^broker-s1: pending_approval$/mu);
+    assert.match(status.stdout, /^broker-s1  pending_approval$/mu);
+    assert.match(status.stdout, /^Closed or superseded:$/mu);
+    assert.match(status.stdout, /^broker-contract: superseded by broker-s1, broker-s2$/mu);
     const next = await cli('next');
     assert.match(next.stdout, /^broker-contract: superseded by broker-s1, broker-s2$/mu);
     assert.match(next.stdout, /^Next: broker-s1 — pending_approval$/mu);

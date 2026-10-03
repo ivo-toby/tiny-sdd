@@ -224,6 +224,13 @@ function validateTaskId(value) {
   return value;
 }
 
+function validateFeature(value) {
+  if (typeof value !== 'string' || value.trim().length === 0 || !TASK_ID_PATTERN.test(value)) {
+    throw tinyError('INVALID_FEATURE', 'feature must use lowercase letters, digits, hyphens, or underscores');
+  }
+  return value;
+}
+
 function parseIds(value, label = 'depends-on') {
   if (value === undefined || value === '') return [];
   if (!Array.isArray(value) && typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', `${label} must be a string or array of strings`);
@@ -341,6 +348,13 @@ function validateTaskShape(id, task) {
   if (typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string') || (task.checks !== undefined && typeof task.checks !== 'string')) {
     throw tinyError('STATE_MALFORMED', `task ${id} has invalid shape fields`);
   }
+  if (task.feature !== undefined) {
+    try {
+      validateFeature(task.feature);
+    } catch {
+      throw tinyError('STATE_MALFORMED', `task ${id} has an invalid feature`);
+    }
+  }
   try {
     if (task.protect !== undefined && (!Array.isArray(task.protect) || task.protect.length === 0)) throw new Error('protect must be nonempty');
     normalizeTaskShape(task);
@@ -383,6 +397,35 @@ function validateState(value) {
     if (task.applied !== undefined) validateApplied(id, task.applied);
   }
   return value;
+}
+
+export function topologicalOrder(tasks) {
+  const ids = Object.keys(tasks);
+  const indegree = new Map(ids.map((id) => [id, 0]));
+  const dependents = new Map(ids.map((id) => [id, []]));
+  for (const [id, task] of Object.entries(tasks)) {
+    for (const dependency of task.dependsOn) {
+      if (!indegree.has(dependency)) throw tinyError('STATE_MALFORMED', `missing dependency task: ${dependency}`);
+      indegree.set(id, indegree.get(id) + 1);
+      dependents.get(dependency).push(id);
+    }
+  }
+  const ready = ids.filter((id) => indegree.get(id) === 0).sort();
+  const order = [];
+  while (ready.length > 0) {
+    const id = ready.shift();
+    order.push(id);
+    for (const dependent of dependents.get(id)) {
+      const remaining = indegree.get(dependent) - 1;
+      indegree.set(dependent, remaining);
+      if (remaining === 0) {
+        ready.push(dependent);
+        ready.sort();
+      }
+    }
+  }
+  if (order.length !== ids.length) throw tinyError('STATE_MALFORMED', 'controller task graph contains a dependency cycle');
+  return order;
 }
 
 async function readState(layoutInfo) {
@@ -526,6 +569,7 @@ function assertDependenciesExist(state, id, dependencies) {
 function publicTask(task, stateInfo) {
   return {
     id: task.id,
+    ...(task.feature ? { feature: task.feature } : {}),
     brief: task.brief,
     ...(task.context ? { context: task.context } : {}),
     ...(task.checks ? { checks: task.checks } : {}),
@@ -600,6 +644,7 @@ export async function initProject(projectRoot, options = {}) {
 
 export async function addTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
+  const feature = options.feature === undefined ? undefined : validateFeature(options.feature);
   const { brief, context, checks, dependsOn, allow, protect } = normalizeTaskShape(options);
   const root = await canonicalProjectRoot(projectRoot);
   const compiled = await validateTaskInputs(root, { brief, context, checks, allow, protect });
@@ -609,6 +654,7 @@ export async function addTask(projectRoot, options = {}) {
     const timestamp = nowIso();
     state.tasks[id] = {
       id,
+      ...(feature === undefined ? {} : { feature }),
       brief,
       ...(context === undefined ? {} : { context }),
       ...(checks === undefined ? {} : { checks }),
@@ -619,7 +665,7 @@ export async function addTask(projectRoot, options = {}) {
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}) }, sizing: taskSizing(allow, compiled) };
+    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}) }, sizing: taskSizing(allow, compiled) };
   });
 }
 
@@ -1209,13 +1255,32 @@ export async function reviewTask(projectRoot, options = {}) {
   });
 }
 
-export async function controllerStatus(projectRoot) {
+export async function controllerStatus(projectRoot, { feature } = {}) {
+  const selectedFeature = feature === undefined ? undefined : validateFeature(feature);
   const root = await canonicalProjectRoot(projectRoot);
   const info = await layout(root, { create: false });
   const state = await readState(info);
   const tasks = [];
   for (const task of Object.values(state.tasks)) tasks.push(publicTask(task, await inspectTask(root, state, task)));
-  return { schemaVersion: 1, tasks };
+  const order = topologicalOrder(state.tasks);
+  const orderById = new Map(order.map((id, index) => [id, index + 1]));
+  const dependentsById = new Map(order.map((id) => [id, []]));
+  for (const task of Object.values(state.tasks)) {
+    if (task.closure) continue;
+    for (const dependency of task.dependsOn) {
+      if (dependentsById.has(dependency)) dependentsById.get(dependency).push(task.id);
+    }
+  }
+  const enriched = tasks.map((task) => ({
+    ...task,
+    order: orderById.get(task.id),
+    dependents: [...dependentsById.get(task.id)].sort(),
+  }));
+  return {
+    schemaVersion: 1,
+    ...(selectedFeature === undefined ? {} : { feature: selectedFeature }),
+    tasks: selectedFeature === undefined ? enriched : enriched.filter((task) => task.feature === selectedFeature),
+  };
 }
 
 export async function controllerNext(projectRoot) {
@@ -1271,7 +1336,7 @@ export function createController(projectRoot) {
     closeTask: (options) => closeTask(projectRoot, options),
     supersedeTask: (options) => supersedeTask(projectRoot, options),
     reviewTask: (options) => reviewTask(projectRoot, options),
-    status: () => controllerStatus(projectRoot),
+    status: (options) => controllerStatus(projectRoot, options),
     next: () => controllerNext(projectRoot),
     packet: (taskId) => resolveTaskPacket(projectRoot, taskId),
     config: (options) => resolveConfig(projectRoot, options),

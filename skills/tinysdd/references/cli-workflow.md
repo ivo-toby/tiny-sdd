@@ -18,6 +18,21 @@ Attribution and reason must reflect actual authority, not the example text.
 For dependent tasks use `--depends-on validation`. State and review artifacts
 live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
+Use the optional `--feature NAME` label to group slices, then filter the view
+with `status --feature NAME`. Human `status` draws open tasks as a dependency
+tree; `status --json` includes each task's global topological `order` and sorted
+non-retired `dependents`, so filtering does not renumber the graph. Accepted
+tasks include their applied worker run, while closed and superseded tasks are
+listed after the tree with their successors:
+
+```text
+broker-s1  accepted (applied from worker-…)
+├─ broker-s2  ready
+│  ├─ broker-s4  blocked (requires broker-s2)
+│  └─ broker-s5  blocked (requires broker-s2, broker-s3, broker-s4)
+└─ broker-s3  pending_approval
+```
+
 A task may cite exact source lines with `--context MANIFEST`, a JSON file under
 `.tinysdd/tasks/` (format in `docs/context-compiler.md` of the TinySDD repository).
 Approval binds the cited lines, not the whole file, so slices that cite one shared
