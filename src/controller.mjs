@@ -87,19 +87,30 @@ async function compileTaskContext(projectRoot, path, options) {
 }
 
 // The approval bound the context the worker started from, but an apply moves the
-// allowed files to the candidate. While one is recorded, cited allowed files are
-// read from the lineage root's workspace-before: applying neither stales the
-// approval nor re-approves the new source, and a missing run fails closed (stale).
-function compileApprovedContext(root, task) {
-  if (!task.applied) return compileTaskContext(root, task.context);
-  const allowed = new Set(task.allow);
+// files it writes to the candidate. Only those paths are displaced: while the
+// apply is recorded they are read from the lineage root's workspace-before, which
+// is what the project held there (the drift check requires it). Every other cited
+// file, including allowed files the lineage never changed and already-applied
+// paths, is read from the project, so the approval keeps binding its current text.
+// A missing run artifact fails closed (stale).
+function pinnedPaths(entries) {
+  return new Set(entries.filter((entry) => entry.status === 'written').map((entry) => entry.path));
+}
+
+function compilePinnedContext(root, task, rootRunId, pinned) {
+  if (pinned.size === 0) return compileTaskContext(root, task.context);
   const readSource = async (path) => {
-    if (!allowed.has(path)) return readProjectFile(root, path);
-    const start = await readRunFile(root, task.applied.rootRunId, 'workspace-before', path);
-    if (start === null) throw tinyError('RUN_NOT_FOUND', `run ${task.applied.rootRunId} no longer holds ${path}`, { runId: task.applied.rootRunId });
+    if (!pinned.has(path)) return readProjectFile(root, path);
+    const start = await readRunFile(root, rootRunId, 'workspace-before', path);
+    if (start === null) throw tinyError('RUN_NOT_FOUND', `run ${rootRunId} no longer holds ${path}`, { runId: rootRunId });
     return start.bytes.toString('utf8');
   };
   return compileTaskContext(root, task.context, { readSource });
+}
+
+function compileApprovedContext(root, task) {
+  if (!task.applied) return compileTaskContext(root, task.context);
+  return compilePinnedContext(root, task, task.applied.rootRunId, pinnedPaths(task.applied.files));
 }
 
 // Provisional advisory thresholds from one observed failure (talon
@@ -746,6 +757,14 @@ export async function applyTask(projectRoot, options = {}) {
       throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
     }
 
+    // Compile the context as inspectTask will read it once this apply is recorded,
+    // and refuse now if that would leave the approval stale.
+    if (task.context) {
+      const after = await compilePinnedContext(root, task, rootRun.id, pinnedPaths(plan)).catch(() => undefined);
+      if (!after || !contextDigestMatches(task.approval.contextDigest ?? null, after.sha256, after.legacySha256)) {
+        throw tinyError('APPLY_WOULD_STALE', `applying run ${finalRun.id} would leave task ${id} with a stale approval; nothing was written`, { runId: finalRun.id, rootRunId: rootRun.id });
+      }
+    }
     // The digest below reads every allowed file; refuse an unreadable or
     // symlinked one now rather than after the writes.
     await snapshotProjectFiles(root, task.allow);

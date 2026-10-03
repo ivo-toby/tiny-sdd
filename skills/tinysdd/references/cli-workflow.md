@@ -118,13 +118,17 @@ accepting review adds `appliedFromRun` with `identical: false` if any allowed
 file differs from what apply left. Apply is neither verification nor acceptance.
 
 After an apply the approval keeps binding the context the worker started from
-(cited lines of an allowed file are read from the first run's starting copy), so
-applying does not stale it and nothing re-approves the new source; if that run's
-directory is deleted the approval reads stale. While an apply is recorded,
+(the cited lines of a file apply wrote are read from the first run's starting
+copy), so applying does not stale it and nothing re-approves the new source. Every
+other cited file, including an allowed file the run did not change and an
+already-applied path, is read from the project, so editing it still stales the
+approval. If a written file's run directory is deleted the approval reads stale,
+and an apply that would leave it stale is refused with `APPLY_WOULD_STALE` before
+anything is written. While an apply is recorded,
 `task packet` and `worker run` refuse with `TASK_APPLIED`: record the review
 first. Accepted and blocked reviews keep the record. A `revision` review records
 `appliedFromRun` and clears it, since the next attempt builds on the applied
-project; if the context cites an allowed file whose cited lines changed, the
+project; if the context cites a file apply wrote whose cited lines changed, the
 approval then reads `stale_approval` and must be re-approved explicitly. Do not
 start a `--base-run` revision from an already applied run: the project no longer
 matches the lineage's starting state, so its apply conflicts.

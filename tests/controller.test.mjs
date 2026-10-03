@@ -1566,6 +1566,98 @@ test('a revision review after apply reopens dispatch, after re-approval when the
   }
 });
 
+// Task `one` is approved with a context that cites line 1 of each path in `cite`.
+async function citedProject({ files, allow, cite }) {
+  const root = await project();
+  await writeTree(root, files);
+  await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+  await writeFile(join(root, '.tinysdd', 'tasks', 'one.context.json'), JSON.stringify({
+    schemaVersion: 1,
+    facts: [],
+    resources: cite.map((path) => ({ path, startLine: 1, endLine: 1, purpose: `Rules in ${path}.` })),
+  }));
+  await addApprovedTask(root, 'one', { allow, context: '.tinysdd/tasks/one.context.json' });
+  return root;
+}
+
+test('apply keeps the approved current text of a cited allowed file the lineage never changed', async () => {
+  const root = await citedProject({ files: { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' }, allow: ['src/a.ts', 'src/b.ts'], cite: ['src/b.ts'] });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+    // B changes after the run and the operator approves the task as it now reads.
+    await writeFile(join(root, 'src', 'b.ts'), 'b1\n');
+    await approveTask(root, { id: 'one', by: 'operator', reason: 're-approved after editing b' });
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'written']]);
+    assert.equal(await readProject(root, 'src/b.ts'), 'b1\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an already-applied cited path is not displaced by apply, so the approval keeps its current text', async () => {
+  const root = await citedProject({ files: { 'src/a.ts': 'a1\n' }, allow: ['src/a.ts'], cite: ['src/a.ts'] });
+  try {
+    // The project already holds the candidate (applied by hand) and the task was approved in that state.
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'a0\n' }, after: { 'src/a.ts': 'a1\n' } });
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    const { applied } = await apply(root);
+    assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'already-applied']]);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('after apply only the paths apply wrote are pinned: editing another cited allowed file stales the approval', async () => {
+  const files = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' };
+  const root = await citedProject({ files, allow: ['src/a.ts', 'src/b.ts'], cite: ['src/a.ts', 'src/b.ts'] });
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+    await apply(root);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    // A was written by apply: it is pinned to the run's starting copy, so editing it is review's business.
+    await writeFile(join(root, 'src', 'a.ts'), 'a edited by hand\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    // B was not written: the approval binds its current text.
+    await writeFile(join(root, 'src', 'b.ts'), 'b edited\n');
+    assert.equal(await taskStatus(root, 'one'), 'stale_approval');
+    await assert.rejects(reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPROVAL_STALE' });
+    await writeFile(join(root, 'src', 'b.ts'), 'b0\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses before writing when the recorded pins would leave the approval stale', async () => {
+  // Reachable with real inputs: the first apply pinned A. A second run from the same start is then
+  // hand-applied, so A is already-applied and unpinned and the project text no longer matches the approval.
+  const root = await citedProject({ files: { 'src/a.ts': 'one\n' }, allow: ['src/a.ts'], cite: ['src/a.ts'] });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'one\n' }, after: { 'src/a.ts': 'two\n' } });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'one\n' }, after: { 'src/a.ts': 'three\n' } });
+    await apply(root);
+    await writeFile(join(root, 'src', 'a.ts'), 'three\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await assert.rejects(apply(root, RUN_TWO), { code: 'APPLY_WOULD_STALE', details: { runId: RUN_TWO, rootRunId: RUN_TWO }, message: /task one/u });
+    const task = (await rawState(root)).tasks.one;
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(await readProject(root, 'src/a.ts'), 'three\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('apply removes a deleted file only, and review checks it stays absent', async () => {
   const files = { 'src/a.ts': 'keep\n', 'src/b.ts': 'remove\n' };
   const root = await applyProject(files);

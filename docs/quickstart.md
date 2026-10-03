@@ -250,15 +250,19 @@ under `applied` in `status --json`, and an accepting review adds `appliedFromRun
 with `identical: false` when any allowed file differs from what apply left, not
 only the files the run changed. Applying is not verification or acceptance.
 
-After an apply the approval keeps binding the context the worker started from: a
-cited line of an allowed file is read from the first run's starting copy, so
-applying does not make the approval stale, and nothing re-approves the new source.
-If that run's directory is gone the approval reads stale. While an apply is
+After an apply the approval keeps binding the context the worker started from:
+the cited lines of a file apply wrote are read from the first run's starting copy,
+so applying does not make the approval stale, and nothing re-approves the new
+source. Every other cited file, including an allowed file the run did not change
+and a path that was already applied, is read from the project, so editing it still
+makes the approval stale. If a written file's run directory is gone the approval
+reads stale, and an apply that would leave the approval stale is refused with
+`APPLY_WOULD_STALE` before anything is written. While an apply is
 recorded, `task packet` and `worker run` refuse with `TASK_APPLIED`; record the
 review first. An accepted or blocked review keeps the apply record. A `revision`
 review records `appliedFromRun` and clears the apply record, because the next
-attempt builds on the applied project; if the context cites an allowed file whose
-cited lines changed, the approval then reads `stale_approval` and you re-approve
+attempt builds on the applied project; if the context cites a file apply wrote
+whose cited lines changed, the approval then reads `stale_approval` and you re-approve
 it explicitly. A later run made with `--base-run` of an already applied run
 conflicts, because the project no longer matches the lineage's starting state;
 dispatch the next attempt from the applied project instead.
