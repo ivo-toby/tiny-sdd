@@ -219,6 +219,26 @@ test('rejects malformed persisted report numbers, phases, membership, and refere
       (event) => { event.report.snapshot.runReferences = []; },
       (event) => { event.report.provenance.runReferences[0].result.path = '../../outside'; },
       (event) => { event.report.local.totals.input = 'UNKNOWN'; event.report.local.totals.coverage.input = { observed: 4, expected: 1, complete: true }; },
+      (event) => {
+        for (const section of ['provenance', 'snapshot']) {
+          const reference = event.report[section].runReferences[0];
+          reference.result.runId = 'other';
+          reference.result.path = '.tinysdd/runs/other/result.json';
+        }
+      },
+      (event) => {
+        for (const section of ['provenance', 'snapshot']) {
+          const references = event.report[section].runReferences[0];
+          [references.result, references.stdout] = [references.stdout, references.result];
+        }
+      },
+      (event) => {
+        for (const section of ['provenance', 'snapshot']) event.report[section].runReferences[0].taskId = 'outside';
+      },
+      (event) => { event.report.local.totals.input = 3; event.report.local.totals.coverage.input = { observed: 0, expected: 1, complete: false }; },
+      (event) => { event.report.local.byTask.one.retired = true; },
+      (event) => { event.report.local.runIds = []; },
+      (event) => { event.report.frontier.ledgerRecordIds = ['invented']; },
     ];
     for (const mutate of variants) {
       const event = JSON.parse(pristine.trim());

@@ -109,18 +109,22 @@ function validateMetric(value, label, allowedKeys = METRIC_KEYS) {
     if (item.expected !== null && (!Number.isSafeInteger(item.expected) || item.expected < 0)) eventError(`${label}.coverage.${component}.expected must be a nonnegative safe integer or null`);
     if (typeof item.complete !== 'boolean') eventError(`${label}.coverage.${component}.complete must be boolean`);
     if (item.complete && (metric[component] === USAGE_UNKNOWN || item.expected === null || item.observed !== item.expected)) eventError(`${label}.coverage.${component} cannot be complete without full numeric coverage`);
+    if (Number.isSafeInteger(metric[component]) && (!item.complete || item.expected === null || item.expected === 0 || item.observed !== item.expected)) {
+      eventError(`${label}.${component} cannot be numeric without complete coverage`);
+    }
   }
   boundedArray(metric.missing, `${label}.missing`, FEATURE_EVENTS_MAX_RECORDS).forEach((reason, index) => text(reason, `${label}.missing[${index}]`));
 }
 
-function validateFileReference(value, label) {
+function validateFileReference(value, label, runId, kind) {
   const reference = exactObject(value, FILE_REFERENCE_KEYS, label);
   identifier(reference.runId, `${label}.runId`);
+  if (reference.runId !== runId) eventError(`${label}.runId must match its enclosing run reference`);
   text(reference.path, `${label}.path`, 512);
   if (reference.sha256 !== null && (typeof reference.sha256 !== 'string' || !DIGEST_PATTERN.test(reference.sha256))) eventError(`${label}.sha256 must be a digest or null`);
-  const expectedPath = reference.path.endsWith('/result.json')
-    ? `.tinysdd/runs/${reference.runId}/result.json`
-    : `.tinysdd/runs/${reference.runId}/stdout.jsonl`;
+  const expectedPath = kind === 'result'
+    ? `.tinysdd/runs/${runId}/result.json`
+    : `.tinysdd/runs/${runId}/stdout.jsonl`;
   if (reference.path !== expectedPath) eventError(`${label}.path must remain inside its run directory`);
 }
 
@@ -130,8 +134,8 @@ function validateRunReferences(value, label) {
     const reference = exactObject(raw, RUN_REFERENCE_KEYS, itemLabel);
     identifier(reference.runId, `${itemLabel}.runId`);
     identifier(reference.taskId, `${itemLabel}.taskId`);
-    validateFileReference(reference.result, `${itemLabel}.result`);
-    validateFileReference(reference.stdout, `${itemLabel}.stdout`);
+    validateFileReference(reference.result, `${itemLabel}.result`, reference.runId, 'result');
+    validateFileReference(reference.stdout, `${itemLabel}.stdout`, reference.runId, 'stdout');
     text(reference.outcome, `${itemLabel}.outcome`);
     for (const field of ['baseRunId', 'baselineRunId']) {
       if (reference[field] !== null) identifier(reference[field], `${itemLabel}.${field}`);
@@ -209,6 +213,25 @@ function validateReport(value, feature) {
     validateRunReferences(section.runReferences, `report.${name}.runReferences`);
     validateMissing(section.missing, `report.${name}.missing`);
   }
+  const reportTaskById = new Map(reportTasks.map((task) => [task.taskId, task]));
+  for (const [taskId, task] of Object.entries(byTask)) {
+    if (task.retired !== reportTaskById.get(taskId).retired) eventError(`${taskId} retirement status must match report.tasks`);
+  }
+  const provenanceReferences = report.provenance.runReferences;
+  for (let index = 1; index < provenanceReferences.length; index += 1) {
+    if (provenanceReferences[index - 1].runId.localeCompare(provenanceReferences[index].runId) >= 0) eventError('report.provenance.runReferences must be sorted by run id');
+  }
+  for (const reference of provenanceReferences) {
+    if (!reportTaskById.has(reference.taskId)) eventError(`run reference task ${reference.taskId} is outside report membership`);
+  }
+  const sortedUnique = (values) => [...new Set(values)].sort();
+  const provenanceRunIds = sortedUnique(provenanceReferences.map((reference) => reference.runId));
+  if (stableStringify(local.runIds) !== stableStringify(provenanceRunIds)) eventError('report.local.runIds must match report provenance references');
+  const provenanceRevisionRunIds = sortedUnique(provenanceReferences.filter((reference) => reference.baseRunId !== null).map((reference) => reference.runId));
+  if (stableStringify(local.revisionRunIds) !== stableStringify(provenanceRevisionRunIds)) eventError('report.local.revisionRunIds must match report provenance references');
+  const phaseLedgerRecordIds = sortedUnique(USAGE_PHASES.flatMap((phase) => report.frontier.byPhase[phase].ledgerRecordIds));
+  if (stableStringify(frontier.ledgerRecordIds) !== stableStringify(phaseLedgerRecordIds)) eventError('report.frontier.ledgerRecordIds must match phase records');
+  if (stableStringify(frontier.ledgerRecordIds) !== stableStringify(report.provenance.ledgerRecordIds)) eventError('report.frontier.ledgerRecordIds must match report provenance');
   if (stableStringify(report.snapshot.ledgerRecordIds) !== stableStringify(report.provenance.ledgerRecordIds)
     || stableStringify(report.snapshot.runReferences) !== stableStringify(report.provenance.runReferences)
     || stableStringify(report.snapshot.missing) !== stableStringify(report.provenance.missing)) {
