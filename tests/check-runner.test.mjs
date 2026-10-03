@@ -160,7 +160,8 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(result.timedOut, false);
     assert.equal(result.id, 'c1');
     assert.deepEqual(result.argv, ['node', '--test', 't.test.mjs']);
-    assert.match(result.output.text, /# pass 1/u);
+    // TAP prints "# pass 1"; the spec reporter, Node 26's default, prints "ℹ pass 1".
+    assert.match(result.output.text, /^(?:# |ℹ )pass 1$/mu);
     assert.equal(result.output.truncated, false);
     assert.equal(result.output.storedBytes, result.output.totalBytes);
     assert.equal(result.output.tail, result.output.text);
