@@ -9,6 +9,7 @@ import {
   buildBenchmarkConfigIdentity,
   parseBenchmarkChallenge,
   parseBenchmarkSuite,
+  validateBenchmarkChallenge,
   validateBenchmarkConfigIdentity,
 } from '../src/benchmark-schema.mjs';
 
@@ -123,6 +124,9 @@ test('rejects duplicate ids, unsafe roots, hidden fixture paths, and extra keys'
     fixture: { path: 'fixtures/slice', sha256: digest('a') },
     packet: { ...challenge.packet, allowedPaths: [] },
   })), { code: 'BENCHMARK_SCHEMA_INVALID' });
+  const customPrototype = { ...validChallenge };
+  Object.setPrototypeOf(customPrototype, { inherited: true });
+  assert.throws(() => validateBenchmarkChallenge(customPrototype), { code: 'BENCHMARK_SCHEMA_INVALID' });
 });
 
 test('config identity is canonical and changes when a benchmark condition changes', () => {
@@ -147,6 +151,29 @@ test('config identity is canonical and changes when a benchmark condition change
     const changed = fullConfig();
     change(changed);
     assert.notEqual(buildBenchmarkConfigIdentity(changed).configDigest, base.configDigest);
+  }
+
+  const suiteAlias = fullConfig();
+  delete suiteAlias.suite.contentSha256;
+  suiteAlias.suite.contentDigest = digest('f');
+  assert.notEqual(buildBenchmarkConfigIdentity(suiteAlias).configDigest, base.configDigest);
+  const verifierAlias = fullConfig();
+  delete verifierAlias.verifier.configSha256;
+  verifierAlias.verifier.configDigest = digest('f');
+  assert.notEqual(buildBenchmarkConfigIdentity(verifierAlias).configDigest, base.configDigest);
+  const checkerAlias = fullConfig();
+  delete checkerAlias.verifier.checkRunner.configSha256;
+  checkerAlias.verifier.checkRunner.configDigest = digest('f');
+  assert.notEqual(buildBenchmarkConfigIdentity(checkerAlias).configDigest, base.configDigest);
+  for (const mutate of [
+    (config) => { delete config.suite.contentSha256; config.suite.contentDigest = 'malformed'; },
+    (config) => { delete config.verifier.configSha256; config.verifier.configDigest = 'malformed'; },
+    (config) => { delete config.verifier.checkRunner.configSha256; config.verifier.checkRunner.configDigest = 'malformed'; },
+    (config) => { config.suite.contentDigest = digest('f'); },
+  ]) {
+    const invalid = fullConfig();
+    mutate(invalid);
+    assert.throws(() => buildBenchmarkConfigIdentity(invalid), { code: 'BENCHMARK_CONFIG_INVALID' });
   }
 });
 
@@ -188,6 +215,22 @@ test('config metadata rejects credential-shaped fields', () => {
   const userInfo = fullConfig();
   userInfo.model.server.id = 'https://user:password@example.test';
   assert.throws(() => buildBenchmarkConfigIdentity(userInfo), { code: 'BENCHMARK_CONFIG_INVALID' });
+  const syntheticBearer = fullConfig();
+  syntheticBearer.worker.settings = { note: 'Bearer SYNTHETIC_CREDENTIAL' };
+  assert.throws(() => buildBenchmarkConfigIdentity(syntheticBearer), { code: 'BENCHMARK_CONFIG_INVALID' });
+  const safeSettings = fullConfig();
+  safeSettings.worker.settings = {
+    maxTokens: 4096,
+    nativeEffectiveMaxTokens: 2048,
+    thinkingTokenBudgetField: 'max_tokens',
+  };
+  const safeIdentity = buildBenchmarkConfigIdentity(safeSettings);
+  assert.deepEqual(safeIdentity.identity.worker.settings, safeSettings.worker.settings);
+  safeSettings.worker.settings.maxTokens = 4097;
+  assert.notEqual(buildBenchmarkConfigIdentity(safeSettings).configDigest, safeIdentity.configDigest);
+  const credential = fullConfig();
+  credential.worker.settings = { accessToken: 4096 };
+  assert.throws(() => buildBenchmarkConfigIdentity(credential), { code: 'BENCHMARK_CONFIG_INVALID' });
 });
 
 test('rejects discarded identity fields and missing entries that are not schema fields', () => {

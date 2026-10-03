@@ -224,6 +224,10 @@ function validateCaseBindings(result) {
   if (resultArtifact !== undefined && resultArtifact !== BENCHMARK_UNKNOWN) {
     bindKnown('benchmark case result artifact digest', result.provenance.workerResultSha256, resultArtifact.sha256);
   }
+  const packetArtifact = result.artifacts.packet;
+  if (packetArtifact !== undefined && packetArtifact !== BENCHMARK_UNKNOWN) {
+    bindKnown('benchmark case result packet artifact digest', result.provenance.packetSha256, packetArtifact.sha256);
+  }
 }
 
 function validatePathChanges(value, label, { violations = false } = {}) {
@@ -265,6 +269,13 @@ function validateArtifactMap(value, label) {
   return result;
 }
 
+function validateSandbox(value, label) {
+  if (value === BENCHMARK_UNKNOWN) return value;
+  const sandbox = object(value, label);
+  if (Object.keys(sandbox).length === 0) invalid(`${label} must contain meaningful sandbox metadata`);
+  return safeMetadata(sandbox, label);
+}
+
 function validateVerifierRecord(value, label) {
   const record = object(value, label);
   keys(record, ['checkId', 'definitionSha256', 'status', 'exitCode', 'signal', 'timedOut', 'durationMs', 'output', 'sandbox'], label);
@@ -286,7 +297,7 @@ function validateVerifierRecord(value, label) {
       sha256: digest(output.sha256, `${label}.output.sha256`, { allowUnknown: true }),
       truncated: boolean(output.truncated, `${label}.output.truncated`, { allowUnknown: true }),
     },
-    sandbox: record.sandbox === BENCHMARK_UNKNOWN ? BENCHMARK_UNKNOWN : safeMetadata(record.sandbox, `${label}.sandbox`),
+    sandbox: validateSandbox(record.sandbox, `${label}.sandbox`),
   };
   const unknownExecution = normalized.exitCode === BENCHMARK_UNKNOWN
     && (normalized.signal === BENCHMARK_UNKNOWN || normalized.signal === null)
@@ -465,6 +476,7 @@ export function validateBenchmarkSummary(value) {
   schemaVersion(summary.schemaVersion, BENCHMARK_RESULTS_SCHEMA_VERSION, 'benchmark summary');
   const groups = Array.isArray(summary.groups) ? summary.groups : invalid('benchmark summary.groups must be an array');
   const seen = new Set();
+  const casePaths = new Set();
   const normalizedGroups = groups.map((entry, index) => {
     const label = `benchmark summary.groups[${index}]`;
     const group = object(entry, label);
@@ -478,6 +490,10 @@ export function validateBenchmarkSummary(value) {
     const counts = validateSummaryCounts(group, label);
     const caseResults = validateArtifactRefs(group.caseResults, `${label}.caseResults`, { uniqueByPath: true });
     if (caseResults.length !== counts.scheduled) invalid(`${label}.caseResults must contain one reference per scheduled attempt`);
+    for (const result of caseResults) {
+      if (casePaths.has(result.path)) invalid(`benchmark summary.caseResults contains duplicate path: ${result.path}`);
+      casePaths.add(result.path);
+    }
     return { role, configDigest, ...counts, caseResults };
   });
   const normalized = {

@@ -41,7 +41,10 @@ function schemaInvalid(label, message, details = undefined) {
 
 function assertObject(value, label) {
   try {
-    return assertPlainObject(value, 'BENCHMARK_SCHEMA_INVALID', label);
+    const result = assertPlainObject(value, 'BENCHMARK_SCHEMA_INVALID', label);
+    const prototype = Object.getPrototypeOf(result);
+    if (prototype !== Object.prototype && prototype !== null) schemaInvalid(label, 'must be a plain object');
+    return result;
   } catch (error) {
     if (error?.code === 'BENCHMARK_SCHEMA_INVALID') throw error;
     schemaInvalid(label, error instanceof Error ? error.message : String(error));
@@ -273,7 +276,10 @@ function configKeys(value, allowed, label) {
 
 const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|credential|api[_-]?key|authorization|bearer)/iu;
 const SENSITIVE_VALUE_PATTERN = /(?:^|[?&\s])(?:token|secret|password|credential|api[_-]?key|authorization|bearer)\s*=/iu;
+const BEARER_VALUE_PATTERN = /\bbearer\s+\S+/iu;
 const USERINFO_VALUE_PATTERN = /^[a-z][a-z\d+.-]*:\/\/[^/]*@/iu;
+const SAFE_NUMERIC_SETTING_KEYS = new Set(['maxtokens', 'nativeeffectivemaxtokens']);
+const SAFE_SETTING_KEYS = new Set(['thinkingtokenbudgetfield']);
 const CONFIG_IDENTITY_FIELDS = new Set([
   'model.provider', 'model.id', 'model.quantization', 'model.server.id', 'model.server.version',
   'worker.profileDigest', 'worker.limits.timeoutMs', 'worker.limits.maxToolCalls', 'worker.limits.firstWriteMs', 'worker.settings',
@@ -288,7 +294,7 @@ function assertSafeMetadata(value, label, seen = new Set()) {
   if (value === BENCHMARK_UNKNOWN) return value;
   if (value === null) metadataInvalid(label, 'must not be null');
   if (typeof value === 'string') {
-    if (SENSITIVE_VALUE_PATTERN.test(value) || USERINFO_VALUE_PATTERN.test(value)) metadataInvalid(label, 'must not contain credential material');
+    if (SENSITIVE_VALUE_PATTERN.test(value) || BEARER_VALUE_PATTERN.test(value) || USERINFO_VALUE_PATTERN.test(value)) metadataInvalid(label, 'must not contain credential material');
     return value;
   }
   if (typeof value === 'number') {
@@ -304,13 +310,25 @@ function assertSafeMetadata(value, label, seen = new Set()) {
     return result;
   }
   if (typeof value === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) metadataInvalid(label, 'must contain plain objects');
     if (seen.has(value)) metadataInvalid(label, 'must not contain cycles');
     seen.add(value);
     const result = {};
     for (const [key, entry] of Object.entries(value)) {
       if (key === '__proto__' || key === 'constructor' || key === 'prototype') metadataInvalid(`${label}.${key}`, 'is not allowed');
-      if (SENSITIVE_KEY_PATTERN.test(key)) metadataInvalid(`${label}.${key}`, 'must not contain credential material');
-      result[key] = assertSafeMetadata(entry, `${label}.${key}`, seen);
+      const normalizedKey = key.toLowerCase();
+      const safeNumericSetting = SAFE_NUMERIC_SETTING_KEYS.has(normalizedKey)
+        && Number.isSafeInteger(entry)
+        && entry >= 0;
+      const safeSetting = SAFE_SETTING_KEYS.has(normalizedKey);
+      if (SENSITIVE_KEY_PATTERN.test(key) && !safeNumericSetting && !safeSetting) metadataInvalid(`${label}.${key}`, 'must not contain credential material');
+      Object.defineProperty(result, key, {
+        value: assertSafeMetadata(entry, `${label}.${key}`, seen),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     seen.delete(value);
     return result;
@@ -370,6 +388,14 @@ function maybeInteger(value, field, missing, { min = 0, allowNull = false } = {}
 
 function choose(...values) {
   return values.find((value) => value !== undefined);
+}
+
+function chooseAliases(label, ...values) {
+  const supplied = values.filter((value) => value !== undefined);
+  if (supplied.length === 0) return undefined;
+  const selected = supplied[0];
+  if (supplied.some((value) => value !== selected)) metadataInvalid(label, 'aliases must agree');
+  return selected;
 }
 
 function inputSection(input, key, allowed) {
@@ -448,13 +474,13 @@ function normalizeConfigIdentityInput(input) {
     suite: {
       id: maybeString(choose(suiteSource.id, source.suiteId), 'suite.id', missing),
       version: maybeString(choose(suiteSource.version, source.suiteVersion), 'suite.version', missing),
-      contentSha256: maybeDigest(choose(suiteSource.contentSha256, suiteSource.sha256, source.suiteContentSha256), 'suite.contentSha256', missing),
+      contentSha256: maybeDigest(chooseAliases('suite.contentSha256', suiteSource.contentSha256, suiteSource.contentDigest, suiteSource.sha256, source.suiteContentSha256), 'suite.contentSha256', missing),
     },
     verifier: {
-      configSha256: maybeDigest(choose(verifierSource.configSha256, verifierSource.sha256, source.verifierConfigSha256), 'verifier.configSha256', missing),
+      configSha256: maybeDigest(chooseAliases('verifier.configSha256', verifierSource.configSha256, verifierSource.configDigest, verifierSource.sha256, source.verifierConfigSha256), 'verifier.configSha256', missing),
       checkRunner: {
         version: maybeString(choose(checkerSource.version, source.checkRunnerVersion), 'verifier.checkRunner.version', missing),
-        configSha256: maybeDigest(choose(checkerSource.configSha256, checkerSource.sha256, source.checkRunnerConfigSha256), 'verifier.checkRunner.configSha256', missing),
+        configSha256: maybeDigest(chooseAliases('verifier.checkRunner.configSha256', checkerSource.configSha256, checkerSource.configDigest, checkerSource.sha256, source.checkRunnerConfigSha256), 'verifier.checkRunner.configSha256', missing),
       },
     },
     runChecks: {

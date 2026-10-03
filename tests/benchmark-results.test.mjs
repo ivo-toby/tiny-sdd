@@ -72,7 +72,7 @@ function caseResult() {
     limitDetails: { timeoutMs: 300000, maxToolCalls: 40 },
     changedPaths: [{ path: 'src/index.mjs', change: 'modified' }],
     scopeViolations: [],
-    artifacts: { result: { path: 'artifacts/result.json', sha256: digest('a') }, patch: { path: 'artifacts/patch.diff', sha256: digest('b') } },
+    artifacts: { result: { path: 'artifacts/result.json', sha256: digest('a') }, packet: { path: 'artifacts/packet.json', sha256: digest('5') }, patch: { path: 'artifacts/patch.diff', sha256: digest('b') } },
     verifier: { visible: [verifier('visible')], heldOut: [verifier('held-out')] },
     hardGates: { outOfScopeEdit: false, protectedFileEdit: false, protectedTestEdit: false, requiredPatchAbsent: false },
     failure: { category: BENCHMARK_UNKNOWN, missing: [] },
@@ -117,6 +117,12 @@ test('requires status-consistent verifier execution evidence', () => {
   unavailableWithGreenEvidence.verifier.visible = [verifier('visible', 'unavailable')];
   Object.assign(unavailableWithGreenEvidence.verifier.visible[0], { exitCode: 0, signal: null, timedOut: false, durationMs: 4, sandbox: { network: 'none' } });
   assert.throws(() => validateBenchmarkCaseResult(unavailableWithGreenEvidence), { code: 'BENCHMARK_RESULTS_INVALID' });
+
+  for (const sandbox of [null, false, '']) {
+    const invalidSandbox = caseResult();
+    invalidSandbox.verifier.visible[0].sandbox = sandbox;
+    assert.throws(() => validateBenchmarkCaseResult(invalidSandbox), { code: 'BENCHMARK_RESULTS_INVALID' });
+  }
 });
 
 test('rejects acceptance claims and duplicate verifier ids', () => {
@@ -149,11 +155,11 @@ test('rejects unknown path-change kinds and prototype-polluting observations', (
 
 test('binds suite, packet, and profile provenance to the config identity', () => {
   for (const mutate of [
-    (result) => { result.suite.sha256 = digest('z'); },
-    (result) => { result.provenance.suiteSha256 = digest('z'); },
-    (result) => { result.packet.packetSha256 = digest('z'); },
-    (result) => { result.provenance.profileSha256 = digest('z'); },
-    (result) => { result.packet.profileSha256 = digest('z'); },
+    (result) => { result.suite.sha256 = digest('f'); },
+    (result) => { result.provenance.suiteSha256 = digest('f'); },
+    (result) => { result.artifacts.packet.sha256 = digest('f'); },
+    (result) => { result.provenance.profileSha256 = digest('f'); },
+    (result) => { result.packet.profileSha256 = digest('f'); },
   ]) {
     const result = caseResult();
     mutate(result);
@@ -175,6 +181,10 @@ test('parses a summary and invocation manifest with exact category accounting', 
   assert.throws(() => parseBenchmarkSummary(JSON.stringify({ ...summary, groups: [{ ...summary.groups[0], scheduled: 3 }] })), { code: 'BENCHMARK_RESULTS_INVALID' });
   assert.throws(() => parseBenchmarkSummary(JSON.stringify({ ...summary, groups: [{ ...summary.groups[0], caseResults: [] }] })), { code: 'BENCHMARK_RESULTS_INVALID' });
   assert.throws(() => parseBenchmarkSummary(JSON.stringify({ ...summary, groups: [{ ...summary.groups[0], caseResults: [summary.groups[0].caseResults[0], summary.groups[0].caseResults[0]] }] })), { code: 'BENCHMARK_RESULTS_INVALID' });
+  assert.throws(() => parseBenchmarkSummary(JSON.stringify({
+    ...summary,
+    groups: [summary.groups[0], { ...summary.groups[0], role: 'research', caseResults: [summary.groups[0].caseResults[0], summary.groups[0].caseResults[1]] }],
+  })), { code: 'BENCHMARK_RESULTS_INVALID' });
 
   const invocation = {
     schemaVersion: 1,
@@ -190,6 +200,6 @@ test('parses a summary and invocation manifest with exact category accounting', 
     summary: { path: 'artifacts/summary.json', sha256: digest('c') },
   };
   assert.equal(parseBenchmarkInvocation(JSON.stringify(invocation)).invocationId, 'invocation-1');
-  const mismatchedInvocation = { ...invocation, worker: { ...invocation.worker, profileSha256: digest('z') } };
+  const mismatchedInvocation = { ...invocation, worker: { ...invocation.worker, profileSha256: digest('f') } };
   assert.throws(() => parseBenchmarkInvocation(JSON.stringify(mismatchedInvocation)), { code: 'BENCHMARK_RESULTS_INVALID' });
 });
