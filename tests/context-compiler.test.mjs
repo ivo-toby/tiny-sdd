@@ -181,3 +181,27 @@ test('a context without source excerpts has one digest, so existing approvals ar
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('readSource supplies the text of each cited source instead of the project file', async () => {
+  const root = await project();
+  try {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      facts: [],
+      resources: [{ path: 'src/contract.ts', startLine: 1, endLine: 1, purpose: 'Public input contract.' }],
+    });
+    const packet = { path: '.tinysdd/tasks/task.context.json', text, sha256: sha256(text) };
+    const calls = [];
+    const readSource = async (path) => {
+      calls.push(path);
+      return 'export type Input = { name: string };\n';
+    };
+    const compiled = await compileContext(root, packet, { readSource });
+    assert.deepEqual(calls, ['src/contract.ts']);
+    assert.match(compiled.rendered, /1 \| export type Input = \{ name: string \}/u);
+    assert.notEqual(compiled.sha256, (await compileContext(root, packet)).sha256);
+    await assert.rejects(compileContext(root, packet, { readSource: async () => { throw new Error('gone'); } }), { code: 'CONTEXT_MANIFEST_INVALID' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

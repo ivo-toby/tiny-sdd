@@ -81,9 +81,25 @@ function reviewEvidenceOptions() {
   return { tinysddArtifactPrefix: REVIEWS_PREFIX };
 }
 
-async function compileTaskContext(projectRoot, path) {
+async function compileTaskContext(projectRoot, path, options) {
   const text = await readProjectFile(projectRoot, path, taskBriefOptions());
-  return compileContext(projectRoot, { path, text, sha256: sha256(text) });
+  return compileContext(projectRoot, { path, text, sha256: sha256(text) }, options);
+}
+
+// The approval bound the context the worker started from, but an apply moves the
+// allowed files to the candidate. While one is recorded, cited allowed files are
+// read from the lineage root's workspace-before: applying neither stales the
+// approval nor re-approves the new source, and a missing run fails closed (stale).
+function compileApprovedContext(root, task) {
+  if (!task.applied) return compileTaskContext(root, task.context);
+  const allowed = new Set(task.allow);
+  const readSource = async (path) => {
+    if (!allowed.has(path)) return readProjectFile(root, path);
+    const start = await readRunFile(root, task.applied.rootRunId, 'workspace-before', path);
+    if (start === null) throw tinyError('RUN_NOT_FOUND', `run ${task.applied.rootRunId} no longer holds ${path}`, { runId: task.applied.rootRunId });
+    return start.bytes.toString('utf8');
+  };
+  return compileTaskContext(root, task.context, { readSource });
 }
 
 // Provisional advisory thresholds from one observed failure (talon
@@ -305,7 +321,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   }
   const briefDigest = await digestProjectFile(projectRoot, task.brief, taskBriefOptions()).catch(() => undefined);
   const compiledContext = task.context
-    ? await compileTaskContext(projectRoot, task.context).catch(() => undefined)
+    ? await compileApprovedContext(projectRoot, task).catch(() => undefined)
     : null;
   const contextDigest = compiledContext === null ? null : compiledContext?.sha256;
   const checksDigest = task.checks
@@ -538,7 +554,7 @@ export async function approveTask(projectRoot, options = {}) {
     if (status.blockedBy.length > 0) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `task ${id} is blocked by: ${status.blockedBy.join(', ')}`);
     const briefDigest = await digestProjectFile(root, task.brief, taskBriefOptions()).catch(() => { throw tinyError('BRIEF_MISSING', `brief is missing: ${task.brief}`); });
     const compiled = task.context
-      ? await compileTaskContext(root, task.context).catch((error) => {
+      ? await compileApprovedContext(root, task).catch((error) => {
         if (error?.code === 'ENOENT' || error?.code === 'PATH_NOT_FOUND') throw tinyError('CONTEXT_MISSING', `context manifest is missing: ${task.context}`);
         throw error;
       })
@@ -762,6 +778,10 @@ export async function resolveTaskPacket(projectRoot, taskId) {
   if (status.status === 'accepted') throw tinyError('TASK_ALREADY_ACCEPTED', `task ${id} is already accepted`);
   if (status.status !== 'ready') {
     throw tinyError('TASK_NOT_READY', `task ${id} is ${status.status}`, { status: status.status, blockedBy: status.blockedBy });
+  }
+  // Context excerpts of an allowed file would no longer match the applied project the worker copies.
+  if (task.applied) {
+    throw tinyError('TASK_APPLIED', `task ${id} has an applied run (${task.applied.runId}); review it, accepted or revision, before dispatching again`, { runId: task.applied.runId });
   }
   const text = await readProjectFile(root, task.brief, taskBriefOptions());
   let context;
@@ -1017,9 +1037,12 @@ export async function reviewTask(projectRoot, options = {}) {
       allowedDigest,
     };
     if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
-    if (verdict === 'accepted' && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedIdentical(root, task.applied, allowedDigest) };
+    if ((verdict === 'accepted' || verdict === 'revision') && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedIdentical(root, task.applied, allowedDigest) };
     if (verdict === 'accepted') review.acceptanceDigest = digestJson({ ...review, taskId: id });
     task.review = review;
+    // The next attempt builds on the applied project, so the record is spent;
+    // an accepted or blocked review leaves it, since the files are still applied.
+    if (verdict === 'revision') delete task.applied;
     return { task: publicTask(task, await inspectTask(root, state, task)) };
   });
 }

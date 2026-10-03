@@ -1383,15 +1383,186 @@ test('a record without allowedDigest falls back to comparing the files it wrote'
   }
 });
 
-test('a non-accepting review records no appliedFromRun', async () => {
-  const root = await applyProject({});
+test('a revision review records appliedFromRun and spends the applied record; blocked leaves it', async () => {
+  const revised = await applyProject({});
   try {
-    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'new a\n' } });
+    await fakeRun(revised, RUN_ONE, { after: { 'src/a.ts': 'new a\n' } });
+    await apply(revised);
+    await writeFile(join(revised, 'src', 'a.ts'), 'edited before the verdict\n');
+    await reviewTask(revised, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(revised)).tasks.one;
+    assert.deepEqual(task.review.appliedFromRun, { runId: RUN_ONE, identical: false });
+    assert.equal(task.review.acceptanceDigest, undefined);
+    assert.equal(task.applied, undefined);
+    assert.equal((await controllerStatus(revised)).tasks[0].applied, undefined);
+    assert.deepEqual((await controllerStatus(revised)).tasks[0].review.appliedFromRun, { runId: RUN_ONE, identical: false });
+    assert.equal(await taskStatus(revised, 'one'), 'ready');
+  } finally {
+    await cleanup(revised);
+  }
+  const blocked = await applyProject({});
+  try {
+    await fakeRun(blocked, RUN_ONE, { after: { 'src/a.ts': 'new a\n' } });
+    await apply(blocked);
+    await reviewTask(blocked, { id: 'one', verdict: 'blocked', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(blocked)).tasks.one;
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(task.review.appliedFromRun, undefined);
+  } finally {
+    await cleanup(blocked);
+  }
+});
+
+// Task `one` allows src/a.ts only. Its context cites line 1 of src/a.ts (allowed)
+// and, when asked, of src/other.ts (not allowed). The fake run rewrites src/a.ts.
+async function contextApplyProject({ citeAllowed = true, citeOther = false, start = 'one\n', candidate = 'two\n' } = {}) {
+  const root = await project();
+  await writeTree(root, { 'src/a.ts': start, 'src/other.ts': 'ctx\n' });
+  await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+  const cited = [...(citeAllowed ? ['src/a.ts'] : []), ...(citeOther ? ['src/other.ts'] : [])];
+  await writeFile(join(root, '.tinysdd', 'tasks', 'one.context.json'), JSON.stringify({
+    schemaVersion: 1,
+    facts: [],
+    resources: cited.map((path) => ({ path, startLine: 1, endLine: 1, purpose: `Rules in ${path}.` })),
+  }));
+  await addApprovedTask(root, 'one', { allow: ['src/a.ts'], context: '.tinysdd/tasks/one.context.json' });
+  await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': start }, after: { 'src/a.ts': candidate } });
+  return root;
+}
+
+test('applying a run that rewrites a cited allowed file keeps the approval current, and review accepts', async () => {
+  const root = await contextApplyProject();
+  try {
+    const approved = (await rawState(root)).tasks.one.approval.contextDigest;
     await apply(root);
-    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
-    assert.equal((await rawState(root)).tasks.one.review.appliedFromRun, undefined);
+    assert.equal(await readProject(root, 'src/a.ts'), 'two\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    assert.equal((await controllerStatus(root)).tasks[0].approval.current, true);
+    assert.equal((await rawState(root)).tasks.one.approval.contextDigest, approved);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(root)).tasks.one;
+    assert.deepEqual(task.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
   } finally {
     await cleanup(root);
+  }
+});
+
+test('after apply the approval still binds the starting context: outside edits stale it, allowed-file edits do not', async () => {
+  const root = await contextApplyProject({ citeOther: true });
+  try {
+    await apply(root);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    // The allowed file is the candidate now; editing it by hand is review's business, not the approval's.
+    await writeFile(join(root, 'src', 'a.ts'), 'edited by hand\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await writeFile(join(root, 'src', 'other.ts'), 'ctx, changed\n');
+    assert.equal(await taskStatus(root, 'one'), 'stale_approval');
+    await assert.rejects(reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPROVAL_STALE' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a missing or unsafe root run makes an applied approval stale instead of trusting the project', async (t) => {
+  // The cited line 1 is not what the run changed, so the project alone would still match the approval:
+  // the approval goes stale because the starting source can no longer be shown, not because the text moved.
+  const missing = await contextApplyProject({ start: 'one\nlater\n', candidate: 'one\nrewritten\n' });
+  try {
+    await apply(missing);
+    assert.equal(await taskStatus(missing, 'one'), 'ready');
+    await rm(join(missing, '.tinysdd', 'runs', RUN_ONE), { recursive: true });
+    assert.equal(await taskStatus(missing, 'one'), 'stale_approval');
+    await assert.rejects(reviewTask(missing, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPROVAL_STALE' });
+  } finally {
+    await cleanup(missing);
+  }
+  const unsafe = await contextApplyProject({ start: 'one\nlater\n', candidate: 'one\nrewritten\n' });
+  try {
+    await apply(unsafe);
+    const cited = join(unsafe, '.tinysdd', 'runs', RUN_ONE, 'workspace-before', 'src', 'a.ts');
+    await rm(cited);
+    try {
+      await symlink(join(unsafe, 'src', 'a.ts'), cited);
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.message}`);
+      return;
+    }
+    assert.equal(await taskStatus(unsafe, 'one'), 'stale_approval');
+  } finally {
+    await cleanup(unsafe);
+  }
+});
+
+test('approving again after apply records the same context digest and stays ready', async () => {
+  const root = await contextApplyProject();
+  try {
+    const first = (await rawState(root)).tasks.one.approval;
+    await apply(root);
+    await approveTask(root, { id: 'one', by: 'second-operator', reason: 'looked again' });
+    const task = (await rawState(root)).tasks.one;
+    assert.equal(task.approval.contextDigest, first.contextDigest);
+    assert.equal(task.approval.by, 'second-operator');
+    assert.equal(task.applied.runId, RUN_ONE);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an approval holding the legacy context digest stays ready through apply', async () => {
+  const root = await contextApplyProject();
+  try {
+    const { legacy, current } = await makeApprovalLegacy(root, 'one');
+    assert.notEqual(legacy, current);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await apply(root);
+    assert.equal((await rawState(root)).tasks.one.approval.contextDigest, legacy);
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('dispatch is refused while an applied run is recorded', async () => {
+  const root = await contextApplyProject();
+  try {
+    assert.equal((await resolveTaskPacket(root, 'one')).taskId, 'one');
+    await apply(root);
+    await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_APPLIED', details: { runId: RUN_ONE }, message: /review it/u });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a revision review after apply reopens dispatch, after re-approval when the cited allowed file changed', async () => {
+  const stale = await contextApplyProject();
+  try {
+    await apply(stale);
+    await reviewTask(stale, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal((await rawState(stale)).tasks.one.applied, undefined);
+    assert.deepEqual((await rawState(stale)).tasks.one.review.appliedFromRun, { runId: RUN_ONE, identical: true });
+    // The cited line of an allowed file changed with the apply, so the operator re-approves it explicitly.
+    assert.equal(await taskStatus(stale, 'one'), 'stale_approval');
+    await assert.rejects(resolveTaskPacket(stale, 'one'), { code: 'TASK_NOT_READY', details: { status: 'stale_approval', blockedBy: [] } });
+    await approveTask(stale, { id: 'one', by: 'operator', reason: 'reviewed the applied source' });
+    const packet = await resolveTaskPacket(stale, 'one');
+    assert.equal(packet.review.verdict, 'revision');
+    assert.match(packet.context.text, /src\/a\.ts/u);
+  } finally {
+    await cleanup(stale);
+  }
+  const ready = await contextApplyProject({ citeAllowed: false, citeOther: true });
+  try {
+    await apply(ready);
+    await reviewTask(ready, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(ready, 'one'), 'ready');
+    assert.equal((await resolveTaskPacket(ready, 'one')).review.verdict, 'revision');
+  } finally {
+    await cleanup(ready);
   }
 });
 
