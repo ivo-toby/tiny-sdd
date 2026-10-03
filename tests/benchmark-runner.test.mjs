@@ -1,14 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
 import { benchmarkFixtureDigest, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
 import { parseBenchmarkInvocation } from '../src/benchmark-results.mjs';
 
 const digest = (value) => sha256(value);
+const execFileAsync = promisify(execFile);
 
 async function writeJson(path, value) {
   const text = `${JSON.stringify(value)}\n`;
@@ -99,7 +102,9 @@ async function makeSuite(root, { heldOutInsideFixture = false, pathFlagVerifier 
     await writeFile(join(verifierRoot, `${definition.id}-held-out.test.mjs`), 'export {};\n');
     if (pathFlagVerifier) await writeFile(join(verifierRoot, `${definition.id}-preload.cjs`), 'module.exports = {};\n');
     const visibleArgv = pathFlagVerifier
-      ? ['node', '--require', `verifier/${definition.id}-preload.cjs`, '--test', `verifier/${definition.id}-visible.test.mjs`]
+      ? pathFlagVerifier === 'inline'
+        ? ['node', `--require=verifier/${definition.id}-preload.cjs`, '--test', `verifier/${definition.id}-visible.test.mjs`]
+        : ['node', '--require', `verifier/${definition.id}-preload.cjs`, '--test', `verifier/${definition.id}-visible.test.mjs`]
       : ['node', '--test', `verifier/${definition.id}-visible.test.mjs`];
     const visible = await writeJson(join(verifierRoot, `${definition.id}-visible.json`), {
       schemaVersion: 1,
@@ -202,6 +207,35 @@ test('runs fresh repeated fixtures, retains timeout/setup attempts, and defers h
   }
 });
 
+test('binds a missing test check runner as unavailable in worker identity', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-runner-unavailable-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    delete runtime.checkRunner;
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker: { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } },
+      runtime,
+      repeat: 1,
+    });
+    assert.equal(result.config.identity.runChecks.available, false);
+    assert.equal(
+      result.config.identity.runChecks.unavailableReason,
+      process.platform === 'linux' ? 'test runtime did not provide a check runner' : result.config.identity.runChecks.unavailableReason,
+    );
+    const caseResult = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
+    assert.equal(caseResult.observed.runChecks.available, false);
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects held-out resources inside a hashed worker fixture before Pi starts', async () => {
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-hidden-')));
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
@@ -236,6 +270,10 @@ test('binds effective model settings and checker limits into the config digest',
     const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } };
     const verifier = async () => ({ status: 'passed', sandbox: { runner: 'test-only', network: 'none' } });
     const supplemental = { note: 'operator metadata', sandbox: undefined };
+    await assert.rejects(
+      runBenchmark({ suiteRoot: root, outputRoot: join(root, 'invalid-settings'), worker, runtime, repeat: 1, workerSettings: false, verifier }),
+      { code: 'BENCHMARK_RUNNER_INVALID', message: /workerSettings must be an object/u },
+    );
     const first = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'first'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12345 } }, workerSettings: supplemental, verifier });
     assert.equal(first.config.identity.worker.settings.note, 'operator metadata');
     assert.equal(first.config.identity.worker.settings.sandbox, 'test-runtime');
@@ -265,6 +303,33 @@ test('binds effective model settings and checker limits into the config digest',
   }
 });
 
+test('rejects a supplied Pi version that conflicts with the installed runtime', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-pi-version-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    await writeJson(join(root, 'package.json'), { name: 'synthetic-pi', version: '0.84.4' });
+    await assert.rejects(
+      runBenchmark({
+        suiteRoot: root,
+        outputRoot: join(root, 'results'),
+        worker: { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } },
+        runtime,
+        repeat: 1,
+        piVersion: '0.84.3',
+        verifier: async () => ({ status: 'passed', sandbox: { runner: 'test-only', network: 'none' } }),
+      }),
+      { code: 'BENCHMARK_RUNNER_INVALID', message: /installed Pi runtime version/u },
+    );
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('uses a worker profile object for preflight, identity, and execution', async () => {
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-profile-')));
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
@@ -286,6 +351,38 @@ test('uses a worker profile object for preflight, identity, and execution', asyn
     assert.equal(result.config.identity.worker.settings.effectiveReasoning, true);
     const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
     assert.equal(firstCase.outcome, 'completed');
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('resolves a worker profile path from the suite and refuses symlinked profiles', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-profile-path-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const profile = { schemaVersion: 1, id: 'path-profile', runtime: { reasoning: true } };
+    await writeFile(join(root, 'worker-profile.json'), `${JSON.stringify(profile)}\n`);
+    const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', profile: 'worker-profile.json', limits: { timeoutMs: 1000, maxToolCalls: 10 } };
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker,
+      runtime,
+      repeat: 1,
+      verifier: async () => ({ status: 'passed', sandbox: { runner: 'test-only', network: 'none' } }),
+    });
+    assert.equal(result.config.identity.worker.profileDigest, digestJson(profile));
+    assert.equal(result.config.identity.worker.settings.effectiveReasoning, true);
+    await symlink(join(root, 'worker-profile.json'), join(root, 'linked-profile.json'));
+    await assert.rejects(
+      runBenchmark({ suiteRoot: root, worker: { ...worker, profile: 'linked-profile.json' }, runtime, verifier: async () => ({ status: 'passed' }) }),
+      { code: 'BENCHMARK_RUNNER_INVALID', message: /symlink/u },
+    );
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
@@ -340,10 +437,12 @@ test('stages and rewrites verifier path-flag operands before evaluation', async 
       verifier: async ({ visibility, check, candidateDir }) => {
         checks.push({ visibility, argv: check.argv });
         const requireIndex = check.argv.indexOf('--require');
-        if (requireIndex !== -1) {
-          const preload = check.argv[requireIndex + 1];
-          assert.match(preload, new RegExp(`^${RESERVED_VERIFIER_ROOT}/visible/[a-z-]+-preload\\.cjs$`, 'u'));
-          await access(join(candidateDir, preload));
+        const inlineRequire = check.argv.find((argument) => argument.startsWith('--require='));
+        if (requireIndex !== -1 || inlineRequire !== undefined) {
+          const preload = requireIndex !== -1 ? check.argv[requireIndex + 1] : inlineRequire.slice('--require='.length);
+          assert.match(preload, new RegExp(`^\\./${RESERVED_VERIFIER_ROOT}/visible/[a-z-]+-preload\\.cjs$`, 'u'));
+          await access(join(candidateDir, preload.slice(2)));
+          await execFileAsync(process.execPath, check.argv.slice(1), { cwd: candidateDir });
           rewrittenPreloads.push(preload);
         }
         return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
@@ -351,6 +450,36 @@ test('stages and rewrites verifier path-flag operands before evaluation', async 
     });
     assert.ok(checks.length >= 1);
     assert.equal(rewrittenPreloads.length, 1);
+    const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
+    assert.equal(firstCase.verifier.visible[0].status, 'passed');
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('executes inline verifier path-flag operands after rewriting', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-verifier-inline-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root, { pathFlagVerifier: 'inline' });
+    const runtime = await makeRuntime(root);
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker: { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } },
+      runtime,
+      repeat: 1,
+      verifier: async ({ check, candidateDir }) => {
+        const inlineRequire = check.argv.find((argument) => argument.startsWith('--require='));
+        if (inlineRequire === undefined) return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
+        assert.match(inlineRequire, new RegExp(`^--require=\\./${RESERVED_VERIFIER_ROOT}/visible/[a-z-]+-preload\\.cjs$`, 'u'));
+        await execFileAsync(process.execPath, check.argv.slice(1), { cwd: candidateDir });
+        return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
+      },
+    });
     const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
     assert.equal(firstCase.verifier.visible[0].status, 'passed');
   } finally {

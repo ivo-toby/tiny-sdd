@@ -195,6 +195,31 @@ async function packageVersion() {
   }
 }
 
+async function installedPiVersion(runtime) {
+  const executable = runtime?.piExecutable ?? join(dirname(process.execPath), 'pi');
+  if (typeof executable !== 'string' || !executable.startsWith('/')) return BENCHMARK_UNKNOWN;
+  let current;
+  try {
+    current = dirname(await realpath(executable));
+  } catch {
+    return BENCHMARK_UNKNOWN;
+  }
+  for (let count = 0; count < 8; count += 1) {
+    try {
+      const packageInfo = JSON.parse(await readFile(join(current, 'package.json'), 'utf8'));
+      if (typeof packageInfo.name === 'string' && typeof packageInfo.version === 'string' && packageInfo.version.length > 0) {
+        return packageInfo.version;
+      }
+    } catch {
+      // Continue toward the bounded install root.
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return BENCHMARK_UNKNOWN;
+}
+
 function workerEffectiveLimits(worker) {
   const limits = worker?.limits && typeof worker.limits === 'object' && !Array.isArray(worker.limits) ? worker.limits : {};
   return {
@@ -239,6 +264,10 @@ function resolveCheckRunnerConfig(checkLimits, runnerOptions) {
 }
 
 async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
+  if (workerSettings !== undefined && workerSettings !== BENCHMARK_UNKNOWN
+    && (!workerSettings || typeof workerSettings !== 'object' || Array.isArray(workerSettings))) {
+    invalid('workerSettings must be an object or UNKNOWN');
+  }
   const base = {
     sandbox: runtime?.test === true ? 'test-runtime' : runtime?.sandbox ?? (process.platform === 'darwin' ? 'seatbelt' : 'bubblewrap'),
     effectiveMaxTokens: BENCHMARK_UNKNOWN,
@@ -278,12 +307,48 @@ async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
   }
 }
 
+async function resolveBenchmarkProfile({ profile, worker, projectRoot, suiteRoot }) {
+  const source = profile ?? worker.profile;
+  if (source === undefined || source === null) return null;
+  if (typeof source === 'object' && !Array.isArray(source)) return structuredClone(source);
+  if (typeof source !== 'string') invalid('worker profile must be an object or project-relative JSON path');
+  const roots = [...new Set([projectRoot, suiteRoot].filter((root) => typeof root === 'string'))];
+  for (const root of roots) {
+    let resource;
+    try {
+      resource = await existingPath(await realDirectory(root, 'profile root'), source, 'worker profile', { file: true });
+    } catch (error) {
+      if (error?.code === 'BENCHMARK_RUNNER_INVALID' && error.details?.causeCode === 'PATH_NOT_FOUND') continue;
+      throw error;
+    }
+    let value;
+    try {
+      value = JSON.parse(await readFile(resource.absolute, 'utf8'));
+    } catch (error) {
+      if (error instanceof SyntaxError) invalid('worker profile is not valid JSON', { path: source });
+      throw error;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('worker profile must contain an object', { path: source });
+    return structuredClone(value);
+  }
+  invalid('worker profile is not present in the project or suite', { path: source });
+}
+
+function workerCheckAvailability(runtime) {
+  if (runtime?.test === true) {
+    if (typeof runtime.checkRunner === 'function') return { available: true, reason: null, testInjected: true };
+    const availability = checkRunnerAvailable();
+    return availability.available
+      ? { available: false, reason: 'test runtime did not provide a check runner', testInjected: false }
+      : { ...availability, testInjected: false };
+  }
+  return { ...checkRunnerAvailable(), testInjected: false };
+}
+
 async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget, checkLimits, verifierMode, suiteRoot, projectRoot, checkRunnerOptions: runnerOptions }) {
   const options = resolveCheckRunnerConfig(checkLimits, runnerOptions);
   const verifierAvailability = checkRunnerAvailable(options);
-  const workerAvailability = runtime?.test === true && typeof runtime.checkRunner === 'function'
-    ? { available: true, reason: null, testInjected: true }
-    : checkRunnerAvailable();
+  const workerAvailability = workerCheckAvailability(runtime);
   const effectiveLimits = workerEffectiveLimits(worker);
   const effectiveCheckBudget = workerEffectiveCheckBudget(worker);
   const effectiveCheckLimits = options.limits;
@@ -328,10 +393,16 @@ async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, 
     },
   });
   const settings = await resolveWorkerSettings(workerSettings, worker, profile, runtime);
+  const discoveredPiVersion = await installedPiVersion(runtime);
+  const resolvedPiVersion = piVersion ?? (runtime?.test ? 'test-harness' : discoveredPiVersion);
+  if (piVersion !== undefined && piVersion !== BENCHMARK_UNKNOWN
+    && discoveredPiVersion !== BENCHMARK_UNKNOWN && piVersion !== discoveredPiVersion) {
+    invalid('piVersion does not match the installed Pi runtime version');
+  }
   const identityInput = {
     model: resolvedModel,
     worker: { profileDigest, limits: effectiveLimits, settings },
-    pi: { version: piVersion ?? (runtime?.test ? 'test-harness' : BENCHMARK_UNKNOWN) },
+    pi: { version: resolvedPiVersion },
     tinySdd: { version, codeRevision: code },
     suite: { id: suite.id, version: suite.version, contentSha256: suiteSha256 },
     verifier: {
@@ -545,17 +616,35 @@ function mountDestination(prefix, sourcePath) {
   return `${prefix}/${verifierSuffix(sourcePath)}`;
 }
 
-function rewritePathToken(token, pathMap) {
+function rewritePathToken(token, pathMap, { modulePath = false } = {}) {
   for (const entry of pathMap) {
     if (token === entry.original || token.startsWith(`${entry.original}/`)) {
-      return `${entry.destination}${token.slice(entry.original.length)}`;
+      const rewritten = `${entry.destination}${token.slice(entry.original.length)}`;
+      return modulePath ? `./${rewritten}` : rewritten;
     }
   }
   for (const flag of PATH_FLAGS) {
     const prefix = `${flag}=`;
-    if (token.startsWith(prefix)) return `${prefix}${rewritePathToken(token.slice(prefix.length), pathMap)}`;
+    if (token.startsWith(prefix)) {
+      return `${prefix}${rewritePathToken(token.slice(prefix.length), pathMap, { modulePath: true })}`;
+    }
   }
   return token;
+}
+
+function rewriteCheckArguments(argv, pathMap) {
+  const rewritten = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    rewritten.push(argument);
+    if (PATH_FLAGS.has(argument) && index + 1 < argv.length && !argv[index + 1].startsWith('-')) {
+      index += 1;
+      rewritten.push(rewritePathToken(argv[index], pathMap, { modulePath: true }));
+      continue;
+    }
+    rewritten[rewritten.length - 1] = rewritePathToken(argument, pathMap);
+  }
+  return rewritten;
 }
 
 async function verifierPlan(root, manifestPath, manifest, visibility, candidateDir, packet) {
@@ -623,7 +712,7 @@ async function verifierPlan(root, manifestPath, manifest, visibility, candidateD
   const rewrittenChecks = manifest.checks.map((check) => ({
     id: check.id,
     timeoutMs: check.timeoutMs,
-    argv: check.argv.map((argument) => rewritePathToken(argument, pathMap)),
+    argv: rewriteCheckArguments(check.argv, pathMap),
   }));
   for (const mount of mounts) {
     const mountTarget = resolve(candidateDir, ...mount.target.split('/'));
@@ -886,6 +975,20 @@ function assertWorkerRunChecksIdentity(config, runtimeMetadata) {
   }
 }
 
+function assertWorkerPiVersionIdentity(config, runtimeMetadata, runtime) {
+  if (runtime?.test === true) return;
+  const expected = config.identity.pi.version;
+  const actual = typeof runtimeMetadata?.piVersion === 'string' && runtimeMetadata.piVersion.length > 0
+    ? runtimeMetadata.piVersion
+    : BENCHMARK_UNKNOWN;
+  if (expected === BENCHMARK_UNKNOWN && actual !== BENCHMARK_UNKNOWN) {
+    invalid('worker Pi version is known but benchmark config identity is UNKNOWN');
+  }
+  if (expected !== BENCHMARK_UNKNOWN && actual !== expected) {
+    invalid('worker Pi version does not match benchmark config identity');
+  }
+}
+
 function assertWorkerSettingsIdentity(config, runtimeMetadata) {
   const expected = config.identity.worker.settings;
   if (expected === BENCHMARK_UNKNOWN || !expected || typeof expected !== 'object') return;
@@ -1018,6 +1121,7 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
       if (workerResult.artifactPaths.patch) artifacts.patch = await copyEvidence(outputRoot, workerResult.artifactPaths.patch, `${caseRelativeDirectory}/patch.diff`);
       const runtimeMetadata = JSON.parse(await readFile(workerResult.artifactPaths.runtime, 'utf8'));
       assertWorkerRunChecksIdentity(config, runtimeMetadata);
+      assertWorkerPiVersionIdentity(config, runtimeMetadata, runtime);
       assertWorkerLimitsIdentity(config, runtimeMetadata);
       assertWorkerSettingsIdentity(config, runtimeMetadata);
       const budgetState = { used: 0, limit: checkBudget };
@@ -1164,7 +1268,7 @@ export async function runBenchmark({
   } catch (error) {
     invalid(error instanceof Error ? error.message : String(error));
   }
-  const effectiveProfile = profile ?? (worker.profile && typeof worker.profile === 'object' && !Array.isArray(worker.profile) ? worker.profile : null);
+  const effectiveProfile = await resolveBenchmarkProfile({ profile, worker, projectRoot, suiteRoot: suiteInfo.root });
   const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile: effectiveProfile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions });
   const root = resolve(outputRoot ?? join(projectRoot ?? suiteInfo.root, '.tinysdd', 'bench', suiteInfo.suite.id, invocationId));
   await assertNoSymlinkPath(root, { allowMissing: true, requireDirectory: false });
