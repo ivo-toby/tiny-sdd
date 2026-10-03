@@ -172,7 +172,18 @@ Work in a detached worktree of the PR head and check:
 2. **The suite.** `TYPESAFE_API_KEY=stub npm test`, with exact counts. Then the
    same with:
    - `TMPDIR` pointing at a symlink to a real directory (macOS temp paths are
-     symlinks);
+     symlinks). Put both the link and its target outside every git repository
+     and on a path that uid 65534 can traverse:
+     ```sh
+     mkdir -p /var/tmp/tinysdd-real && chmod 1777 /var/tmp/tinysdd-real
+     ln -sfn /var/tmp/tinysdd-real /var/tmp/tinysdd-link
+     TMPDIR=/var/tmp/tinysdd-link TYPESAFE_API_KEY=stub npm test
+     ```
+     Inside a repository, an enclosing `.gitignore` or `.git/info/exclude` can
+     hide the test projects from `git ls-files`. Under a 0700 directory, a root
+     run's check runner drops to `nobody` and can't reach its scratch copy.
+     Both produce dozens of false failures (an "empty worker workspace" error,
+     or the whole check-runner suite failing), not product bugs;
    - macOS emulated:
      ```sh
      printf "Object.defineProperty(process, 'platform', { value: 'darwin' });\n" > /tmp/fake-darwin.mjs
