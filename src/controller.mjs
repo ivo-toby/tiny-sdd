@@ -242,6 +242,12 @@ async function mutateState(projectRoot, callback) {
   });
 }
 
+// Approvals recorded before the compiled text dropped its whole-file source
+// digests hold the legacy digest; they stay fresh and keep binding the whole file.
+function contextDigestMatches(approved, current, legacy) {
+  return approved === current || (legacy !== undefined && approved === legacy);
+}
+
 async function inspectTask(projectRoot, state, task, seen = new Set()) {
   if (seen.has(task.id)) throw tinyError('STATE_MALFORMED', `dependency cycle reaches ${task.id}`);
   const nextSeen = new Set(seen).add(task.id);
@@ -254,9 +260,10 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     dependencyStates.push(await inspectTask(projectRoot, state, dependencyTask, nextSeen));
   }
   const briefDigest = await digestProjectFile(projectRoot, task.brief, taskBriefOptions()).catch(() => undefined);
-  const contextDigest = task.context
-    ? await compileTaskContext(projectRoot, task.context).then((compiled) => compiled.sha256).catch(() => undefined)
+  const compiledContext = task.context
+    ? await compileTaskContext(projectRoot, task.context).catch(() => undefined)
     : null;
+  const contextDigest = compiledContext === null ? null : compiledContext?.sha256;
   const checksDigest = task.checks
     ? await readProjectFile(projectRoot, task.checks, taskBriefOptions()).then((text) => sha256(text)).catch(() => undefined)
     : null;
@@ -275,7 +282,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     approval
       && briefDigest
       && approval.briefDigest === briefDigest
-      && (approval.contextDigest ?? null) === contextDigest
+      && contextDigestMatches(approval.contextDigest ?? null, contextDigest, compiledContext?.legacySha256)
       && (approval.checksDigest ?? null) === checksDigest
       && approvalBindsTaskShape
       && task.dependsOn.every((dependency) => (

@@ -18,7 +18,8 @@ import {
   reviewTask,
   supersedeTask,
 } from '../src/controller.mjs';
-import { sha256 } from '../src/fs-utils.mjs';
+import { compileContext } from '../src/context-compiler.mjs';
+import { digestJson, sha256 } from '../src/fs-utils.mjs';
 
 const exec = promisify(execFile);
 // Project roots may not resolve through a symlink, and tmpdir() does on macOS
@@ -129,6 +130,126 @@ test('selected context source changes also make approval stale', async () => {
     assert.equal(packet.context.compiledSha256.length, 64);
     await writeFile(join(root, 'src', 'contract.ts'), 'export const boundary = 2;\n');
     assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+const SHARED_SPEC = ['# Shared feature spec', 'A1 first rule', 'A2 second rule', 'A3 third rule', 'separator', 'B1 first rule', 'B2 second rule', 'B3 third rule', 'closing note'];
+
+async function writeSharedSpec(root, lines = SHARED_SPEC) {
+  await writeFile(join(root, 'docs', 'spec.md'), `${lines.join('\n')}\n`);
+}
+
+// One brief per slice; the shared spec is cited through the slice's manifest.
+async function addSliceCitingSpec(root, id, startLine, endLine) {
+  await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+  await writeFile(join(root, 'docs', `${id}.md`), `# Slice ${id}\n`);
+  await writeFile(join(root, '.tinysdd', 'tasks', `${id}.context.json`), JSON.stringify({
+    schemaVersion: 1,
+    facts: [],
+    resources: [{ path: 'docs/spec.md', startLine, endLine, purpose: `Rules for ${id}.` }],
+  }));
+  await addTask(root, { id, brief: `docs/${id}.md`, context: `.tinysdd/tasks/${id}.context.json`, allow: [`src/${id}.ts`] });
+  await approveTask(root, { id, by: 'operator', reason: 'checked the brief and the cited spec lines' });
+}
+
+async function statusById(root) {
+  return Object.fromEntries((await controllerStatus(root)).tasks.map((task) => [task.id, task.status]));
+}
+
+// Rewrites an approval the way a controller recorded it while the compiled
+// text still carried a whole-file source digest per cited file.
+async function makeApprovalLegacy(root, id) {
+  const state = await rawState(root);
+  const task = state.tasks[id];
+  const text = await readFile(join(root, task.context), 'utf8');
+  const compiled = await compileContext(root, { path: task.context, text, sha256: sha256(text) });
+  const { approvalDigest, ...approvalBase } = task.approval;
+  assert.equal(approvalBase.contextDigest, compiled.sha256);
+  approvalBase.contextDigest = compiled.legacySha256;
+  task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
+  await writeState(root, state);
+  return { legacy: compiled.legacySha256, current: compiled.sha256 };
+}
+
+test('slices citing one shared spec go stale only when their own cited lines move or change', async () => {
+  const root = await project();
+  try {
+    await writeSharedSpec(root);
+    await addSliceCitingSpec(root, 'one', 2, 4);
+    await addSliceCitingSpec(root, 'two', 6, 8);
+    assert.deepEqual(await statusById(root), { one: 'ready', two: 'ready' });
+
+    await writeSharedSpec(root, [...SHARED_SPEC, '', 'Addendum: a paragraph appended at the end.']);
+    assert.deepEqual(await statusById(root), { one: 'ready', two: 'ready' });
+
+    await writeSharedSpec(root, SHARED_SPEC.map((line) => (line === 'closing note' ? 'closing note, reworded' : line)));
+    assert.deepEqual(await statusById(root), { one: 'ready', two: 'ready' });
+
+    await writeSharedSpec(root, SHARED_SPEC.map((line) => (line === 'A2 second rule' ? 'A2 changed rule' : line)));
+    assert.deepEqual(await statusById(root), { one: 'stale_approval', two: 'ready' });
+    await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_NOT_READY' });
+    assert.equal((await resolveTaskPacket(root, 'two')).taskId, 'two');
+
+    // Citations are positional: a line inserted above both ranges shifts them.
+    await writeSharedSpec(root, [SHARED_SPEC[0], 'inserted above both ranges', ...SHARED_SPEC.slice(1)]);
+    assert.deepEqual(await statusById(root), { one: 'stale_approval', two: 'stale_approval' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an approval holding the legacy context digest stays fresh, still binds the whole file, and is replaced on re-approval', async () => {
+  const root = await project();
+  try {
+    await writeSharedSpec(root);
+    await addSliceCitingSpec(root, 'one', 2, 4);
+    const { legacy, current } = await makeApprovalLegacy(root, 'one');
+    assert.notEqual(legacy, current);
+    assert.equal((await rawState(root)).tasks.one.approval.contextDigest, legacy);
+    assert.deepEqual(await statusById(root), { one: 'ready' });
+
+    // The packet and a benchmark replay each carry a digest the worker accepts.
+    assert.equal((await resolveTaskPacket(root, 'one')).context.compiledSha256, current);
+    assert.equal((await resolveBenchmarkPacket(root, 'one')).context.compiledSha256, legacy);
+
+    // Legacy digests bound the whole file, so an uncited edit still stales them.
+    await writeSharedSpec(root, SHARED_SPEC.map((line) => (line === 'B2 second rule' ? 'B2 changed rule' : line)));
+    assert.deepEqual(await statusById(root), { one: 'stale_approval' });
+
+    await approveTask(root, { id: 'one', by: 'operator', reason: 're-approved after the spec edit' });
+    const approval = (await rawState(root)).tasks.one.approval;
+    assert.equal(approval.contextDigest.length, 64);
+    assert.notEqual(approval.contextDigest, legacy);
+    assert.deepEqual(await statusById(root), { one: 'ready' });
+
+    await writeSharedSpec(root, [...SHARED_SPEC, 'appended after re-approval']);
+    assert.deepEqual(await statusById(root), { one: 'ready' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an accepted slice with a legacy context digest stays accepted, and a current one survives appending to its spec', async () => {
+  const root = await project();
+  try {
+    await writeSharedSpec(root);
+    await addSliceCitingSpec(root, 'legacy', 2, 4);
+    await addSliceCitingSpec(root, 'current', 6, 8);
+    await makeApprovalLegacy(root, 'legacy');
+    for (const id of ['legacy', 'current']) {
+      await reviewTask(root, { id, verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer' });
+    }
+    assert.deepEqual(await statusById(root), { legacy: 'accepted', current: 'accepted' });
+
+    const appended = [...SHARED_SPEC, '', 'Addendum: a paragraph appended at the end.'];
+    await writeSharedSpec(root, appended);
+    // The legacy digest still binds the whole file, so only the current approval is unaffected.
+    assert.deepEqual(await statusById(root), { legacy: 'stale', current: 'accepted' });
+
+    await writeSharedSpec(root, appended.map((line) => (line === 'B1 first rule' ? 'B1 changed rule' : line)));
+    assert.equal((await statusById(root)).current, 'stale');
   } finally {
     await cleanup(root);
   }
