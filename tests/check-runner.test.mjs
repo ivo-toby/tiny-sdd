@@ -558,12 +558,15 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(quiet.result.limits.maxProcesses, 100);
     assert.equal(quiet.result.sandbox.processLimitEnforced, process.getuid() !== 0);
 
-    // Other tasks of the same uid, started by the test, raise the baseline.
-    const sleepers = Array.from({ length: 40 }, () => spawn('/usr/bin/sleep', ['30'], { stdio: 'ignore' }));
+    // Other tasks of the same uid, started by the test, raise the baseline. As
+    // root the count includes every root process on the machine, which come and
+    // go by tens, so the margin is generous.
+    const sleepers = Array.from({ length: 150 }, () => spawn('/usr/bin/sleep', ['30'], { stdio: 'ignore' }));
     try {
+      await Promise.all(sleepers.map((sleeper) => new Promise((resolve) => sleeper.once('spawn', resolve))));
       const busy = await limitOf({ maxProcesses: 100 });
       assert.equal(busy.nproc, busy.result.sandbox.processBaseline + 100);
-      assert.ok(busy.result.sandbox.processBaseline >= quiet.result.sandbox.processBaseline + 30, `${quiet.result.sandbox.processBaseline} -> ${busy.result.sandbox.processBaseline}`);
+      assert.ok(busy.result.sandbox.processBaseline >= quiet.result.sandbox.processBaseline + 100, `${quiet.result.sandbox.processBaseline} -> ${busy.result.sandbox.processBaseline}`);
     } finally {
       for (const sleeper of sleepers) sleeper.kill('SIGKILL');
     }
