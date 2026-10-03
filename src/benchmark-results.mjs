@@ -221,12 +221,12 @@ function validateCaseBindings(result) {
   bindKnown('benchmark case result profile digest', result.provenance.profileSha256, result.packet.profileSha256);
   bindKnown('benchmark case result profile identity', result.packet.profileSha256, identity.worker.profileDigest);
   const resultArtifact = result.artifacts.result;
-  if (resultArtifact !== undefined && resultArtifact !== BENCHMARK_UNKNOWN) {
-    bindKnown('benchmark case result artifact digest', result.provenance.workerResultSha256, resultArtifact.sha256);
+  if (resultArtifact !== undefined) {
+    bindKnown('benchmark case result artifact digest', result.provenance.workerResultSha256, resultArtifact === BENCHMARK_UNKNOWN ? BENCHMARK_UNKNOWN : resultArtifact.sha256);
   }
   const packetArtifact = result.artifacts.packet;
-  if (packetArtifact !== undefined && packetArtifact !== BENCHMARK_UNKNOWN) {
-    bindKnown('benchmark case result packet artifact digest', result.provenance.packetSha256, packetArtifact.sha256);
+  if (packetArtifact !== undefined) {
+    bindKnown('benchmark case result packet artifact digest', result.provenance.packetSha256, packetArtifact === BENCHMARK_UNKNOWN ? BENCHMARK_UNKNOWN : packetArtifact.sha256);
   }
 }
 

@@ -158,6 +158,7 @@ test('binds suite, packet, and profile provenance to the config identity', () =>
     (result) => { result.suite.sha256 = digest('f'); },
     (result) => { result.provenance.suiteSha256 = digest('f'); },
     (result) => { result.artifacts.packet.sha256 = digest('f'); },
+    (result) => { result.artifacts.packet = BENCHMARK_UNKNOWN; },
     (result) => { result.provenance.profileSha256 = digest('f'); },
     (result) => { result.packet.profileSha256 = digest('f'); },
   ]) {
