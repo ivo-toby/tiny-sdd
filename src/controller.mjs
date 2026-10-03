@@ -703,10 +703,14 @@ export async function applyTask(projectRoot, options = {}) {
     await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
     await runArtifactPath(root, finalRun.id, ['workspace-after'], { requireDirectory: true });
 
-    // Plan everything, and refuse on drift, before the first write.
+    // Plan everything, and refuse on drift, before the first write. Only paths
+    // the lineage recorded as changed are applied: a revision's workspaces also
+    // carry whatever the project held at its dispatch, which is not the run's work.
+    const recorded = new Set(lineage.flatMap((run) => run.result.changedPaths.map((change) => change.path)));
     const plan = [];
     const conflicts = [];
     for (const path of task.allow) {
+      if (!recorded.has(path)) continue;
       const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
       const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
       if (sameContent(before, after)) continue;

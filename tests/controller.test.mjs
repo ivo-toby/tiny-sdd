@@ -1434,6 +1434,29 @@ test('a three-run chain applies from the earliest run', async () => {
   }
 });
 
+test('apply plans only the paths the lineage recorded as changed, whatever the project held at a later dispatch', async () => {
+  // B changed in the project between the two dispatches, so the revision's
+  // workspaces carry the new B although neither run touched it.
+  for (const projectB of ['b1\n', 'b2\n', 'b0\n']) {
+    const root = await applyProject({ 'src/a.ts': 'a0\n', 'src/b.ts': projectB });
+    try {
+      await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b0\n' } });
+      await fakeRun(root, RUN_TWO, {
+        before: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' },
+        after: { 'src/a.ts': 'a2\n', 'src/b.ts': 'b1\n' },
+        changedPaths: [{ path: 'src/a.ts', change: 'modified' }],
+        baseRun: { id: RUN_ONE, paths: ['src/a.ts'] },
+      });
+      const { applied } = await apply(root, RUN_TWO);
+      assert.deepEqual(applied.files.map(({ path, status }) => [path, status]), [['src/a.ts', 'written']], projectB);
+      assert.equal(await readProject(root, 'src/a.ts'), 'a2\n');
+      assert.equal(await readProject(root, 'src/b.ts'), projectB);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
 test('apply refuses a lineage that is cyclic, too deep, foreign, scope-violating or missing a run', async () => {
   const root = await applyProject({});
   try {
