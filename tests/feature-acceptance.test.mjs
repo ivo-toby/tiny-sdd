@@ -239,6 +239,10 @@ test('rejects malformed persisted report numbers, phases, membership, and refere
       (event) => { event.report.local.byTask.one.retired = true; },
       (event) => { event.report.local.runIds = []; },
       (event) => { event.report.frontier.ledgerRecordIds = ['invented']; },
+      (event) => { event.report.local.byTask.one.runIds = []; },
+      (event) => { event.report.local.byTask.one.revisionRunIds = ['invented']; },
+      (event) => { event.report.tasks[0].runIds = ['invented']; },
+      (event) => { event.report.local.totals.knownSubtotals.input = 4; },
     ];
     for (const mutate of variants) {
       const event = JSON.parse(pristine.trim());
@@ -246,6 +250,21 @@ test('rejects malformed persisted report numbers, phases, membership, and refere
       await writeFile(ledgerPath, `${JSON.stringify(event)}\n`, 'utf8');
       await assert.rejects(reportFeature(root, { feature: 'broker' }), { code: 'FEATURE_EVENT_INVALID' });
     }
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('rejects report task run references outside frozen provenance', async () => {
+  const root = await project();
+  try {
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    await acceptFeature(root, { feature: 'broker', by: 'operator', reason: 'feature complete' });
+    const ledgerPath = join(root, '.tinysdd', 'runs', 'feature-events.jsonl');
+    const event = JSON.parse((await readFile(ledgerPath, 'utf8')).trim());
+    event.report.tasks[0].runIds = ['invented'];
+    await writeFile(ledgerPath, `${JSON.stringify(event)}\n`, 'utf8');
+    await assert.rejects(reportFeature(root, { feature: 'broker' }), { code: 'FEATURE_EVENT_INVALID' });
   } finally {
     await cleanup(root);
   }

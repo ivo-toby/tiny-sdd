@@ -112,6 +112,9 @@ function validateMetric(value, label, allowedKeys = METRIC_KEYS) {
     if (Number.isSafeInteger(metric[component]) && (!item.complete || item.expected === null || item.expected === 0 || item.observed !== item.expected)) {
       eventError(`${label}.${component} cannot be numeric without complete coverage`);
     }
+    if (Number.isSafeInteger(metric[component]) && subtotals[component] !== metric[component]) {
+      eventError(`${label}.knownSubtotals.${component} must match its complete value`);
+    }
   }
   boundedArray(metric.missing, `${label}.missing`, FEATURE_EVENTS_MAX_RECORDS).forEach((reason, index) => text(reason, `${label}.missing[${index}]`));
 }
@@ -161,8 +164,11 @@ function validateReport(value, feature) {
     if (task.feature !== feature) eventError(`${label}.feature does not match report feature`);
     identifier(task.feature, `${label}.feature`, FEATURE_PATTERN, 64);
     if (typeof task.retired !== 'boolean') eventError(`${label}.retired must be boolean`);
-    boundedIdentifierList(task.runIds, `${label}.runIds`);
-    return { taskId: task.taskId, retired: task.retired };
+    const runIds = boundedIdentifierList(task.runIds, `${label}.runIds`);
+    for (let runIndex = 1; runIndex < runIds.length; runIndex += 1) {
+      if (runIds[runIndex - 1].localeCompare(runIds[runIndex]) >= 0) eventError(`${label}.runIds must be sorted and unique`);
+    }
+    return { taskId: task.taskId, retired: task.retired, runIds };
   });
   for (let index = 1; index < reportTasks.length; index += 1) {
     if (reportTasks[index - 1].taskId.localeCompare(reportTasks[index].taskId) >= 0) eventError('report.tasks must be sorted by task id');
@@ -229,6 +235,16 @@ function validateReport(value, feature) {
   if (stableStringify(local.runIds) !== stableStringify(provenanceRunIds)) eventError('report.local.runIds must match report provenance references');
   const provenanceRevisionRunIds = sortedUnique(provenanceReferences.filter((reference) => reference.baseRunId !== null).map((reference) => reference.runId));
   if (stableStringify(local.revisionRunIds) !== stableStringify(provenanceRevisionRunIds)) eventError('report.local.revisionRunIds must match report provenance references');
+  for (const [taskId, task] of Object.entries(byTask)) {
+    const taskRunIds = sortedUnique(provenanceReferences.filter((reference) => reference.taskId === taskId).map((reference) => reference.runId));
+    const taskRevisionRunIds = sortedUnique(provenanceReferences.filter((reference) => reference.taskId === taskId && reference.baseRunId !== null).map((reference) => reference.runId));
+    if (stableStringify(task.runIds) !== stableStringify(taskRunIds)) eventError(`${taskId}.runIds must match report provenance references`);
+    if (stableStringify(task.revisionRunIds) !== stableStringify(taskRevisionRunIds)) eventError(`${taskId}.revisionRunIds must match report provenance references`);
+  }
+  for (const task of reportTasks) {
+    const provenanceTaskRunIds = new Set(provenanceReferences.filter((reference) => reference.taskId === task.taskId).map((reference) => reference.runId));
+    if (task.runIds.some((runId) => !provenanceTaskRunIds.has(runId))) eventError(`${task.taskId}.runIds must be present in report provenance references`);
+  }
   const phaseLedgerRecordIds = sortedUnique(USAGE_PHASES.flatMap((phase) => report.frontier.byPhase[phase].ledgerRecordIds));
   if (stableStringify(frontier.ledgerRecordIds) !== stableStringify(phaseLedgerRecordIds)) eventError('report.frontier.ledgerRecordIds must match phase records');
   if (stableStringify(frontier.ledgerRecordIds) !== stableStringify(report.provenance.ledgerRecordIds)) eventError('report.frontier.ledgerRecordIds must match report provenance');
