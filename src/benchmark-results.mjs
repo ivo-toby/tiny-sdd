@@ -269,11 +269,19 @@ function validateArtifactMap(value, label) {
   return result;
 }
 
+function hasKnownSandboxMetadata(value) {
+  if (value === BENCHMARK_UNKNOWN || value === null) return false;
+  if (typeof value !== 'object') return true;
+  const entries = Array.isArray(value) ? value : Object.values(value);
+  return entries.some((entry) => hasKnownSandboxMetadata(entry));
+}
+
 function validateSandbox(value, label) {
   if (value === BENCHMARK_UNKNOWN) return value;
   const sandbox = object(value, label);
-  if (Object.keys(sandbox).length === 0) invalid(`${label} must contain meaningful sandbox metadata`);
-  return safeMetadata(sandbox, label);
+  const normalized = safeMetadata(sandbox, label);
+  if (!hasKnownSandboxMetadata(normalized)) invalid(`${label} must contain meaningful sandbox metadata`);
+  return normalized;
 }
 
 function validateVerifierRecord(value, label) {

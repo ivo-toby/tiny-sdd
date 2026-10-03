@@ -118,11 +118,14 @@ test('requires status-consistent verifier execution evidence', () => {
   Object.assign(unavailableWithGreenEvidence.verifier.visible[0], { exitCode: 0, signal: null, timedOut: false, durationMs: 4, sandbox: { network: 'none' } });
   assert.throws(() => validateBenchmarkCaseResult(unavailableWithGreenEvidence), { code: 'BENCHMARK_RESULTS_INVALID' });
 
-  for (const sandbox of [null, false, '']) {
+  for (const sandbox of [null, false, '', { runner: BENCHMARK_UNKNOWN }, { details: { runner: BENCHMARK_UNKNOWN } }, { details: {} }]) {
     const invalidSandbox = caseResult();
     invalidSandbox.verifier.visible[0].sandbox = sandbox;
     assert.throws(() => validateBenchmarkCaseResult(invalidSandbox), { code: 'BENCHMARK_RESULTS_INVALID' });
   }
+  const nestedKnownSandbox = caseResult();
+  nestedKnownSandbox.verifier.visible[0].sandbox = { details: { runner: 'bwrap' } };
+  assert.doesNotThrow(() => validateBenchmarkCaseResult(nestedKnownSandbox));
 });
 
 test('rejects acceptance claims and duplicate verifier ids', () => {
