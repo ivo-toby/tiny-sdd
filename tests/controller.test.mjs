@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -21,9 +21,12 @@ import {
 import { sha256 } from '../src/fs-utils.mjs';
 
 const exec = promisify(execFile);
+// Project roots may not resolve through a symlink, and tmpdir() does on macOS
+// (/var -> /private/var), so temp dirs are built from the real path.
+const canonicalTmpdir = await realpath(tmpdir());
 
 async function project() {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-controller-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-controller-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
   await initProject(root);
@@ -326,7 +329,7 @@ test('read operations reject a symlinked runs directory', async (t) => {
 });
 
 test('CLI emits one clean JSON result and never accepts automatically', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-cli-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-cli-'));
   try {
     const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
     const result = await exec(process.execPath, [bin, 'init', '--project', root, '--json']);
@@ -343,7 +346,7 @@ test('CLI emits one clean JSON result and never accepts automatically', async ()
 });
 
 test('CLI exposes help and version without touching project state', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-cli-help-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-cli-help-'));
   try {
     const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
     const help = await exec(process.execPath, [bin, '--help', '--json', '--project', root]);
@@ -727,7 +730,7 @@ const GATE_EVIDENCE = [
 ].join('\n');
 
 async function gateProject(mode, { brief = GATE_BRIEF, evidence = GATE_EVIDENCE, thresholds } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-gate-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-gate-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), brief);
   await initProject(root);

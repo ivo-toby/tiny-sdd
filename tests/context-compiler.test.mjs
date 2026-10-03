@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { compileContext, parseContextManifest } from '../src/context-compiler.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 
+// Project roots may not resolve through a symlink, and tmpdir() does on macOS
+// (/var -> /private/var), so temp dirs are built from the real path.
+const canonicalTmpdir = await realpath(tmpdir());
+
 async function project() {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-context-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-context-'));
   await mkdir(join(root, 'src'), { recursive: true });
   await writeFile(join(root, 'src', 'contract.ts'), 'export type Input = { id: string };\nexport function run(input: Input) {\n  return input.id;\n}\n');
   return root;

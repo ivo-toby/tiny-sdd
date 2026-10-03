@@ -8,10 +8,13 @@ import { tmpdir } from 'node:os';
 import { initProject } from '../src/controller.mjs';
 
 const exec = promisify(execFile);
+// Project roots may not resolve through a symlink, and tmpdir() does on macOS
+// (/var -> /private/var), so temp dirs are built from the real path.
+const canonicalTmpdir = await realpath(tmpdir());
 const cli = new URL('../bin/tinysdd.mjs', import.meta.url);
 
 async function project() {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-launch-cli-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-launch-cli-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
   await initProject(root);
@@ -75,7 +78,7 @@ test('worker status reports current state at data.status, not in the launch snap
 
 test('worker start fails before detaching when Pi cannot honor the thinking request', async () => {
   const root = await project();
-  const agentDir = await mkdtemp(join(tmpdir(), 'tinysdd-launch-agent-'));
+  const agentDir = await mkdtemp(join(canonicalTmpdir, 'tinysdd-launch-agent-'));
   try {
     await writeFile(join(agentDir, 'models.json'), JSON.stringify({
       providers: { titan: { api: 'openai-completions', baseUrl: 'http://127.0.0.1:9/v1', models: [{ id: 'qwen-bare', reasoning: false }] } },
@@ -125,6 +128,11 @@ writeFileSync(process.env.FAKE_LAUNCHER_READY, '');
 setInterval(() => {}, 1000);
 `;
 
+// `worker stop` verifies a live launcher through /proc, so it can only get past
+// that check on Linux. Stops that return earlier (finished, dead pid, bad
+// arguments) run everywhere.
+const LINUX_ONLY_STOP = process.platform !== 'linux' && 'worker stop needs Linux /proc';
+
 const LAUNCH_ID = 'launch-11111111-2222-3333-4444-555555555555';
 
 async function waitFor(check, label) {
@@ -167,7 +175,7 @@ async function launch(root, pid, id = LAUNCH_ID) {
 
 // Starts the fake launcher with the argv `worker start` would give the real one.
 async function startFakeLauncher(root, directory, { delayMs = 0 } = {}) {
-  const helperDirectory = await mkdtemp(join(tmpdir(), 'tinysdd-fake-launcher-'));
+  const helperDirectory = await mkdtemp(join(canonicalTmpdir, 'tinysdd-fake-launcher-'));
   const script = join(helperDirectory, 'worker-launcher.mjs');
   const ready = join(helperDirectory, 'ready');
   const signals = join(helperDirectory, 'signals');
@@ -200,7 +208,7 @@ async function workerJson(root, ...args) {
   return JSON.parse((await worker(root, '--json', ...args)).stdout);
 }
 
-test('worker stop signals the launcher and returns its finalized result', async () => {
+test('worker stop signals the launcher and returns its finalized result', { skip: LINUX_ONLY_STOP }, async () => {
   const root = await project();
   let fake;
   try {
@@ -227,7 +235,7 @@ test('worker stop signals the launcher and returns its finalized result', async 
   }
 });
 
-test('worker stop reports stopping when the launcher is still finalizing, and never signals twice', async () => {
+test('worker stop reports stopping when the launcher is still finalizing, and never signals twice', { skip: LINUX_ONLY_STOP }, async () => {
   const root = await project();
   let fake;
   try {
@@ -261,7 +269,7 @@ test('worker stop reports stopping when the launcher is still finalizing, and ne
   }
 });
 
-test('worker stop refuses to signal a live process that is not this launch\'s launcher', async () => {
+test('worker stop refuses to signal a live process that is not this launch\'s launcher', { skip: LINUX_ONLY_STOP }, async () => {
   const root = await project();
   const other = sleeper();
   let lookalike;

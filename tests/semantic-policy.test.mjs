@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -11,6 +11,10 @@ import {
   computeBand,
   GATE_ID,
 } from '../src/semantic-policy.mjs';
+
+// Project roots may not resolve through a symlink, and tmpdir() does on macOS
+// (/var -> /private/var), so temp dirs are built from the real path.
+const canonicalTmpdir = await realpath(tmpdir());
 
 const THRESHOLDS = { accept: 0.75, reject: 0.4 };
 
@@ -64,7 +68,7 @@ test('decision records carry the fixed gate field set with digests only', () => 
 });
 
 test('decision records append as JSONL under runs/decisions per task', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'tinysdd-policy-'));
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-policy-'));
   try {
     await mkdir(join(root, '.tinysdd'), { recursive: true });
     const record = (noul) => buildDecisionRecord({

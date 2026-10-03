@@ -10,6 +10,9 @@ import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.
 import { copyProjectTree, runWorker } from "../src/worker.mjs";
 
 const execFileAsync = promisify(execFile);
+// The worker rejects a project root or temp dir that resolves through a symlink,
+// and tmpdir() does on macOS (/var -> /private/var), so use the real path.
+const canonicalTmpdir = await realpath(tmpdir());
 
 async function git(cwd, ...args) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
@@ -59,6 +62,7 @@ async function listTree(root, prefix = "") {
 }
 
 const originalTestFlag = process.env.TINYSDD_WORKER_TEST;
+const originalTmpdirOverride = process.env.TINYSDD_TMPDIR;
 let fakePi;
 let sourceAgentDir;
 
@@ -79,7 +83,7 @@ const models = {
 };
 
 async function makeProject() {
-  const root = await mkdtemp(join(tmpdir(), "tinysdd-worker-test-project-"));
+  const root = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-test-project-"));
   await writeFile(join(root, "TASK.md"), "Implement the bounded test change.\n");
   await (await import("node:fs/promises")).mkdir(join(root, "src"), { recursive: true });
   await writeFile(join(root, "src", "allowed.txt"), "before\n");
@@ -87,7 +91,7 @@ async function makeProject() {
 }
 
 async function makeRuntime() {
-  const root = await mkdtemp(join(tmpdir(), "tinysdd-worker-test-runtime-"));
+  const root = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-test-runtime-"));
   sourceAgentDir = join(root, "agent");
   await (await import("node:fs/promises")).mkdir(sourceAgentDir, { recursive: true });
   await writeFile(join(sourceAgentDir, "models.json"), `${JSON.stringify(models)}\n`);
@@ -165,6 +169,7 @@ function runtime(runtimeRoot, action = "complete") {
 
 before(async () => {
   process.env.TINYSDD_WORKER_TEST = "1";
+  process.env.TINYSDD_TMPDIR = canonicalTmpdir;
   const runtimeRoot = await makeRuntime();
   // Keep the directory alive for the suite; each project remains independent.
   process.env.TINYSDD_TEST_RUNTIME_ROOT = runtimeRoot;
@@ -175,6 +180,8 @@ after(async () => {
   if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true });
   if (originalTestFlag === undefined) delete process.env.TINYSDD_WORKER_TEST;
   else process.env.TINYSDD_WORKER_TEST = originalTestFlag;
+  if (originalTmpdirOverride === undefined) delete process.env.TINYSDD_TMPDIR;
+  else process.env.TINYSDD_TMPDIR = originalTmpdirOverride;
   delete process.env.TINYSDD_TEST_RUNTIME_ROOT;
 });
 
@@ -721,7 +728,7 @@ describe("Pi worker capture and scope", () => {
 
   test("rejects source symlink escapes before any model execution", async () => {
     const project = await makeProject();
-    const outside = await mkdtemp(join(tmpdir(), "tinysdd-worker-test-outside-"));
+    const outside = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-test-outside-"));
     try {
       await (await import("node:fs/promises")).symlink(outside, join(project, "linked"));
       await assert.rejects(
@@ -800,8 +807,8 @@ describe("Pi worker capture and scope", () => {
   });
 
   test("git copy refuses an empty listing instead of an empty workspace", async () => {
-    const outer = await mkdtemp(join(tmpdir(), "tinysdd-copy-outer-"));
-    const destination = await mkdtemp(join(tmpdir(), "tinysdd-copy-test-"));
+    const outer = await mkdtemp(join(canonicalTmpdir, "tinysdd-copy-outer-"));
+    const destination = await mkdtemp(join(canonicalTmpdir, "tinysdd-copy-test-"));
     try {
       await git(outer, "init", "-q");
       await writeFile(join(outer, ".gitignore"), "project/\n");
@@ -818,7 +825,7 @@ describe("Pi worker capture and scope", () => {
     const project = await makeGitProject();
     const destinations = [];
     const destination = async () => {
-      const path = await mkdtemp(join(tmpdir(), "tinysdd-copy-test-"));
+      const path = await mkdtemp(join(canonicalTmpdir, "tinysdd-copy-test-"));
       destinations.push(path);
       return path;
     };
@@ -843,10 +850,12 @@ describe("Pi worker capture and scope", () => {
 
   test("fails closed when the Linux sandbox executable is unavailable", async () => {
     const project = await makeProject();
+    // Off Linux, chooseRuntime refuses before it looks for bubblewrap.
+    const refusal = process.platform === "linux" ? /bubblewrap.*unavailable|unavailable.*bubblewrap/u : /require Linux bubblewrap/u;
     try {
       await assert.rejects(
         runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: "/definitely/missing/bwrap", piExecutable: fakePi } }),
-        /bubblewrap.*unavailable|unavailable.*bubblewrap/u,
+        refusal,
       );
     } finally {
       await rm(project, { recursive: true, force: true });
