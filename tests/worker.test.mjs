@@ -645,6 +645,57 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("records an unavailable declared runner without exposing a check tool", async () => {
+    const project = await makeProject();
+    try {
+      const text = "declared checks\n";
+      const digest = createHash("sha256").update(text).digest("hex");
+      const result = await runWorker({
+        projectRoot: await realpath(project),
+        packet: { ...packet(), checks: { path: ".tinysdd/tasks/checks.json", text, sha256: digest } },
+        worker: worker(),
+        runtime: runtime(undefined, "complete"),
+      });
+      const runtimeMetadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.equal(runtimeMetadata.runChecks.declared, true);
+      assert.equal(runtimeMetadata.runChecks.available, false);
+      assert.equal(runtimeMetadata.capabilities.tools.includes("run_checks"), false);
+      assert.equal(runtimeMetadata.capabilities.extensions, false);
+      assert.equal(runtimeMetadata.limits.maxCheckRuns, 12);
+      assert.match(result.warnings.find((warning) => warning.startsWith("run_checks unavailable: ")), /requires Linux|test runtime did not provide/u);
+      assert.equal(result.artifactPaths.checks, undefined);
+      assert.equal(result.runChecks.available, false);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("uses live dependency mounts and compares their identity on a replay", async () => {
+    const project = await makeProject();
+    try {
+      await mkdir(join(project, "node_modules"), { recursive: true });
+      await writeFile(join(project, "node_modules", "package.json"), '{"name":"fixture"}\n');
+      const checksText = JSON.stringify({ schemaVersion: 1, dependencyMounts: ["node_modules"], checks: [{ id: "unit", argv: ["node", "-e", "0"], timeoutMs: 1000 }] });
+      const checks = { path: ".tinysdd/tasks/checks.json", text: checksText, sha256: createHash("sha256").update(checksText).digest("hex") };
+      const checkRuntime = { ...runtime(undefined, "complete"), checkRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok", tail: "ok", totalBytes: 2, truncated: false } }) };
+      const first = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime });
+      const firstRuntime = JSON.parse(await readFile(first.artifactPaths.runtime, "utf8"));
+      assert.equal(firstRuntime.runChecks.available, true);
+      assert.equal(firstRuntime.runChecks.maxCheckRuns, 12);
+      assert.equal(firstRuntime.runChecks.dependencyIdentity.provenance, "live-source-root");
+      assert.equal(firstRuntime.capabilities.tools.includes("run_checks"), true);
+      const replay = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime, baselineRunId: first.runId });
+      const replayRuntime = JSON.parse(await readFile(replay.artifactPaths.runtime, "utf8"));
+      assert.equal(replayRuntime.runChecks.baselineComparison.status, "identical");
+      assert.equal(replay.runChecks.baselineComparison.status, "identical");
+      await rm(first.artifactPaths.runtime);
+      const oldReplay = await runWorker({ projectRoot: await realpath(project), packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime, baselineRunId: first.runId });
+      assert.equal(oldReplay.runChecks.baselineComparison.status, "unknown");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("classifies assistant errors and length stops independently of process exit zero", async () => {
     for (const [action, expected, stopReason] of [["error", "failed", "error"], ["length", "response_token_limit", "length"]]) {
       const project = await makeProject();

@@ -19,7 +19,7 @@ export const DEFAULT_MAX_TOOL_CALLS = 40;
 export const MAX_TOOL_CALLS = 100;
 
 const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits'];
-const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs'];
+const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs', 'maxCheckRuns'];
 const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
 const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets'];
 const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole', 'thinkingTokenBudgetField'];
@@ -66,7 +66,7 @@ function validateStringArray(value, label, suffix = undefined) {
 }
 
 function validateLimits(value, label) {
-  if (value === undefined) return { timeoutMs: DEFAULT_TIMEOUT_MS, maxToolCalls: DEFAULT_MAX_TOOL_CALLS };
+  if (value === undefined) return { timeoutMs: DEFAULT_TIMEOUT_MS, maxToolCalls: DEFAULT_MAX_TOOL_CALLS, maxCheckRuns: 12 };
   assertPlainObject(value, 'CONFIG_INVALID', label);
   assertExactKeys(value, LIMIT_KEYS, 'CONFIG_INVALID', label);
   const timeoutMs = value.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -80,12 +80,16 @@ function validateLimits(value, label) {
   if (!Number.isInteger(maxToolCalls) || maxToolCalls <= 0 || maxToolCalls > MAX_TOOL_CALLS) {
     throw tinyError('CONFIG_INVALID', `${label}.maxToolCalls must be an integer from 1 to ${MAX_TOOL_CALLS}`);
   }
-  if (value.firstWriteMs === undefined) return { timeoutMs, maxToolCalls };
+  const maxCheckRuns = value.maxCheckRuns === undefined ? 12 : value.maxCheckRuns;
+  if (!Number.isInteger(maxCheckRuns) || maxCheckRuns < 1 || maxCheckRuns > 20) {
+    throw tinyError('CONFIG_INVALID', `${label}.maxCheckRuns must be an integer from 1 to 20`);
+  }
+  if (value.firstWriteMs === undefined) return { timeoutMs, maxToolCalls, maxCheckRuns };
   // Optional no-progress watchdog: stop when no write/edit has started by then.
   if (!Number.isInteger(value.firstWriteMs) || value.firstWriteMs <= 0 || value.firstWriteMs >= timeoutMs) {
     throw tinyError('CONFIG_INVALID', `${label}.firstWriteMs must be a positive integer below timeoutMs`);
   }
-  return { timeoutMs, maxToolCalls, firstWriteMs: value.firstWriteMs };
+  return { timeoutMs, maxToolCalls, maxCheckRuns, firstWriteMs: value.firstWriteMs };
 }
 
 function validateWorker(raw, name, label = `workers.${name}`) {

@@ -88,13 +88,16 @@ on the selected worker when needed. Profiles do not include credentials.
 
 Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`, Pi in
 the same installation as the CLI's Node executable, and the exact model in Pi's
-configured models. Missing sandbox support fails closed. It uses only
-read/write/edit tools in a disposable copy.
-No generated code is run. Source files may appear in local raw events and sent
+configured models. Pi 1.0.0 requires Node >=22.19.0; its fixed check-client
+integration still needs live qualification. Missing sandbox support fails closed. It uses
+read/write/edit tools in a disposable copy. Available declared checks add the
+fixed `run_checks` client; generated code executes only in the separate Linux
+check sandbox. An unavailable host records the reason and runs without the
+client. Source files may appear in local raw events and sent
 model context: use only authorized projects and providers. Excluded filenames
 are a precaution, not a general detector for secrets embedded in source.
 
-On macOS, Seatbelt allows writes only to the candidate and temporary Pi state;
+On macOS, Seatbelt allows writes to the candidate and temporary Pi state;
 the original project, original Pi configuration and other home files are denied.
 Only trusted Node/Pi code and system libraries are readable outside those copies.
 The `openai-completions` API needs an explicit HTTP(S) base URL. A per-run
@@ -193,7 +196,29 @@ Evidence is caller-supplied; the controller does not claim to have run its
 commands. Acceptance is bound to the brief, dependencies, review evidence and
 allowed file contents. Later changes can invalidate it.
 
+Replay check mounts come from the live canonical project root rather than the
+frozen candidate snapshot. `runtime.json.runChecks` records their content
+identity and the explicit baseline comparison; older artifacts without an
+identity compare as `unknown`.
+
 Declare fixed task checks in a reviewed JSON file under `.tinysdd/tasks/` and
 pass it to `task add` with `--checks PATH`. The controller validates and binds
-the declaration into approval and the packet, but checks are approved only and
-are not executed yet.
+the declaration into approval and the packet. When the host runner is available,
+a checks-bearing packet exposes `run_checks` with optional `checkId` (omitted
+means all checks in order). It uses the separate Linux bubblewrap runner,
+without network or credentials. An unavailable host records the reason and
+keeps the no-check tool surface. Dependency mounts cannot overlap allowed
+paths. `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
+check. Budget exhaustion, unknown ids and runner unavailability throw tool
+errors and do not end the worker. Pi 1.0.0 makes a batch containing `run_checks`
+sequential in assistant source order: `[write, run_checks]` sees the write;
+`[run_checks, write]` sees the earlier candidate. No sibling reordering occurs.
+Keep extension discovery and built-ins disabled, loading only the read-only
+check client with `read,write,edit,run_checks`. Do not enable codemode, MCP,
+tool-search or llama.cpp built-ins. Check time
+counts toward the worker deadline; checks are cancelled when the worker ends.
+
+Inspect `checks.jsonl`, bounded check-output artifacts and
+`result.workerObservedChecks`. The observations identify the checked input
+digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
+independent operator verification remains required.

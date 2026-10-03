@@ -5,6 +5,8 @@ Spawned workers require Linux with bubblewrap or macOS with `sandbox-exec`, and
 an existing Pi installation with the exact provider/model configured. Missing
 sandbox support fails closed. No package installation is needed for the
 dependency-free CLI itself. Node24 is the development/test environment.
+The fixed check client targets Pi 1.0.0, which requires Node >=22.19.0;
+its live sandbox loading and Titan smoke still require qualification.
 The first adapter expects Pi in the same installation's `bin` directory as the
 Node executable running this CLI; other installation layouts are not qualified.
 Workers create disposable candidate directories under `/tmp` by default. Set
@@ -15,10 +17,12 @@ On macOS, the default system temporary directory is resolved through Apple's
 `/var` and `/tmp` aliases; an explicit `TINYSDD_TMPDIR` must still be a real path.
 
 The macOS adapter uses Seatbelt with read access to system libraries, the Node
-executable and the installed Pi package. Only the candidate and temporary Pi
-state are writable. The source project, original Pi state and other home files
-are inaccessible, including through symlinks. Pi receives only read/write/edit
-tools; process forks and shell execution are denied.
+executable and the installed Pi package. The candidate and temporary Pi state
+are writable. The source project, original Pi state and other home files are
+inaccessible, including through symlinks. Pi receives read/write/edit; process
+forks and shell execution are denied. The Linux check runner is unavailable on
+macOS, so a declared checks packet records that condition and runs without
+`run_checks`.
 
 macOS currently supports the `openai-completions` API with an explicit HTTP(S)
 base URL. A temporary loopback relay forwards only `POST /chat/completions` for
@@ -137,8 +141,28 @@ and uncalibrated, pending the talon reruns; warnings never block.
 
 When a task has fixed checks, declare them in a reviewed JSON file under
 `.tinysdd/tasks/` and pass it with `--checks`. TinySDD validates and binds the
-declaration into approval and the worker packet, but does not execute the checks
-yet.
+declaration into approval and the worker packet. When the host check runner is
+available, packets expose the fixed `run_checks` tool: an optional `checkId`
+selects one declared check; omitting it runs them in declaration order. The
+separate Linux bubblewrap runner executes the current candidate without network
+or credentials. On an unavailable host, the packet records the reason, emits a
+warning and runs without the tool.
+
+`limits.maxCheckRuns` defaults to 12 and accepts integers from 1 to 20 when the
+tool is available. Each individual check consumes one run, including checks
+requested by an all-checks call. Exhaustion, unknown ids and runner
+unavailability throw tool errors while
+the worker continues. Pi 1.0.0 executes a batch containing `run_checks`
+sequentially in assistant source order: `[write, run_checks]` observes that
+write; `[run_checks, write]` checks the earlier candidate. The tool does not
+reorder sibling writes. Checks share
+the worker wall-clock deadline and are cancelled when the worker ends. Declared
+dependency mounts cannot overlap any allowed path.
+
+`checks.jsonl` and bounded output artifacts retain host observations, including
+the digests of the candidate bytes checked. `result.workerObservedChecks` labels
+these as `source: "worker run_checks", acceptanceEvidence: false`. They are
+feedback for the worker; the operator still verifies and accepts separately.
 
 ## Configure a worker
 
@@ -216,6 +240,11 @@ Optional worker `skills` lists project-relative SKILL.md files; `instructions`
 lists additional project-relative text resources. Applicable AGENTS.md guidance
 is included separately. Profiles cannot override task permissions. MCP and
 arbitrary runtime extensions are not supported in this first adapter.
+`--no-extensions` suppresses extension discovery and Pi 1.0.0 built-ins;
+available checks-bearing packets explicitly load only TinySDD’s read-only check
+client, with `read,write,edit,run_checks` as the tool allowlist. Unavailable
+hosts keep the existing no-check extension and tool arguments. Codemode, MCP,
+tool-search and llama.cpp built-ins are not enabled.
 
 Optional `.tinysdd/config.local.json` replaces whole workers by name, not nested
 fields. Arrays replace; null/unknown fields are errors. Credentials stay in Pi's
@@ -265,10 +294,15 @@ If `task update` changes the approved allow, protect, context, checks, or
 dependency shape, benchmark replay refuses with `STALE_BENCHMARK_SHAPE` instead
 of silently replaying a different packet. Re-approve the revised task before
 starting a new benchmark.
+For a replay with available checks, dependency mounts are resolved from the
+live canonical project root and recorded with a content identity. The replay's
+`runtime.json.runChecks.baselineComparison` reports `identical`, `different` or
+`unknown`; older baseline artifacts without that identity remain `unknown`.
 
 ## Review the result
 
-The worker edits a disposable copy using read/write/edit only. Its result points
+The worker edits a disposable copy using read/write/edit. Available declared
+checks add the fixed `run_checks` client. Its result points
 to local evidence and a patch under `.tinysdd/runs/`. It does not run tests,
 apply the patch, commit, or accept its own result. Inference can reach the selected
 provider; use only source you are authorized to send there. Raw event files may

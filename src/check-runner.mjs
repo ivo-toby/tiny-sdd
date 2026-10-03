@@ -37,7 +37,7 @@ const HEAD_BYTES = 1024;
 const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
 const SETPRIV_DEFAULTS = ['/usr/bin/setpriv', '/bin/setpriv'];
-const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'tempRoot'];
+const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'tempRoot', 'signal'];
 // nobody and nogroup: the uid a root caller drops to unless runAs says otherwise.
 const DEFAULT_DROP_ID = 65534;
 const MAX_ID = 4294967294;
@@ -214,6 +214,7 @@ function parseRequest(options) {
     if (options[key] !== undefined && typeof options[key] !== 'string') throw invalid(`${key} must be a string`);
   }
   if (typeof options.candidateDir !== 'string') throw invalid('candidateDir must be an absolute path');
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) throw invalid('signal must be an AbortSignal');
   const mounts = parseMounts(options.dependencyMounts);
   return {
     candidateDir: options.candidateDir,
@@ -296,8 +297,10 @@ async function copyRegularFile(from, to, info, budget, label) {
   }
 }
 
-async function copyDirectory(from, to, budget, prefix = '') {
+async function copyDirectory(from, to, budget, prefix = '', signal) {
+  signal?.throwIfAborted();
   for (const entry of await readdir(from, { withFileTypes: true })) {
+    signal?.throwIfAborted();
     const label = `${prefix}${entry.name}`;
     const source = join(from, entry.name);
     const target = join(to, entry.name);
@@ -305,7 +308,7 @@ async function copyDirectory(from, to, budget, prefix = '') {
     if (info.isDirectory()) {
       // Owner rwx is forced so the copy can be filled and later removed.
       await mkdir(target, { mode: (info.mode & 0o777) | 0o700 });
-      await copyDirectory(source, target, budget, `${label}/`);
+      await copyDirectory(source, target, budget, `${label}/`, signal);
     } else if (info.isFile()) {
       await copyRegularFile(source, target, info, budget, label);
     } else {
@@ -325,6 +328,7 @@ async function giveToUser(path, uid, gid) {
 
 function copyFailure(error) {
   if (error instanceof TinySDDError) return error;
+  if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || error?.code === 'CHECK_DEADLINE') return tinyError('CHECK_CANCELLED', 'check cancelled before execution');
   if (error?.code === 'ENOSPC' || error?.code === 'EDQUOT') return unavailable(`scratch space ran out while copying candidateDir (${error.code})`);
   return invalid(`candidateDir could not be copied: ${error?.code ?? error?.message}`);
 }
@@ -475,7 +479,7 @@ function summarizeOutput(capture, limits) {
   };
 }
 
-function runSandbox({ command, args, timeoutMs, capture }) {
+function runSandbox({ command, args, timeoutMs, capture, signal }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
     let settled = false;
@@ -488,8 +492,14 @@ function runSandbox({ command, args, timeoutMs, capture }) {
       settled = true;
       clearTimeout(killTimer);
       clearTimeout(graceTimer);
+      signal?.removeEventListener('abort', abort);
       callback();
     };
+    const abort = () => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      graceTimer = setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, KILL_GRACE_MS);
+    };
+    if (signal?.aborted) { reject(invalid('check cancelled before execution')); return; }
     try {
       // env: {} so prlimit and bwrap inherit nothing from the host, and
       // detached so the whole group can be killed on timeout.
@@ -498,6 +508,8 @@ function runSandbox({ command, args, timeoutMs, capture }) {
       reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }));
       return;
     }
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     child.on('error', (error) => finish(() => reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }))));
     child.stdout.on('data', (chunk) => capture.push(chunk));
     child.stderr.on('data', (chunk) => capture.push(chunk));
@@ -545,6 +557,7 @@ export async function runCheck(options) {
   const platform = unsupportedPlatform();
   if (platform) throw unavailable(platform);
   const request = parseRequest(options);
+  options.signal?.throwIfAborted();
   const binaries = locateBinaries(options);
   if (binaries.reason) throw unavailable(binaries.reason);
 
@@ -570,7 +583,7 @@ export async function runCheck(options) {
   try {
     const input = join(scratch, 'input');
     await mkdir(input, { mode: 0o700 });
-    await copyDirectory(request.candidateDir, input, { used: 0, limit: request.limits.scratchBytes }).catch((error) => {
+    await copyDirectory(request.candidateDir, input, { used: 0, limit: request.limits.scratchBytes }, '', options.signal).catch((error) => {
       throw copyFailure(error);
     });
     await assertMountPointsFree(input, request.mounts);
@@ -598,6 +611,7 @@ export async function runCheck(options) {
       args: dropCommand ? [...dropPrefix, binaries.prlimit, ...sandboxArgs] : sandboxArgs,
       timeoutMs: request.check.timeoutMs,
       capture,
+      signal: options.signal,
     });
     const setupFailure = sandboxSetupFailure(run, capture.head);
     if (setupFailure) throw unavailable('the check sandbox could not be created; the check did not run', { output: setupFailure });

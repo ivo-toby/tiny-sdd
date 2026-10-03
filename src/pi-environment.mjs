@@ -315,7 +315,9 @@ function validateWorker(worker) {
   if (firstWriteMs !== null && (!Number.isInteger(firstWriteMs) || firstWriteMs <= 0 || firstWriteMs >= timeoutMs)) {
     fail("Pi firstWriteMs must be a positive integer below timeoutMs");
   }
-  return { timeoutMs, maxToolCalls, firstWriteMs };
+  const maxCheckRuns = limits.maxCheckRuns === undefined ? 12 : limits.maxCheckRuns;
+  if (!Number.isInteger(maxCheckRuns) || maxCheckRuns < 1 || maxCheckRuns > 20) fail("Pi maxCheckRuns must be an integer from 1 to 20");
+  return { timeoutMs, maxToolCalls, firstWriteMs, maxCheckRuns };
 }
 
 // Thinking-control rules for Pi's openai-completions requests, read from
@@ -510,6 +512,7 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
     timeoutMs: limits.timeoutMs,
     maxToolCalls: limits.maxToolCalls,
     firstWriteMs: limits.firstWriteMs,
+    maxCheckRuns: limits.maxCheckRuns,
     credentialEnvironmentNames: [],
     generatedCredentialReferenceCount: Object.keys(generatedEnv).length,
     preflight,

@@ -15,6 +15,9 @@ import {
   preparePiEnvironment,
   validatePiWorker,
 } from "./pi-environment.mjs";
+import { checkRunnerAvailable } from "./check-runner.mjs";
+import { parseChecksManifest } from "./checks-manifest.mjs";
+import { createCheckChannel } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
@@ -373,7 +376,16 @@ async function resolveFrozenBaseline(projectRoot, baselineRunId, taskId) {
     if (result?.taskId !== taskId) fail("baseline run belongs to a different task");
     const canonical = await realpath(workspace);
     if (!isInside(runDirectory, canonical)) fail("baseline run workspace escapes its artifact directory");
-    return { id: baselineRunId, root: canonical };
+    let runtime = null;
+    try {
+      const runtimePath = join(runDirectory, "runtime.json");
+      const runtimeInfo = await lstat(runtimePath);
+      if (!runtimeInfo.isSymbolicLink() && runtimeInfo.isFile()) runtime = JSON.parse(await readFile(runtimePath, "utf8"));
+    } catch {
+      // Older artifacts have no runtime identity. Replays record that as
+      // unknown instead of treating the dependency configuration as equal.
+    }
+    return { id: baselineRunId, root: canonical, runtime };
   } catch (error) {
     if (error instanceof WorkerError) throw error;
     fail(`Cannot load baseline run ${baselineRunId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -746,7 +758,63 @@ async function piPackageInfo(pi) {
   return { version: null, root: null };
 }
 
-function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt }) {
+function probeCheckRunner(runtimeChoice, runtime) {
+  if (runtimeChoice.test) {
+    if (typeof runtime?.checkRunner === "function") return { available: true, reason: null, testInjected: true };
+    const availability = checkRunnerAvailable();
+    return availability.available
+      ? { available: false, reason: "test runtime did not provide a check runner", testInjected: false }
+      : { ...availability, testInjected: false };
+  }
+  return { ...checkRunnerAvailable(), testInjected: false };
+}
+
+function compareRunChecks(baseline, current) {
+  if (!baseline) return { status: "not_applicable" };
+  const previous = baseline.runtime?.runChecks;
+  if (!previous || typeof previous !== "object") {
+    return { status: "unknown", reason: "baseline runtime has no runChecks identity" };
+  }
+  if (typeof previous.declared !== "boolean" || typeof previous.available !== "boolean") {
+    return { status: "unknown", reason: "baseline runChecks availability is unknown" };
+  }
+  for (const key of ["declared", "available"]) {
+    if (previous[key] !== current[key]) return { status: "different", reason: `baseline runChecks.${key} differs` };
+  }
+  if (!current.available) return { status: "identical" };
+  if (!Number.isInteger(previous.maxCheckRuns) || typeof previous.runner !== "string") {
+    return { status: "unknown", reason: "baseline check-run budget or runner identity is unavailable" };
+  }
+  if (previous.maxCheckRuns !== current.maxCheckRuns || previous.runner !== current.runner) {
+    return { status: "different", reason: "baseline runChecks configuration differs" };
+  }
+  if (!previous.dependencyIdentity || !current.dependencyIdentity) {
+    return { status: "unknown", reason: "baseline dependency identity is unavailable" };
+  }
+  if (typeof previous.dependencyIdentity.algorithm !== "string" || typeof previous.dependencyIdentity.provenance !== "string") {
+    return { status: "unknown", reason: "baseline dependency identity provenance is unavailable" };
+  }
+  if (previous.dependencyIdentity.algorithm !== current.dependencyIdentity.algorithm || previous.dependencyIdentity.provenance !== current.dependencyIdentity.provenance) {
+    return { status: "different", reason: "baseline dependency identity provenance differs" };
+  }
+  return previous.dependencyIdentity.sha256 === current.dependencyIdentity.sha256
+    ? { status: "identical" }
+    : { status: "different", reason: "dependency mount content differs" };
+}
+
+function runChecksMetadata({ declared, availability, maxCheckRuns, checkChannel, baseline }) {
+  const current = {
+    declared,
+    available: declared && availability.available,
+    ...(declared && !availability.available ? { reason: availability.reason } : {}),
+    ...(declared && availability.available ? { maxCheckRuns, runner: availability.testInjected ? "test-injected" : "linux-bubblewrap" } : {}),
+    ...(checkChannel ? { dependencyIdentity: checkChannel.dependencyIdentity } : {}),
+  };
+  if (baseline) current.baselineComparison = compareRunChecks(baseline, current);
+  return current;
+}
+
+function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt, checkExtension }) {
   const args = [
     "--offline",
     "--print",
@@ -758,7 +826,7 @@ function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath,
     "--no-context-files",
     "--no-approve",
     "--tools",
-    "read,write,edit",
+    checkExtension ? "read,write,edit,run_checks" : "read,write,edit",
     "--provider",
     provider,
     "--model",
@@ -770,11 +838,12 @@ function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath,
     "--append-system-prompt",
     systemPromptPath,
   ];
+  if (checkExtension) args.push("-e", checkExtension);
   args.push(userPrompt);
   return args;
 }
 
-function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, env }) {
+function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, env, checkChannel }) {
   const requiredMounts = ["/usr", "/bin", "/lib", "/lib64"];
   const args = ["--die-with-parent", "--unshare-user", "--unshare-pid", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--dir", "/etc"];
   for (const mount of requiredMounts) args.push("--ro-bind", mount, mount);
@@ -791,6 +860,7 @@ function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalP
     "/etc/ca-certificates",
   ]) args.push("--ro-bind-try", path, path);
   args.push("--dir", "/opt", "--ro-bind", nodeRoot, "/opt/node", "--dir", "/work", "--bind", workspace, "/work", "--dir", "/pi-state", "--bind", stateDir, "/pi-state", "--chdir", "/work");
+  if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--dir", "/opt/tinysdd", "--ro-bind", checkChannel.extension, "/opt/tinysdd/run-checks.mjs");
   // No --unshare-net: model inference must reach the configured proxy.  The
   // only writable mounts are the disposable candidate and temporary Pi state.
   args.push("--setenv", "HOME", "/home", "--setenv", "PI_CODING_AGENT_DIR", "/pi-state", "--setenv", "PATH", "/opt/node/bin:/usr/bin:/bin");
@@ -878,10 +948,11 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal }) {
+async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal, checkChannel }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
+  checkChannel?.start(timeoutMs);
   let child;
   let spawnError = null;
   let forcedOutcome = null;
@@ -898,6 +969,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   const stop = (reason) => {
     if (forcedOutcome) return;
     forcedOutcome = reason;
+    checkChannel?.cancel();
     killProcessGroup(child?.pid, "SIGTERM");
     killTimer = setTimeout(() => killProcessGroup(child?.pid, "SIGKILL"), 250);
     killTimer.unref?.();
@@ -910,6 +982,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     // Stopped before Pi started: spawn nothing, but still finalize the run.
     stopRequested = true;
     stoppedBeforeSpawn = true;
+    checkChannel?.cancel();
     forcedOutcome = "stopped";
   } else {
     try {
@@ -945,6 +1018,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
     if (pollBusy || !child) return;
     pollBusy = true;
     try {
+      try { checkChannel?.poll(); } catch { stop("failed"); }
       const [outInfo, errInfo] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
       latest.bytes = outInfo.size + errInfo.size;
       if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("raw_output_limit");
@@ -976,7 +1050,9 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   if (pollTimer) clearInterval(pollTimer);
   if (timeoutTimer) clearTimeout(timeoutTimer);
   if (killTimer) clearTimeout(killTimer);
+  checkChannel?.cancel();
   await poll();
+  await checkChannel?.drain();
   await stdoutHandle.close();
   await stderrHandle.close();
   const stdout = await readFile(stdoutPath, "utf8");
@@ -1171,7 +1247,7 @@ async function resolveReview(projectRoot, review) {
   return { ...review, evidence };
 }
 
-function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion) {
+function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks) {
   return {
     schemaVersion: 1,
     adapter: "pi",
@@ -1202,15 +1278,23 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     rawCompat: prepared.metadata.rawCompat,
     effectiveCompat: prepared.metadata.effectiveCompat,
     profileId: prepared.metadata.profileId,
+    runChecks,
     capabilities: {
-      tools: ["read", "write", "edit"],
-      extensions: false,
+      tools: ["read", "write", "edit", ...(runChecks?.available ? ["run_checks"] : [])],
+      extensions: runChecks?.available ? ["run-checks.mjs"] : false,
       globalSkills: false,
       contextFiles: false,
       generatedCodeExecution: false,
       inferenceNetwork: true,
     },
-    limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxCheckRuns: prepared.metadata.maxCheckRuns, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    accounting: {
+      maxToolCallsIncludesRunChecks: true,
+      firstWriteMsIncludesRunChecks: false,
+      maxCheckRunsPerExecutedCheck: true,
+      allChecksChargesEachCheck: true,
+      checkTimeCountsTowardTimeoutMs: true,
+    },
     credentialEnvironmentNames: prepared.metadata.credentialEnvironmentNames,
     generatedCredentialReferenceCount: prepared.metadata.generatedCredentialReferenceCount,
   };
@@ -1235,6 +1319,9 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const executionSource = frozenBaseline?.root ?? sourceRoot;
   const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
   const runtimeChoice = await chooseRuntime(runtime);
+  const checksDeclared = normalizedPacket.checks !== null;
+  const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime) : { available: false, reason: null, testInjected: false };
+  const checkManifest = checkAvailability.available ? parseChecksManifest(normalizedPacket.checks.text) : null;
   const brief = await resolveBrief(sourceRoot, normalizedPacket);
   const review = await resolveReview(sourceRoot, normalizedPacket.review);
   let compiledContext;
@@ -1275,6 +1362,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let workspace;
   let baseline;
   let inferenceRelay;
+  let checkChannel;
   try {
     artifactDir = await createArtifactDir(sourceRoot, runId);
     workspace = await mkdtemp(join(tempRoot, "tinysdd-worker-"));
@@ -1295,9 +1383,13 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeJson(join(artifactDir, "packet.json"), normalizedPacket);
     await writeFile(join(artifactDir, "prompt.txt"), prompt.rendered, { mode: 0o600 });
     if (compiledContext) await writeFile(join(artifactDir, "compiled-context.md"), compiledContext.rendered, { mode: 0o600 });
+    if (checkManifest) {
+      checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
+    }
     const piPackage = await piPackageInfo(runtimeChoice.pi);
     const piVersion = piPackage.version;
-    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion));
+    const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline });
+    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks));
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
       resources: contextResources,
@@ -1330,7 +1422,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeFile(userPromptPath, prompt.user, { mode: 0o600 });
     const promptArgumentPath = nativePaths ? join(promptStateDir, "task-prompt.txt") : "/pi-state/task-prompt.txt";
     const appendPromptPath = nativePaths ? join(promptStateDir, "system-prompt.txt") : "/pi-state/system-prompt.txt";
-    const piArgs = buildPiArgs({ provider: worker.provider, model: worker.model, sessionPath, thinking, systemPromptPath: appendPromptPath, userPrompt: promptArgumentPath.startsWith("/") ? `@${promptArgumentPath}` : prompt.user });
+    const checkExtension = checkChannel ? (nativePaths ? checkChannel.extension : "/opt/tinysdd/run-checks.mjs") : null;
+    const piArgs = buildPiArgs({ checkExtension, provider: worker.provider, model: worker.model, sessionPath, thinking, systemPromptPath: appendPromptPath, userPrompt: promptArgumentPath.startsWith("/") ? `@${promptArgumentPath}` : prompt.user });
     let command;
     let args;
     let childEnv;
@@ -1363,15 +1456,19 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.sandboxExec.path;
       args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
       childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
-      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
+      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
       command = runtimeChoice.bwrap.path;
       childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
-      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv });
+      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv, checkChannel });
     }
-    capture = await captureProcess({ command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
+    if (checkChannel) {
+      childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";
+      childEnv.TINYSDD_CHECK_DEADLINE = String(Date.now() + limits.timeoutMs);
+    }
+    capture = await captureProcess({ checkChannel, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
     if (inferenceRelay) await inferenceRelay.close();
     inferenceRelay = null;
     after = await snapshotTree(workspace);
@@ -1390,6 +1487,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       schemaVersion: 1,
       runId,
       taskId: normalizedPacket.taskId,
+      runChecks,
       ...(revisionBase ? {
         baseRun: {
           id: revisionBase.id,
@@ -1398,6 +1496,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         },
       } : {}),
       ...(frozenBaseline ? { baselineRun: { id: frozenBaseline.id } } : {}),
+      ...(checkChannel ? { workerObservedChecks: { source: "worker run_checks", acceptanceEvidence: false, runs: checkChannel.runs } } : {}),
       taskShape: { allowedFiles: selectedAllowed.length, ...contextSizeMetrics(compiledContext) },
       workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
       outcome,
@@ -1431,6 +1530,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         packet: join(artifactDir, "packet.json"),
         prompt: join(artifactDir, "prompt.txt"),
         runtime: join(artifactDir, "runtime.json"),
+        ...(checkChannel ? { checks: checkChannel.logPath } : {}),
         context: join(artifactDir, "context.json"),
         ...(compiledContext ? { compiledContext: join(artifactDir, "compiled-context.md") } : {}),
         beforeSnapshot: join(artifactDir, "before-snapshot.json"),
@@ -1444,12 +1544,13 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;
   } finally {
     if (inferenceRelay) await inferenceRelay.close().catch(() => {});
+    if (checkChannel) await checkChannel.cleanup().catch(() => {});
     await prepared.cleanup().catch(() => {});
     if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (baseline) await rm(baseline, { recursive: true, force: true }).catch(() => {});
