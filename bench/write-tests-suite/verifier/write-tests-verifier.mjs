@@ -79,11 +79,28 @@ function witnessBlock(output, prefix, name) {
   return lines.slice(start, end < 0 ? lines.length : end + 1).join('\n');
 }
 
+function firstStackFrame(block) {
+  const marker = '\n  stack: |-\n';
+  const start = block.indexOf(marker);
+  if (start < 0) return '';
+  return block.slice(start + marker.length)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? '';
+}
+
+function isProtectedSourceFrame(frame) {
+  return /(?:^|\s)(?:file:\/\/)?[^)\s]*[\\/]src[\\/][^)\s]+:\d+:\d+(?:\)|$)/u.test(frame);
+}
+
 function hasEvaluatorFailure(block) {
-  return /\b(?:ERR_MODULE_[A-Z_]+|MODULE_NOT_FOUND|ERR_REQUIRE_ESM|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_DIR_IMPORT|ERR_INVALID_MODULE_SPECIFIER)\b/u.test(block)
+  if (/\b(?:ERR_MODULE_[A-Z_]+|MODULE_NOT_FOUND|ERR_REQUIRE_ESM|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_DIR_IMPORT|ERR_INVALID_MODULE_SPECIFIER)\b/u.test(block)
     || /Cannot find (?:module|package)/u.test(block)
-    || /node:internal\/modules\/(?:esm|cjs)\//u.test(block)
-    || (/name: 'SyntaxError'/u.test(block) && /\bnew Function \(<anonymous>\)/u.test(block));
+    || /node:internal\/modules\/(?:esm|cjs)\//u.test(block)) {
+    return true;
+  }
+  if (!/^  name: 'SyntaxError'$/mu.test(block)) return false;
+  return !isProtectedSourceFrame(firstStackFrame(block));
 }
 
 function executionFailure(error) {

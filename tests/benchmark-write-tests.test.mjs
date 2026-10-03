@@ -301,20 +301,15 @@ test('write-tests verifier rejects evaluator syntax failures but keeps API Synta
   await mkdir(join(candidate, 'src'), { recursive: true });
   await mkdir(join(candidate, 'tests'), { recursive: true });
   const expectedWitness = 'C3 enforces the inclusive timeout bounds';
-  const referenceTest = await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8');
+  const referenceTest = `import { Script } from 'node:vm';\n${await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8')}`;
   const c3Start = referenceTest.indexOf(`test('${expectedWitness}'`);
   const c4Start = referenceTest.indexOf("test('C4", c3Start);
   assert.ok(c3Start >= 0 && c4Start > c3Start);
-  const syntaxFailureTest = `test('${expectedWitness}', () => {
-  try {
-    normalizeOptions({ timeoutMs: 1 });
-  } catch {
-    new Function('const invalid = ;');
-  }
-});
-
-`;
-  await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}${syntaxFailureTest}${referenceTest.slice(c4Start)}`);
+  const syntaxExpressions = [
+    "new Function('const invalid = ;');",
+    "eval('const invalid = ;');",
+    "new Script('const invalid = ;');",
+  ];
   const endpointMutant = resolve(SUITE_ROOT, 'candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs');
   const apiSyntaxErrorSource = (await readFile(resolve(SUITE_ROOT, 'fixtures/amber-input-validation/src/options.mjs'), 'utf8'))
     .replace(
@@ -326,29 +321,41 @@ test('write-tests verifier rejects evaluator syntax failures but keeps API Synta
     join(candidate, 'src/options.mjs'),
   );
   try {
-    const reference = await execFileAsync(process.execPath, [VERIFIER, 'reference', 'amber-input-validation'], {
-      cwd: candidate,
-      env: childEnvironment(),
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: 10000,
-    });
-    assert.match(reference.stdout, /# tests 4\b/u);
-    assert.match(reference.stdout, /# pass 4\b/u);
-    await assert.rejects(
-      execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', endpointMutant, expectedWitness], {
+    for (const expression of syntaxExpressions) {
+      const syntaxFailureTest = `test('${expectedWitness}', () => {
+  try {
+    normalizeOptions({ timeoutMs: 1 });
+  } catch {
+    ${expression}
+  }
+});
+
+`;
+      await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}${syntaxFailureTest}${referenceTest.slice(c4Start)}`);
+      const reference = await execFileAsync(process.execPath, [VERIFIER, 'reference', 'amber-input-validation'], {
         cwd: candidate,
         env: childEnvironment(),
         maxBuffer: 2 * 1024 * 1024,
         timeout: 10000,
-      }),
-      (error) => {
-        const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
-        assert.notEqual(error.code, 0);
-        assert.match(output, /name: 'SyntaxError'/u);
-        assert.match(output, /new Function \(<anonymous>\)/u);
-        return true;
-      },
-    );
+      });
+      assert.match(reference.stdout, /# tests 4\b/u);
+      assert.match(reference.stdout, /# pass 4\b/u);
+      await assert.rejects(
+        execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', endpointMutant, expectedWitness], {
+          cwd: candidate,
+          env: childEnvironment(),
+          maxBuffer: 2 * 1024 * 1024,
+          timeout: 10000,
+        }),
+        (error) => {
+          const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+          assert.notEqual(error.code, 0);
+          assert.match(output, /name: 'SyntaxError'/u);
+          assert.match(output, /tests\/contract\.test\.mjs/u);
+          return true;
+        },
+      );
+    }
 
     await writeFile(join(candidate, 'src/options.mjs'), apiSyntaxErrorSource);
     await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}test('${expectedWitness}', () => {\n  normalizeOptions({ timeoutMs: 1 });\n});\n\n${referenceTest.slice(c4Start)}`);
@@ -359,6 +366,7 @@ test('write-tests verifier rejects evaluator syntax failures but keeps API Synta
       timeout: 10000,
     });
     assert.match(apiSyntaxError.stdout, /name: 'SyntaxError'/u);
+    assert.match(apiSyntaxError.stdout, /\/src\/options\.mjs:\d+:\d+/u);
     assert.match(apiSyntaxError.stdout, /# fail 1\b/u);
     assert.match(apiSyntaxError.stdout, /candidate-sha256:[a-f0-9]{64}/u);
   } finally {
