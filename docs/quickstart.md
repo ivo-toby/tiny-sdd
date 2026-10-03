@@ -65,6 +65,11 @@ will compile only its declared source line ranges and record their digests; see
 [the context compiler guide](context-compiler.md). Omit it for genuinely simple
 tasks rather than padding prompts.
 
+When a task has fixed checks, declare them in a reviewed JSON file under
+`.tinysdd/tasks/` and pass it with `--checks`. TinySDD validates and binds the
+declaration into approval and the worker packet, but does not execute the checks
+yet.
+
 ## Configure a worker
 
 For a new project configuration:

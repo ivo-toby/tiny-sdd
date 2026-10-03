@@ -595,6 +595,15 @@ function normalizePacket(packet) {
       ...(compiledSha256 === undefined ? {} : { compiledSha256 }),
     };
   }
+  let checks = null;
+  if (packet.checks !== undefined && packet.checks !== null) {
+    if (!packet.checks || typeof packet.checks !== "object" || Array.isArray(packet.checks)) fail("packet.checks must be an object");
+    const { path, text, sha256 } = packet.checks;
+    if (typeof text !== "string") fail("packet.checks.text must be a string");
+    if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(sha256)) fail("packet.checks.sha256 must be a SHA-256 digest");
+    if (createHash("sha256").update(text).digest("hex") !== sha256) fail("packet checks digest does not match supplied text");
+    checks = { path: projectRelative(path, "packet checks path", CONTROLLER_TASKS_PREFIX), text, sha256 };
+  }
   return {
     taskId,
     briefText,
@@ -605,6 +614,7 @@ function normalizePacket(packet) {
     approval: packet.approval ?? null,
     review,
     context,
+    checks,
   };
 }
 

@@ -157,6 +157,81 @@ test('task add validates the context manifest before registering the task', asyn
   }
 });
 
+test('task checks manifests are validated, approved, and carried in packets', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+    const checksPath = '.tinysdd/tasks/one.checks.json';
+    const checksText = JSON.stringify({
+      schemaVersion: 1,
+      dependencyMounts: ['node_modules'],
+      checks: [{ id: 'unit', argv: ['node_modules/.bin/vitest', 'run'], timeoutMs: 5000, criteria: ['C1'] }],
+    });
+    await writeFile(join(root, ...checksPath.split('/')), checksText);
+    const added = await addTask(root, { id: 'one', brief: 'docs/brief.md', checks: checksPath, allow: ['src/new-file.ts'] });
+    assert.equal(added.task.checks, checksPath);
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked declared checks' });
+    const packet = await resolveTaskPacket(root, 'one');
+    assert.equal(packet.checks.path, checksPath);
+    assert.equal(packet.checks.text, checksText);
+    assert.equal(packet.checks.sha256, sha256(checksText));
+    assert.equal((await controllerStatus(root)).tasks[0].checks, checksPath);
+    await writeFile(join(root, ...checksPath.split('/')), `${checksText}\n`);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task add rejects invalid checks manifests without changing state', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+    const valid = { schemaVersion: 1, dependencyMounts: ['node_modules'], checks: [{ id: 'unit', argv: ['node_modules/.bin/vitest'] }] };
+    const invalidCases = [
+      { name: 'unknown top-level key', value: { ...valid, extra: true }, message: /unknown key: extra/u },
+      { name: 'unknown check key', value: { ...valid, checks: [{ ...valid.checks[0], extra: true }] }, message: /unknown key: extra/u },
+      { name: 'string argv', value: { ...valid, checks: [{ id: 'unit', argv: 'node_modules/.bin/vitest' }] }, message: /argv must be an array, not a shell string/u },
+      { name: 'argv outside mounts', value: { ...valid, checks: [{ id: 'unit', argv: ['scripts/test'] }] }, message: /inside a declared dependency mount/u },
+      { name: 'argv traversal', value: { ...valid, checks: [{ id: 'unit', argv: ['node_modules/../bin/test'] }] }, message: /must not traverse/u },
+      { name: 'duplicate id', value: { ...valid, checks: [{ id: 'unit', argv: ['node'] }, { id: 'unit', argv: ['node'] }] }, message: /duplicate id: unit/u },
+      { name: 'bad criteria', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], criteria: ['criterion'] }] }, message: /criteria must contain unique C<n> ids/u },
+      { name: 'timeout out of range', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], timeoutMs: 999 }] }, message: /timeoutMs must be an integer from 1000 to 600000/u },
+      { name: 'empty checks', value: { ...valid, checks: [] }, message: /checks must contain between 1 and 16 items/u },
+    ];
+    for (const [index, invalidCase] of invalidCases.entries()) {
+      const path = `.tinysdd/tasks/invalid-${index}.json`;
+      await writeFile(join(root, ...path.split('/')), JSON.stringify(invalidCase.value));
+      await assert.rejects(
+        addTask(root, { id: `bad-${index}`, brief: 'docs/brief.md', checks: path, allow: ['src/new-file.ts'] }),
+        (error) => {
+          assert.equal(error.code, 'CHECKS_MANIFEST_INVALID', invalidCase.name);
+          assert.match(error.message, invalidCase.message, invalidCase.name);
+          return true;
+        },
+      );
+      assert.deepEqual((await controllerStatus(root)).tasks, [], invalidCase.name);
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('old approvals without checks fields remain fresh for tasks without checks', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/new-file.ts'] });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked scope' });
+    const state = await rawState(root);
+    delete state.tasks.one.approval.checks;
+    delete state.tasks.one.approval.checksDigest;
+    await writeState(root, state);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('task add and approve report advisory sizing without blocking', async () => {
   const root = await project();
   try {
