@@ -52,3 +52,59 @@ test('rejects controller paths, invalid ranges, and unknown keys', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('the compiled text binds the cited excerpt, not the whole source file', async () => {
+  const root = await project();
+  try {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      facts: [],
+      resources: [{ path: 'src/contract.ts', startLine: 1, endLine: 2, purpose: 'Public input contract.' }],
+    });
+    const packetContext = { path: '.tinysdd/tasks/task.context.json', text, sha256: sha256(text) };
+    const before = await compileContext(root, packetContext);
+    assert.doesNotMatch(before.rendered, /Source sha256:/u);
+    assert.match(before.rendered, /Excerpt sha256: [a-f0-9]{64}/u);
+    // The whole-file digest is still recorded with the run, only not approved.
+    assert.equal(before.resources[0].sourceSha256.length, 64);
+
+    await writeFile(join(root, 'src', 'contract.ts'), 'export type Input = { id: string };\nexport function run(input: Input) {\n  return input.id;\n}\n\n// appended addendum\n');
+    const appended = await compileContext(root, packetContext);
+    assert.equal(appended.sha256, before.sha256);
+    assert.notEqual(appended.resources[0].sourceSha256, before.resources[0].sourceSha256);
+    assert.notEqual(appended.legacySha256, before.legacySha256);
+
+    await writeFile(join(root, 'src', 'contract.ts'), 'export type Input = { id: number };\nexport function run(input: Input) {\n  return input.id;\n}\n');
+    assert.notEqual((await compileContext(root, packetContext)).sha256, before.sha256);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('legacySha256 reproduces the digest recorded before the source digest line was dropped', async () => {
+  const root = await project();
+  try {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      facts: ['Do not weaken Input validation.'],
+      resources: [{ path: 'src/contract.ts', startLine: 1, endLine: 2, purpose: 'Public input contract.' }],
+    });
+    const compiled = await compileContext(root, { path: '.tinysdd/tasks/task.context.json', text, sha256: sha256(text) });
+    // Computed once with the compiler as it was on main before the change.
+    assert.equal(compiled.legacySha256, '81390591b77912a3f2856cf5edb11f6595a4938a5c738ecac5c6cf2fced1c70a');
+    assert.notEqual(compiled.sha256, compiled.legacySha256);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a context without source excerpts has one digest, so existing approvals are unaffected', async () => {
+  const root = await project();
+  try {
+    const text = JSON.stringify({ schemaVersion: 1, facts: ['Keep the boundary.'], resources: [] });
+    const compiled = await compileContext(root, { path: '.tinysdd/tasks/task.context.json', text, sha256: sha256(text) });
+    assert.equal(compiled.sha256, compiled.legacySha256);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { assertExactKeys, assertPlainObject, readProjectFile, sha256, tinyError } from './fs-utils.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
@@ -89,12 +87,12 @@ function numberedExcerpt(lines, startLine, endLine) {
   return lines.slice(startLine - 1, endLine).map((line, index) => `${String(startLine + index).padStart(width, ' ')} | ${line}`).join('\n');
 }
 
-function renderCompiledContext({ manifestPath, manifestSha256, facts, resources }) {
+function renderCompiledContext({ manifestPath, manifestSha256, facts, resources, includeSourceDigest = false }) {
   const factBlock = facts.length === 0 ? '_No additional approved facts._' : facts.map((fact) => `- ${fact}`).join('\n');
   const resourceBlock = resources.length === 0 ? '_No selected source excerpts._' : resources.map((resource) => [
     `### ${resource.path}:${resource.startLine}-${resource.endLine}`,
     `Purpose: ${resource.purpose}`,
-    `Source sha256: ${resource.sourceSha256}`,
+    ...(includeSourceDigest ? [`Source sha256: ${resource.sourceSha256}`] : []),
     `Excerpt sha256: ${resource.excerptSha256}`,
     '```text',
     resource.excerpt,
@@ -149,7 +147,8 @@ export async function compileContext(projectRoot, packetContext) {
       excerpt,
     });
   }
-  const rendered = renderCompiledContext({ manifestPath: packetContext.path, manifestSha256: packetContext.sha256, facts: manifest.facts, resources });
+  const renderInput = { manifestPath: packetContext.path, manifestSha256: packetContext.sha256, facts: manifest.facts, resources };
+  const rendered = renderCompiledContext(renderInput);
   if (Buffer.byteLength(rendered) > MAX_COMPILED_CONTEXT_BYTES) {
     throw tinyError('CONTEXT_BUDGET_EXCEEDED', `compiled context exceeds ${MAX_COMPILED_CONTEXT_BYTES} bytes; narrow the declared excerpts`, { bytes: Buffer.byteLength(rendered), limit: MAX_COMPILED_CONTEXT_BYTES });
   }
@@ -159,7 +158,11 @@ export async function compileContext(projectRoot, packetContext) {
     facts: [...manifest.facts],
     resources: resources.map(({ excerpt, ...resource }) => resource),
     rendered,
-    sha256: createHash('sha256').update(rendered).digest('hex'),
+    sha256: sha256(rendered),
+    // Approvals recorded before the rendering dropped its whole-file `Source
+    // sha256:` lines bound this digest. Callers accept it so those approvals
+    // stay fresh; it still binds the whole source file, as it always did.
+    legacySha256: sha256(renderCompiledContext({ ...renderInput, includeSourceDigest: true })),
     bytes: Buffer.byteLength(rendered),
   };
 }

@@ -6,6 +6,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { compileContext } from "../src/context-compiler.mjs";
 import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
 import { copyProjectTree, runWorker } from "../src/worker.mjs";
 
@@ -539,6 +540,66 @@ describe("Pi worker capture and scope", () => {
       const metadata = JSON.parse(await readFile(result.artifactPaths.context, "utf8"));
       assert.equal(metadata.compiledContext.manifest.path, ".tinysdd/tasks/task.context.json");
       assert.equal(metadata.compiledContext.resources[0].path, "src/allowed.txt");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  async function approvedContextPacket(project) {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      facts: [],
+      resources: [{ path: "src/allowed.txt", startLine: 1, endLine: 1, purpose: "Current behavior to preserve." }],
+    });
+    const context = { path: ".tinysdd/tasks/task.context.json", text, sha256: createHash("sha256").update(text).digest("hex") };
+    return { context, compiled: await compileContext(project, context) };
+  }
+
+  test("accepts a compiled-context digest approved before source digests left the compiled text", async () => {
+    const project = await makeProject();
+    try {
+      const { context, compiled } = await approvedContextPacket(project);
+      assert.match(compiled.legacySha256, /^[a-f0-9]{64}$/u);
+      assert.notEqual(compiled.legacySha256, compiled.sha256);
+      for (const compiledSha256 of [compiled.sha256, compiled.legacySha256]) {
+        const result = await runWorker({
+          projectRoot: project,
+          packet: { ...packet(), context: { ...context, compiledSha256 } },
+          worker: worker(),
+          runtime: runtime(undefined, "complete"),
+        });
+        assert.equal(result.outcome, "completed");
+        assert.equal(await readFile(result.artifactPaths.compiledContext, "utf8"), compiled.rendered);
+      }
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a compiled-context digest that is neither the current nor the legacy digest", async () => {
+    const project = await makeProject();
+    try {
+      const { context, compiled } = await approvedContextPacket(project);
+      await assert.rejects(
+        runWorker({
+          projectRoot: project,
+          packet: { ...packet(), context: { ...context, compiledSha256: "0".repeat(64) } },
+          worker: worker(),
+          runtime: runtime(undefined, "complete"),
+        }),
+        /selected source no longer matches the approved context digest/u,
+      );
+      // A cited line that changed after approval still fails both digests.
+      await writeFile(join(project, "src", "allowed.txt"), "after\n");
+      await assert.rejects(
+        runWorker({
+          projectRoot: project,
+          packet: { ...packet(), context: { ...context, compiledSha256: compiled.legacySha256 } },
+          worker: worker(),
+          runtime: runtime(undefined, "complete"),
+        }),
+        /selected source no longer matches the approved context digest/u,
+      );
     } finally {
       await rm(project, { recursive: true, force: true });
     }

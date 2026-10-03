@@ -1206,7 +1206,10 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let compiledContext;
   try {
     compiledContext = await compileContext(executionSource, normalizedPacket.context);
-    if (normalizedPacket.context?.compiledSha256 && compiledContext?.sha256 !== normalizedPacket.context.compiledSha256) {
+    const approvedDigest = normalizedPacket.context?.compiledSha256;
+    // A replay of an approval recorded before the whole-file source digests
+    // left the compiled text carries the legacy digest.
+    if (approvedDigest && approvedDigest !== compiledContext?.sha256 && approvedDigest !== compiledContext?.legacySha256) {
       fail("Context compiler rejected packet: selected source no longer matches the approved context digest");
     }
   } catch (error) {
