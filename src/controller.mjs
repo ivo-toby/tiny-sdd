@@ -26,6 +26,7 @@ import {
   validateConfigDocument,
 } from './config.mjs';
 import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
+import { parseChecksManifest } from './checks-manifest.mjs';
 import {
   extractAcceptanceCriteria,
   extractEvidenceChecks,
@@ -58,6 +59,12 @@ function normalizeReviewEvidence(value, field) {
 function normalizeTaskContext(value, field) {
   const path = normalizeProjectRelative(value, field, { tinysddArtifactPrefix: TASKS_PREFIX });
   if (!path.toLowerCase().endsWith('.json')) throw tinyError('INVALID_CONTEXT', 'context manifest must be a JSON file');
+  return path;
+}
+
+function normalizeTaskChecks(value, field) {
+  const path = normalizeProjectRelative(value, field, { tinysddArtifactPrefix: TASKS_PREFIX });
+  if (!path.toLowerCase().endsWith('.json')) throw tinyError('INVALID_CHECKS', 'checks manifest must be a JSON file');
   return path;
 }
 
@@ -199,13 +206,14 @@ function validateState(value) {
       throw tinyError('STATE_MALFORMED', `task id is invalid: ${id}`);
     }
     assertPlainObject(task, 'STATE_MALFORMED', `task ${id}`);
-    if (task.id !== id || typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string')) {
+    if (task.id !== id || typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string') || (task.checks !== undefined && typeof task.checks !== 'string')) {
       throw tinyError('STATE_MALFORMED', `task ${id} has invalid fields`);
     }
     try {
       const brief = normalizeTaskBrief(task.brief, `task ${id}.brief`);
       if (!brief.toLowerCase().endsWith('.md')) throw new Error('brief is not Markdown');
       if (task.context !== undefined) normalizeTaskContext(task.context, `task ${id}.context`);
+      if (task.checks !== undefined) normalizeTaskChecks(task.checks, `task ${id}.checks`);
       for (const dep of task.dependsOn) validateTaskId(dep);
       for (const path of task.allow) normalizeProjectRelative(path, `task ${id}.allow`);
     } catch {
@@ -249,6 +257,9 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   const contextDigest = task.context
     ? await compileTaskContext(projectRoot, task.context).then((compiled) => compiled.sha256).catch(() => undefined)
     : null;
+  const checksDigest = task.checks
+    ? await readProjectFile(projectRoot, task.checks, taskBriefOptions()).then((text) => sha256(text)).catch(() => undefined)
+    : null;
   const dependencyAcceptances = Object.fromEntries(dependencyStates.filter((item) => item.acceptanceDigest).map((item) => [item.id, item.acceptanceDigest]));
   const approval = task.approval;
   const blockedAfterApproval = task.review?.verdict === 'blocked'
@@ -257,13 +268,15 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     approval
       && stableStringify(approval.dependsOn) === stableStringify(task.dependsOn)
       && stableStringify(approval.allow) === stableStringify(task.allow)
-      && (approval.context ?? null) === (task.context ?? null),
+      && (approval.context ?? null) === (task.context ?? null)
+      && (approval.checks ?? null) === (task.checks ?? null),
   );
   const approvalFresh = Boolean(
     approval
       && briefDigest
       && approval.briefDigest === briefDigest
       && (approval.contextDigest ?? null) === contextDigest
+      && (approval.checksDigest ?? null) === checksDigest
       && approvalBindsTaskShape
       && task.dependsOn.every((dependency) => (
         Object.hasOwn(approval.dependencyAcceptances ?? {}, dependency)
@@ -305,6 +318,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     status,
     briefDigest,
     contextDigest,
+    checksDigest,
     approvalFresh,
     blockedBy,
     dependencyAcceptances,
@@ -339,6 +353,7 @@ function publicTask(task, stateInfo) {
     id: task.id,
     brief: task.brief,
     ...(task.context ? { context: task.context } : {}),
+    ...(task.checks ? { checks: task.checks } : {}),
     dependsOn: [...task.dependsOn],
     allow: [...task.allow],
     status: stateInfo.status,
@@ -409,6 +424,7 @@ export async function addTask(projectRoot, options = {}) {
   const brief = normalizeTaskBrief(requireText(options.brief, 'brief'), 'brief');
   if (!brief.toLowerCase().endsWith('.md')) throw tinyError('INVALID_BRIEF', 'brief must be a Markdown file');
   const context = options.context === undefined ? undefined : normalizeTaskContext(requireText(options.context, 'context'), 'context');
+  const checks = options.checks === undefined ? undefined : normalizeTaskChecks(requireText(options.checks, 'checks'), 'checks');
   const dependsOn = parseIds(options.dependsOn);
   if (options.allow !== undefined && !Array.isArray(options.allow) && typeof options.allow !== 'string') {
     throw tinyError('INVALID_ARGUMENT', 'allow must be a string or array of strings');
@@ -424,6 +440,10 @@ export async function addTask(projectRoot, options = {}) {
   // Validate the manifest schema, source ranges and budget now rather than
   // first discovering an invalid manifest at approval.
   const compiled = context === undefined ? null : await compileTaskContext(root, context);
+  if (checks !== undefined) {
+    const text = await readProjectFile(root, checks, taskBriefOptions());
+    parseChecksManifest(text);
+  }
   for (const path of allow) {
     const absolute = await assertInternalPath(root, path.split('/'), { allowMissing: true });
     try {
@@ -441,13 +461,14 @@ export async function addTask(projectRoot, options = {}) {
       id,
       brief,
       ...(context === undefined ? {} : { context }),
+      ...(checks === undefined ? {} : { checks }),
       dependsOn,
       allow,
       createdAt: timestamp,
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, brief, ...(context === undefined ? {} : { context }), dependsOn, allow }, sizing: taskSizing(allow, compiled) };
+    return { task: { id, brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow }, sizing: taskSizing(allow, compiled) };
   });
 }
 
@@ -470,6 +491,17 @@ export async function approveTask(projectRoot, options = {}) {
       })
       : null;
     const contextDigest = compiled ? compiled.sha256 : null;
+    let checksDigest = null;
+    if (task.checks) {
+      let checksText;
+      try {
+        checksText = await readProjectFile(root, task.checks, taskBriefOptions());
+      } catch {
+        throw tinyError('CHECKS_MISSING', `checks manifest is missing: ${task.checks}`);
+      }
+      parseChecksManifest(checksText);
+      checksDigest = sha256(checksText);
+    }
     const dependencyAcceptances = {};
     for (const dependency of task.dependsOn) {
       const dependencyState = await inspectTask(root, state, state.tasks[dependency]);
@@ -477,7 +509,7 @@ export async function approveTask(projectRoot, options = {}) {
       dependencyAcceptances[dependency] = dependencyState.acceptanceDigest;
     }
     const approvedAt = nowIso();
-    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
+    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
     return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
   });
@@ -545,6 +577,18 @@ export async function resolveTaskPacket(projectRoot, taskId) {
     const contextText = await readProjectFile(root, task.context, taskBriefOptions());
     context = { path: task.context, text: contextText, sha256: sha256(contextText), compiledSha256: compiled.sha256 };
   }
+  let checks;
+  if (task.checks) {
+    let checksText;
+    try {
+      checksText = await readProjectFile(root, task.checks, taskBriefOptions());
+    } catch {
+      throw tinyError('STALE_CHECKS', `checks manifest is no longer readable: ${task.checks}`);
+    }
+    const checksSha256 = sha256(checksText);
+    if (checksSha256 !== status.checksDigest) throw tinyError('STALE_CHECKS', `checks manifest has changed: ${task.checks}`);
+    checks = { path: task.checks, text: checksText, sha256: checksSha256 };
+  }
   let revisionReview;
   if (task.review?.verdict === 'revision') {
     let evidenceText;
@@ -571,6 +615,7 @@ export async function resolveTaskPacket(projectRoot, taskId) {
     dependencies: task.dependsOn.map((dependency) => ({ id: dependency, acceptanceDigest: status.dependencyAcceptances[dependency] })),
     approval: { ...task.approval },
     ...(context === undefined ? {} : { context }),
+    ...(checks === undefined ? {} : { checks }),
     ...(revisionReview === undefined ? {} : { review: revisionReview }),
   };
 }
@@ -603,6 +648,15 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
       compiledSha256: task.approval.contextDigest,
     };
   }
+  let checks;
+  if (task.checks) {
+    const checksText = await readProjectFile(root, task.checks, taskBriefOptions());
+    const checksSha256 = sha256(checksText);
+    if (checksSha256 !== task.approval.checksDigest) {
+      throw tinyError('STALE_BENCHMARK_CHECKS', `checks manifest has changed since the recorded approval: ${task.checks}`);
+    }
+    checks = { path: task.checks, text: checksText, sha256: checksSha256 };
+  }
   return {
     schemaVersion: 1,
     taskId: id,
@@ -611,6 +665,7 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
     dependencies: task.dependsOn.map((dependency) => ({ id: dependency, acceptanceDigest: task.approval.dependencyAcceptances?.[dependency] })),
     approval: { ...task.approval },
     ...(context === undefined ? {} : { context }),
+    ...(checks === undefined ? {} : { checks }),
   };
 }
 

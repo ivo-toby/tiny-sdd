@@ -544,6 +544,41 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("rejects a checks packet whose sha256 does not match its text", async () => {
+    const project = await makeProject();
+    try {
+      await assert.rejects(
+        runWorker({
+          projectRoot: await realpath(project),
+          packet: { ...packet(), checks: { path: ".tinysdd/tasks/checks.json", text: "declared checks\n", sha256: "0".repeat(64) } },
+          worker: worker(),
+          runtime: runtime(undefined, "complete"),
+        }),
+        /checks digest does not match/u,
+      );
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a valid checks declaration in packet.json", async () => {
+    const project = await makeProject();
+    try {
+      const text = "declared checks\n";
+      const digest = createHash("sha256").update(text).digest("hex");
+      const result = await runWorker({
+        projectRoot: await realpath(project),
+        packet: { ...packet(), checks: { path: ".tinysdd/tasks/checks.json", text, sha256: digest } },
+        worker: worker(),
+        runtime: runtime(undefined, "complete"),
+      });
+      const saved = JSON.parse(await readFile(result.artifactPaths.packet, "utf8"));
+      assert.deepEqual(saved.checks, { path: ".tinysdd/tasks/checks.json", text, sha256: digest });
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("classifies assistant errors and length stops independently of process exit zero", async () => {
     for (const [action, expected, stopReason] of [["error", "failed", "error"], ["length", "response_token_limit", "length"]]) {
       const project = await makeProject();

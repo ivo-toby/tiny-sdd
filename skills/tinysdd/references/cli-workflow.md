@@ -96,3 +96,8 @@ do not modify it silently after recording the decision.
 Evidence is caller-supplied; the controller does not claim to have run its
 commands. Acceptance is bound to the brief, dependencies, review evidence and
 allowed file contents. Later changes can invalidate it.
+
+Declare fixed task checks in a reviewed JSON file under `.tinysdd/tasks/` and
+pass it to `task add` with `--checks PATH`. The controller validates and binds
+the declaration into approval and the packet, but checks are approved only and
+are not executed yet.

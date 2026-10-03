@@ -32,7 +32,7 @@ Usage:
   tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID]
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
   tinysdd [--json] [--project PATH] status|next
-  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--depends-on ID[,ID]]
+  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
   tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL
@@ -133,7 +133,7 @@ function parseCommand(args) {
   if (command === 'task') {
     if (!['add', 'approve', 'packet', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, approve, packet, review, close, or supersede');
     const allowedByCommand = {
-      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['depends-on', 'list'], ['allow', 'list']]),
+      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
       review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value']]),
@@ -357,6 +357,7 @@ async function run(argv) {
     id: parsed.values.id,
     brief: parsed.values.brief,
     context: parsed.values.context,
+    checks: parsed.values.checks,
     dependsOn: parsed.values['depends-on'],
     allow: parsed.values.allow,
   });
