@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "dune-emitter-edge",
+  "version": "1",
+  "role": "write-tests",
+  "difficultyTags": [
+    "api-edge",
+    "medium"
+  ],
+  "fixture": {
+    "path": "fixtures/dune-emitter-edge",
+    "sha256": "4368a4d8c074b8f4bee73dd4ad0af6f4ef52c6b1ba0b8c8789d072bd3bdae4dc"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/dune-emitter-edge/brief.md",
+      "sha256": "67314d28e6f0c45f74b406eb72aed4f4ec3f6e73384c0d7c51cc68b912fb60d0"
+    },
+    "context": {
+      "path": "packets/dune-emitter-edge/context.json",
+      "sha256": "1ce33984de6f39ce8e275d8667faa00b6ab81516de45b3cc41ef3854d17d1576"
+    },
+    "checks": {
+      "path": "packets/dune-emitter-edge/checks.json",
+      "sha256": "00a4ccb0213d42b0a73ce5e8924f6f0689ff9938627d1aa31894c15e3db48c9e"
+    },
+    "allowedPaths": [
+      "tests/contract.test.mjs"
+    ],
+    "protectedPaths": [
+      "src/emitter.mjs",
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/dune-emitter-edge/visible.json",
+      "sha256": "ed44d274433755a674448a1556c7c88849090d4ad7acecab934da39dbef38872"
+    },
+    "heldOut": {
+      "path": "verifier/dune-emitter-edge/held-out.json",
+      "sha256": "f9ef01f53a6c95c09001b41f33a43518ef971749bce227dac434d15e47346a7f"
+    }
+  }
+}

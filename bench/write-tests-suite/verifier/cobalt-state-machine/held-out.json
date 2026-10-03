@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [
+    { "id": "mutant-wrong-any-state-completion", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "cobalt-state-machine", "candidates/cobalt-state-machine/wrong-any-state-completion/src/state-machine.mjs", "C1 accepts only legal state transitions"], "timeoutMs": 120000, "criteria": ["C1"] },
+    { "id": "mutant-wrong-reject-failure", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "cobalt-state-machine", "candidates/cobalt-state-machine/wrong-reject-failure/src/state-machine.mjs", "C1 accepts only legal state transitions"], "timeoutMs": 120000, "criteria": ["C1"] },
+    { "id": "mutant-wrong-terminal-restart", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "cobalt-state-machine", "candidates/cobalt-state-machine/wrong-terminal-restart/src/state-machine.mjs", "C2 rejects events after a terminal state"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-terminal-succeed", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "cobalt-state-machine", "candidates/cobalt-state-machine/wrong-terminal-succeed/src/state-machine.mjs", "C2 rejects events after a terminal state"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-mutates-state", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "cobalt-state-machine", "candidates/cobalt-state-machine/wrong-mutates-state/src/state-machine.mjs", "C3 returns a new state without mutating the input"], "timeoutMs": 120000, "criteria": ["C3"] }
+  ]
+}

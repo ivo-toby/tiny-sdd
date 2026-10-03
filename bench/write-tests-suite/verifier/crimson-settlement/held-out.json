@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [
+    { "id": "mutant-wrong-reject-batch", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "crimson-settlement", "candidates/crimson-settlement/wrong-reject-batch/src/settle.mjs", "C1 records fulfillment and rejection without rejecting the batch"], "timeoutMs": 120000, "criteria": ["C1"] },
+    { "id": "mutant-wrong-completion-order", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "crimson-settlement", "candidates/crimson-settlement/wrong-completion-order/src/settle.mjs", "C2 keeps results in declaration order when completion order differs"], "timeoutMs": 120000, "criteria": ["C2"] },
+    { "id": "mutant-wrong-sequential", "argv": ["node", "verifier/write-tests-verifier.mjs", "mutant", "crimson-settlement", "candidates/crimson-settlement/wrong-sequential/src/settle.mjs", "C3 starts every task before awaiting settlement"], "timeoutMs": 120000, "criteria": ["C3"] }
+  ]
+}

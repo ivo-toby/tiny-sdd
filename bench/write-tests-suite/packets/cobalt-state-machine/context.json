@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The exported interface is transition(state, event).",
+    "The writable test must import transition from ../src/state-machine.mjs.",
+    "State objects contain status and nonnegative integer attempts; extra fields are preserved by a legal transition."
+  ],
+  "resources": [
+    {
+      "path": "src/state-machine.mjs",
+      "startLine": 1,
+      "endLine": 25,
+      "purpose": "Exact state and event interface for legal-transition and immutability tests."
+    }
+  ]
+}

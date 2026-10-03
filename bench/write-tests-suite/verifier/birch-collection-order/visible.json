@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "reference-tests", "argv": ["node", "verifier/write-tests-verifier.mjs", "reference", "birch-collection-order"], "timeoutMs": 120000, "criteria": ["C1", "C2", "C3"] }]
+}

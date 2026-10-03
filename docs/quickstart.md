@@ -355,10 +355,11 @@ result with changed paths is a candidate for review, not a reason to discard it.
 
 ## Run an isolated benchmark
 
-Use the benchmark command for an operator-selected suite of `implement-slice`
-challenges. A suite directory contains `suite.json`, fixture snapshots, packet
-resources, and verifier-only resources. The default suite path is `bench`; pass
-the directory or its `suite.json` explicitly when it is elsewhere:
+Use the benchmark command for an operator-selected suite of runnable
+`implement-slice`, `stop-and-ask`, or `write-tests` challenges. A suite directory
+contains `suite.json`, fixture snapshots, packet resources, and verifier-only
+resources. The default suite path is `bench`; pass the directory or its
+`suite.json` explicitly when it is elsewhere:
 
 ```sh
 tinysdd bench run --worker qwen --suite bench --repeat 2 --json
@@ -384,6 +385,15 @@ plus one runnable `stop-and-ask` challenge. The tenth writes only
 `questions/report.json` with named missing inputs and a nonempty question; it
 must leave implementation and protected files unchanged. Run the suite with
 `--suite bench/implement-slice-suite`.
+
+The write-tests challenge data is at `bench/write-tests-suite`. It contains five
+contract-test challenges with a visible reference run and 20 held-out mutant
+checks. The verifier reuses the submitted test bytes for every reference and
+mutant evaluation, rejects empty, skipped, setup-failing and syntax-invalid
+runs, and records `referencePass` plus killed over declared mutants as
+measurement data only. These values are derived from the existing verifier
+records; they do not change the result shape. Run it with
+`--suite bench/write-tests-suite`.
 
 ## Controlled benchmark replay
 

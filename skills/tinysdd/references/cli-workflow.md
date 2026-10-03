@@ -205,7 +205,8 @@ tinysdd bench run --worker qwen --suite bench --repeat 2 --json
 ```
 
 `--suite` accepts a project-relative suite directory or its `suite.json`; when
-omitted it defaults to `bench`. V1 executes `implement-slice` challenges only.
+omitted it defaults to `bench`. Runnable roles are `implement-slice`,
+`stop-and-ask`, and `write-tests`.
 Every challenge and repetition gets a fresh fixture and a retained case result
 under `.tinysdd/bench/<suite-id>/<invocation-id>/`. The worker runs through the
 normal disposable path, then visible and held-out checks run against a separate
@@ -223,6 +224,15 @@ references and deliberately wrong candidates audited outside the worker
 fixtures. The stop-and-ask case writes only `questions/report.json` with named
 missing inputs and a nonempty question, while implementation and protected
 files remain untouched.
+
+The write-tests suite at `bench/write-tests-suite` runs five contract-test
+challenges. Its visible check evaluates the submitted bytes against the
+reference source; each held-out check evaluates the same bytes against one of
+20 mutant sources in a separate evaluator copy. Valid TAP failures of the
+mapped named witness count as measurement kills, while empty, skipped,
+syntax/import, setup, timeout, process, and unavailable runs do not. The
+reference pass and killed/declared count are derived from existing records;
+they never qualify a worker or accept a task.
 
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.

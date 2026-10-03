@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The exported interface is normalizeOptions(input = {}).",
+    "The writable test must import normalizeOptions from ../src/options.mjs.",
+    "The normalized result has timeoutMs and headers fields; invalid input throws TypeError or RangeError as described by the brief."
+  ],
+  "resources": [
+    {
+      "path": "src/options.mjs",
+      "startLine": 1,
+      "endLine": 22,
+      "purpose": "Exact implementation interface and current behavior for contract tests."
+    }
+  ]
+}

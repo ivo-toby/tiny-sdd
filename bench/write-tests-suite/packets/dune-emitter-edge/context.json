@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The exported interface is createEmitter().",
+    "The writable test must import createEmitter from ../src/emitter.mjs.",
+    "subscribe(listener) returns an unsubscribe function; emit(value) dispatches to current listeners and returns no value."
+  ],
+  "resources": [
+    {
+      "path": "src/emitter.mjs",
+      "startLine": 1,
+      "endLine": 15,
+      "purpose": "Exact subscription API for duplicate, snapshot, order, and targeted-unsubscribe tests."
+    }
+  ]
+}
