@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suiteId": "implement-slice-v1",
-  "phase": "phase-1",
+  "phase": "phase-1-and-2",
   "challenges": [
     {
       "id": "copper-tokenize",
@@ -161,6 +161,24 @@
           "sha256": "2381a330c01a74c73322db0c731ed980ed11a0104d076afacdb1494f337dbf87",
           "heldOutFailures": [
             "held-out-lint"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "opal-missing-inputs",
+      "category": "stop-and-ask",
+      "reference": {
+        "path": "candidates/opal-missing-inputs/reference",
+        "sha256": "9bcfeeb07ebcb424d0ee3421872aef09ee04064bfd79376f63142c1231685be9"
+      },
+      "wrong": [
+        {
+          "id": "wrong-invented-values",
+          "path": "candidates/opal-missing-inputs/wrong-invented-values",
+          "sha256": "b3c5b23317b771b2b803159f5ffd9e61bbe6309e170987d1ad37fa9953f781bc",
+          "heldOutFailures": [
+            "held-out-question-report"
           ]
         }
       ]

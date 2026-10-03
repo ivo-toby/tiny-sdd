@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The source endpoint and timeout are required service inputs.",
+    "Both values are intentionally absent from this packet and must be requested, not guessed."
+  ],
+  "resources": []
+}

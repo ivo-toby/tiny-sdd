@@ -76,7 +76,10 @@ test('accepts every declared role in the schema and gates execution separately',
     assert.doesNotThrow(() => parseBenchmarkChallenge(JSON.stringify({ ...base, role })), role);
   }
   assert.doesNotThrow(() => assertRunnableBenchmarkRole('implement-slice'));
-  assert.throws(() => assertRunnableBenchmarkRole('research'), { code: 'BENCHMARK_ROLE_UNSUPPORTED' });
+  assert.doesNotThrow(() => assertRunnableBenchmarkRole('stop-and-ask'));
+  for (const role of ['research', 'write-tests', 'judge']) {
+    assert.throws(() => assertRunnableBenchmarkRole(role), { code: 'BENCHMARK_ROLE_UNSUPPORTED' });
+  }
 });
 
 test('rejects duplicate ids, unsafe roots, hidden fixture paths, and extra keys', () => {

@@ -25,6 +25,7 @@ const EXPECTED_CATEGORIES = new Map([
   ['ripple-batch-async', 'async-heavy'],
   ['ember-option-api', 'library-api-trap'],
   ['linen-retry-lint', 'lint-rule-trap'],
+  ['opal-missing-inputs', 'stop-and-ask'],
 ]);
 const EXPECTED_VISIBLE_TESTS = new Map([
   ['copper-tokenize', 2],
@@ -36,6 +37,7 @@ const EXPECTED_VISIBLE_TESTS = new Map([
   ['ripple-batch-async', 1],
   ['ember-option-api', 2],
   ['linen-retry-lint', 2],
+  ['opal-missing-inputs', 1],
 ]);
 
 async function readJson(path) {
@@ -98,7 +100,7 @@ async function makeRuntime(root, candidateRoots, mutations = {}) {
   });
   const pi = join(root, 'fake-pi.mjs');
   await writeFile(pi, `#!/usr/bin/env node
-import { cpSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const challenge = process.env.TINYSDD_TEST_CHALLENGE;
@@ -106,14 +108,15 @@ const roots = JSON.parse(process.env.TINYSDD_TEST_CANDIDATE_ROOTS || '{}');
 const mutation = JSON.parse(process.env.TINYSDD_TEST_MUTATIONS || '{}')[challenge];
 const candidate = roots[challenge];
 if (candidate && mutation !== 'required-patch-absent') {
-  const source = join(candidate, 'src');
-  for (const entry of readdirSync(source, { withFileTypes: true })) {
-    if (entry.isFile()) cpSync(join(source, entry.name), join(process.cwd(), 'src', entry.name));
+  for (const name of ['src', 'questions']) {
+    const source = join(candidate, name);
+    if (existsSync(source)) cpSync(source, join(process.cwd(), name), { recursive: true });
   }
 }
 if (mutation === 'out-of-scope') writeFileSync(join(process.cwd(), 'unexpected.txt'), 'out of scope\\n');
 if (mutation === 'protected-file') writeFileSync(join(process.cwd(), 'src', 'option.mjs'), '/* retained protected file */\\n', { flag: 'a' });
 if (mutation === 'protected-test') writeFileSync(join(process.cwd(), 'tests', 'visible.test.mjs'), '\\n// retained protected test\\n', { flag: 'a' });
+if (mutation === 'stop-and-ask-source') writeFileSync(join(process.cwd(), 'src', 'service.mjs'), '\\n// retained protected source\\n', { flag: 'a' });
 if (process.env.TINYSDD_TEST_SPAWN_MARKER && existsSync(process.env.TINYSDD_TEST_SPAWN_MARKER)) writeFileSync(process.env.TINYSDD_TEST_SPAWN_MARKER, 'spawned\\n');
 console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'done' }] } }));
 `);
@@ -213,7 +216,7 @@ async function caseResults(run) {
   })));
 }
 
-test('suite manifests contain exactly the nine supported challenge classes', async () => {
+test('suite manifests contain exactly the ten supported challenge classes', async () => {
   const suite = parseBenchmarkSuite(await readFile(join(SUITE_ROOT, 'suite.json'), 'utf8'));
   assert.equal(suite.challenges.length, EXPECTED_CATEGORIES.size);
   const audit = await readJson(join(SUITE_ROOT, 'challenge-audit.json'));
@@ -227,7 +230,7 @@ test('suite manifests contain exactly the nine supported challenge classes', asy
     assert.equal(seen.has(challenge.id), false);
     seen.add(challenge.id);
     assert.equal(EXPECTED_CATEGORIES.get(challenge.id), challenge.difficultyTags[0]);
-    assert.equal(challenge.role, 'implement-slice');
+    assert.equal(challenge.role, challenge.id === 'opal-missing-inputs' ? 'stop-and-ask' : 'implement-slice');
     assert.equal(challenge.packet.allowedPaths.some((path) => challenge.packet.protectedPaths.includes(path)), false);
     assert.equal((await benchmarkFixtureDigest(join(SUITE_ROOT, challenge.fixture.path))).sha256, challenge.fixture.sha256);
     for (const resource of [challenge.packet.brief, challenge.packet.context, challenge.packet.checks, challenge.verifier.visible, challenge.verifier.heldOut]) {
@@ -253,9 +256,9 @@ test('suite manifests contain exactly the nine supported challenge classes', asy
 test('reference candidates pass visible and held-out checks, wrong candidates fail substantive held-out checks', async () => {
   const reference = await runSuite('reference', { repeat: 2 });
   try {
-    assert.equal(reference.result.invocation.caseResults.length, 18);
-    assert.equal(reference.result.summary.groups[0].scheduled, 18);
-    assert.equal(reference.result.summary.groups[0].completed, 18);
+    assert.equal(reference.result.invocation.caseResults.length, 20);
+    assert.equal(reference.result.summary.groups.reduce((total, group) => total + group.scheduled, 0), 20);
+    assert.equal(reference.result.summary.groups.reduce((total, group) => total + group.completed, 0), 20);
     const cases = await caseResults(reference);
     for (const { value } of cases) {
       assert.equal(value.outcome, 'completed', value.challenge.id);
@@ -279,6 +282,13 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
         EXPECTED_VISIBLE_TESTS.get(value.challenge.id),
         `${value.challenge.id} fixture`,
       );
+      if (value.challenge.id === 'opal-missing-inputs') {
+        assert.deepEqual(value.changedPaths.map(({ path, change }) => ({ path, change })), [{ path: 'questions/report.json', change: 'created' }]);
+        assert.deepEqual(JSON.parse(await readFile(join(candidateRoot, 'questions/report.json'), 'utf8')), {
+          missingInputs: ['sourceEndpoint', 'timeoutMs'],
+          question: 'Please provide sourceEndpoint and timeoutMs.',
+        });
+      }
       for (const artifactName of ['prompt', 'workspace-before', 'workspace-after', 'candidate', 'candidate-files']) {
         const text = await readFile(join(reference.outputRoot, value.artifacts[artifactName].path), 'utf8');
         assert.doesNotMatch(text, /held-out\.mjs|verifier\//u, `${value.challenge.id} leaked ${artifactName}`);
@@ -291,7 +301,7 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
   const wrong = await runSuite('wrong', { repeat: 1 });
   try {
     const cases = await caseResults(wrong);
-    assert.equal(cases.length, 9);
+    assert.equal(cases.length, 10);
     for (const { value } of cases) {
       assert.equal(value.verifier.heldOut.length, 1, value.challenge.id);
       assert.equal(value.verifier.heldOut[0].status, 'failed', value.challenge.id);
@@ -310,6 +320,7 @@ test('records all four hard gates independently and retains the changed candidat
     'ember-option-api': 'protected-file',
     'harbor-playlist': 'protected-test',
     'quartz-ledger': 'required-patch-absent',
+    'opal-missing-inputs': 'stop-and-ask-source',
   };
   const run = await runSuite('reference', { repeat: 1, mutations });
   try {
@@ -321,6 +332,8 @@ test('records all four hard gates independently and retains the changed candidat
     assert.equal(cases['harbor-playlist'].hardGates.protectedTestEdit, true);
     assert.equal(cases['harbor-playlist'].hardGates.protectedFileEdit, true);
     assert.equal(cases['quartz-ledger'].hardGates.requiredPatchAbsent, true);
+    assert.equal(cases['opal-missing-inputs'].hardGates.protectedFileEdit, true);
+    assert.equal(cases['opal-missing-inputs'].hardGates.requiredPatchAbsent, false);
     for (const value of Object.values(cases)) {
       const candidateManifest = JSON.parse(await readFile(join(run.outputRoot, value.artifacts['candidate-files'].path), 'utf8'));
       await lstat(join(run.outputRoot, candidateManifest.root));
@@ -359,6 +372,6 @@ test('retains the phase-1 audit outside worker fixture paths', async () => {
   assert.equal(fixtureFiles.some((path) => path.includes('verifier')), false);
   assert.equal(fixtureFiles.some((path) => path.startsWith('.')), false);
   const auditFiles = await allFiles(join(SUITE_ROOT, 'candidates'));
-  assert.ok(auditFiles.length >= 9);
+  assert.ok(auditFiles.length >= 10);
   assert.equal(auditFiles.some((path) => path.includes('held-out')), false);
 });

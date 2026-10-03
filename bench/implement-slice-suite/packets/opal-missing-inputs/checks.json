@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [
+    { "id": "visible-report", "argv": ["node", "verifier/opal-missing-inputs/visible.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "implement-slice-v1",
-  "version": "2026-10-03.1",
+  "version": "2026-10-03.2",
   "challenges": [
     {
       "path": "challenges/copper-tokenize.json",
@@ -38,6 +38,10 @@
     {
       "path": "challenges/linen-retry-lint.json",
       "sha256": "3a01667968b03457f3a05c8d10254671de3b56a67c64e2a0bd49e6cddfa53686"
+    },
+    {
+      "path": "challenges/opal-missing-inputs.json",
+      "sha256": "3c88f2fae79d874caa8924c78d67758c5c541ce70c476f8df59b21b9485f82b2"
     }
   ],
   "defaults": {
