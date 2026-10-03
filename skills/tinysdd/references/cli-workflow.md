@@ -47,6 +47,25 @@ For external data, use the normalized import envelope with a `source`, an
 the complete file before appending it; this contract does not claim a native
 Pi or Claude Code adapter:
 
+```json
+{
+  "schemaVersion": 1,
+  "type": "usage-import",
+  "source": "synthetic-talon",
+  "exportId": "export-1",
+  "records": [
+    {
+      "externalRecordId": "record-1",
+      "phase": "review",
+      "model": "frontier/model",
+      "feature": "broker",
+      "input": 7,
+      "output": 3
+    }
+  ]
+}
+```
+
 ```sh
 tinysdd usage import --file usage-export.json
 ```

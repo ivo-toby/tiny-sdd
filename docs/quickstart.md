@@ -102,6 +102,25 @@ Normalized imports use a versioned JSON envelope with `source`, `exportId` and
 stable per-record `externalRecordId` values. The entire file is validated before
 anything is appended:
 
+```json
+{
+  "schemaVersion": 1,
+  "type": "usage-import",
+  "source": "synthetic-talon",
+  "exportId": "export-1",
+  "records": [
+    {
+      "externalRecordId": "record-1",
+      "phase": "review",
+      "model": "frontier/model",
+      "feature": "broker",
+      "input": 7,
+      "output": 3
+    }
+  ]
+}
+```
+
 ```sh
 tinysdd usage import --file usage-export.json
 ```
