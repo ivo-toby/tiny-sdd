@@ -976,13 +976,29 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
-  test("fails closed when the Linux sandbox executable is unavailable", async () => {
+  test("captures sandbox output through host-owned pipes without granting artifact writes", async () => {
     const project = await makeProject();
-    // Off Linux, chooseRuntime refuses before it looks for bubblewrap.
-    const refusal = process.platform === "linux" ? /bubblewrap.*unavailable|unavailable.*bubblewrap/u : /require Linux bubblewrap/u;
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { ...runtime(undefined, "allowed"), pipeOutput: true } });
+      assert.equal(result.outcome, "completed");
+      assert.equal(await readFile(join(result.artifactPaths.workspaceAfter, "src", "allowed.txt"), "utf8"), "after\n");
+      assert.match(await readFile(result.artifactPaths.stdout, "utf8"), /message_end/u);
+      assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), "before\n");
+      const metadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.equal(metadata.sandbox, "test-runtime");
+      assert.equal(metadata.bubblewrap, null);
+      assert.equal(metadata.sandboxExec, undefined);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed when the platform sandbox executable is unavailable", async () => {
+    const project = await makeProject();
+    const refusal = process.platform === "darwin" ? /macOS sandbox-exec.*unavailable/u : process.platform === "linux" ? /bubblewrap.*unavailable|unavailable.*bubblewrap/u : /require Linux bubblewrap or macOS sandbox-exec/u;
     try {
       await assert.rejects(
-        runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: "/definitely/missing/bwrap", piExecutable: fakePi } }),
+        runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: "/definitely/missing/bwrap", sandboxExecExecutable: "/definitely/missing/sandbox-exec", piExecutable: fakePi } }),
         refusal,
       );
     } finally {
