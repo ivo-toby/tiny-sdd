@@ -92,15 +92,30 @@ disposable workspace and records the lineage; it never changes the source projec
 
 Inspect the finished result envelope and patch. Process completion is not passing
 verification, and scope violations are review blockers. Use the outer harness
-to verify the candidate in an appropriate isolated environment, apply the
-reviewed patch, and retain observed test results plus review findings in a file.
-Then record the decision explicitly:
+to verify the candidate in an appropriate isolated environment, and retain observed
+test results plus review findings in a file. Apply the reviewed run to the project
+with `task apply` before recording acceptance, because acceptance binds the
+project's allowed-file content: accepting first makes the task `stale` and blocks
+its dependents. Then record the decision explicitly:
 
 ```sh
+tinysdd task apply --id validation --run WORKER_RUN_ID --by operator
 tinysdd task review --id validation --verdict accepted --evidence docs/reviews/validation.md --by operator
 tinysdd status
 tinysdd next
 ```
+
+`task apply` copies the run's allowed files by content, so it works for a
+`--base-run` revision too (a revision's `patch.diff` is a delta against the prior
+candidate, not the project). It follows the lineage to the first run, and refuses
+with `APPLY_CONFLICT`, writing nothing, if a project file no longer matches the
+state that run started from; files that already equal the candidate are recorded
+as `already-applied`. It refuses another task's run, a benchmark replay, scope
+violations and a run whose outcome is not `completed`; `--allow-incomplete` permits
+the last (a complete candidate from a timed-out run) and records the outcome. The
+record shows under `applied` in `status --json`; an accepting review adds
+`appliedFromRun` with `identical: false` if the files were edited after applying.
+Apply is neither verification nor acceptance.
 
 Use `revision` for a bounded repair or `blocked` for missing authority/context.
 The next revision packet includes the recorded review evidence as feedback;

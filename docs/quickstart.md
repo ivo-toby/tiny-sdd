@@ -223,15 +223,32 @@ whether it is committed, untracked or ignored. Put needed dependency interfaces 
 selected instruction resources rather than assuming the worker can inspect an
 installed dependency tree.
 
-Have your outer agent inspect scope violations and the diff, verify in an
-appropriate credential-free disposable environment, and apply only the reviewed
-patch. Preserve the observed checks and review findings in a project file. Then:
+Have your outer agent inspect scope violations and the diff and verify in an
+appropriate credential-free disposable environment. Then apply the reviewed run
+to the project before recording acceptance: acceptance binds the allowed files'
+content, so accepting first and applying later makes the task `stale` and blocks
+its dependents. Preserve the observed checks and review findings in a project
+file. Then:
 
 ```sh
+tinysdd task apply --id first-change --run WORKER_RUN_ID --by ivo
 tinysdd task review --id first-change --verdict accepted --evidence docs/reviews/first-change.md --by ivo
 tinysdd status
 tinysdd next
 ```
+
+`task apply` copies the run's allowed files by content, not by patch, so it also
+works for a `--base-run` revision, whose `patch.diff` is a delta against the prior
+candidate. It follows the revision lineage back to the first run and refuses with
+`APPLY_CONFLICT`, writing nothing, when a project file no longer matches the state
+that run started from. A file that already equals the candidate (for example
+applied by hand) is recorded as `already-applied`. It refuses a run of another
+task, a benchmark replay, a run with scope violations and a run whose outcome is
+not `completed`; `--allow-incomplete` permits the last, for a complete candidate
+from a timed-out run, and records the outcome. The run is recorded under `applied`
+in `status --json`, and an accepting review adds `appliedFromRun`, with
+`identical: false` when you edited the files after applying. Applying is not
+verification or acceptance.
 
 Use `revision` or `blocked` instead of accepting an incomplete result. Caller
 evidence is labeled as such; the CLI does not claim to have executed its tests.
@@ -244,5 +261,6 @@ Controller mutations use an exclusive lock. If a crash leaves a stale lock, the
 CLI stops for manual inspection; it does not guess that another writer is safe
 to remove. Do not remove a lock while its owning process is still active.
 
-This version deliberately leaves verification/application in the outer harness.
+This version deliberately leaves verification in the outer harness; the CLI
+copies a run into the project only when you call `task apply`.
 It is suitable for controlled testing, not unsupervised production changes.
