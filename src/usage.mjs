@@ -211,10 +211,11 @@ function provenanceForRecord(value, { imported = false, source = undefined, expo
     ? undefined
     : normalizeId(supplied.externalRecordId, 'provenance.externalRecordId', code);
   const suppliedSourceDigest = optionalDigest(supplied.sourceDigest, 'provenance.sourceDigest', code);
+  const normalizedOptionSourceDigest = optionalDigest(sourceDigest, 'provenance.sourceDigest', code);
   if (source !== undefined && suppliedSource !== undefined && source !== suppliedSource) throw tinyError(code, 'provenance.source conflicts with the import envelope');
   if (exportId !== undefined && suppliedExportId !== undefined && exportId !== suppliedExportId) throw tinyError(code, 'provenance.exportId conflicts with the import envelope');
   if (externalRecordId !== undefined && suppliedExternalId !== undefined && externalRecordId !== suppliedExternalId) throw tinyError(code, 'provenance.externalRecordId conflicts with the record');
-  if (sourceDigest !== undefined && suppliedSourceDigest !== undefined && sourceDigest !== suppliedSourceDigest) throw tinyError(code, 'provenance.sourceDigest conflicts with the import envelope');
+  if (normalizedOptionSourceDigest !== undefined && suppliedSourceDigest !== undefined && normalizedOptionSourceDigest !== suppliedSourceDigest) throw tinyError(code, 'provenance.sourceDigest conflicts with the import envelope');
   const normalizedSource = assertText(source ?? suppliedSource ?? (imported ? undefined : 'tinysdd'), 'provenance.source', { code });
   const exportValue = exportId ?? suppliedExportId;
   const externalValue = externalRecordId ?? suppliedExternalId;
@@ -224,7 +225,7 @@ function provenanceForRecord(value, { imported = false, source = undefined, expo
   const normalizedExternalId = externalValue === undefined
     ? undefined
     : normalizeId(externalValue, 'provenance.externalRecordId', code);
-  const normalizedSourceDigest = sourceDigest ?? suppliedSourceDigest;
+  const normalizedSourceDigest = normalizedOptionSourceDigest ?? suppliedSourceDigest;
   const result = { source: normalizedSource };
   if (normalizedExportId !== undefined) result.exportId = normalizedExportId;
   if (normalizedExternalId !== undefined) result.externalRecordId = normalizedExternalId;

@@ -8,6 +8,7 @@ import {
   appendUsageRecord,
   importUsageRecords,
   normalizeUsageImport,
+  normalizeUsageRecord,
   readUsageRecords,
   validateUsageRecord,
   usageRecord,
@@ -86,6 +87,14 @@ test('persisted validation requires canonical metadata and paired external prove
   incomplete.id = undefined;
   incomplete.timestamp = undefined;
   assert.throws(() => validateUsageRecord(incomplete), { code: 'USAGE_LEDGER_INVALID' });
+});
+
+test('normalization validates effective provenance overrides before writing them', () => {
+  const record = localRecord();
+  assert.throws(() => normalizeUsageRecord(record, { sourceDigest: 'not-a-digest' }), { code: 'USAGE_INVALID' });
+  const normalized = normalizeUsageRecord(record, { sourceDigest: 'a'.repeat(64) });
+  assert.equal(normalized.provenance.sourceDigest, 'a'.repeat(64));
+  assert.throws(() => normalizeUsageRecord({ ...record, provenance: { ...record.provenance, sourceDigest: 'b'.repeat(64) } }, { sourceDigest: 'a'.repeat(64) }), { code: 'USAGE_INVALID' });
 });
 
 test('every attribution and token alias is validated and aliases must agree', () => {
