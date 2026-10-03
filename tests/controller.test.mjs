@@ -1656,7 +1656,7 @@ test('apply refuses a symlinked parent directory or target and writes nothing', 
       t.skip(`symlink unavailable: ${error.message}`);
       return;
     }
-    await assert.rejects(apply(root), { code: 'INVALID_PATH' });
+    await assert.rejects(apply(root), { code: 'SYMLINK_PATH' });
     await assert.rejects(readFile(join(elsewhere, 'a.ts')), { code: 'ENOENT' });
     await assert.rejects(readProject(root, 'lib/ok.ts'), { code: 'ENOENT' });
 
@@ -1664,7 +1664,7 @@ test('apply refuses a symlinked parent directory or target and writes nothing', 
     await mkdir(join(root, 'src'));
     await writeFile(join(elsewhere, 'target.ts'), 'untouched\n');
     await symlink(join(elsewhere, 'target.ts'), join(root, 'src', 'a.ts'));
-    await assert.rejects(apply(root), { code: 'INVALID_PATH' });
+    await assert.rejects(apply(root), { code: 'SYMLINK_PATH' });
     assert.equal(await readFile(join(elsewhere, 'target.ts'), 'utf8'), 'untouched\n');
     await assert.rejects(readProject(root, 'lib/ok.ts'), { code: 'ENOENT' });
     assert.equal((await rawState(root)).tasks.one.applied, undefined);

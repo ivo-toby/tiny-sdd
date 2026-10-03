@@ -688,13 +688,6 @@ function sameContent(left, right) {
   return left.bytes.equals(right.bytes);
 }
 
-// A symlink in the way is reported as INVALID_PATH, where the fs-utils helpers
-// say SYMLINK_PATH.
-function refuseSymlink(error, path) {
-  if (error?.code === 'SYMLINK_PATH') return tinyError('INVALID_PATH', `refusing to apply through a symlink: ${path}`, { path });
-  return error;
-}
-
 export async function applyTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const by = requireText(options.by, 'apply by');
@@ -721,14 +714,8 @@ export async function applyTask(projectRoot, options = {}) {
       const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
       const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
       if (sameContent(before, after)) continue;
-      let absolute;
-      let current;
-      try {
-        absolute = (await resolveProjectPath(root, path, { allowMissing: true })).absolutePath;
-        current = await readRegularFile(absolute);
-      } catch (error) {
-        throw refuseSymlink(error, path);
-      }
+      const absolute = (await resolveProjectPath(root, path, { allowMissing: true })).absolutePath;
+      const current = await readRegularFile(absolute);
       let applyStatus = 'written';
       if (!sameContent(current, before)) {
         if (sameContent(current, after)) applyStatus = 'already-applied';
@@ -742,12 +729,8 @@ export async function applyTask(projectRoot, options = {}) {
 
     for (const item of plan) {
       if (item.status !== 'written') continue;
-      try {
-        if (item.change === 'deleted') await rm(item.absolute, { force: true });
-        else await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
-      } catch (error) {
-        throw refuseSymlink(error, item.path);
-      }
+      if (item.change === 'deleted') await rm(item.absolute, { force: true });
+      else await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
     }
     task.applied = {
       runId: finalRun.id,
