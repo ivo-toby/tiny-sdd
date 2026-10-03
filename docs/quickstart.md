@@ -102,6 +102,14 @@ file, so slices that cite one shared spec by line range stay current when the
 spec is appended to or edited outside their ranges. Inserting lines above a
 cited range shifts it and makes the slice stale: append addenda at the end.
 
+Use `task add --protect src/types.ts,tests/contract.test.ts` for read-only
+contract files. They must exist and cannot overlap `--allow`. The packet lists
+them and the worker prompt forbids changing them; an edit is retained as a scope
+violation with reason `protected contract file`, rather than prevented by file
+permissions. Approval binds their content digests. Editing a protected file makes
+the approval stale and therefore makes an accepted slice `stale` too: it must be
+checked again against the changed contract. Acceptance needs no separate field.
+
 Sizing warnings at `task add` and `task approve` now include a behavior-split
 recommendation for cited tests with fake timers plus deferred promises or races,
 or at least 8 ordering assertions. Separate the sequential core from the async

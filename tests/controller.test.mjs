@@ -2304,3 +2304,111 @@ test('CLI task apply reports refusals and has no flags beyond id, run and by', a
     await cleanup(root);
   }
 });
+
+test('protected contracts are normalized, public, and present in both packets', async () => {
+  const root = await project();
+  try {
+    await writeFile(join(root, 'docs', 'contract.txt'), 'contract\n');
+    const added = await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/new.ts', protect: 'docs/contract.txt,docs/brief.md,docs/contract.txt' });
+    assert.deepEqual(added.task.protect, ['docs/brief.md', 'docs/contract.txt']);
+    assert.deepEqual((await controllerStatus(root)).tasks[0].protect, added.task.protect);
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'fixed contract' });
+    assert.deepEqual((await resolveTaskPacket(root, 'one')).protectedPaths, added.task.protect);
+    assert.deepEqual((await resolveBenchmarkPacket(root, 'one')).protectedPaths, added.task.protect);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('invalid protected contracts are rejected without changing state', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'existing', brief: 'docs/brief.md', allow: 'src/old.ts' });
+    const statePath = join(root, '.tinysdd', 'runs', 'controller.json');
+    const before = await readFile(statePath, 'utf8');
+    for (const [protect, allow, code] of [
+      ['docs/brief.md', 'docs/brief.md', 'PROTECT_ALLOW_OVERLAP'],
+      ['docs/missing.txt', 'src/new.ts', 'PROTECT_MISSING'],
+      ['docs', 'src/new.ts', 'INVALID_FILE'],
+      ['.tinysdd/x', 'src/new.ts', 'INVALID_PATH'],
+    ]) {
+      await assert.rejects(addTask(root, { id: 'bad', brief: 'docs/brief.md', protect, allow }), { code });
+      assert.equal(await readFile(statePath, 'utf8'), before);
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('protected content drift stales approval and acceptance, and reapproval restores readiness', async () => {
+  const root = await project();
+  try {
+    const contract = join(root, 'docs', 'contract.txt');
+    await writeFile(contract, 'original\n');
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/new.ts', protect: 'docs/contract.txt' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'fixed contract' });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    await writeFile(contract, 'changed\n');
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+    await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_NOT_READY' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked changed contract' });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'operator' });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    await writeFile(contract, 'changed again\n');
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('missing or unreadable protected files fail closed after approval', async () => {
+  const root = await project();
+  try {
+    const contract = join(root, 'docs', 'contract.txt');
+    await writeFile(contract, 'original\n');
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/new.ts', protect: 'docs/contract.txt' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'fixed contract' });
+    await rm(contract);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+    await assert.rejects(approveTask(root, { id: 'one', by: 'operator', reason: 'missing contract' }), { code: 'PROTECT_MISSING' });
+    await mkdir(contract);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('legacy approvals stay fresh without protect fields; malformed protected state is rejected', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/new.ts' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'legacy approval' });
+    const statePath = join(root, '.tinysdd', 'runs', 'controller.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    assert.equal(Object.hasOwn(state.tasks.one, 'protect'), false);
+    delete state.tasks.one.approval.protect;
+    delete state.tasks.one.approval.protectDigest;
+    await writeFile(statePath, JSON.stringify(state));
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    assert.equal(Object.hasOwn(await resolveTaskPacket(root, 'one'), 'protectedPaths'), false);
+    for (const protect of ['docs/brief.md', [], [null], ['.tinysdd/x']]) {
+      await writeFile(statePath, JSON.stringify({ ...state, tasks: { one: { ...state.tasks.one, protect } } }));
+      await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED' }, JSON.stringify(protect));
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task add exposes protected paths in its single JSON object', async () => {
+  const root = await project();
+  try {
+    const cli = new URL('../bin/tinysdd.mjs', import.meta.url).pathname;
+    const { stdout } = await exec(process.execPath, [cli, '--project', root, '--json', 'task', 'add', '--id', 'one', '--brief', 'docs/brief.md', '--allow', 'src/new.ts', '--protect', 'docs/brief.md']);
+    assert.equal(stdout.trim().split('\n').length, 1);
+    assert.deepEqual(JSON.parse(stdout).data.task.protect, ['docs/brief.md']);
+  } finally {
+    await cleanup(root);
+  }
+});

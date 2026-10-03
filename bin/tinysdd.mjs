@@ -33,7 +33,7 @@ Usage:
   tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID]
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
   tinysdd [--json] [--project PATH] status|next
-  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--depends-on ID[,ID]]
+  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
   tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
@@ -137,7 +137,7 @@ function parseCommand(args) {
   if (command === 'task') {
     if (!['add', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, approve, packet, apply, review, close, or supersede');
     const allowedByCommand = {
-      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list']]),
+      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
       apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
@@ -365,6 +365,7 @@ async function run(argv) {
     checks: parsed.values.checks,
     dependsOn: parsed.values['depends-on'],
     allow: parsed.values.allow,
+    protect: parsed.values.protect,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'approve') data = await approveTask(project, {
     id: parsed.values.id,
