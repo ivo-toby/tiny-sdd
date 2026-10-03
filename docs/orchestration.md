@@ -123,9 +123,6 @@ Don't relitigate these; cite them in notes when relevant.
 
 ## Known follow-ups without an issue yet
 
-- **`task apply` doesn't check the run's approval.** It doesn't verify that the
-  run was produced under the task's current approval, so a run from before a
-  `task update` and re-approval can still be applied.
 - **`task add` allows the task's own inputs in `--allow`.** It accepts an
   allowlist containing the task's own brief, context or checks file. Apply
   refuses such runs; rejecting the overlap at `task add` and `task update` would
