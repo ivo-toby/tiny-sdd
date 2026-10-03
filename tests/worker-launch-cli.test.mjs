@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { initProject } from '../src/controller.mjs';
+import { addTask, approveTask, initProject } from '../src/controller.mjs';
+import { checkRunnerAvailable } from '../src/check-runner.mjs';
 
 const exec = promisify(execFile);
 // Project roots may not resolve through a symlink, and tmpdir() does on macOS
@@ -19,6 +20,34 @@ async function project() {
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
   await initProject(root);
   return root;
+}
+
+async function configuredCheckWorker() {
+  const root = await project();
+  const agentDir = await mkdtemp(join(canonicalTmpdir, 'tinysdd-launch-agent-'));
+  try {
+    await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+    await writeFile(join(root, '.tinysdd', 'tasks', 'one.checks.json'), JSON.stringify({
+      schemaVersion: 1,
+      dependencyMounts: [],
+      checks: [{ id: 'unit', argv: ['node', '--test', 't.test.mjs'], timeoutMs: 1000 }],
+    }));
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', checks: '.tinysdd/tasks/one.checks.json', allow: ['src/new-file.ts'] });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked declared checks' });
+    await writeFile(join(agentDir, 'models.json'), JSON.stringify({
+      providers: { titan: { api: 'openai-completions', baseUrl: 'http://127.0.0.1:9/v1', models: [{ id: 'qwen-bare', reasoning: false }] } },
+    }));
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'qwen',
+      workers: { qwen: { type: 'pi', provider: 'titan', model: 'qwen-bare' } },
+    }));
+    return { root, agentDir };
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 test('worker status rejects an unknown launch without creating controller state', async () => {
@@ -101,6 +130,53 @@ test('worker start fails before detaching when Pi cannot honor the thinking requ
       },
     );
     await assert.rejects(readdir(join(root, '.tinysdd', 'launches')), { code: 'ENOENT' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test('worker start reports an unavailable declared runner once on stderr in JSON mode', { skip: checkRunnerAvailable().available ? 'requires an unavailable check runner' : false }, async () => {
+  const { root, agentDir } = await configuredCheckWorker();
+  let launch;
+  try {
+    const completed = await exec(process.execPath, [cli.pathname, '--json', '--project', root, 'worker', 'start', '--task', 'one'], {
+      env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+    });
+    const result = JSON.parse(completed.stdout);
+    launch = result.data;
+    assert.equal(result.ok, true);
+    assert.equal(result.data.warnings.length, 1);
+    assert.match(result.data.warnings[0], /^run_checks unavailable: /u);
+    assert.equal((completed.stderr.match(/run_checks unavailable/g) ?? []).length, 1);
+    assert.match(completed.stderr, /^Warning: run_checks unavailable: .+$/mu);
+  } finally {
+    if (launch?.pid) {
+      try { process.kill(launch.pid, 'SIGTERM'); } catch { /* launcher may have exited */ }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      try { process.kill(launch.pid, 'SIGKILL'); } catch { /* launcher may have exited */ }
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test('worker run reports an unavailable declared runner once on stderr in JSON mode', { skip: checkRunnerAvailable().available ? 'requires an unavailable check runner' : false }, async () => {
+  const { root, agentDir } = await configuredCheckWorker();
+  try {
+    await assert.rejects(
+      exec(process.execPath, [cli.pathname, '--json', '--project', root, 'worker', 'run', '--task', 'one'], {
+        env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+      }),
+      (error) => {
+        const result = JSON.parse(error.stdout);
+        assert.equal(result.warnings.length, 1);
+        assert.match(result.warnings[0], /^run_checks unavailable: /u);
+        assert.equal((error.stderr.match(/run_checks unavailable/g) ?? []).length, 1);
+        assert.match(error.stderr, /^Warning: run_checks unavailable: .+$/mu);
+        return true;
+      },
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(agentDir, { recursive: true, force: true });

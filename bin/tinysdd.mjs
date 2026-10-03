@@ -18,6 +18,7 @@ import {
   dispatchWorker,
   initProject,
   publicError,
+  resolveBenchmarkPacket,
   resolveTaskPacket,
   reviewTask,
   supersedeTask,
@@ -25,6 +26,7 @@ import {
 } from '../src/controller.mjs';
 import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, readJsonFile, tinyError } from '../src/fs-utils.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
+import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
 
 const VERSION = '0.1.0';
@@ -218,6 +220,7 @@ async function startWorker(project, options) {
   if (preflight.errors.length > 0) {
     throw tinyError('WORKER_PREFLIGHT_FAILED', `worker preflight failed: ${preflight.errors.join('; ')}`, { errors: preflight.errors, warnings: preflight.warnings });
   }
+  const warnings = await declaredRunCheckWarnings(project, options);
   const id = `launch-${randomUUID()}`;
   const location = await launchDirectory(project, id);
   await ensureDirectory(location.directory);
@@ -256,7 +259,33 @@ async function startWorker(project, options) {
     pid: child.pid,
     statusCommand: `tinysdd worker status --id ${id}`,
     preflight: { thinking: preflight.thinking, maxTokens: preflight.maxTokens, warnings: preflight.warnings },
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+async function declaredRunCheckWarnings(project, options) {
+  const packet = options['baseline-run']
+    ? await resolveBenchmarkPacket(project, options.task)
+    : await resolveTaskPacket(project, options.task);
+  if (packet.checks === undefined) return [];
+  const runner = checkRunnerAvailable();
+  return runner.available ? [] : [`run_checks unavailable: ${runner.reason}`];
+}
+
+async function runWorkerCommand(project, options) {
+  const warnings = await declaredRunCheckWarnings(project, options);
+  try {
+    const data = await dispatchWorker(project, {
+      taskId: options.task,
+      worker: options.worker,
+      baseRunId: options['base-run'],
+      baselineRunId: options['baseline-run'],
+    });
+    return warnings.length === 0 ? data : { ...data, warnings: [...new Set([...warnings, ...(data.warnings ?? [])])] };
+  } catch (error) {
+    if (warnings.length > 0 && error && typeof error === 'object') error.cliWarnings = warnings;
+    throw error;
+  }
 }
 
 async function loadLaunch(project, rawId) {
@@ -412,12 +441,7 @@ async function run(argv) {
     by: parsed.values.by,
     reason: parsed.values.reason,
   });
-  else if (parsed.command === 'worker' && parsed.subcommand === 'run') data = await dispatchWorker(project, {
-    taskId: parsed.values.task,
-    worker: parsed.values.worker,
-    baseRunId: parsed.values['base-run'],
-    baselineRunId: parsed.values['baseline-run'],
-  });
+  else if (parsed.command === 'worker' && parsed.subcommand === 'run') data = await runWorkerCommand(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'start') data = await startWorker(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'stop') data = await workerStop(project, { id: parsed.values.id, waitMs: parsed.values['wait-ms'] });
@@ -453,9 +477,19 @@ function describeTask(task) {
   return task.status ?? 'registered';
 }
 
+function writeRunCheckWarnings(result) {
+  const warnings = [
+    ...(result.warnings ?? []),
+    ...(result.data?.warnings ?? []),
+    ...(result.data?.preflight?.warnings ?? []),
+  ].filter((warning) => typeof warning === 'string' && warning.startsWith('run_checks unavailable: '));
+  for (const warning of [...new Set(warnings)]) process.stderr.write(`Warning: ${warning}\n`);
+}
+
 function writeResult(result, json) {
   const envelope = { ...result };
   delete envelope.presentation;
+  writeRunCheckWarnings(result);
   if (json) {
     process.stdout.write(`${JSON.stringify(envelope)}\n`);
     return;
@@ -516,7 +550,7 @@ try {
   writeResult(result, requestedJson);
   if (!result.ok) process.exitCode = 1;
 } catch (error) {
-  const result = { ok: false, error: publicError(error) };
+  const result = { ok: false, error: publicError(error), ...(error.cliWarnings ? { warnings: error.cliWarnings } : {}) };
   writeResult(result, requestedJson);
   process.exitCode = 1;
 }

@@ -208,7 +208,9 @@ the declaration into approval and the packet. When the host runner is available,
 a checks-bearing packet exposes `run_checks` with optional `checkId` (omitted
 means all checks in order). It uses the separate Linux bubblewrap runner,
 without network or credentials. An unavailable host records the reason and
-keeps the no-check tool surface. Dependency mounts cannot overlap allowed
+keeps the no-check tool surface. `worker start` and `worker run` repeat the
+same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
+one JSON result. Dependency mounts cannot overlap allowed
 paths. `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
 check. Budget exhaustion, unknown ids and runner unavailability throw tool
 errors and do not end the worker. Pi 1.0.0 makes a batch containing `run_checks`

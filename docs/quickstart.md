@@ -146,7 +146,9 @@ available, packets expose the fixed `run_checks` tool: an optional `checkId`
 selects one declared check; omitting it runs them in declaration order. The
 separate Linux bubblewrap runner executes the current candidate without network
 or credentials. On an unavailable host, the packet records the reason, emits a
-warning and runs without the tool.
+warning and runs without the tool. `worker start` and `worker run` repeat the
+same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
+one JSON result.
 
 `limits.maxCheckRuns` defaults to 12 and accepts integers from 1 to 20 when the
 tool is available. Each individual check consumes one run, including checks

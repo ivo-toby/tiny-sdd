@@ -501,6 +501,44 @@ describe('check runner', { skip: SKIP }, () => {
     }
   });
 
+  test('an abort during namespace preparation stops the probe before spawning the sandbox', async () => {
+    const token = `tinysdd-probe-abort-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const probeRuns = join(fixtures, `${token}.runs`);
+    const bwrapPath = await stubExecutable([
+      `count=$(cat '${probeRuns}' 2>/dev/null || printf '0')`,
+      'count=$((count + 1))',
+      `printf '%s\\n' "$count" > '${probeRuns}'`,
+      `if [ "$count" -eq 1 ]; then exec /bin/sh -c 'sleep 2' '${token}'; fi`,
+      'exit 0',
+    ].join('\n'));
+    const prlimitPath = await stubExecutable('exit 0');
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 100);
+    const started = Date.now();
+    try {
+      await assert.rejects(
+        run(candidate, {}, { bwrapPath, signal: controller.signal }),
+        (error) => {
+          assert.equal(error.code, 'CHECK_CANCELLED');
+          return true;
+        },
+      );
+      assert.ok(Date.now() - started < 1500, 'namespace preparation ignored cancellation');
+      let remaining = await processesMatching(token);
+      for (let attempt = 0; attempt < 20 && remaining.length > 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        remaining = await processesMatching(token);
+      }
+      assert.deepEqual(remaining, []);
+      const result = await run(candidate, {}, { bwrapPath, prlimitPath });
+      assert.equal(result.exitCode, 0);
+      assert.equal(await readFile(probeRuns, 'utf8'), '2\n');
+    } finally {
+      clearTimeout(abortTimer);
+    }
+  });
+
   test('the address-space limit stops a runaway allocation without a timeout', async () => {
     const candidate = await makeDir({
       'alloc.mjs': [
