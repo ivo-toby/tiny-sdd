@@ -62,7 +62,7 @@
       "category": "brownfield",
       "reference": {
         "path": "candidates/quartz-ledger/reference",
-        "sha256": "e07e21bef127ff8790b6538cc93eb4ad328670a1b201842255b50dd52994582d"
+        "sha256": "b44494f7afe7de180ae435b44a0280dba901e8ce8b2a4a2af115978c8d5f3edc"
       },
       "wrong": [
         {
@@ -98,7 +98,7 @@
       "category": "bugfix",
       "reference": {
         "path": "candidates/cedar-receipt-fix/reference",
-        "sha256": "0829c2f0ad8baf12034b667e9a63ba77a6552b3444e16abdf19cc474698be2b5"
+        "sha256": "ac0133be0ba1dc1af8986065d132bf751b566b7d034fe0bc97e7dea292cab723"
       },
       "wrong": [
         {
@@ -158,7 +158,7 @@
         {
           "id": "wrong-async-no-await",
           "path": "candidates/linen-retry-lint/wrong-async-no-await",
-          "sha256": "08e91a985a50008123ef9a51df466e920190f5de6f6b0b4e91cd7303fbd35e5d",
+          "sha256": "2381a330c01a74c73322db0c731ed980ed11a0104d076afacdb1494f337dbf87",
           "heldOutFailures": [
             "held-out-lint"
           ]

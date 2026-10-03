@@ -7,5 +7,8 @@ test('preserves task order', async () => {
     async () => 'first',
     async () => 'second',
   ], { concurrency: 2 });
-  assert.deepEqual(result, ['first', 'second']);
+  assert.deepEqual(result, [
+    { status: 'fulfilled', value: 'first' },
+    { status: 'fulfilled', value: 'second' },
+  ]);
 });

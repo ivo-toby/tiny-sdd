@@ -9,3 +9,7 @@ test('parses an integer amount in cents', () => {
 test('rejects a malformed receipt', () => {
   assert.throws(() => parseReceipt('r-7|12x'), /amount/u);
 });
+
+test('rejects non-string input with an amount error', () => {
+  assert.throws(() => parseReceipt(42), /amount/u);
+});

@@ -26,6 +26,17 @@ const EXPECTED_CATEGORIES = new Map([
   ['ember-option-api', 'library-api-trap'],
   ['linen-retry-lint', 'lint-rule-trap'],
 ]);
+const EXPECTED_VISIBLE_TESTS = new Map([
+  ['copper-tokenize', 2],
+  ['orbit-window', 2],
+  ['harbor-playlist', 2],
+  ['quartz-ledger', 3],
+  ['maple-queue-fix', 1],
+  ['cedar-receipt-fix', 3],
+  ['ripple-batch-async', 1],
+  ['ember-option-api', 2],
+  ['linen-retry-lint', 2],
+]);
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf8'));
@@ -52,6 +63,24 @@ async function allFiles(root, prefix = '') {
 
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function childEnvironment(overrides = {}) {
+  const env = { ...process.env, ...overrides };
+  delete env.NODE_TEST_CONTEXT;
+  return env;
+}
+
+function assertNodeTestSummary(output, expectedTests, label) {
+  const summary = (name) => {
+    const match = output.match(new RegExp(`^(?:# |ℹ )${name} (\\d+)$`, 'mu'));
+    assert.ok(match, `${label} did not report ${name}`);
+    return Number(match[1]);
+  };
+  assert.equal(summary('tests'), expectedTests, `${label} test count`);
+  assert.equal(summary('pass'), expectedTests, `${label} pass count`);
+  assert.equal(summary('fail'), 0, `${label} fail count`);
+  assert.equal(summary('skipped'), 0, `${label} skipped count`);
 }
 
 async function makeRuntime(root, candidateRoots, mutations = {}) {
@@ -113,7 +142,7 @@ async function runVerifier({ check, candidateDir }) {
   try {
     const output = await execFileAsync(process.execPath, check.argv.slice(1), {
       cwd: candidateDir,
-      env: { ...process.env, NODE_OPTIONS: '' },
+      env: childEnvironment({ NODE_OPTIONS: '' }),
       maxBuffer: 1024 * 1024,
     });
     return {
@@ -240,7 +269,16 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
       });
       const candidateManifest = JSON.parse(await readFile(join(reference.outputRoot, value.artifacts['candidate-files'].path), 'utf8'));
       const candidateRoot = join(reference.outputRoot, candidateManifest.root);
-      await execFileAsync(process.execPath, ['--test', 'tests/visible.test.mjs'], { cwd: candidateRoot });
+      const visibleTests = await execFileAsync(process.execPath, ['--test', 'tests/visible.test.mjs'], {
+        cwd: candidateRoot,
+        env: childEnvironment(),
+        maxBuffer: 1024 * 1024,
+      });
+      assertNodeTestSummary(
+        `${visibleTests.stdout}${visibleTests.stderr}`,
+        EXPECTED_VISIBLE_TESTS.get(value.challenge.id),
+        `${value.challenge.id} fixture`,
+      );
       for (const artifactName of ['prompt', 'workspace-before', 'workspace-after', 'candidate', 'candidate-files']) {
         const text = await readFile(join(reference.outputRoot, value.artifacts[artifactName].path), 'utf8');
         assert.doesNotMatch(text, /held-out\.mjs|verifier\//u, `${value.challenge.id} leaked ${artifactName}`);

@@ -17,7 +17,7 @@
     },
     {
       "path": "challenges/quartz-ledger.json",
-      "sha256": "7b225dd3e3bf628e7668b29ccbcf66910bc58195b6423b4a740a0048b0da118c"
+      "sha256": "56c2b0c43998072c464fdc73f54adb8204b863bb67ab320ed0c4e3259970a7f4"
     },
     {
       "path": "challenges/maple-queue-fix.json",
@@ -25,11 +25,11 @@
     },
     {
       "path": "challenges/cedar-receipt-fix.json",
-      "sha256": "d4cc4ba72b09501a6c9c45d7a0bac669bfcd64c848d1017875baeb85b1f0320e"
+      "sha256": "c68ebdbe8d17914b56b461e91998c633938c5dffb411f34db18af57f59ef2aa0"
     },
     {
       "path": "challenges/ripple-batch-async.json",
-      "sha256": "01d165ddd7a7ccdef8e659b19026fd472798e7dfed73d48bf505e8b699515d1c"
+      "sha256": "25bc796ded6cd28302070cf6039c66b0897f140c5da37bb5a8cdcdd33c089138"
     },
     {
       "path": "challenges/ember-option-api.json",

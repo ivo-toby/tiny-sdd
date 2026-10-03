@@ -9,7 +9,7 @@
   ],
   "fixture": {
     "path": "fixtures/ripple-batch-async",
-    "sha256": "881b154e8b9ed6a43c0c66a7dfaf05d8ee66a7a0d1f523f8e27347faeb7962ee"
+    "sha256": "11b344dc11860c8d0ca4ff62afc3d98fd1daacb4f5af9609dbf46744c975dc41"
   },
   "packet": {
     "brief": {

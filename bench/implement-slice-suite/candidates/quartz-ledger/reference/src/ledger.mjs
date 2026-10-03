@@ -8,7 +8,13 @@ export function entriesForAccount(entries, account) {
 
 export function balanceByAccount(entries) {
   return entries.reduce((balances, entry) => {
-    balances[entry.account] = (balances[entry.account] ?? 0) + entry.amount;
+    if (Object.hasOwn(balances, entry.account)) balances[entry.account] += entry.amount;
+    else Object.defineProperty(balances, entry.account, {
+      configurable: true,
+      enumerable: true,
+      value: entry.amount,
+      writable: true,
+    });
     return balances;
   }, {});
 }
