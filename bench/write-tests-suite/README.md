@@ -18,8 +18,9 @@ to the mutant that must break it. A candidate passes the audit only when its
 tests pass against the reference source and each wrong source produces a
 substantive assertion failure in its named witness. Syntax errors, zero tests,
 skips, timeouts, process failures, and unavailable checks do not count as
-kills. The later runner adapter will report killed mutants over declared
-mutants; this phase does not introduce qualification or acceptance thresholds.
+kills. The runner derives killed mutants over declared mutants from these
+held-out records; this phase does not introduce qualification or acceptance
+thresholds.
 
 The visible verifier runs the submitted test bytes against the reference source.
 Each held-out check overlays one declared mutant and runs those same unchanged

@@ -241,6 +241,60 @@ test('write-tests verifier rejects empty, skipped, syntax-invalid, and setup-fai
   }
 });
 
+test('write-tests verifier rejects an evaluator import failure as a mutant kill', async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-write-tests-import-failure-'));
+  const candidate = join(root, 'candidate');
+  await mkdir(join(candidate, 'src'), { recursive: true });
+  await mkdir(join(candidate, 'tests'), { recursive: true });
+  await cp(
+    resolve(SUITE_ROOT, 'fixtures/amber-input-validation/src/options.mjs'),
+    join(candidate, 'src/options.mjs'),
+  );
+  const expectedWitness = 'C3 enforces the inclusive timeout bounds';
+  const referenceTest = await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8');
+  const c3Start = referenceTest.indexOf(`test('${expectedWitness}'`);
+  const c4Start = referenceTest.indexOf("test('C4", c3Start);
+  assert.ok(c3Start >= 0 && c4Start > c3Start);
+  const importFailureWitness = `test('${expectedWitness}', async () => {
+  try {
+    normalizeOptions({ timeoutMs: 1 });
+  } catch {
+    await import('../src/missing-dependency.mjs');
+  }
+});
+
+`;
+  await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}${importFailureWitness}${referenceTest.slice(c4Start)}`);
+  const mutant = resolve(SUITE_ROOT, 'candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs');
+  try {
+    const reference = await execFileAsync(process.execPath, [VERIFIER, 'reference', 'amber-input-validation'], {
+      cwd: candidate,
+      env: childEnvironment(),
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 10000,
+    });
+    assert.match(reference.stdout, /# tests 4\b/u);
+    assert.match(reference.stdout, /# pass 4\b/u);
+    await assert.rejects(
+      execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', mutant, expectedWitness], {
+        cwd: candidate,
+        env: childEnvironment(),
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 10000,
+      }),
+      (error) => {
+        const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+        assert.notEqual(error.code, 0);
+        assert.match(output, /ERR_MODULE_NOT_FOUND/u);
+        assert.match(output, /candidate-sha256:[a-f0-9]{64}/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('write-tests verifier accepts extra tests and multiple mapped failures', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-write-tests-compound-'));
   const candidate = join(root, 'candidate');

@@ -79,6 +79,12 @@ function witnessBlock(output, prefix, name) {
   return lines.slice(start, end < 0 ? lines.length : end + 1).join('\n');
 }
 
+function hasEvaluatorFailure(block) {
+  return /\b(?:ERR_MODULE_[A-Z_]+|MODULE_NOT_FOUND|ERR_REQUIRE_ESM|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_DIR_IMPORT|ERR_INVALID_MODULE_SPECIFIER)\b/u.test(block)
+    || /Cannot find (?:module|package)/u.test(block)
+    || /node:internal\/modules\/(?:esm|cjs)\//u.test(block);
+}
+
 function executionFailure(error) {
   return {
     exitCode: typeof error.code === 'number' ? error.code : 1,
@@ -145,7 +151,8 @@ function validMutant(result, challenge, expectedWitness) {
     && summary(output, 'todo') === 0
     && witnessLine(output, 'not ok', expectedWitness)
     && challenge.witnesses.filter((name) => name !== expectedWitness).every((name) => witnessLine(output, 'ok', name) || witnessLine(output, 'not ok', name))
-    && witnessBlock(output, 'not ok', expectedWitness).includes("failureType: 'testCodeFailure'");
+    && witnessBlock(output, 'not ok', expectedWitness).includes("failureType: 'testCodeFailure'")
+    && !hasEvaluatorFailure(witnessBlock(output, 'not ok', expectedWitness));
 }
 
 async function main() {

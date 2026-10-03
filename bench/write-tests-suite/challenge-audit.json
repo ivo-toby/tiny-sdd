@@ -93,7 +93,7 @@
       "category": "state-transition",
       "referenceTest": {
         "path": "candidates/cobalt-state-machine/reference/tests/contract.test.mjs",
-        "sha256": "6d5d45f4ed156938f632cc5df51a2cc176e67fa03003d2a688faa84c86726c10"
+        "sha256": "b557cdc1d9544457d0e7451412355066bb04cf9cf268122b4115e70eb1b3ff64"
       },
       "witnesses": [
         { "id": "C1", "testName": "C1 accepts only legal state transitions", "invariant": "only the declared idle and running transitions are legal" },
