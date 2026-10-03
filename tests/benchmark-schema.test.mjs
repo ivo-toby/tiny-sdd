@@ -221,6 +221,7 @@ test('config metadata rejects credential-shaped fields', () => {
   const safeSettings = fullConfig();
   safeSettings.worker.settings = {
     maxTokens: 4096,
+    effectiveMaxTokens: 3072,
     nativeEffectiveMaxTokens: 2048,
     thinkingTokenBudgetField: 'max_tokens',
   };

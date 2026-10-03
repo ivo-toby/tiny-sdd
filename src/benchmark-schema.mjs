@@ -278,7 +278,7 @@ const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|credential|api[_-]?key|a
 const SENSITIVE_VALUE_PATTERN = /(?:^|[?&\s])(?:token|secret|password|credential|api[_-]?key|authorization|bearer)\s*=/iu;
 const BEARER_VALUE_PATTERN = /\bbearer\s+\S+/iu;
 const USERINFO_VALUE_PATTERN = /^[a-z][a-z\d+.-]*:\/\/[^/]*@/iu;
-const SAFE_NUMERIC_SETTING_KEYS = new Set(['maxtokens', 'nativeeffectivemaxtokens']);
+const SAFE_NUMERIC_SETTING_KEYS = new Set(['maxtokens', 'effectivemaxtokens', 'nativeeffectivemaxtokens']);
 const SAFE_SETTING_KEYS = new Set(['thinkingtokenbudgetfield']);
 const CONFIG_IDENTITY_FIELDS = new Set([
   'model.provider', 'model.id', 'model.quantization', 'model.server.id', 'model.server.version',
