@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { sha256 } from '../src/fs-utils.mjs';
+import { digestJson, sha256 } from '../src/fs-utils.mjs';
 import { benchmarkFixtureDigest, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
 import { parseBenchmarkInvocation } from '../src/benchmark-results.mjs';
 
@@ -265,6 +265,63 @@ test('binds effective model settings and checker limits into the config digest',
   }
 });
 
+test('uses a worker profile object for preflight, identity, and execution', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-profile-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const profile = { schemaVersion: 1, id: 'reasoning-profile', runtime: { reasoning: true } };
+    const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', profile, limits: { timeoutMs: 1000, maxToolCalls: 10 } };
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker,
+      runtime,
+      repeat: 1,
+      verifier: async () => ({ status: 'passed', sandbox: { runner: 'test-only', network: 'none' } }),
+    });
+    assert.equal(result.config.identity.worker.profileDigest, digestJson(profile));
+    assert.equal(result.config.identity.worker.settings.effectiveReasoning, true);
+    const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
+    assert.equal(firstCase.outcome, 'completed');
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects unsafe invocation ids before starting workers or writing output', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-invocation-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  const invocationId = `../../../../escaped-${basename(root)}`;
+  const escaped = resolve(root, '.tinysdd', 'bench', 'runner-fixture', invocationId);
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    await assert.rejects(
+      runBenchmark({
+        suiteRoot: root,
+        worker: { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } },
+        runtime,
+        invocationId,
+        verifier: async () => ({ status: 'passed', sandbox: { runner: 'test-only', network: 'none' } }),
+      }),
+      { code: 'BENCHMARK_RUNNER_INVALID', message: /invocationId/u },
+    );
+    await assert.rejects(access(join(root, 'pi-spawned')));
+    await assert.rejects(access(escaped));
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+    await rm(escaped, { recursive: true, force: true });
+  }
+});
+
 test('stages and rewrites verifier path-flag operands before evaluation', async () => {
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-verifier-flag-')));
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
@@ -296,6 +353,43 @@ test('stages and rewrites verifier path-flag operands before evaluation', async 
     assert.equal(rewrittenPreloads.length, 1);
     const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
     assert.equal(firstCase.verifier.visible[0].status, 'passed');
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('refuses verifier mutation between visible and held-out evaluation', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-group-mutation-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const heldOutPath = join(root, 'verifier', 'slow-slice-held-out.test.mjs');
+    let visibleCalls = 0;
+    let heldOutCalls = 0;
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker: { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } },
+      runtime,
+      repeat: 1,
+      verifier: async ({ visibility }) => {
+        if (visibility === 'visible') {
+          visibleCalls += 1;
+          await writeFile(heldOutPath, 'mutated after visible evaluation\n');
+        } else {
+          heldOutCalls += 1;
+        }
+        return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
+      },
+    });
+    const firstCase = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
+    assert.equal(firstCase.outcome, 'setup_error');
+    assert.equal(visibleCalls, 1);
+    assert.equal(heldOutCalls, 0);
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;

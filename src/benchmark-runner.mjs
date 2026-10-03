@@ -45,6 +45,7 @@ const MAX_CHECK_BUDGET = 20;
 const CHECK_RUNNER_VERSION = 'runCheck-v1';
 const PATH_FLAGS = new Set(['--require', '-r', '--import', '--loader']);
 const VALUE_FLAGS = new Set(['-e', '--eval', '--input-type', '--test-name-pattern']);
+const BENCHMARK_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const TINYSDD_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 function invalid(message, details = undefined) {
@@ -728,11 +729,12 @@ async function persistVerifierOutput(root, caseRelativeDirectory, record, visibi
   };
 }
 
-async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibility, candidateSource, packet, root, caseRelativeDirectory, verifier, runtime, checkRunnerOptions, budgetState }) {
+async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibility, candidateSource, packet, root, caseRelativeDirectory, verifier, runtime, checkRunnerOptions, budgetState, verifyStable }) {
   const records = [];
   const plan = await verifierPlan(suiteRoot, manifestPath, definition.manifest, visibility, candidateSource, packet);
   await applyVerifierPlan(candidateSource, plan);
   for (let index = 0; index < plan.checks.length; index += 1) {
+    if (verifyStable) await verifyStable();
     const check = plan.checks[index];
     let record;
     if (budgetState.used >= budgetState.limit) {
@@ -779,6 +781,7 @@ async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibilit
       }
     }
     records.push(await persistVerifierOutput(root, caseRelativeDirectory, record, visibility, index));
+    if (verifyStable) await verifyStable();
   }
   return records;
 }
@@ -1018,12 +1021,20 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
       assertWorkerLimitsIdentity(config, runtimeMetadata);
       assertWorkerSettingsIdentity(config, runtimeMetadata);
       const budgetState = { used: 0, limit: checkBudget };
+      const verifyStable = async () => {
+        try {
+          await assertBenchmarkInputsStable(suiteInfo, verifierContent);
+        } catch (error) {
+          inputStable = false;
+          throw error;
+        }
+      };
       if (inputStable && visibleDefinition) {
         const evaluator = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-evaluator-'));
         try {
           const candidate = join(evaluator, 'candidate');
           await copyRegularTree(retainedCandidate, candidate, 'retained worker candidate');
-          const records = await runVerifierGroup({ suiteRoot, manifestPath: visibleDefinition.resource.path, definition: visibleDefinition, visibility: 'visible', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState });
+          const records = await runVerifierGroup({ suiteRoot, manifestPath: visibleDefinition.resource.path, definition: visibleDefinition, visibility: 'visible', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState, verifyStable });
           visibleRecords = records;
         } catch (error) {
           setupError ??= error instanceof Error ? error : new Error(String(error));
@@ -1037,9 +1048,10 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
         try {
           const candidate = join(evaluator, 'candidate');
           await copyRegularTree(retainedCandidate, candidate, 'retained worker candidate');
-          const records = await runVerifierGroup({ suiteRoot, manifestPath: heldOutDefinition.resource.path, definition: heldOutDefinition, visibility: 'held-out', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState });
+          const records = await runVerifierGroup({ suiteRoot, manifestPath: heldOutDefinition.resource.path, definition: heldOutDefinition, visibility: 'held-out', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState, verifyStable });
           heldOutRecords = records;
         } catch (error) {
+          inputStable = false;
           setupError ??= error instanceof Error ? error : new Error(String(error));
           heldOutRecords = verifierDefinitionNotRun(heldOutDefinition, heldOutDefinition.manifest.checks);
         } finally {
@@ -1130,6 +1142,9 @@ export async function runBenchmark({
   checkLimits,
   checkRunnerOptions,
 } = {}) {
+  if (typeof invocationId !== 'string' || !BENCHMARK_ID_PATTERN.test(invocationId)) {
+    invalid('invocationId must be a lowercase benchmark identifier');
+  }
   if (verifier !== undefined && (typeof verifier !== 'function' || runtime?.test !== true)) {
     invalid('test verifier injection requires runtime.test === true');
   }
@@ -1149,7 +1164,8 @@ export async function runBenchmark({
   } catch (error) {
     invalid(error instanceof Error ? error.message : String(error));
   }
-  const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions });
+  const effectiveProfile = profile ?? (worker.profile && typeof worker.profile === 'object' && !Array.isArray(worker.profile) ? worker.profile : null);
+  const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile: effectiveProfile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions });
   const root = resolve(outputRoot ?? join(projectRoot ?? suiteInfo.root, '.tinysdd', 'bench', suiteInfo.suite.id, invocationId));
   await assertNoSymlinkPath(root, { allowMissing: true, requireDirectory: false });
   if (await pathExists(root)) invalid(`benchmark invocation output already exists: ${root}`);
@@ -1159,7 +1175,7 @@ export async function runBenchmark({
   for (const challengeInfo of suiteInfo.challenges) {
     for (let repetition = 1; repetition <= selectedRepeat; repetition += 1) {
       const attemptId = `${challengeInfo.challenge.id}-repeat-${repetition}`;
-      cases.push(await executeCase({ suiteInfo, challengeInfo, verifierContent, config, profile, worker, runtime, outputRoot: root, attemptId, repetition, verifier, checkRunnerOptions: config.checkRunnerOptions, checkBudget: maxCheckRuns }));
+      cases.push(await executeCase({ suiteInfo, challengeInfo, verifierContent, config, profile: effectiveProfile, worker, runtime, outputRoot: root, attemptId, repetition, verifier, checkRunnerOptions: config.checkRunnerOptions, checkBudget: maxCheckRuns }));
     }
   }
   const completedAt = new Date().toISOString();
