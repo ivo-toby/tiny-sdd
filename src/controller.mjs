@@ -85,6 +85,31 @@ function normalizeTaskPaths(value, label, { required = false } = {}) {
   }))].sort();
 }
 
+function normalizeTaskShape(options) {
+  const brief = normalizeTaskBrief(requireText(options.brief, 'brief'), 'brief');
+  if (!brief.toLowerCase().endsWith('.md')) throw tinyError('INVALID_BRIEF', 'brief must be a Markdown file');
+  const context = options.context === undefined ? undefined : normalizeTaskContext(requireText(options.context, 'context'), 'context');
+  const checks = options.checks === undefined ? undefined : normalizeTaskChecks(requireText(options.checks, 'checks'), 'checks');
+  const dependsOn = parseIds(options.dependsOn);
+  const allow = normalizeTaskPaths(options.allow, 'allow', { required: true });
+  const protect = normalizeTaskPaths(options.protect, 'protect');
+  assertProtectAllowDisjoint(allow, protect);
+  return {
+    brief,
+    ...(context === undefined ? {} : { context }),
+    ...(checks === undefined ? {} : { checks }),
+    dependsOn,
+    allow,
+    ...(protect.length > 0 ? { protect } : {}),
+  };
+}
+
+const TASK_SHAPE_FIELDS = ['brief', 'context', 'checks', 'allow', 'protect', 'dependsOn'];
+
+function taskShape(task) {
+  return structuredClone(Object.fromEntries(TASK_SHAPE_FIELDS.filter((field) => task[field] !== undefined).map((field) => [field, task[field]])));
+}
+
 function assertProtectAllowDisjoint(allow, protect) {
   const paths = protect.filter((path) => allow.includes(path));
   if (paths.length > 0) throw tinyError('PROTECT_ALLOW_OVERLAP', `protected paths overlap allowed paths: ${paths.join(', ')}`, { paths });
@@ -311,6 +336,33 @@ function assertOpen(task) {
   if (task.closure) throw tinyError('TASK_CLOSED', `task ${task.id} is ${closureLabel(task)}`, publicClosure(task.closure));
 }
 
+function validateTaskShape(id, task) {
+  assertPlainObject(task, 'STATE_MALFORMED', `task ${id} shape`);
+  if (typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string') || (task.checks !== undefined && typeof task.checks !== 'string')) {
+    throw tinyError('STATE_MALFORMED', `task ${id} has invalid shape fields`);
+  }
+  try {
+    if (task.protect !== undefined && (!Array.isArray(task.protect) || task.protect.length === 0)) throw new Error('protect must be nonempty');
+    normalizeTaskShape(task);
+    for (const dependency of task.dependsOn) validateTaskId(dependency);
+    for (const path of [...task.allow, ...(task.protect ?? [])]) normalizeProjectRelative(path, `task ${id} path`);
+  } catch {
+    throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
+  }
+}
+
+function validateRevisions(id, revisions) {
+  if (!Array.isArray(revisions)) throw tinyError('STATE_MALFORMED', `task ${id} revisions must be an array`);
+  for (const revision of revisions) {
+    assertPlainObject(revision, 'STATE_MALFORMED', `task ${id} revision`);
+    for (const field of ['revisedAt', 'by', 'reason']) {
+      if (typeof revision[field] !== 'string' || revision[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `task ${id} revision ${field} must be a nonempty string`);
+    }
+    validateTaskShape(id, revision.previous);
+    if (revision.previous.applied !== undefined) validateApplied(id, revision.previous.applied);
+  }
+}
+
 function validateState(value) {
   assertPlainObject(value, 'STATE_MALFORMED', 'controller state');
   if (value.schemaVersion !== CONTROLLER_SCHEMA_VERSION) throw tinyError('STATE_MALFORMED', `controller state schemaVersion must be ${CONTROLLER_SCHEMA_VERSION}`);
@@ -324,24 +376,9 @@ function validateState(value) {
       throw tinyError('STATE_MALFORMED', `task id is invalid: ${id}`);
     }
     assertPlainObject(task, 'STATE_MALFORMED', `task ${id}`);
-    if (task.id !== id || typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string') || (task.checks !== undefined && typeof task.checks !== 'string')) {
-      throw tinyError('STATE_MALFORMED', `task ${id} has invalid fields`);
-    }
-    try {
-      const brief = normalizeTaskBrief(task.brief, `task ${id}.brief`);
-      if (!brief.toLowerCase().endsWith('.md')) throw new Error('brief is not Markdown');
-      if (task.context !== undefined) normalizeTaskContext(task.context, `task ${id}.context`);
-      if (task.checks !== undefined) normalizeTaskChecks(task.checks, `task ${id}.checks`);
-      for (const dep of task.dependsOn) validateTaskId(dep);
-      for (const path of task.allow) normalizeProjectRelative(path, `task ${id}.allow`);
-      if (task.protect !== undefined) {
-        if (!Array.isArray(task.protect) || task.protect.length === 0) throw new Error('protect must be nonempty');
-        for (const path of task.protect) normalizeProjectRelative(path, `task ${id}.protect`);
-        assertProtectAllowDisjoint(task.allow, task.protect);
-      }
-    } catch {
-      throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
-    }
+    if (task.id !== id) throw tinyError('STATE_MALFORMED', `task ${id} has an invalid id`);
+    validateTaskShape(id, task);
+    if (task.revisions !== undefined) validateRevisions(id, task.revisions);
     if (task.closure !== undefined) validateClosure(id, task.closure);
     if (task.applied !== undefined) validateApplied(id, task.applied);
   }
@@ -491,6 +528,7 @@ function publicTask(task, stateInfo) {
     dependsOn: [...task.dependsOn],
     allow: [...task.allow],
     ...(task.protect ? { protect: [...task.protect] } : {}),
+    ...(task.revisions?.length > 0 ? { revisions: structuredClone(task.revisions) } : {}),
     status: stateInfo.status,
     blockedBy: [...stateInfo.blockedBy],
     approval: task.approval ? {
@@ -558,14 +596,7 @@ export async function initProject(projectRoot, options = {}) {
 
 export async function addTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
-  const brief = normalizeTaskBrief(requireText(options.brief, 'brief'), 'brief');
-  if (!brief.toLowerCase().endsWith('.md')) throw tinyError('INVALID_BRIEF', 'brief must be a Markdown file');
-  const context = options.context === undefined ? undefined : normalizeTaskContext(requireText(options.context, 'context'), 'context');
-  const checks = options.checks === undefined ? undefined : normalizeTaskChecks(requireText(options.checks, 'checks'), 'checks');
-  const dependsOn = parseIds(options.dependsOn);
-  const allow = normalizeTaskPaths(options.allow, 'allow', { required: true });
-  const protectedPaths = normalizeTaskPaths(options.protect, 'protect');
-  const protect = protectedPaths.length > 0 ? protectedPaths : undefined;
+  const { brief, context, checks, dependsOn, allow, protect } = normalizeTaskShape(options);
   const root = await canonicalProjectRoot(projectRoot);
   const compiled = await validateTaskInputs(root, { brief, context, checks, allow, protect });
   return mutateState(root, async (state) => {
@@ -585,6 +616,41 @@ export async function addTask(projectRoot, options = {}) {
       review: undefined,
     };
     return { task: { id, brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}) }, sizing: taskSizing(allow, compiled) };
+  });
+}
+
+export async function updateTask(projectRoot, options = {}) {
+  const id = validateTaskId(options.id);
+  const by = requireText(options.by, 'update by');
+  const reason = requireText(options.reason, 'update reason');
+  const root = await canonicalProjectRoot(projectRoot);
+  return mutateState(root, async (state) => {
+    if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
+    const task = state.tasks[id];
+    assertOpen(task);
+    if (task.review?.verdict === 'accepted') throw tinyError('TASK_ACCEPTED', `task ${id} has been accepted; use task supersede`);
+    const fields = TASK_SHAPE_FIELDS.filter((field) => options[field] !== undefined);
+    if (fields.length === 0) throw tinyError('INVALID_ARGUMENT', 'task update requires at least one shape field');
+    const previous = taskShape(task);
+    const updated = { ...previous, ...Object.fromEntries(fields.map((field) => [field, options[field]])) };
+    for (const field of ['context', 'checks']) {
+      if (updated[field] === '') delete updated[field];
+    }
+    const shape = normalizeTaskShape(updated);
+    assertDependenciesExist(state, id, shape.dependsOn);
+    const compiled = await validateTaskInputs(root, shape);
+    if (stableStringify(previous) === stableStringify(shape)) throw tinyError('TASK_UNCHANGED', `task ${id} shape is unchanged`);
+    const revision = { revisedAt: nowIso(), by, reason, previous };
+    if (task.applied) {
+      revision.previous.applied = structuredClone(task.applied);
+      delete task.applied;
+    }
+    for (const field of TASK_SHAPE_FIELDS) {
+      if (shape[field] === undefined) delete task[field];
+      else task[field] = shape[field];
+    }
+    task.revisions = [...(task.revisions ?? []), revision];
+    return { task: publicTask(task, await inspectTask(root, state, task)), revision: structuredClone(revision), sizing: taskSizing(task.allow, compiled) };
   });
 }
 
@@ -1167,6 +1233,7 @@ export function createController(projectRoot) {
   return {
     init: (options) => initProject(projectRoot, options),
     addTask: (options) => addTask(projectRoot, options),
+    updateTask: (options) => updateTask(projectRoot, options),
     approveTask: (options) => approveTask(projectRoot, options),
     applyTask: (options) => applyTask(projectRoot, options),
     closeTask: (options) => closeTask(projectRoot, options),

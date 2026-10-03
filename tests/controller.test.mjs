@@ -20,9 +20,11 @@ import {
   reviewTask,
   supersedeTask,
 } from '../src/controller.mjs';
+import * as controller from '../src/controller.mjs';
 import { compileContext } from '../src/context-compiler.mjs';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
 
+const { updateTask, createController } = controller;
 const exec = promisify(execFile);
 // Project roots may not resolve through a symlink, and tmpdir() does on macOS
 // (/var -> /private/var), so temp dirs are built from the real path.
@@ -2408,6 +2410,232 @@ test('CLI task add exposes protected paths in its single JSON object', async () 
     const { stdout } = await exec(process.execPath, [cli, '--project', root, '--json', 'task', 'add', '--id', 'one', '--brief', 'docs/brief.md', '--allow', 'src/new.ts', '--protect', 'docs/brief.md']);
     assert.equal(stdout.trim().split('\n').length, 1);
     assert.deepEqual(JSON.parse(stdout).data.task.protect, ['docs/brief.md']);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update records shape history, preserves decisions, and requires reapproval', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/old.ts', protect: 'docs/brief.md' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'old scope' });
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer' });
+    const before = (await rawState(root)).tasks.one;
+    const result = await createController(root).updateTask({ id: 'one', by: 'operator', reason: 'smaller slice', allow: 'src/new.ts' });
+    assert.equal(result.task.status, 'stale_approval');
+    assert.deepEqual(result.revision.previous, { brief: before.brief, allow: before.allow, protect: before.protect, dependsOn: before.dependsOn });
+    assert.equal(result.revision.by, 'operator');
+    assert.equal(result.revision.reason, 'smaller slice');
+    assert.ok(!Number.isNaN(Date.parse(result.revision.revisedAt)));
+    assert.deepEqual(result.task.revisions, [result.revision]);
+    assert.equal(result.sizing.allowedFiles, 1);
+    const after = (await rawState(root)).tasks.one;
+    assert.deepEqual(after.approval, before.approval);
+    assert.deepEqual(after.review, before.review);
+    await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_NOT_READY' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'new scope' });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    const second = await updateTask(root, { id: 'one', by: 'operator', reason: 'split again', allow: ['src/final.ts'] });
+    assert.equal(second.task.revisions.length, 2);
+    assert.deepEqual(second.task.revisions[0], result.revision);
+    assert.deepEqual(second.task.revisions[1].previous.allow, ['src/new.ts']);
+    second.task.revisions[0].previous.allow.push('mutated-return.ts');
+    assert.deepEqual((await controllerStatus(root)).tasks[0].revisions[0].previous.allow, ['src/old.ts']);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update rejects invalid shapes and dependency changes without changing state', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/one.ts', protect: 'docs/brief.md' });
+    await addTask(root, { id: 'two', brief: 'docs/brief.md', allow: 'src/two.ts', dependsOn: 'one' });
+    await writeFile(join(root, 'docs', 'bad.json'), '{}');
+    const statePath = join(root, '.tinysdd', 'runs', 'controller.json');
+    const before = await readFile(statePath, 'utf8');
+    for (const [fields, code] of [
+      [{}, 'INVALID_ARGUMENT'],
+      [{ allow: ['src/one.ts', 'src/one.ts'] }, 'TASK_UNCHANGED'],
+      [{ allow: [] }, 'INVALID_ARGUMENT'],
+      [{ allow: 'docs/brief.md' }, 'PROTECT_ALLOW_OVERLAP'],
+      [{ allow: 'docs' }, 'INVALID_FILE'],
+      [{ protect: 'docs/missing.txt' }, 'PROTECT_MISSING'],
+      [{ protect: 'docs' }, 'INVALID_FILE'],
+      [{ protect: '.tinysdd/x' }, 'INVALID_PATH'],
+      [{ dependsOn: 'two' }, 'DEPENDENCY_CYCLE'],
+      [{ dependsOn: 'missing' }, 'DEPENDENCY_NOT_FOUND'],
+      [{ brief: 'docs/bad.json' }, 'INVALID_BRIEF'],
+      [{ brief: 'docs/missing.md' }, 'PATH_NOT_FOUND'],
+      [{ context: 'docs/bad.json' }, 'CONTEXT_MANIFEST_INVALID'],
+      [{ checks: 'docs/bad.json' }, 'CHECKS_MANIFEST_INVALID'],
+      [{ context: 'docs/brief.md' }, 'INVALID_CONTEXT'],
+      [{ checks: 'docs/brief.md' }, 'INVALID_CHECKS'],
+      [{ id: 'missing', allow: 'src/new.ts' }, 'TASK_NOT_FOUND'],
+      [{ by: '', allow: 'src/new.ts' }, 'INVALID_ARGUMENT'],
+      [{ reason: '', allow: 'src/new.ts' }, 'INVALID_ARGUMENT'],
+    ]) {
+      await assert.rejects(updateTask(root, { id: 'one', by: 'operator', reason: 'change scope', ...fields }), { code }, JSON.stringify(fields));
+      assert.equal(await readFile(statePath, 'utf8'), before);
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update refuses accepted, stale accepted, and retired tasks', async () => {
+  const root = await project();
+  try {
+    for (const id of ['accepted', 'closed', 'superseded', 'successor']) {
+      await addTask(root, { id, brief: 'docs/brief.md', allow: `src/${id}.ts` });
+    }
+    await approveTask(root, { id: 'accepted', by: 'operator', reason: 'approved' });
+    await reviewTask(root, { id: 'accepted', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'operator' });
+    await closeTask(root, { id: 'closed', by: 'operator', reason: 'abandoned' });
+    await supersedeTask(root, { id: 'superseded', by: 'operator', reason: 're-cut', with: 'successor' });
+    const statePath = join(root, '.tinysdd', 'runs', 'controller.json');
+    const before = await readFile(statePath, 'utf8');
+    for (const [id, code] of [['accepted', 'TASK_ACCEPTED'], ['closed', 'TASK_CLOSED'], ['superseded', 'TASK_CLOSED']]) {
+      await assert.rejects(updateTask(root, { id, by: 'operator', reason: 'new scope', allow: 'src/new.ts' }), { code });
+      assert.equal(await readFile(statePath, 'utf8'), before);
+    }
+    await writeFile(join(root, 'docs', 'brief.md'), '# Changed brief\n');
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale');
+    await assert.rejects(updateTask(root, { id: 'accepted', by: 'operator', reason: 'new scope', allow: 'src/new.ts' }), { code: 'TASK_ACCEPTED' });
+    assert.equal(await readFile(statePath, 'utf8'), before);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update replaces all supported inputs and can explicitly clear optional fields', async () => {
+  const root = await project();
+  try {
+    await writeFile(join(root, 'docs', 'next.md'), '# Next brief\n');
+    await writeFile(join(root, 'docs', 'context.json'), JSON.stringify({ schemaVersion: 1, facts: ['fixed API'], resources: [] }));
+    await writeFile(join(root, 'docs', 'checks.json'), JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'unit', argv: ['node', '--test'] }] }));
+    await addTask(root, { id: 'dependency', brief: 'docs/brief.md', allow: 'src/dependency.ts' });
+    await approveTask(root, { id: 'dependency', by: 'operator', reason: 'approved' });
+    await reviewTask(root, { id: 'dependency', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'operator' });
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/old.ts' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'approved' });
+    const changed = await updateTask(root, { id: 'one', by: 'operator', reason: 'new shape', brief: 'docs/next.md', context: 'docs/context.json', checks: 'docs/checks.json', allow: 'src/new.ts', protect: ['docs/next.md'], dependsOn: ['dependency'] });
+    assert.equal(changed.task.status, 'stale_approval');
+    assert.equal(changed.task.context, 'docs/context.json');
+    assert.equal(changed.task.checks, 'docs/checks.json');
+    assert.deepEqual(changed.task.protect, ['docs/next.md']);
+    assert.deepEqual(changed.task.dependsOn, ['dependency']);
+    assert.ok(changed.sizing.compiledContextBytes > 0);
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'approved new shape' });
+    const packet = await resolveTaskPacket(root, 'one');
+    assert.equal(packet.brief.path, 'docs/next.md');
+    assert.equal(packet.context.path, 'docs/context.json');
+    assert.equal(packet.checks.path, 'docs/checks.json');
+    const cleared = await updateTask(root, { id: 'one', by: 'operator', reason: 'clear optional fields', context: '', checks: '', protect: [], dependsOn: [] });
+    assert.equal(cleared.task.status, 'stale_approval');
+    const task = (await rawState(root)).tasks.one;
+    for (const field of ['context', 'checks', 'protect']) assert.equal(Object.hasOwn(task, field), false, field);
+    assert.deepEqual(task.dependsOn, []);
+    assert.equal(task.brief, 'docs/next.md');
+    assert.deepEqual(task.allow, ['src/new.ts']);
+    assert.equal(cleared.revision.previous.context, 'docs/context.json');
+    assert.equal(cleared.revision.previous.checks, 'docs/checks.json');
+    assert.deepEqual(cleared.revision.previous.protect, ['docs/next.md']);
+    assert.deepEqual(cleared.revision.previous.dependsOn, ['dependency']);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update adding and clearing protect stales approval through its shape binding', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/one.ts' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'old approval' });
+    assert.equal((await updateTask(root, { id: 'one', by: 'operator', reason: 'protect contract', protect: 'docs/brief.md' })).task.status, 'stale_approval');
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'protected approval' });
+    const cleared = await updateTask(root, { id: 'one', by: 'operator', reason: 'clear contract', protect: [] });
+    assert.equal(cleared.task.status, 'stale_approval');
+    assert.equal(Object.hasOwn((await rawState(root)).tasks.one, 'protect'), false);
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'unprotected approval' });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update moves an old apply into history before later review', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/old.ts' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'old approval' });
+    const state = await rawState(root);
+    const applied = { runId: 'worker-test', rootRunId: 'worker-test', by: 'operator', appliedAt: '2026-10-03T00:00:00Z', files: [{ path: 'src/old.ts', change: 'created', sha256: sha256('old'), status: 'written' }] };
+    state.tasks.one.applied = applied;
+    await writeState(root, state);
+    const result = await updateTask(root, { id: 'one', by: 'operator', reason: 'changed scope', allow: 'src/new.ts' });
+    assert.deepEqual(result.revision.previous.applied, applied);
+    assert.equal(Object.hasOwn((await rawState(root)).tasks.one, 'applied'), false);
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'new approval' });
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'operator' });
+    assert.equal(Object.hasOwn((await rawState(root)).tasks.one.review, 'appliedFromRun'), false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task revision history is optional in legacy state and rejects malformed entries', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/old.ts' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'legacy approval' });
+    const state = await rawState(root);
+    assert.equal(Object.hasOwn(state.tasks.one, 'revisions'), false);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    const valid = { revisedAt: '2026-10-03T00:00:00Z', by: 'operator', reason: 'old shape', previous: { brief: 'docs/brief.md', allow: ['src/older.ts'], dependsOn: [] } };
+    for (const revisions of [
+      null, {}, 'history', [null], [{}],
+      [{ ...valid, by: '' }], [{ ...valid, reason: ' ' }], [{ ...valid, revisedAt: 1 }],
+      [{ ...valid, previous: null }],
+      [{ ...valid, previous: { ...valid.previous, brief: 'docs/brief.json' } }],
+      [{ ...valid, previous: { ...valid.previous, allow: [] } }],
+      [{ ...valid, previous: { ...valid.previous, allow: ['.tinysdd/x'] } }],
+      [{ ...valid, previous: { ...valid.previous, dependsOn: [null] } }],
+      [{ ...valid, previous: { ...valid.previous, context: 'context.md' } }],
+      [{ ...valid, previous: { ...valid.previous, checks: 2 } }],
+      [{ ...valid, previous: { ...valid.previous, protect: [] } }],
+      [{ ...valid, previous: { ...valid.previous, applied: {} } }],
+    ]) {
+      await writeState(root, { ...state, tasks: { one: { ...state.tasks.one, revisions } } });
+      await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED' }, JSON.stringify(revisions));
+    }
+    await writeState(root, { ...state, tasks: { one: { ...state.tasks.one, revisions: [valid] } } });
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+    assert.deepEqual((await controllerStatus(root)).tasks[0].revisions, [valid]);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task update emits one JSON object and distinguishes omitted lists from clearing', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: 'src/old.ts', protect: 'docs/brief.md' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'approved' });
+    const cli = new URL('../bin/tinysdd.mjs', import.meta.url).pathname;
+    const args = [cli, '--project', root, '--json', 'task', 'update', '--id', 'one', '--by', 'operator', '--reason', 'change scope'];
+    const result = await exec(process.execPath, [...args, '--allow', 'src/new.ts']);
+    assert.equal(result.stdout.trim().split('\n').length, 1);
+    const updated = JSON.parse(result.stdout).data;
+    assert.deepEqual(updated.task.protect, ['docs/brief.md']);
+    assert.equal(updated.task.status, 'stale_approval');
+    const cleared = await exec(process.execPath, [...args, '--protect=', '--depends-on=']);
+    assert.equal(cleared.stdout.trim().split('\n').length, 1);
+    assert.equal(Object.hasOwn(JSON.parse(cleared.stdout).data.task, 'protect'), false);
+    assert.deepEqual((await rawState(root)).tasks.one.allow, ['src/new.ts']);
+    const human = await exec(process.execPath, [cli, '--project', root, 'task', 'update', '--id', 'one', '--by', 'operator', '--reason', 'final scope', '--allow', 'src/final.ts']);
+    assert.equal(human.stdout, 'one: stale_approval\n');
   } finally {
     await cleanup(root);
   }

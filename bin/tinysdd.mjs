@@ -21,6 +21,7 @@ import {
   resolveTaskPacket,
   reviewTask,
   supersedeTask,
+  updateTask,
 } from '../src/controller.mjs';
 import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirectory, readJsonFile, tinyError } from '../src/fs-utils.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
@@ -34,6 +35,7 @@ Usage:
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
   tinysdd [--json] [--project PATH] status|next
   tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--depends-on ID[,ID]]
+  tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
   tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
@@ -47,6 +49,9 @@ Usage:
 
 Retired (closed or superseded) tasks leave \`next\`, cannot be approved, reviewed or
 dispatched, and are refused while open tasks depend on them.
+\`task update\` keeps shape history and requires explicit reapproval after bound
+inputs change. Accepted tasks cannot be updated; \`task supersede\` still refuses
+a current acceptance and open dependents.
 Workers return isolated candidates and patches; they never apply or accept them.
 \`task apply\` copies a reviewed run's allowed files into the project and records the
 run; apply before \`task review\`, because acceptance binds the project's files.
@@ -135,9 +140,10 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'task') {
-    if (!['add', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, approve, packet, apply, review, close, or supersede');
+    if (!['add', 'update', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, update, approve, packet, apply, review, close, or supersede');
     const allowedByCommand = {
       add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list']]),
+      update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['depends-on', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
       apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
@@ -366,6 +372,17 @@ async function run(argv) {
     dependsOn: parsed.values['depends-on'],
     allow: parsed.values.allow,
     protect: parsed.values.protect,
+  });
+  else if (parsed.command === 'task' && parsed.subcommand === 'update') data = await updateTask(project, {
+    id: parsed.values.id,
+    by: parsed.values.by,
+    reason: parsed.values.reason,
+    brief: parsed.values.brief,
+    context: parsed.values.context,
+    checks: parsed.values.checks,
+    allow: parsed.values.allow,
+    protect: parsed.values.protect,
+    dependsOn: parsed.values['depends-on'],
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'approve') data = await approveTask(project, {
     id: parsed.values.id,
