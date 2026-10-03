@@ -1,6 +1,7 @@
 import { afterEach, after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,21 +11,37 @@ import { CHECK_LIMIT_DEFAULTS, checkRunnerAvailable, runCheck } from '../src/che
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
+const AS_ROOT = process.getuid() === 0;
+// A root caller drops to nobody:nogroup; anyone else runs as itself.
+const TARGET = AS_ROOT ? { uid: 65534, gid: 65534 } : { uid: process.getuid(), gid: process.getgid() };
+// Spawn options that make the test's own helper processes belong to TARGET.
+const AS_TARGET = AS_ROOT ? { uid: TARGET.uid, gid: TARGET.gid } : {};
 
-// The runner needs Linux, bwrap and prlimit. A host that has the binaries but
-// forbids user namespaces is skipped too, instead of failing every test.
+// The runner needs Linux, bwrap and prlimit (and setpriv for a root caller). A
+// host that has the binaries but cannot build the sandbox, for example because
+// it forbids user namespaces or the uid the check drops to cannot reach node, is
+// skipped instead of failing every test. That is decided with plain bwrap, not
+// with the runner: a runner bug must fail the tests, not skip them.
 async function skipReason() {
   const availability = checkRunnerAvailable();
   if (!availability.available) return `check runner unavailable: ${availability.reason}`;
-  const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-check-probe-'));
+  const first = (paths) => paths.find((path) => existsSync(path));
+  const bwrap = first(['/usr/bin/bwrap', '/bin/bwrap']);
+  const drop = AS_ROOT ? [first(['/usr/bin/setpriv', '/bin/setpriv']), `--reuid=${TARGET.uid}`, `--regid=${TARGET.gid}`, '--clear-groups', '--no-new-privs', '--'] : [];
+  const nodeRoot = dirname(dirname(process.execPath));
+  const sandbox = [
+    '--clearenv', '--die-with-parent', '--unshare-all', '--new-session', '--cap-drop', 'ALL',
+    '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind-try', '/lib64', '/lib64',
+    '--dir', '/opt', '--ro-bind', nodeRoot, '/opt/node', '--proc', '/proc', '--dev', '/dev',
+    '--size', String(MIB), '--tmpfs', '/tmp', '--remount-ro', '/dev',
+    '--', '/opt/node/bin/node', '-e', '0',
+  ];
   try {
-    await runCheck({ candidateDir: root, check: { id: 'probe', argv: ['node', '-e', '0'], timeoutMs: 30000 } });
+    const [command, ...args] = [...drop, bwrap, ...sandbox];
+    await execFileAsync(command, args, { env: {}, timeout: 30000 });
     return false;
   } catch (error) {
-    if (error?.code === 'CHECK_RUNNER_UNAVAILABLE') return `check sandbox cannot start here: ${error.message} ${error.details?.output ?? ''}`.trim();
-    return false;
-  } finally {
-    await rm(root, { recursive: true, force: true });
+    return `this host cannot build the check sandbox as uid ${TARGET.uid}: ${(error.stderr || error.message).trim()}`;
   }
 }
 
@@ -41,6 +58,9 @@ describe('check runner', { skip: SKIP }, () => {
 
   before(async () => {
     fixtures = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-check-runner-'));
+    // The check runs as another uid when this process is root, and the stub
+    // executables write their dumps and markers here, so it has to be open to them.
+    await chmod(fixtures, 0o777);
     scratchRoot = join(fixtures, 'scratch');
     await mkdir(scratchRoot);
   });
@@ -151,10 +171,12 @@ describe('check runner', { skip: SKIP }, () => {
       prlimit: result.sandbox.prlimit,
       network: 'none',
       env: ['PATH', 'HOME', 'CI', 'LANG', 'PWD'],
+      setpriv: AS_ROOT ? result.sandbox.setpriv : null,
+      runAs: TARGET,
       processBaseline: result.sandbox.processBaseline,
-      processLimitEnforced: process.getuid() !== 0,
       nestedUserNamespaces: result.sandbox.nestedUserNamespaces,
     });
+    if (AS_ROOT) assert.match(result.sandbox.setpriv, /\/setpriv$/u);
     assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
     assert.ok(['disabled', 'allowed'].includes(result.sandbox.nestedUserNamespaces));
   });
@@ -499,7 +521,7 @@ describe('check runner', { skip: SKIP }, () => {
     assert.match(result.output.text, /^\/dev EROFS$/mu);
   });
 
-  test('the process limit stops a spawn loop', { skip: process.getuid?.() === 0 ? 'RLIMIT_NPROC is not enforced for root' : false }, async () => {
+  test('the process limit stops a spawn loop', async () => {
     const candidate = await makeDir({
       'spawn.mjs': [
         "import { spawn } from 'node:child_process';",
@@ -523,16 +545,16 @@ describe('check runner', { skip: SKIP }, () => {
     const result = await run(candidate, { argv: ['node', 'spawn.mjs'] }, { limits: { maxProcesses: 150 } });
     assert.equal(result.exitCode, 6, result.output.text);
     assert.match(result.output.text, /spawned \d+ EAGAIN/u);
-    assert.equal(result.sandbox.processLimitEnforced, true);
     const spawned = Number(/spawned (\d+)/u.exec(result.output.text)[1]);
     assert.ok(spawned > 50 && spawned <= 150, `${spawned} children were spawned`);
   });
 
-  test('a uid that already runs more than maxProcesses tasks can still start a check', { skip: process.getuid?.() === 0 ? 'RLIMIT_NPROC is not enforced for root' : false }, async () => {
+  test('a uid that already runs more than maxProcesses tasks can still start a check', async () => {
     // A fixed limit of 512 would make bwrap fail to start here, which is what a
-    // busy desktop account looks like.
+    // busy desktop account looks like. The sleepers belong to the uid the check
+    // runs as, which for a root caller is not the caller's.
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
-    const sleepers = Array.from({ length: 520 }, () => spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore' }));
+    const sleepers = Array.from({ length: 520 }, () => spawn('/usr/bin/sleep', ['60'], { stdio: 'ignore', ...AS_TARGET }));
     try {
       await Promise.all(sleepers.map((sleeper) => new Promise((resolve) => sleeper.once('spawn', resolve))));
       const result = await run(candidate, {});
@@ -543,7 +565,7 @@ describe('check runner', { skip: SKIP }, () => {
     }
   });
 
-  test('the process limit is the uid task count plus maxProcesses, and root is reported as unenforced', async () => {
+  test('the process limit is the task count of the uid the check runs as, plus maxProcesses', async () => {
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
     const dump = join(fixtures, `nproc-${counter}.txt`);
     const prlimitPath = await stubExecutable(`printf '%s\\n' "$@" > '${dump}'`);
@@ -556,12 +578,11 @@ describe('check runner', { skip: SKIP }, () => {
     const quiet = await limitOf({ maxProcesses: 100 });
     assert.equal(quiet.nproc, quiet.result.sandbox.processBaseline + 100);
     assert.equal(quiet.result.limits.maxProcesses, 100);
-    assert.equal(quiet.result.sandbox.processLimitEnforced, process.getuid() !== 0);
+    assert.deepEqual(quiet.result.sandbox.runAs, TARGET);
 
-    // Other tasks of the same uid, started by the test, raise the baseline. As
-    // root the count includes every root process on the machine, which come and
-    // go by tens, so the margin is generous.
-    const sleepers = Array.from({ length: 150 }, () => spawn('/usr/bin/sleep', ['30'], { stdio: 'ignore' }));
+    // Other tasks of the uid the check runs as, started by the test, raise the
+    // baseline. Tasks of the caller do not: for a root caller they are root's.
+    const sleepers = Array.from({ length: 150 }, () => spawn('/usr/bin/sleep', ['30'], { stdio: 'ignore', ...AS_TARGET }));
     try {
       await Promise.all(sleepers.map((sleeper) => new Promise((resolve) => sleeper.once('spawn', resolve))));
       const busy = await limitOf({ maxProcesses: 100 });
@@ -604,6 +625,57 @@ describe('check runner', { skip: SKIP }, () => {
     assert.doesNotMatch(result.output.tail, /\uFFFD/u);
     assert.ok(result.output.storedBytes <= 51);
     assert.match(result.output.tail, /^\[\.\.\. \d+ earlier bytes omitted \.\.\.\]\n(é)+\n$/u);
+  });
+
+  test('the check never has root\'s identity', async () => {
+    const candidate = await makeDir({
+      'who.mjs': [
+        "import { readFileSync } from 'node:fs';",
+        "const status = readFileSync('/proc/self/status', 'utf8');",
+        "console.log(JSON.stringify({ uid: process.getuid(), gid: process.getgid(), euid: process.geteuid(), egid: process.getegid(), groups: process.getgroups(), status: status.split('\\n').filter((line) => /^(Uid|Gid|Groups|NoNewPrivs):/.test(line)) }));",
+        '',
+      ].join('\n'),
+    });
+    const result = await run(candidate, { argv: ['node', 'who.mjs'] });
+    assert.equal(result.exitCode, 0, result.output.text);
+    const seen = JSON.parse(result.output.text.trim());
+    assert.notEqual(seen.uid, 0);
+    assert.notEqual(seen.euid, 0);
+    assert.notEqual(seen.gid, 0);
+    assert.deepEqual([seen.uid, seen.euid], [TARGET.uid, TARGET.uid]);
+    assert.deepEqual([seen.gid, seen.egid], [TARGET.gid, TARGET.gid]);
+    assert.ok(!seen.groups.includes(0), `supplementary groups ${seen.groups}`);
+    assert.deepEqual(result.sandbox.runAs, TARGET);
+    // The saved ids are not root's either, so the drop cannot be undone.
+    assert.ok(seen.status.some((line) => /^Uid:\t(\d+)\t\1\t\1\t\1$/u.test(line) && !line.includes('\t0')), seen.status.join(' | '));
+  });
+
+  test('a root caller can run as another uid through runAs', { skip: AS_ROOT ? false : 'only a root caller can switch users' }, async () => {
+    const candidate = await makeDir({ 'who.mjs': 'console.log(process.getuid(), process.getgid());\n' });
+    const result = await run(candidate, { argv: ['node', 'who.mjs'] }, { runAs: { uid: 65533, gid: 65532 } });
+    assert.equal(result.exitCode, 0, result.output.text);
+    assert.equal(result.output.text.trim(), '65533 65532');
+    assert.deepEqual(result.sandbox.runAs, { uid: 65533, gid: 65532 });
+  });
+
+  test('an unprivileged caller may name itself in runAs', { skip: AS_ROOT ? 'a root caller always drops' : false }, async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const result = await run(candidate, {}, { runAs: TARGET });
+    assert.equal(result.exitCode, 0, result.output.text);
+    assert.deepEqual(result.sandbox.runAs, TARGET);
+    assert.equal(result.sandbox.setpriv, null);
+  });
+
+  test('the scratch copy is handed to the uid the check runs as, and stays private', { skip: AS_ROOT ? false : 'nothing is handed over without a drop' }, async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const dump = join(fixtures, `owner-${counter}.txt`);
+    // The stub prlimit runs as the target uid after the drop and records what it can see.
+    const prlimitPath = await stubExecutable(`id -u > '${dump}'\nfor path in "${scratchRoot}"/tinysdd-check-*; do stat -c '%u:%g %a' "$path" "$path/input" >> '${dump}'; stat -c '%u:%g' "$path/input/t.test.mjs" >> '${dump}'; done`);
+    const result = await run(candidate, {}, { prlimitPath });
+    assert.equal(result.exitCode, 0);
+    const lines = (await readFile(dump, 'utf8')).trim().split('\n');
+    assert.equal(lines[0], String(TARGET.uid));
+    assert.deepEqual(lines.slice(1), [`${TARGET.uid}:${TARGET.gid} 700`, `${TARGET.uid}:${TARGET.gid} 700`, `${TARGET.uid}:${TARGET.gid}`]);
   });
 
   describe('validation refuses before anything runs', () => {
@@ -763,6 +835,29 @@ describe('check runner', { skip: SKIP }, () => {
       return options;
     }));
 
+    test('a runAs that is root or malformed', async () => {
+      for (const runAs of [{ uid: 0, gid: 0 }, { uid: 0, gid: 65534 }, { uid: 65534, gid: 0 }, { uid: -1, gid: 1 }, { uid: 1.5, gid: 1 }, { uid: '65534', gid: 65534 }, { uid: 65534 }, { gid: 65534 }, { uid: 4294967295, gid: 1 }, {}, 'nobody', null]) {
+        await assertRefused(/runAs/u, async () => withCandidate({ runAs }));
+      }
+      await assertRefused(/runAs contains unknown key: shell/u, async () => withCandidate({ runAs: { uid: 65534, gid: 65534, shell: '/bin/sh' } }));
+    });
+
+    test('an unprivileged caller naming another uid or gid in runAs', async () => {
+      // An unprivileged process cannot switch users; pretend to be one so this
+      // is exercised whoever runs the suite.
+      const original = { getuid: process.getuid, geteuid: process.geteuid, getgid: process.getgid };
+      process.getuid = () => 1000;
+      process.geteuid = () => 1000;
+      process.getgid = () => 1000;
+      try {
+        await assertRefused(/an unprivileged process cannot switch users/u, async () => withCandidate({ runAs: { uid: 1001, gid: 1000 } }));
+        await assertRefused(/an unprivileged process cannot switch users/u, async () => withCandidate({ runAs: { uid: 1000, gid: 1001 } }));
+        await assertRefused(/an unprivileged process cannot switch users/u, async () => withCandidate({ runAs: { uid: 65534, gid: 65534 } }));
+      } finally {
+        Object.assign(process, original);
+      }
+    });
+
     test('a nodeRoot that is a symlink or has no bin/node', async () => {
       const empty = await makeDir({});
       const link = join(fixtures, `node-link-${counter}`);
@@ -798,6 +893,65 @@ describe('check runner', { skip: SKIP }, () => {
       assert.match(noPrlimit.reason, /prlimit.*\/nonexistent\/prlimit/u);
       const directory = checkRunnerAvailable({ bwrapPath: fixtures });
       assert.equal(directory.available, false);
+    });
+
+    test('a root caller without setpriv is refused: it never runs the check as root', { skip: AS_ROOT ? false : 'setpriv is only needed by a root caller' }, async () => {
+      const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+      counter += 1;
+      const marker = join(fixtures, `ran-as-root-${counter}`);
+      // Anything that runs writes the marker; these stubs would run if the runner fell back.
+      const bwrapPath = await stubExecutable(`touch '${marker}'`);
+      const prlimitPath = await stubExecutable(`touch '${marker}'`);
+      for (const setprivPath of ['/nonexistent/setpriv', join(candidate, 't.test.mjs'), fixtures]) {
+        await assert.rejects(run(candidate, {}, { bwrapPath, prlimitPath, setprivPath }), (error) => {
+          assert.equal(error.code, 'CHECK_RUNNER_UNAVAILABLE');
+          assert.match(error.message, /will not run checks as root without dropping to an unprivileged user, and setpriv is unavailable/u);
+          return true;
+        });
+      }
+      await assert.rejects(stat(marker), { code: 'ENOENT' });
+      const availability = checkRunnerAvailable({ setprivPath: '/nonexistent/setpriv' });
+      assert.equal(availability.available, false);
+      assert.match(availability.reason, /setpriv is unavailable/u);
+    });
+
+    test('a caller that is not root does not need setpriv', { skip: AS_ROOT ? 'a root caller needs setpriv' : false }, async () => {
+      assert.deepEqual(checkRunnerAvailable({ setprivPath: '/nonexistent/setpriv' }), { available: true, reason: null });
+      const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+      const result = await run(candidate, {}, { setprivPath: '/nonexistent/setpriv' });
+      assert.equal(result.exitCode, 0, result.output.text);
+    });
+
+    test('a setpriv that fails to drop is a setup failure, and the check does not run', { skip: AS_ROOT ? false : 'only a root caller uses setpriv' }, async () => {
+      const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+      counter += 1;
+      const marker = join(fixtures, `ran-after-failed-drop-${counter}`);
+      const prlimitPath = await stubExecutable(`touch '${marker}'`);
+      const setprivPath = await stubExecutable("echo 'setpriv: setreuid failed: Operation not permitted' >&2\nexit 1");
+      await assert.rejects(run(candidate, {}, { prlimitPath, setprivPath }), (error) => {
+        assert.equal(error.code, 'CHECK_RUNNER_UNAVAILABLE');
+        assert.match(error.details.output, /setreuid failed/u);
+        return true;
+      });
+      await assert.rejects(stat(marker), { code: 'ENOENT' });
+    });
+
+    test('a root caller drops with setpriv before prlimit and bwrap, and probes through the same drop', { skip: AS_ROOT ? false : 'only a root caller uses setpriv' }, async () => {
+      const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+      const dump = join(fixtures, `setpriv-${counter}.txt`);
+      // A stand-in that records its arguments and does not run the rest.
+      const setprivPath = await stubExecutable(`printf '%s\\n' "$@" >> '${dump}'\nprintf -- '--end\\n' >> '${dump}'`);
+      const result = await run(candidate, {}, { setprivPath });
+      assert.equal(result.exitCode, 0);
+      const calls = (await readFile(dump, 'utf8')).split('--end\n').filter(Boolean).map((call) => call.split('\n').slice(0, -1));
+      assert.equal(calls.length, 2, 'one userns probe and one run');
+      const drop = ['--reuid=65534', '--regid=65534', '--clear-groups', '--no-new-privs', '--'];
+      const [probe, real] = calls;
+      assert.deepEqual(probe.slice(0, 6), [...drop, '/usr/bin/bwrap']);
+      assert.ok(probe.includes('--disable-userns'));
+      assert.deepEqual(real.slice(0, 6), [...drop, '/usr/bin/prlimit']);
+      assert.ok(real[6].startsWith('--as=') && real[7].startsWith('--nproc='));
+      assert.equal(real[10], '/usr/bin/bwrap');
     });
 
     test('the runner is unavailable off Linux', async () => {

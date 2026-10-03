@@ -2,10 +2,12 @@
 //
 // The code a check runs is model-written plus project dependencies, so it runs
 // in its own bubblewrap sandbox: no network, no inherited environment, no
-// capabilities, a scratch copy of the candidate and resource limits. Nothing
-// here is verification or acceptance evidence.
+// capabilities, a scratch copy of the candidate and resource limits. It never
+// runs as root: a root caller drops to an unprivileged uid with setpriv first
+// (the kernel does not apply RLIMIT_NPROC to root), and without setpriv the
+// runner refuses to run. Nothing here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import { lchown, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -15,7 +17,7 @@ const MIB = 1024 * 1024;
 
 export const CHECK_LIMIT_DEFAULTS = Object.freeze({
   addressSpaceBytes: 8 * 1024 * MIB,
-  // Extra tasks (processes and threads) the check may create, on top of what the
+  // Extra tasks (processes and threads) the check may create, on top of what its
   // uid already runs: RLIMIT_NPROC counts every task of the uid on the host.
   maxProcesses: 512,
   fileSizeBytes: 256 * MIB,
@@ -34,14 +36,18 @@ const KILL_GRACE_MS = 2000;
 const HEAD_BYTES = 1024;
 const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
-const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'bwrapPath', 'prlimitPath', 'tempRoot'];
+const SETPRIV_DEFAULTS = ['/usr/bin/setpriv', '/bin/setpriv'];
+const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'tempRoot'];
+// nobody and nogroup: the uid a root caller drops to unless runAs says otherwise.
+const DEFAULT_DROP_ID = 65534;
+const MAX_ID = 4294967294;
 // bwrap adds PWD itself when --chdir is used and it cannot be unset.
 const SANDBOX_ENV = Object.freeze(['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
 // The candidate is bound read-only at /input and copied into the /work tmpfs
 // here, so what the check writes is bounded by the tmpfs size. The script is
 // fixed text: the check's argv reaches the shell only as "$@", never as script.
-// cp -a keeps the modes (the exec bit) and works for root and for an
-// unprivileged uid; its own errors are folded into the one setup message.
+// cp -a keeps the modes (the exec bit) and works for an unprivileged uid; its
+// own errors are folded into the one setup message.
 // There is no cd: bwrap --chdir /work already set the directory, and a cd would
 // add OLDPWD to the check's environment.
 const SETUP_PREFIX = 'tinysdd-setup: ';
@@ -74,7 +80,13 @@ function findExecutable(candidates) {
   return null;
 }
 
-function locateBinaries({ bwrapPath, prlimitPath } = {}) {
+// A caller with root's identity or privileges drops to an unprivileged uid
+// before the sandbox; an unprivileged caller cannot switch users and runs as itself.
+function isPrivileged() {
+  return process.getuid() === 0 || process.geteuid() === 0;
+}
+
+function locateBinaries({ bwrapPath, prlimitPath, setprivPath } = {}) {
   if (process.platform !== 'linux') return { reason: `the check runner requires Linux (this is ${process.platform})` };
   const bwrapCandidates = bwrapPath === undefined ? BWRAP_DEFAULTS : [bwrapPath];
   const bwrap = findExecutable(bwrapCandidates);
@@ -82,7 +94,13 @@ function locateBinaries({ bwrapPath, prlimitPath } = {}) {
   const prlimitCandidates = prlimitPath === undefined ? PRLIMIT_DEFAULTS : [prlimitPath];
   const prlimit = findExecutable(prlimitCandidates);
   if (!prlimit) return { reason: `prlimit is not an executable file (tried ${prlimitCandidates.join(', ')})` };
-  return { bwrap, prlimit };
+  if (!isPrivileged()) return { bwrap, prlimit, setpriv: null };
+  const setprivCandidates = setprivPath === undefined ? SETPRIV_DEFAULTS : [setprivPath];
+  const setpriv = findExecutable(setprivCandidates);
+  if (!setpriv) {
+    return { reason: `the check runner will not run checks as root without dropping to an unprivileged user, and setpriv is unavailable (tried ${setprivCandidates.join(', ')})` };
+  }
+  return { bwrap, prlimit, setpriv };
 }
 
 export function checkRunnerAvailable(options = {}) {
@@ -136,6 +154,26 @@ function parseMounts(dependencyMounts) {
   return mounts;
 }
 
+function parseRunAs(runAs) {
+  if (runAs !== undefined) {
+    if (!isPlainObject(runAs)) throw invalid('runAs must be an object with uid and gid');
+    for (const key of Object.keys(runAs)) {
+      if (key !== 'uid' && key !== 'gid') throw invalid(`runAs contains unknown key: ${key}`);
+    }
+    for (const key of ['uid', 'gid']) {
+      if (!Number.isSafeInteger(runAs[key]) || runAs[key] < 1 || runAs[key] > MAX_ID) {
+        throw invalid(`runAs.${key} must be an integer from 1 to ${MAX_ID}: a check never runs as root`);
+      }
+    }
+  }
+  if (isPrivileged()) return { uid: runAs?.uid ?? DEFAULT_DROP_ID, gid: runAs?.gid ?? DEFAULT_DROP_ID, drop: true };
+  const own = { uid: process.getuid(), gid: process.getgid() };
+  if (runAs !== undefined && (runAs.uid !== own.uid || runAs.gid !== own.gid)) {
+    throw invalid(`runAs must be absent or the current uid and gid (${own.uid}:${own.gid}); an unprivileged process cannot switch users`);
+  }
+  return { ...own, drop: false };
+}
+
 function parseCheck(check, mounts) {
   if (!isPlainObject(check)) throw invalid('check must be an object');
   const { id, argv, timeoutMs } = check;
@@ -165,7 +203,7 @@ function parseRequest(options) {
   for (const key of Object.keys(options)) {
     if (!OPTION_KEYS.includes(key)) throw invalid(`runCheck options contain unknown key: ${key}`);
   }
-  for (const key of ['bwrapPath', 'prlimitPath', 'tempRoot', 'nodeRoot']) {
+  for (const key of ['bwrapPath', 'prlimitPath', 'setprivPath', 'tempRoot', 'nodeRoot']) {
     if (options[key] !== undefined && typeof options[key] !== 'string') throw invalid(`${key} must be a string`);
   }
   if (typeof options.candidateDir !== 'string') throw invalid('candidateDir must be an absolute path');
@@ -176,6 +214,7 @@ function parseRequest(options) {
     mounts,
     nodeRoot: options.nodeRoot ?? dirname(dirname(process.execPath)),
     limits: parseLimits(options.limits),
+    runAs: parseRunAs(options.runAs),
   };
 }
 
@@ -241,7 +280,8 @@ async function copyRegularFile(from, to, info, budget, label) {
           yield chunk;
         }
       },
-      createWriteStream(to, { flags: 'wx', mode: opened.mode & 0o777 }),
+      // Owner read is forced: after a root caller's chown the dropped uid reads it as owner.
+      createWriteStream(to, { flags: 'wx', mode: (opened.mode & 0o777) | 0o400 }),
     );
     budget.used += pageFootprint(copied);
   } finally {
@@ -266,6 +306,14 @@ async function copyDirectory(from, to, budget, prefix = '') {
       throw invalid(`candidateDir contains a ${kind}; only regular files and directories are copied: ${label}`, { path: label });
     }
   }
+}
+
+// The sandbox runs as the target uid, which has to read the host copy. The
+// scratch directory stays 0700, so nobody else can.
+async function giveToUser(path, uid, gid) {
+  await lchown(path, uid, gid);
+  if (!(await lstat(path)).isDirectory()) return;
+  for (const entry of await readdir(path)) await giveToUser(join(path, entry), uid, gid);
 }
 
 function copyFailure(error) {
@@ -299,7 +347,8 @@ async function assertMountPointsFree(input, mounts) {
 // RLIMIT_NPROC counts every task of the real uid on the host, threads
 // included, not only the sandbox's. A fixed limit would stop a busy account
 // from starting the sandbox at all, so the limit is this baseline plus the
-// extra tasks the check may create.
+// extra tasks the check may create. The uid counted is the one the check runs
+// as, which is not the caller's when a root caller drops privileges.
 async function countUserTasks(uid) {
   let entries;
   try {
@@ -321,13 +370,27 @@ async function countUserTasks(uid) {
   return tasks;
 }
 
-function nestedUserNamespaces(bwrap) {
-  if (!usernsProbes.has(bwrap)) {
-    usernsProbes.set(bwrap, new Promise((resolve) => {
-      execFile(bwrap, USERNS_PROBE_ARGS, { env: {}, timeout: 10000 }, (error) => resolve(error ? 'allowed' : 'disabled'));
+// The setpriv drop that comes before everything else when the caller is root.
+// An unprivileged bwrap behaves differently from a privileged one, so the
+// probe below goes through the same drop as the real run.
+function launcher(binaries, runAs) {
+  if (!runAs.drop) return { command: null, prefix: [] };
+  return {
+    command: binaries.setpriv,
+    prefix: [`--reuid=${runAs.uid}`, `--regid=${runAs.gid}`, '--clear-groups', '--no-new-privs', '--'],
+  };
+}
+
+function nestedUserNamespaces(binaries, runAs) {
+  const key = [binaries.setpriv, binaries.bwrap, runAs.drop ? `${runAs.uid}:${runAs.gid}` : 'self'].join('\0');
+  if (!usernsProbes.has(key)) {
+    const { command, prefix } = launcher(binaries, runAs);
+    usernsProbes.set(key, new Promise((resolve) => {
+      const args = [...prefix, ...(command ? [binaries.bwrap] : []), ...USERNS_PROBE_ARGS];
+      execFile(command ?? binaries.bwrap, args, { env: {}, timeout: 10000 }, (error) => resolve(error ? 'allowed' : 'disabled'));
     }));
   }
-  return usernsProbes.get(bwrap);
+  return usernsProbes.get(key);
 }
 
 function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit, nestedUserns }) {
@@ -341,7 +404,8 @@ function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, pr
     '--clearenv',
     '--die-with-parent', '--unshare-all', '--new-session',
     ...(nestedUserns === 'disabled' ? ['--unshare-user', '--disable-userns'] : []),
-    // bwrap only drops its capabilities when it is unprivileged; run as root it would keep them.
+    // The check never runs as root, so bwrap is unprivileged and already drops
+    // its capabilities; stating it keeps that true if it were ever not.
     '--cap-drop', 'ALL',
     '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind-try', '/lib64', '/lib64',
     '--dir', '/opt', '--ro-bind', nodeRoot, '/opt/node',
@@ -450,16 +514,16 @@ function runSandbox({ command, args, timeoutMs, capture }) {
   });
 }
 
-// prlimit and bwrap report their own failures as "prlimit: ..." or "bwrap: ...",
-// and the wrapper script reports a failed copy as "tinysdd-setup: ..." with exit
-// 125. Any of them means the sandbox was never fully built and the check did not
-// run. A check that cannot be executed is not one of these: the shell reports
-// that as exit 127 and it stays a failing check.
+// setpriv, prlimit and bwrap report their own failures as "setpriv: ...",
+// "prlimit: ..." or "bwrap: ...", and the wrapper script reports a failed copy
+// as "tinysdd-setup: ..." with exit 125. Any of them means the sandbox was never
+// fully built and the check did not run. A check that cannot be executed is not
+// one of these: the shell reports that as exit 127 and it stays a failing check.
 function sandboxSetupFailure(run, head) {
   if (run.timedOut || run.exitCode === 0 || run.signal) return null;
   const text = head.toString('utf8');
   if (text.startsWith(SETUP_PREFIX)) return run.exitCode === SETUP_FAILURE_EXIT ? text : null;
-  return text.startsWith('bwrap: ') || text.startsWith('prlimit: ') ? text : null;
+  return ['bwrap: ', 'prlimit: ', 'setpriv: '].some((prefix) => text.startsWith(prefix)) ? text : null;
 }
 
 // The check only ever writes inside the sandbox, and the host copy is bound
@@ -502,23 +566,27 @@ export async function runCheck(options) {
     });
     await assertMountPointsFree(input, request.mounts);
 
+    const { runAs } = request;
+    if (runAs.drop) await giveToUser(scratch, runAs.uid, runAs.gid);
+
     // Measured right before the spawn, so the baseline is as current as it can be.
-    const uid = process.getuid();
-    const processBaseline = await countUserTasks(uid);
-    const nestedUserns = await nestedUserNamespaces(binaries.bwrap);
+    const processBaseline = await countUserTasks(runAs.uid);
+    const nestedUserns = await nestedUserNamespaces(binaries, runAs);
     const capture = new OutputCapture(request.limits.storedOutputBytes);
+    const { command: dropCommand, prefix: dropPrefix } = launcher(binaries, runAs);
+    const sandboxArgs = sandboxArguments({
+      binaries,
+      nodeRoot: request.nodeRoot,
+      input,
+      mounts: request.mounts,
+      limits: request.limits,
+      check: request.check,
+      processLimit: processBaseline + request.limits.maxProcesses,
+      nestedUserns,
+    });
     const run = await runSandbox({
-      command: binaries.prlimit,
-      args: sandboxArguments({
-        binaries,
-        nodeRoot: request.nodeRoot,
-        input,
-        mounts: request.mounts,
-        limits: request.limits,
-        check: request.check,
-        processLimit: processBaseline + request.limits.maxProcesses,
-        nestedUserns,
-      }),
+      command: dropCommand ?? binaries.prlimit,
+      args: dropCommand ? [...dropPrefix, binaries.prlimit, ...sandboxArgs] : sandboxArgs,
       timeoutMs: request.check.timeoutMs,
       capture,
     });
@@ -539,10 +607,9 @@ export async function runCheck(options) {
         prlimit: binaries.prlimit,
         network: 'none',
         env: [...SANDBOX_ENV],
+        setpriv: binaries.setpriv,
+        runAs: { uid: runAs.uid, gid: runAs.gid },
         processBaseline,
-        // The kernel does not apply RLIMIT_NPROC to root (or to CAP_SYS_ADMIN and
-        // CAP_SYS_RESOURCE); there the timeout and the PID namespace are the bound.
-        processLimitEnforced: uid !== 0,
         nestedUserNamespaces: nestedUserns,
       },
     };
