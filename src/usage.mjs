@@ -544,6 +544,12 @@ export async function readUsageRecords(projectRoot) {
   return withExclusiveLock(info.lock, async () => readLedgerRecords(info));
 }
 
+export async function withUsageLedgerLock(projectRoot, callback) {
+  if (typeof callback !== 'function') throw tinyError('USAGE_INVALID', 'usage ledger callback must be a function');
+  const info = await ledgerInfo(projectRoot);
+  return withExclusiveLock(info.lock, async () => callback(await readLedgerRecords(info)));
+}
+
 export async function importUsageRecords(projectRoot, input) {
   const normalizedImport = normalizeUsageImport(input);
   const info = await ledgerInfo(projectRoot, { create: true });
