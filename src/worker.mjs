@@ -287,7 +287,10 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
   return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
 }
 
-async function assertCopiedInputs(sourceRoot, copy, allowedPaths, compiledContext) {
+async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths, compiledContext) {
+  for (const path of protectedPaths) {
+    if (!copy.copied.has(path)) fail(`Protected path is not part of the worker copy (missing, gitignored or excluded): ${path}`);
+  }
   for (const resource of compiledContext?.resources ?? []) {
     if (!copy.copied.has(resource.path)) fail(`Context resource is not part of the worker copy (gitignored or excluded): ${resource.path}`);
   }
@@ -570,6 +573,12 @@ function normalizePacket(packet) {
   const allowedPaths = packet.allowedPaths ?? packet.allow;
   if (!Array.isArray(allowedPaths) || allowedPaths.length === 0) fail("packet.allowedPaths must list at least one exact path");
   if (allowedPaths.some((path) => typeof path !== "string")) fail("packet.allowedPaths must contain strings");
+  const normalizedAllowed = allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
+  const protectedPaths = packet.protectedPaths === undefined ? [] : packet.protectedPaths;
+  if (!Array.isArray(protectedPaths) || protectedPaths.some((path) => typeof path !== "string")) fail("packet.protectedPaths must be an array of strings");
+  const normalizedProtected = protectedPaths.map((path) => projectRelative(path, "packet protected path"));
+  if (new Set(normalizedProtected).size !== normalizedProtected.length) fail("packet.protectedPaths must not contain duplicates");
+  if (normalizedProtected.some((path) => normalizedAllowed.includes(path))) fail("packet.protectedPaths must not overlap packet.allowedPaths");
   const dependencies = packet.dependencies === undefined ? [] : packet.dependencies;
   if (!Array.isArray(dependencies)) fail("packet.dependencies must be an array");
   let review = null;
@@ -613,7 +622,8 @@ function normalizePacket(packet) {
     briefText,
     briefPath: briefPath === undefined ? undefined : projectRelative(briefPath, "packet brief path", CONTROLLER_TASKS_PREFIX),
     briefSha256,
-    allowedPaths: allowedPaths.map((path) => projectRelative(path, "packet allowed path")),
+    allowedPaths: normalizedAllowed,
+    protectedPaths: normalizedProtected,
     dependencies,
     approval: packet.approval ?? null,
     review,
@@ -649,6 +659,7 @@ function formatContext(resource) {
 function buildPrompt({ packet, profile, review, compiledContext, agents, skills, instructions, builtInPrompt }) {
   const systemSections = [builtInPrompt?.text || DEFAULT_WORKER_GUIDANCE];
   systemSections.push(`\n\n## TinySDD worker contract\nYou are operating in a disposable candidate workspace. Read, write and edit only. Do not run commands, tests, shells, package managers, network clients or services. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. The caller performs all verification separately; report checks as unrun unless the packet itself supplies observed evidence.\n\nAllowed exact paths (scope is reported by the caller, not permission to edit others):\n${packet.allowedPaths.map((path) => `- ${path}`).join("\n")}`);
+  if (packet.protectedPaths.length > 0) systemSections.push(`\n\n## Protected contract files (read-only)\nRead these files; never write, edit, create, delete or rename them. A change is reported as a scope violation.\n${packet.protectedPaths.map((path) => `- ${path}`).join("\n")}`);
   if (profile?.instructions) systemSections.push(`\n\n## Model profile guidance\n${profile.instructions}`);
   if (compiledContext) systemSections.push(`\n\n## Compiled-context operating rule\nThe caller has supplied a bounded implementation context with approved facts and exact source excerpts. Treat it as the authoritative working set for the cited contracts and acceptance assertions. Do not re-read cited source files or the source specification merely to rediscover injected facts. Read uncited code only when needed for the allowed edit, or when a concrete contradiction requires escalation. Start by planning the allowed-file edit.`);
   if (review) systemSections.push(`\n\n## Caller revision constraints\nThis is a bounded revision under the existing task approval. Do not broaden the task or reinterpret the contract. Address only the named review evidence; report any contradiction instead of inventing a requirement. Reviewer: ${review.by}\n${formatContext(review.evidence)}`);
@@ -1276,7 +1287,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let patchInfo;
   let result;
     const workspaceCopy = await copyProjectTree(executionSource, workspace, { useGit: !frozenBaseline });
-    await assertCopiedInputs(executionSource, workspaceCopy, selectedAllowed, compiledContext);
+    await assertCopiedInputs(executionSource, workspaceCopy, selectedAllowed, normalizedPacket.protectedPaths, compiledContext);
     await overlayRevisionBase(revisionBase, workspace);
     await copyRegularTree(workspace, baseline);
     before = await snapshotTree(workspace);
@@ -1370,7 +1381,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     patchInfo = await runGitDiff(beforeArtifact, afterArtifact, join(artifactDir, "patch.diff"), artifactDir);
     if (patchInfo.available) patchInfo.applyCheck = await runGitApplyCheck(join(artifactDir, "patch.diff"), baseline);
     const allowedSet = new Set(selectedAllowed);
-    const scopeViolations = changes.filter((change) => !allowedSet.has(slash(change.path))).map((change) => ({ path: slash(change.path), change: change.change, reason: "changed path is outside packet.allowedPaths" }));
+    const protectedSet = new Set(normalizedPacket.protectedPaths);
+    const scopeViolations = changes.filter((change) => !allowedSet.has(slash(change.path))).map((change) => ({ path: slash(change.path), change: change.change, reason: protectedSet.has(slash(change.path)) ? "protected contract file" : "changed path is outside packet.allowedPaths" }));
     const outcome = classifyOutcome(capture);
     const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);
     const touchedAllowedPaths = new Set(changes.filter((change) => allowedSet.has(slash(change.path))).map((change) => slash(change.path)));

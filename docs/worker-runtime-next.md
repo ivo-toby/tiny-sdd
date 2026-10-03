@@ -737,7 +737,7 @@ contexts grow.
 | `task close` / `task supersede` | **Implemented** (#14) | Terminal `closed`/`superseded` status; refused while open tasks depend on it; supersede records successors. |
 | `task apply` + `appliedFromRun` | **Implemented** (#15) | Requested by the operator. |
 | Slice-DAG `status`, `--feature` | Designed (3.2) | |
-| `--protect`, `task update` | Designed (3.2) | Controller semantics, so the open questions come first. |
+| `--protect`, `task update` | **Implemented** (#17) | Read-only contract paths bind approval; changes are scope violations and stale accepted slices through approval freshness. Audited updates retain shape and apply history, stale bound approvals, and refuse accepted or retired tasks. |
 | Plan-level approval | Designed (3.2) | Changes approval meaning; operator decision first. |
 | `worker stop` with `stopped` outcome | **Implemented** (#10) | Finalizes the run with outcome `stopped` (evidence, candidate and patch kept); only signals a launcher verified through `/proc/<pid>/cmdline`. |
 | `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |

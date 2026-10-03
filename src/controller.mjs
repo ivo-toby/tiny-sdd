@@ -73,6 +73,79 @@ function normalizeTaskChecks(value, field) {
   return path;
 }
 
+function normalizeTaskPaths(value, label, { required = false } = {}) {
+  if (value !== undefined && !Array.isArray(value) && typeof value !== 'string') {
+    throw tinyError('INVALID_ARGUMENT', `${label} must be a string or array of strings`);
+  }
+  const values = Array.isArray(value) ? value : String(value ?? '').split(',').filter(Boolean);
+  if (required && values.length === 0) throw tinyError('INVALID_ARGUMENT', `at least one --${label} path is required`);
+  return [...new Set(values.map((path) => {
+    if (typeof path !== 'string') throw tinyError('INVALID_ARGUMENT', `${label} paths must contain only strings`);
+    return normalizeProjectRelative(path.trim(), `${label} path`);
+  }))].sort();
+}
+
+function normalizeTaskShape(options) {
+  const brief = normalizeTaskBrief(requireText(options.brief, 'brief'), 'brief');
+  if (!brief.toLowerCase().endsWith('.md')) throw tinyError('INVALID_BRIEF', 'brief must be a Markdown file');
+  const context = options.context === undefined ? undefined : normalizeTaskContext(requireText(options.context, 'context'), 'context');
+  const checks = options.checks === undefined ? undefined : normalizeTaskChecks(requireText(options.checks, 'checks'), 'checks');
+  const dependsOn = parseIds(options.dependsOn);
+  const allow = normalizeTaskPaths(options.allow, 'allow', { required: true });
+  const protect = normalizeTaskPaths(options.protect, 'protect');
+  assertProtectAllowDisjoint(allow, protect);
+  return {
+    brief,
+    ...(context === undefined ? {} : { context }),
+    ...(checks === undefined ? {} : { checks }),
+    dependsOn,
+    allow,
+    ...(protect.length > 0 ? { protect } : {}),
+  };
+}
+
+const TASK_SHAPE_FIELDS = ['brief', 'context', 'checks', 'allow', 'protect', 'dependsOn'];
+
+function taskShape(task) {
+  return structuredClone(Object.fromEntries(TASK_SHAPE_FIELDS.filter((field) => task[field] !== undefined).map((field) => [field, task[field]])));
+}
+
+function assertProtectAllowDisjoint(allow, protect) {
+  const paths = protect.filter((path) => allow.includes(path));
+  if (paths.length > 0) throw tinyError('PROTECT_ALLOW_OVERLAP', `protected paths overlap allowed paths: ${paths.join(', ')}`, { paths });
+}
+
+async function validateTaskInputs(root, task) {
+  await readProjectFile(root, task.brief, taskBriefOptions());
+  // Validate the manifest schema, source ranges and budget before recording it.
+  const compiled = task.context === undefined ? null : await compileTaskContext(root, task.context);
+  if (task.checks !== undefined) {
+    parseChecksManifest(await readProjectFile(root, task.checks, taskBriefOptions()));
+  }
+  assertProtectAllowDisjoint(task.allow, task.protect ?? []);
+  for (const [label, paths] of [['allowed', task.allow], ['protected', task.protect ?? []]]) {
+    for (const path of paths) {
+      const absolute = await assertInternalPath(root, path.split('/'), { allowMissing: true });
+      try {
+        const info = await lstat(absolute);
+        if (!info.isFile()) throw tinyError('INVALID_FILE', `${label} path must be a regular file: ${path}`);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        if (label === 'protected') throw tinyError('PROTECT_MISSING', `protected file is missing: ${path}`);
+      }
+    }
+  }
+  return compiled;
+}
+
+async function protectedFilesDigest(root, protect) {
+  if (!protect) return null;
+  const snapshot = await snapshotProjectFiles(root, protect);
+  const paths = snapshot.filter((item) => !item.exists).map((item) => item.path);
+  if (paths.length > 0) throw tinyError('PROTECT_MISSING', `protected files are missing: ${paths.join(', ')}`, { paths });
+  return digestJson(snapshot);
+}
+
 function taskBriefOptions() {
   return { tinysddArtifactPrefix: TASKS_PREFIX };
 }
@@ -263,6 +336,33 @@ function assertOpen(task) {
   if (task.closure) throw tinyError('TASK_CLOSED', `task ${task.id} is ${closureLabel(task)}`, publicClosure(task.closure));
 }
 
+function validateTaskShape(id, task) {
+  assertPlainObject(task, 'STATE_MALFORMED', `task ${id} shape`);
+  if (typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string') || (task.checks !== undefined && typeof task.checks !== 'string')) {
+    throw tinyError('STATE_MALFORMED', `task ${id} has invalid shape fields`);
+  }
+  try {
+    if (task.protect !== undefined && (!Array.isArray(task.protect) || task.protect.length === 0)) throw new Error('protect must be nonempty');
+    normalizeTaskShape(task);
+    for (const dependency of task.dependsOn) validateTaskId(dependency);
+    for (const path of [...task.allow, ...(task.protect ?? [])]) normalizeProjectRelative(path, `task ${id} path`);
+  } catch {
+    throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
+  }
+}
+
+function validateRevisions(id, revisions) {
+  if (!Array.isArray(revisions)) throw tinyError('STATE_MALFORMED', `task ${id} revisions must be an array`);
+  for (const revision of revisions) {
+    assertPlainObject(revision, 'STATE_MALFORMED', `task ${id} revision`);
+    for (const field of ['revisedAt', 'by', 'reason']) {
+      if (typeof revision[field] !== 'string' || revision[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `task ${id} revision ${field} must be a nonempty string`);
+    }
+    validateTaskShape(id, revision.previous);
+    if (revision.previous.applied !== undefined) validateApplied(id, revision.previous.applied);
+  }
+}
+
 function validateState(value) {
   assertPlainObject(value, 'STATE_MALFORMED', 'controller state');
   if (value.schemaVersion !== CONTROLLER_SCHEMA_VERSION) throw tinyError('STATE_MALFORMED', `controller state schemaVersion must be ${CONTROLLER_SCHEMA_VERSION}`);
@@ -276,19 +376,9 @@ function validateState(value) {
       throw tinyError('STATE_MALFORMED', `task id is invalid: ${id}`);
     }
     assertPlainObject(task, 'STATE_MALFORMED', `task ${id}`);
-    if (task.id !== id || typeof task.brief !== 'string' || !Array.isArray(task.dependsOn) || !Array.isArray(task.allow) || (task.context !== undefined && typeof task.context !== 'string') || (task.checks !== undefined && typeof task.checks !== 'string')) {
-      throw tinyError('STATE_MALFORMED', `task ${id} has invalid fields`);
-    }
-    try {
-      const brief = normalizeTaskBrief(task.brief, `task ${id}.brief`);
-      if (!brief.toLowerCase().endsWith('.md')) throw new Error('brief is not Markdown');
-      if (task.context !== undefined) normalizeTaskContext(task.context, `task ${id}.context`);
-      if (task.checks !== undefined) normalizeTaskChecks(task.checks, `task ${id}.checks`);
-      for (const dep of task.dependsOn) validateTaskId(dep);
-      for (const path of task.allow) normalizeProjectRelative(path, `task ${id}.allow`);
-    } catch {
-      throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
-    }
+    if (task.id !== id) throw tinyError('STATE_MALFORMED', `task ${id} has an invalid id`);
+    validateTaskShape(id, task);
+    if (task.revisions !== undefined) validateRevisions(id, task.revisions);
     if (task.closure !== undefined) validateClosure(id, task.closure);
     if (task.applied !== undefined) validateApplied(id, task.applied);
   }
@@ -319,6 +409,17 @@ function contextDigestMatches(approved, current, legacy) {
   return approved === current || (legacy !== undefined && approved === legacy);
 }
 
+function approvalBindsTaskShape(approval, task) {
+  return Boolean(
+    approval
+      && stableStringify(approval.dependsOn) === stableStringify(task.dependsOn)
+      && stableStringify(approval.allow) === stableStringify(task.allow)
+      && (approval.context ?? null) === (task.context ?? null)
+      && (approval.checks ?? null) === (task.checks ?? null)
+      && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null),
+  );
+}
+
 async function inspectTask(projectRoot, state, task, seen = new Set()) {
   if (seen.has(task.id)) throw tinyError('STATE_MALFORMED', `dependency cycle reaches ${task.id}`);
   const nextSeen = new Set(seen).add(task.id);
@@ -338,24 +439,20 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   const checksDigest = task.checks
     ? await readProjectFile(projectRoot, task.checks, taskBriefOptions()).then((text) => sha256(text)).catch(() => undefined)
     : null;
+  const protectDigest = await protectedFilesDigest(projectRoot, task.protect).catch(() => undefined);
   const dependencyAcceptances = Object.fromEntries(dependencyStates.filter((item) => item.acceptanceDigest).map((item) => [item.id, item.acceptanceDigest]));
   const approval = task.approval;
   const blockedAfterApproval = task.review?.verdict === 'blocked'
     && task.review.approvalDigest === approval?.approvalDigest;
-  const approvalBindsTaskShape = Boolean(
-    approval
-      && stableStringify(approval.dependsOn) === stableStringify(task.dependsOn)
-      && stableStringify(approval.allow) === stableStringify(task.allow)
-      && (approval.context ?? null) === (task.context ?? null)
-      && (approval.checks ?? null) === (task.checks ?? null),
-  );
+  const shapeBindsApproval = approvalBindsTaskShape(approval, task);
   const approvalFresh = Boolean(
     approval
       && briefDigest
       && approval.briefDigest === briefDigest
       && contextDigestMatches(approval.contextDigest ?? null, contextDigest, compiledContext?.legacySha256)
       && (approval.checksDigest ?? null) === checksDigest
-      && approvalBindsTaskShape
+      && (approval.protectDigest ?? null) === protectDigest
+      && shapeBindsApproval
       && task.dependsOn.every((dependency) => (
         Object.hasOwn(approval.dependencyAcceptances ?? {}, dependency)
         && approval.dependencyAcceptances[dependency] === dependencyAcceptances[dependency]
@@ -434,6 +531,8 @@ function publicTask(task, stateInfo) {
     ...(task.checks ? { checks: task.checks } : {}),
     dependsOn: [...task.dependsOn],
     allow: [...task.allow],
+    ...(task.protect ? { protect: [...task.protect] } : {}),
+    ...(task.revisions?.length > 0 ? { revisions: structuredClone(task.revisions) } : {}),
     status: stateInfo.status,
     blockedBy: [...stateInfo.blockedBy],
     approval: task.approval ? {
@@ -501,38 +600,9 @@ export async function initProject(projectRoot, options = {}) {
 
 export async function addTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
-  const brief = normalizeTaskBrief(requireText(options.brief, 'brief'), 'brief');
-  if (!brief.toLowerCase().endsWith('.md')) throw tinyError('INVALID_BRIEF', 'brief must be a Markdown file');
-  const context = options.context === undefined ? undefined : normalizeTaskContext(requireText(options.context, 'context'), 'context');
-  const checks = options.checks === undefined ? undefined : normalizeTaskChecks(requireText(options.checks, 'checks'), 'checks');
-  const dependsOn = parseIds(options.dependsOn);
-  if (options.allow !== undefined && !Array.isArray(options.allow) && typeof options.allow !== 'string') {
-    throw tinyError('INVALID_ARGUMENT', 'allow must be a string or array of strings');
-  }
-  const allowValues = Array.isArray(options.allow) ? options.allow : String(options.allow ?? '').split(',').filter(Boolean);
-  if (allowValues.length === 0) throw tinyError('INVALID_ARGUMENT', 'at least one --allow path is required');
-  const allow = [...new Set(allowValues.map((value) => {
-    if (typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', 'allow paths must contain only strings');
-    return normalizeProjectRelative(value.trim(), 'allow path');
-  }))].sort();
+  const { brief, context, checks, dependsOn, allow, protect } = normalizeTaskShape(options);
   const root = await canonicalProjectRoot(projectRoot);
-  await readProjectFile(root, brief, taskBriefOptions());
-  // Validate the manifest schema, source ranges and budget now rather than
-  // first discovering an invalid manifest at approval.
-  const compiled = context === undefined ? null : await compileTaskContext(root, context);
-  if (checks !== undefined) {
-    const text = await readProjectFile(root, checks, taskBriefOptions());
-    parseChecksManifest(text);
-  }
-  for (const path of allow) {
-    const absolute = await assertInternalPath(root, path.split('/'), { allowMissing: true });
-    try {
-      const info = await lstat(absolute);
-      if (!info.isFile()) throw tinyError('INVALID_FILE', `allowed path must be a regular file: ${path}`);
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
-  }
+  const compiled = await validateTaskInputs(root, { brief, context, checks, allow, protect });
   return mutateState(root, async (state) => {
     if (Object.hasOwn(state.tasks, id)) throw tinyError('TASK_EXISTS', `task already exists: ${id}`);
     assertDependenciesExist(state, id, dependsOn);
@@ -544,11 +614,47 @@ export async function addTask(projectRoot, options = {}) {
       ...(checks === undefined ? {} : { checks }),
       dependsOn,
       allow,
+      ...(protect ? { protect } : {}),
       createdAt: timestamp,
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow }, sizing: taskSizing(allow, compiled) };
+    return { task: { id, brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}) }, sizing: taskSizing(allow, compiled) };
+  });
+}
+
+export async function updateTask(projectRoot, options = {}) {
+  const id = validateTaskId(options.id);
+  const by = requireText(options.by, 'update by');
+  const reason = requireText(options.reason, 'update reason');
+  const root = await canonicalProjectRoot(projectRoot);
+  return mutateState(root, async (state) => {
+    if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
+    const task = state.tasks[id];
+    assertOpen(task);
+    if (task.review?.verdict === 'accepted') throw tinyError('TASK_ACCEPTED', `task ${id} has been accepted; use task supersede`);
+    const fields = TASK_SHAPE_FIELDS.filter((field) => options[field] !== undefined);
+    if (fields.length === 0) throw tinyError('INVALID_ARGUMENT', 'task update requires at least one shape field');
+    const previous = taskShape(task);
+    const updated = { ...previous, ...Object.fromEntries(fields.map((field) => [field, options[field]])) };
+    for (const field of ['context', 'checks']) {
+      if (updated[field] === '') delete updated[field];
+    }
+    const shape = normalizeTaskShape(updated);
+    assertDependenciesExist(state, id, shape.dependsOn);
+    const compiled = await validateTaskInputs(root, shape);
+    if (stableStringify(previous) === stableStringify(shape)) throw tinyError('TASK_UNCHANGED', `task ${id} shape is unchanged`);
+    const revision = { revisedAt: nowIso(), by, reason, previous };
+    if (task.applied) {
+      revision.previous.applied = structuredClone(task.applied);
+      delete task.applied;
+    }
+    for (const field of TASK_SHAPE_FIELDS) {
+      if (shape[field] === undefined) delete task[field];
+      else task[field] = shape[field];
+    }
+    task.revisions = [...(task.revisions ?? []), revision];
+    return { task: publicTask(task, await inspectTask(root, state, task)), revision: structuredClone(revision), sizing: taskSizing(task.allow, compiled) };
   });
 }
 
@@ -588,8 +694,9 @@ export async function approveTask(projectRoot, options = {}) {
       if (!dependencyState.acceptanceDigest) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `dependency is not accepted: ${dependency}`);
       dependencyAcceptances[dependency] = dependencyState.acceptanceDigest;
     }
+    const protectDigest = await protectedFilesDigest(root, task.protect);
     const approvedAt = nowIso();
-    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
+    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
     return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
   });
@@ -856,6 +963,7 @@ export async function resolveTaskPacket(projectRoot, taskId) {
     taskId: id,
     brief: { path: task.brief, text, sha256: sha256(text) },
     allowedPaths: [...task.allow],
+    ...(task.protect ? { protectedPaths: [...task.protect] } : {}),
     dependencies: task.dependsOn.map((dependency) => ({ id: dependency, acceptanceDigest: status.dependencyAcceptances[dependency] })),
     approval: { ...task.approval },
     ...(context === undefined ? {} : { context }),
@@ -878,6 +986,9 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
   if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
   const task = state.tasks[id];
   if (!task.approval) throw tinyError('BENCHMARK_NOT_APPROVED', `task ${id} has no recorded approval to replay`);
+  if (!approvalBindsTaskShape(task.approval, task)) {
+    throw tinyError('STALE_BENCHMARK_SHAPE', `task ${id} shape has changed since the recorded approval`, { taskId: id });
+  }
   const text = await readProjectFile(root, task.brief, taskBriefOptions());
   if (sha256(text) !== task.approval.briefDigest) {
     throw tinyError('STALE_BENCHMARK_BRIEF', `brief has changed since the recorded approval: ${task.brief}`);
@@ -906,6 +1017,7 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
     taskId: id,
     brief: { path: task.brief, text, sha256: sha256(text) },
     allowedPaths: [...task.allow],
+    ...(task.protect ? { protectedPaths: [...task.protect] } : {}),
     dependencies: task.dependsOn.map((dependency) => ({ id: dependency, acceptanceDigest: task.approval.dependencyAcceptances?.[dependency] })),
     approval: { ...task.approval },
     ...(context === undefined ? {} : { context }),
@@ -1128,6 +1240,7 @@ export function createController(projectRoot) {
   return {
     init: (options) => initProject(projectRoot, options),
     addTask: (options) => addTask(projectRoot, options),
+    updateTask: (options) => updateTask(projectRoot, options),
     approveTask: (options) => approveTask(projectRoot, options),
     applyTask: (options) => applyTask(projectRoot, options),
     closeTask: (options) => closeTask(projectRoot, options),

@@ -102,6 +102,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const action = process.env.TINYSDD_TEST_ACTION || "complete";
 if (action === "allowed") writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
+if (action === "protected") writeFileSync(join(process.cwd(), "src", "contract.txt"), "changed\\n");
 if (action === "outside") writeFileSync(join(process.cwd(), "outside.txt"), "outside\\n");
 if (action === "error") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"error",errorMessage:"synthetic provider failure",content:[{type:"text",text:"I could not continue."}]}}));
@@ -329,7 +330,7 @@ describe("Pi worker capture and scope", () => {
     try {
       const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "outside") });
       assert.equal(result.outcome, "completed");
-      assert.deepEqual(result.scopeViolations.map((entry) => entry.path), ["outside.txt"]);
+      assert.deepEqual(result.scopeViolations, [{ path: "outside.txt", change: "created", reason: "changed path is outside packet.allowedPaths" }]);
       await assert.rejects(readFile(join(project, "outside.txt")));
     } finally {
       await rm(project, { recursive: true, force: true });
@@ -1005,4 +1006,68 @@ describe("Pi worker capture and scope", () => {
       await rm(project, { recursive: true, force: true });
     }
   });
+});
+
+
+test("protected edits retain the candidate and report the contract violation", async () => {
+  const project = await makeProject();
+  try {
+    await writeFile(join(project, "src", "contract.txt"), "original\n");
+    const result = await runWorker({ projectRoot: project, packet: { ...packet(), protectedPaths: ["src/contract.txt"] }, worker: worker(), runtime: runtime(undefined, "protected") });
+    assert.deepEqual(result.scopeViolations, [{ path: "src/contract.txt", change: "modified", reason: "protected contract file" }]);
+    assert.equal(await readFile(join(project, "src", "contract.txt"), "utf8"), "original\n");
+    assert.equal(await readFile(join(result.artifactPaths.candidate, "src", "contract.txt"), "utf8"), "changed\n");
+    const prompt = await readFile(result.artifactPaths.prompt, "utf8");
+    assert.match(prompt, /Protected contract files \(read-only\)/u);
+    assert.match(prompt, /never write, edit, create, delete or rename/u);
+    const retained = JSON.parse(await readFile(result.artifactPaths.packet, "utf8"));
+    assert.deepEqual(retained.protectedPaths, ["src/contract.txt"]);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("unprotected packets keep the prompt unchanged and normalize to an empty protected list", async () => {
+  const project = await makeProject();
+  try {
+    const results = [];
+    for (const selectedPacket of [packet(), { ...packet(), protectedPaths: [] }]) {
+      const result = await runWorker({ projectRoot: project, packet: selectedPacket, worker: worker(), runtime: runtime(undefined, "complete") });
+      results.push(await readFile(result.artifactPaths.prompt, "utf8"));
+      const retained = JSON.parse(await readFile(result.artifactPaths.packet, "utf8"));
+      assert.deepEqual(retained.protectedPaths, []);
+    }
+    assert.equal(results[0], results[1]);
+    assert.doesNotMatch(results[0], /Protected contract files/u);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("worker rejects overlapping, duplicate and invalid protected paths", async () => {
+  const project = await makeProject();
+  try {
+    for (const [protectedPaths, message] of [
+      [["src/allowed.txt"], /must not overlap/u],
+      [["src/contract.txt", "src/contract.txt"], /must not contain duplicates/u],
+      [[".tinysdd/contract.txt"], /protected path/u],
+      [[null], /array of strings/u],
+      ["src/contract.txt", /array of strings/u],
+    ]) {
+      await assert.rejects(runWorker({ projectRoot: project, packet: { ...packet(), protectedPaths }, worker: worker(), runtime: runtime(undefined, "complete") }), message);
+    }
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("worker refuses protected inputs missing from its copy", async () => {
+  const project = await makeGitProject();
+  try {
+    for (const path of ["debug.log", "src/missing.txt"]) {
+      await assert.rejects(runWorker({ projectRoot: project, packet: { ...packet(), protectedPaths: [path] }, worker: worker(), runtime: runtime(undefined, "complete") }), /Protected path is not part of the worker copy/u);
+    }
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
 });

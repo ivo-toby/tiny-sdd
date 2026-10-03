@@ -102,6 +102,33 @@ file, so slices that cite one shared spec by line range stay current when the
 spec is appended to or edited outside their ranges. Inserting lines above a
 cited range shifts it and makes the slice stale: append addenda at the end.
 
+Use `task add --protect src/types.ts,tests/contract.test.ts` for read-only
+contract files. They must exist and cannot overlap `--allow`. The packet lists
+them and the worker prompt forbids changing them; an edit is retained as a scope
+violation with reason `protected contract file`, rather than prevented by file
+permissions. Approval binds their content digests. Editing a protected file makes
+the approval stale and therefore makes an accepted slice `stale` too: it must be
+checked again against the changed contract. Acceptance needs no separate field.
+
+To revise an open task's shape, use `task update` with `--by` and `--reason`:
+
+```sh
+tinysdd task update --id first-change --allow src/example.mjs --protect tests/contract.test.ts --by operator --reason 'keep the contract fixed'
+```
+
+`--brief`, `--context`, `--checks`, `--allow`, `--protect` and `--depends-on`
+validate like `task add`; omitted fields stay unchanged. Use `--context=`,
+`--checks=`, `--protect=` or `--depends-on=` to clear an optional field;
+`--allow` must stay nonempty. Each effective update keeps the previous shape and
+any apply record in `revisions[]`, with attribution, reason and timestamp, shown
+by `status --json`. It leaves recorded approvals and reviews intact; changes to
+bound shape or digests make approval stale, requiring explicit reapproval.
+A later review cannot attribute the revised task to an apply under its old shape.
+Accepted tasks, including stale accepted tasks, cannot be updated: use
+`task supersede` once acceptance is stale; supersede still refuses a current
+acceptance and open dependents. Closed and superseded tasks cannot be updated
+either.
+
 Sizing warnings at `task add` and `task approve` now include a behavior-split
 recommendation for cited tests with fake timers plus deferred promises or races,
 or at least 8 ordering assertions. Separate the sequential core from the async
@@ -234,6 +261,10 @@ tinysdd worker start --task first-change --worker gemma \
 
 Use a run from the same task. Do not use `--baseline-run` for a revision; use
 `--base-run` only when deliberately overlaying a reviewed prior candidate.
+If `task update` changes the approved allow, protect, context, checks, or
+dependency shape, benchmark replay refuses with `STALE_BENCHMARK_SHAPE` instead
+of silently replaying a different packet. Re-approve the revised task before
+starting a new benchmark.
 
 ## Review the result
 
