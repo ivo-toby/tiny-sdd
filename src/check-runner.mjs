@@ -1,0 +1,471 @@
+// Host-side runner for one declared check (docs/worker-runtime-next.md 3.1).
+//
+// The code a check runs is model-written plus project dependencies, so it runs
+// in its own bubblewrap sandbox: no network, no inherited environment, no
+// capabilities, a scratch copy of the candidate and resource limits. Nothing
+// here is verification or acceptance evidence.
+import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { dirname, isAbsolute, join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { TinySDDError, isPlainObject, normalizeProjectRelative, tinyError } from './fs-utils.mjs';
+
+const MIB = 1024 * 1024;
+
+export const CHECK_LIMIT_DEFAULTS = Object.freeze({
+  addressSpaceBytes: 8 * 1024 * MIB,
+  maxProcesses: 512,
+  fileSizeBytes: 256 * MIB,
+  scratchBytes: 1024 * MIB,
+  // /tmp and /dev/shm are memory-backed, so RLIMIT_AS does not cover them.
+  tmpfsBytes: 256 * MIB,
+  storedOutputBytes: MIB,
+  returnedTailBytes: 16 * 1024,
+});
+
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 600000;
+const KILL_GRACE_MS = 2000;
+const HEAD_BYTES = 1024;
+const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
+const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
+const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'bwrapPath', 'prlimitPath', 'tempRoot'];
+// bwrap adds PWD itself when --chdir is used and it cannot be unset.
+const SANDBOX_ENV = Object.freeze(['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
+
+function invalid(message, details = undefined) {
+  return tinyError('CHECK_INVALID', message, details);
+}
+
+function unavailable(message, details = undefined) {
+  return tinyError('CHECK_RUNNER_UNAVAILABLE', message, details);
+}
+
+function findExecutable(candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || !isAbsolute(candidate)) continue;
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // Keep looking through the bounded list; there is no PATH lookup.
+    }
+  }
+  return null;
+}
+
+function locateBinaries({ bwrapPath, prlimitPath } = {}) {
+  if (process.platform !== 'linux') return { reason: `the check runner requires Linux (this is ${process.platform})` };
+  const bwrapCandidates = bwrapPath === undefined ? BWRAP_DEFAULTS : [bwrapPath];
+  const bwrap = findExecutable(bwrapCandidates);
+  if (!bwrap) return { reason: `bubblewrap is not an executable file (tried ${bwrapCandidates.join(', ')})` };
+  const prlimitCandidates = prlimitPath === undefined ? PRLIMIT_DEFAULTS : [prlimitPath];
+  const prlimit = findExecutable(prlimitCandidates);
+  if (!prlimit) return { reason: `prlimit is not an executable file (tried ${prlimitCandidates.join(', ')})` };
+  return { bwrap, prlimit };
+}
+
+export function checkRunnerAvailable(options = {}) {
+  const found = locateBinaries(options);
+  return found.reason ? { available: false, reason: found.reason } : { available: true, reason: null };
+}
+
+function projectRelative(input, field) {
+  let normalized;
+  try {
+    normalized = normalizeProjectRelative(input, field);
+  } catch (error) {
+    throw invalid(error.message, { field });
+  }
+  if (normalized !== input) throw invalid(`${field} must be a normalized project-relative path`, { field });
+  return normalized;
+}
+
+function parseLimits(overrides) {
+  const limits = { ...CHECK_LIMIT_DEFAULTS };
+  if (overrides === undefined) return limits;
+  if (!isPlainObject(overrides)) throw invalid('limits must be an object');
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!Object.hasOwn(CHECK_LIMIT_DEFAULTS, key)) throw invalid(`limits contains unknown key: ${key}`);
+    if (!Number.isSafeInteger(value) || value < 1) throw invalid(`limits.${key} must be a positive integer`);
+    limits[key] = value;
+  }
+  return limits;
+}
+
+function parseMounts(dependencyMounts) {
+  if (dependencyMounts === undefined) return [];
+  if (!Array.isArray(dependencyMounts)) throw invalid('dependencyMounts must be an array');
+  const mounts = dependencyMounts.map((mount, index) => {
+    const label = `dependencyMounts[${index}]`;
+    if (!isPlainObject(mount)) throw invalid(`${label} must be an object`);
+    for (const key of Object.keys(mount)) {
+      if (key !== 'source' && key !== 'target') throw invalid(`${label} contains unknown key: ${key}`);
+    }
+    if (typeof mount.source !== 'string') throw invalid(`${label}.source must be an absolute path`);
+    return { source: mount.source, target: projectRelative(mount.target, `${label}.target`) };
+  });
+  for (const [index, mount] of mounts.entries()) {
+    for (const other of mounts.slice(index + 1)) {
+      if (mount.target === other.target) throw invalid(`dependency mount target is declared twice: ${mount.target}`);
+      if (mount.target.startsWith(`${other.target}/`) || other.target.startsWith(`${mount.target}/`)) {
+        throw invalid(`dependency mount targets must not nest: ${mount.target}, ${other.target}`);
+      }
+    }
+  }
+  return mounts;
+}
+
+function parseCheck(check, mounts) {
+  if (!isPlainObject(check)) throw invalid('check must be an object');
+  const { id, argv, timeoutMs } = check;
+  if (typeof id !== 'string' || id.length === 0 || id.includes('\0')) throw invalid('check.id must be a nonempty string');
+  if (!Array.isArray(argv) || argv.length === 0) throw invalid('check.argv must be a nonempty array of strings');
+  argv.forEach((arg, index) => {
+    if (typeof arg !== 'string' || arg.length === 0 || arg.includes('\0')) {
+      throw invalid(`check.argv[${index}] must be a nonempty string without NUL`);
+    }
+  });
+  if (!Number.isInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS || timeoutMs > MAX_TIMEOUT_MS) {
+    throw invalid(`check.timeoutMs must be an integer from ${MIN_TIMEOUT_MS} to ${MAX_TIMEOUT_MS}`);
+  }
+  return { id, argv: [...argv], timeoutMs, executable: sandboxExecutable(argv[0], mounts) };
+}
+
+function sandboxExecutable(argv0, mounts) {
+  if (argv0 === 'node') return '/opt/node/bin/node';
+  const path = projectRelative(argv0, 'check.argv[0]');
+  if (!mounts.some((mount) => path.startsWith(`${mount.target}/`))) {
+    throw invalid('check.argv[0] must be node or a path inside a declared dependency mount', { field: 'check.argv[0]' });
+  }
+  return `/work/${path}`;
+}
+
+function parseRequest(options) {
+  for (const key of Object.keys(options)) {
+    if (!OPTION_KEYS.includes(key)) throw invalid(`runCheck options contain unknown key: ${key}`);
+  }
+  for (const key of ['bwrapPath', 'prlimitPath', 'tempRoot', 'nodeRoot']) {
+    if (options[key] !== undefined && typeof options[key] !== 'string') throw invalid(`${key} must be a string`);
+  }
+  if (typeof options.candidateDir !== 'string') throw invalid('candidateDir must be an absolute path');
+  const mounts = parseMounts(options.dependencyMounts);
+  return {
+    candidateDir: options.candidateDir,
+    check: parseCheck(options.check, mounts),
+    mounts,
+    nodeRoot: options.nodeRoot ?? dirname(dirname(process.execPath)),
+    limits: parseLimits(options.limits),
+  };
+}
+
+// Paths are compared with their realpath so a symlinked parent cannot point a
+// mount or the copy somewhere the caller did not name.
+async function assertRealDirectory(path, label) {
+  if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) {
+    throw invalid(`${label} must be an absolute path`);
+  }
+  let info;
+  let canonical;
+  try {
+    info = await lstat(path);
+    canonical = await realpath(path);
+  } catch {
+    throw invalid(`${label} is not a readable directory: ${path}`);
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) throw invalid(`${label} must be a real directory: ${path}`);
+  if (canonical !== path) throw invalid(`${label} resolves through a symlink: ${path}`);
+}
+
+async function resolveTempRoot(requested) {
+  const chosen = requested ?? [process.env.TINYSDD_TMPDIR, process.env.TMPDIR].find((value) => typeof value === 'string' && value.length > 0) ?? '/tmp';
+  let canonical;
+  try {
+    canonical = await realpath(chosen);
+    if (!(await lstat(canonical)).isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw invalid(`temporary directory is not usable: ${chosen}`);
+  }
+  return canonical;
+}
+
+async function copyRegularFile(from, to, info, budget, label) {
+  let input;
+  try {
+    // O_NOFOLLOW and O_NONBLOCK close the window between lstat and open in
+    // which an entry could become a symlink or a FIFO.
+    input = await open(from, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  } catch (error) {
+    throw invalid(`candidateDir file cannot be copied: ${label} (${error.code ?? 'unreadable'})`);
+  }
+  try {
+    const opened = await input.stat();
+    if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev) {
+      throw invalid(`candidateDir changed while it was being copied: ${label}`);
+    }
+    if (budget.used + opened.size > budget.limit) throw invalid(`candidateDir exceeds the scratch limit of ${budget.limit} bytes`, { limit: budget.limit });
+    await pipeline(
+      input.createReadStream(),
+      async function* countBytes(source) {
+        for await (const chunk of source) {
+          budget.used += chunk.length;
+          if (budget.used > budget.limit) throw invalid(`candidateDir exceeds the scratch limit of ${budget.limit} bytes`, { limit: budget.limit });
+          yield chunk;
+        }
+      },
+      createWriteStream(to, { flags: 'wx', mode: opened.mode & 0o777 }),
+    );
+  } finally {
+    await input.close().catch(() => {});
+  }
+}
+
+async function copyDirectory(from, to, budget, prefix = '') {
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    const label = `${prefix}${entry.name}`;
+    const source = join(from, entry.name);
+    const target = join(to, entry.name);
+    const info = await lstat(source);
+    if (info.isDirectory()) {
+      // Owner rwx is forced so the copy can be filled and later removed.
+      await mkdir(target, { mode: (info.mode & 0o777) | 0o700 });
+      await copyDirectory(source, target, budget, `${label}/`);
+    } else if (info.isFile()) {
+      await copyRegularFile(source, target, info, budget, label);
+    } else {
+      const kind = info.isSymbolicLink() ? 'symlink' : 'special file';
+      throw invalid(`candidateDir contains a ${kind}; only regular files and directories are copied: ${label}`, { path: label });
+    }
+  }
+}
+
+function copyFailure(error) {
+  if (error instanceof TinySDDError) return error;
+  if (error?.code === 'ENOSPC' || error?.code === 'EDQUOT') return unavailable(`scratch space ran out while copying candidateDir (${error.code})`);
+  return invalid(`candidateDir could not be copied: ${error?.code ?? error?.message}`);
+}
+
+// bwrap would fail on a file where a mount point must be a directory, and that
+// failure would look like a failing check.
+async function assertMountPointsFree(work, mounts) {
+  for (const { target } of mounts) {
+    let current = work;
+    for (const segment of target.split('/')) {
+      current = join(current, segment);
+      let info;
+      try {
+        info = await lstat(current);
+      } catch (error) {
+        if (error?.code === 'ENOENT') break;
+        throw error;
+      }
+      if (!info.isDirectory()) throw invalid(`dependency mount target collides with a file in candidateDir: ${target}`, { target });
+    }
+  }
+}
+
+function sandboxArguments({ binaries, nodeRoot, work, mounts, limits, check }) {
+  const tmpfsSize = String(limits.tmpfsBytes);
+  return [
+    `--as=${limits.addressSpaceBytes}`,
+    `--nproc=${limits.maxProcesses}`,
+    `--fsize=${limits.fileSizeBytes}`,
+    '--',
+    binaries.bwrap,
+    '--clearenv',
+    '--die-with-parent', '--unshare-all', '--new-session',
+    // bwrap only drops its capabilities when it is unprivileged; run as root it would keep them.
+    '--cap-drop', 'ALL',
+    '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind-try', '/lib64', '/lib64',
+    '--dir', '/opt', '--ro-bind', nodeRoot, '/opt/node',
+    '--proc', '/proc', '--dev', '/dev',
+    '--size', tmpfsSize, '--tmpfs', '/tmp',
+    '--size', tmpfsSize, '--tmpfs', '/dev/shm',
+    '--remount-ro', '/dev',
+    '--bind', work, '/work',
+    ...mounts.flatMap((mount) => ['--ro-bind', mount.source, `/work/${mount.target}`]),
+    '--setenv', 'PATH', '/opt/node/bin:/usr/bin:/bin', '--setenv', 'HOME', '/tmp', '--setenv', 'CI', '1', '--setenv', 'LANG', 'C.UTF-8',
+    '--chdir', '/work',
+    '--', check.executable, ...check.argv.slice(1),
+  ];
+}
+
+// Keeps the last `limit` bytes: a failing run ends with its summary.
+class OutputCapture {
+  constructor(limit) {
+    this.limit = limit;
+    this.chunks = [];
+    this.stored = 0;
+    this.total = 0;
+    this.head = Buffer.alloc(0);
+  }
+
+  push(chunk) {
+    this.total += chunk.length;
+    if (this.head.length < HEAD_BYTES) this.head = Buffer.concat([this.head, chunk.subarray(0, HEAD_BYTES - this.head.length)]);
+    this.chunks.push(chunk);
+    this.stored += chunk.length;
+    while (this.chunks.length > 1 && this.stored - this.chunks[0].length >= this.limit) this.stored -= this.chunks.shift().length;
+  }
+
+  finish() {
+    const all = Buffer.concat(this.chunks);
+    return all.length > this.limit ? keepLast(all, this.limit) : all;
+  }
+}
+
+// Cutting inside a UTF-8 sequence would start the text with replacement
+// characters, so the cut moves forward to the next character boundary.
+function keepLast(buffer, bytes) {
+  let start = buffer.length - bytes;
+  const end = Math.min(buffer.length, start + 3);
+  while (start < end && (buffer[start] & 0xc0) === 0x80) start += 1;
+  return buffer.subarray(start);
+}
+
+function summarizeOutput(capture, limits) {
+  const stored = capture.finish();
+  const tailBytes = stored.length > limits.returnedTailBytes ? keepLast(stored, limits.returnedTailBytes) : stored;
+  const omitted = capture.total - tailBytes.length;
+  return {
+    totalBytes: capture.total,
+    storedBytes: stored.length,
+    truncated: capture.total > stored.length,
+    text: stored.toString('utf8'),
+    tail: `${omitted > 0 ? `[... ${omitted} earlier bytes omitted ...]\n` : ''}${tailBytes.toString('utf8')}`,
+  };
+}
+
+function runSandbox({ command, args, timeoutMs, capture }) {
+  return new Promise((resolve, reject) => {
+    const started = process.hrtime.bigint();
+    let settled = false;
+    let timedOut = false;
+    let killTimer;
+    let graceTimer;
+    let child;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      clearTimeout(graceTimer);
+      callback();
+    };
+    try {
+      // env: {} so prlimit and bwrap inherit nothing from the host, and
+      // detached so the whole group can be killed on timeout.
+      child = spawn(command, args, { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }));
+      return;
+    }
+    child.on('error', (error) => finish(() => reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }))));
+    child.stdout.on('data', (chunk) => capture.push(chunk));
+    child.stderr.on('data', (chunk) => capture.push(chunk));
+    child.on('close', (exitCode, signal) => finish(() => {
+      resolve({ exitCode, signal, timedOut, durationMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6) });
+    }));
+    killTimer = setTimeout(() => {
+      timedOut = true;
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+      // --die-with-parent and the PID namespace take the sandbox down with
+      // bwrap. If something still holds the pipes open, stop waiting for them.
+      graceTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, KILL_GRACE_MS);
+    }, timeoutMs);
+  });
+}
+
+// bwrap and prlimit report their own failures as "bwrap: ..." or "prlimit: ...".
+// A failure to exec the check itself ("bwrap: execvp ...") is a failing check,
+// but anything else means the sandbox was never built and nothing ran.
+function sandboxSetupFailure(run, head) {
+  if (run.timedOut || run.exitCode === 0 || run.signal) return null;
+  const text = head.toString('utf8');
+  if (text.startsWith('bwrap: execvp ')) return null;
+  return text.startsWith('bwrap: ') || text.startsWith('prlimit: ') ? text : null;
+}
+
+async function restorePermissions(directory) {
+  await chmod(directory, 0o700);
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) await restorePermissions(join(directory, entry.name));
+  }
+}
+
+async function removeScratch(scratch) {
+  try {
+    await rm(scratch, { recursive: true, force: true });
+  } catch {
+    // The check may have made directories unreadable; make them removable and retry once.
+    await restorePermissions(scratch).catch(() => {});
+    await rm(scratch, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function runCheck(options) {
+  if (!isPlainObject(options)) throw invalid('runCheck options must be an object');
+  const request = parseRequest(options);
+  const binaries = locateBinaries(options);
+  if (binaries.reason) throw unavailable(binaries.reason);
+
+  await assertRealDirectory(request.candidateDir, 'candidateDir');
+  for (const mount of request.mounts) await assertRealDirectory(mount.source, `dependency mount source for ${mount.target}`);
+  await assertRealDirectory(request.nodeRoot, 'nodeRoot');
+  try {
+    accessSync(join(request.nodeRoot, 'bin', 'node'), fsConstants.X_OK);
+  } catch {
+    throw invalid(`nodeRoot has no executable bin/node: ${request.nodeRoot}`);
+  }
+  const tempRoot = await resolveTempRoot(options.tempRoot);
+  if (tempRoot === request.candidateDir || tempRoot.startsWith(`${request.candidateDir}/`)) {
+    throw invalid('tempRoot must not be inside candidateDir');
+  }
+
+  let scratch;
+  try {
+    scratch = await mkdtemp(join(tempRoot, 'tinysdd-check-'));
+  } catch (error) {
+    throw unavailable(`could not create a scratch directory in ${tempRoot}: ${error.code ?? error.message}`);
+  }
+  try {
+    const work = join(scratch, 'work');
+    await mkdir(work, { mode: 0o700 });
+    await copyDirectory(request.candidateDir, work, { used: 0, limit: request.limits.scratchBytes }).catch((error) => {
+      throw copyFailure(error);
+    });
+    await assertMountPointsFree(work, request.mounts);
+
+    const capture = new OutputCapture(request.limits.storedOutputBytes);
+    const run = await runSandbox({
+      command: binaries.prlimit,
+      args: sandboxArguments({ binaries, nodeRoot: request.nodeRoot, work, mounts: request.mounts, limits: request.limits, check: request.check }),
+      timeoutMs: request.check.timeoutMs,
+      capture,
+    });
+    const setupFailure = sandboxSetupFailure(run, capture.head);
+    if (setupFailure) throw unavailable('the check sandbox could not be created; the check did not run', { output: setupFailure });
+
+    return {
+      id: request.check.id,
+      argv: request.check.argv,
+      exitCode: run.exitCode,
+      signal: run.signal,
+      timedOut: run.timedOut,
+      durationMs: run.durationMs,
+      output: summarizeOutput(capture, request.limits),
+      limits: request.limits,
+      sandbox: { bwrap: binaries.bwrap, prlimit: binaries.prlimit, network: 'none', env: [...SANDBOX_ENV] },
+    };
+  } finally {
+    await removeScratch(scratch);
+  }
+}
