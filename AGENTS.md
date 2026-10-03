@@ -5,6 +5,8 @@ implementation models. A strong model prepares specs, slices and context; a smal
 model implements one bounded slice in a sandboxed disposable copy; the operator
 approves and accepts. Start with `README.md`, `docs/current-scope.md` and
 `docs/worker-runtime-next.md`. Work is tracked in GitHub issues (epics #2–#6).
+If you are orchestrating (planning the queue, writing implementation notes,
+reviewing PRs) rather than implementing one issue, read `docs/orchestration.md`.
 
 ## Setup and tests
 
