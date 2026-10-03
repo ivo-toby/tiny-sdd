@@ -466,6 +466,41 @@ describe('check runner', { skip: SKIP }, () => {
     assert.deepEqual(remaining, []);
   });
 
+  test('an abort cancels the sandbox process group and removes its scratch copy', async () => {
+    const token = `tinysdd-abort-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({
+      'loop.mjs': [
+        "import { spawn } from 'node:child_process';",
+        "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', process.argv[2]], { stdio: 'ignore' });",
+        "console.log('started');",
+        'for (;;) {}',
+        '',
+      ].join('\n'),
+    });
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 700);
+    try {
+      let result;
+      try {
+        result = await run(candidate, { argv: ['node', 'loop.mjs', token], timeoutMs: 60_000 }, { signal: controller.signal });
+      } catch (error) {
+        assert.equal(error.code, 'CHECK_CANCELLED');
+      }
+      if (result) {
+        assert.equal(result.signal, 'SIGKILL');
+        assert.equal(result.timedOut, false);
+      }
+      let remaining = await processesMatching(token);
+      for (let attempt = 0; attempt < 30 && remaining.length > 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        remaining = await processesMatching(token);
+      }
+      assert.deepEqual(remaining, []);
+    } finally {
+      clearTimeout(abortTimer);
+    }
+  });
+
   test('the address-space limit stops a runaway allocation without a timeout', async () => {
     const candidate = await makeDir({
       'alloc.mjs': [

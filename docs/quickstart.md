@@ -298,6 +298,8 @@ For a replay with available checks, dependency mounts are resolved from the
 live canonical project root and recorded with a content identity. The replay's
 `runtime.json.runChecks.baselineComparison` reports `identical`, `different` or
 `unknown`; older baseline artifacts without that identity remain `unknown`.
+For a `--base-run` revision, the comparison uses the immediate parent run's
+recorded identity; an older parent without that identity remains `unknown`.
 
 ## Review the result
 

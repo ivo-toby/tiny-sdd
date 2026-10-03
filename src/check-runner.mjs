@@ -474,6 +474,7 @@ function summarizeOutput(capture, limits) {
     totalBytes: capture.total,
     storedBytes: stored.length,
     truncated: capture.total > stored.length,
+    tailTruncated: tailBytes.length < stored.length,
     text: stored.toString('utf8'),
     tail: `${omitted > 0 ? `[... ${omitted} earlier bytes omitted ...]\n` : ''}${tailBytes.toString('utf8')}`,
   };

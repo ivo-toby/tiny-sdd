@@ -312,12 +312,25 @@ async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths
   }
 }
 
+async function readOptionalRuntime(runDirectory) {
+  try {
+    const runtimePath = join(runDirectory, "runtime.json");
+    const runtimeInfo = await lstat(runtimePath);
+    if (runtimeInfo.isSymbolicLink() || !runtimeInfo.isFile() || runtimeInfo.size > MAX_RESOURCE_BYTES) return null;
+    const runtime = JSON.parse(await readFile(runtimePath, "utf8"));
+    return runtime && typeof runtime === "object" && !Array.isArray(runtime) ? runtime : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId) {
   if (baseRunId === undefined || baseRunId === null) return null;
   if (typeof baseRunId !== "string" || !SAFE_RUN_ID.test(baseRunId)) fail("baseRunId must name a TinySDD worker run");
   const allowed = new Set(allowedPaths);
   const seen = new Set();
   const chain = [];
+  let immediateRuntime = null;
   let currentId = baseRunId;
   while (currentId) {
     if (seen.has(currentId)) fail("base run lineage contains a cycle");
@@ -341,6 +354,7 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId)
       fail("base run must be a completed, scope-clean TinySDD worker result");
     }
     if (result.taskId !== undefined && result.taskId !== taskId) fail("base run lineage belongs to a different task");
+    if (currentId === baseRunId) immediateRuntime = await readOptionalRuntime(runDirectory);
     const paths = result.changedPaths.map((change) => {
       if (!change || typeof change.path !== "string" || !["created", "modified"].includes(change.change)) fail("base run contains an unsupported change");
       const path = projectRelative(change.path, "base run changed path");
@@ -355,7 +369,7 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId)
     currentId = parentId;
   }
   const paths = [...new Set(chain.flatMap((entry) => entry.paths))].sort();
-  return { id: baseRunId, chain, paths };
+  return { id: baseRunId, chain, paths, runtime: immediateRuntime };
 }
 
 async function resolveFrozenBaseline(projectRoot, baselineRunId, taskId) {
@@ -376,15 +390,7 @@ async function resolveFrozenBaseline(projectRoot, baselineRunId, taskId) {
     if (result?.taskId !== taskId) fail("baseline run belongs to a different task");
     const canonical = await realpath(workspace);
     if (!isInside(runDirectory, canonical)) fail("baseline run workspace escapes its artifact directory");
-    let runtime = null;
-    try {
-      const runtimePath = join(runDirectory, "runtime.json");
-      const runtimeInfo = await lstat(runtimePath);
-      if (!runtimeInfo.isSymbolicLink() && runtimeInfo.isFile()) runtime = JSON.parse(await readFile(runtimePath, "utf8"));
-    } catch {
-      // Older artifacts have no runtime identity. Replays record that as
-      // unknown instead of treating the dependency configuration as equal.
-    }
+    const runtime = await readOptionalRuntime(runDirectory);
     return { id: baselineRunId, root: canonical, runtime };
   } catch (error) {
     if (error instanceof WorkerError) throw error;
@@ -1388,7 +1394,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     }
     const piPackage = await piPackageInfo(runtimeChoice.pi);
     const piVersion = piPackage.version;
-    const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline });
+    const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
     await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks));
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,

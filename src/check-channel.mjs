@@ -9,6 +9,11 @@ const MAX_REQUEST_BYTES = 1024;
 const REQUEST_NAME = /^[a-f0-9]{64}\.json$/u;
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const errorResult = (code, message) => ({ error: { code, message } });
+function outputWasTruncated(output) {
+  if (output.truncated === true || output.tailTruncated === true) return true;
+  const marker = /^\[\.\.\. (\d+) earlier bytes omitted \.\.\.\]\n/u.exec(output.tail ?? '');
+  return marker ? Number(marker[1]) > 0 : output.totalBytes > Buffer.byteLength(output.tail ?? '');
+}
 const overlaps = (a, b) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 const inside = (root, candidate) => {
   const path = relative(root, candidate);
@@ -226,9 +231,10 @@ export async function createCheckChannel({ manifest, sourceRoot, workspace, arti
         if (timeoutMs < 1000 || abort.signal.aborted) throw Object.assign(new Error('worker deadline prevents execution'), { code: 'CHECK_DEADLINE' });
         const result = await runner({ candidateDir: scratch, check: { id: declaration.id, argv: declaration.argv, timeoutMs }, dependencyMounts: mounts, nodeRoot, tempRoot, signal: abort.signal });
         const outputPath = join(artifactDir, `check-${count}.txt`);
+        const truncated = outputWasTruncated(result.output);
         await writeFile(outputPath, result.output.text, { mode: 0o600 });
-        record = { ...record, run: count, exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, durationMs: result.durationMs, outputPath, outputSha256: digest(result.output.text), tailSha256: digest(result.output.tail), outcome: result.timedOut ? 'timed_out' : result.signal ? 'cancelled' : result.exitCode === 0 ? 'passed' : 'failed', outputBytes: result.output.totalBytes, truncated: result.output.truncated };
-        results.push({ checkId: declaration.id, run: count, exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, durationMs: result.durationMs, tail: result.output.tail, truncated: result.output.totalBytes > Buffer.byteLength(result.output.tail) });
+        record = { ...record, run: count, exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, durationMs: result.durationMs, outputPath, outputSha256: digest(result.output.text), tailSha256: digest(result.output.tail), outcome: result.timedOut ? 'timed_out' : result.signal ? 'cancelled' : result.exitCode === 0 ? 'passed' : 'failed', outputBytes: result.output.totalBytes, truncated, ...(result.output.tailTruncated === undefined ? {} : { tailTruncated: result.output.tailTruncated }) };
+        results.push({ checkId: declaration.id, run: count, exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, durationMs: result.durationMs, tail: result.output.tail, truncated });
       } catch (caught) {
         error = errorResult(caught.code ?? 'CHECK_INVALID', String(caught.message).slice(0, 512));
         record = { ...record, run: count, ...error };

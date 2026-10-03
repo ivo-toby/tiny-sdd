@@ -196,10 +196,11 @@ Evidence is caller-supplied; the controller does not claim to have run its
 commands. Acceptance is bound to the brief, dependencies, review evidence and
 allowed file contents. Later changes can invalidate it.
 
-Replay check mounts come from the live canonical project root rather than the
-frozen candidate snapshot. `runtime.json.runChecks` records their content
-identity and the explicit baseline comparison; older artifacts without an
-identity compare as `unknown`.
+Replay and revision check mounts come from the live canonical project root
+rather than the frozen candidate snapshot. `runtime.json.runChecks` records
+their content identity and the explicit baseline comparison; a revision uses
+its immediate parent run, and older artifacts without an identity compare as
+`unknown`.
 
 Declare fixed task checks in a reviewed JSON file under `.tinysdd/tasks/` and
 pass it to `task add` with `--checks PATH`. The controller validates and binds
