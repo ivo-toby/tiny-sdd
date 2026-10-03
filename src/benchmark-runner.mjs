@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import {
   assertNoSymlinkPath,
   digestJson,
@@ -35,7 +36,7 @@ import {
 import { BENCHMARK_VERIFIER_STATUSES, parseBenchmarkCaseResult } from './benchmark-results.mjs';
 import { writeBenchmarkResults } from './benchmark-results-writer.mjs';
 import { runWorker, workerLimits } from './worker.mjs';
-import { validatePiWorker } from './pi-environment.mjs';
+import { defaultPiAgentDir, preflightPiWorker, validatePiWorker } from './pi-environment.mjs';
 
 const execFileAsync = promisify(execFile);
 const RESERVED_VERIFIER_ROOT = '__tinysdd_benchmark_verifier';
@@ -44,6 +45,7 @@ const MAX_CHECK_BUDGET = 20;
 const CHECK_RUNNER_VERSION = 'runCheck-v1';
 const PATH_FLAGS = new Set(['--require', '-r', '--import', '--loader']);
 const VALUE_FLAGS = new Set(['-e', '--eval', '--input-type', '--test-name-pattern']);
+const TINYSDD_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 function invalid(message, details = undefined) {
   throw tinyError('BENCHMARK_RUNNER_INVALID', message, details);
@@ -224,24 +226,72 @@ function normalizeCheckLimits(value) {
   return { ...CHECK_LIMIT_DEFAULTS, ...structuredClone(value) };
 }
 
-async function buildIdentity({ suite, suiteSha256, challenges, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget, checkLimits, verifierMode, suiteRoot, projectRoot, checkRunnerOptions: runnerOptions }) {
+function resolveCheckRunnerConfig(checkLimits, runnerOptions) {
   const options = checkRunnerOptions(runnerOptions);
+  const topLevel = checkLimits === undefined ? undefined : normalizeCheckLimits(checkLimits);
+  const nested = options.limits === undefined ? undefined : normalizeCheckLimits(options.limits);
+  if (topLevel !== undefined && nested !== undefined && digestJson(topLevel) !== digestJson(nested)) {
+    invalid('checkLimits and checkRunnerOptions.limits must agree');
+  }
+  const limits = topLevel ?? nested ?? normalizeCheckLimits(undefined);
+  return { ...options, limits };
+}
+
+async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
+  if (workerSettings !== undefined) return workerSettings;
+  const base = {
+    sandbox: runtime?.test === true ? 'test-runtime' : process.platform === 'darwin' ? 'seatbelt' : 'bubblewrap',
+    effectiveMaxTokens: BENCHMARK_UNKNOWN,
+    effectiveReasoning: BENCHMARK_UNKNOWN,
+    effectiveThinkingControl: BENCHMARK_UNKNOWN,
+    effectiveThinkingReason: BENCHMARK_UNKNOWN,
+    effectiveThinkingField: BENCHMARK_UNKNOWN,
+    effectiveThinkingBudgetValue: BENCHMARK_UNKNOWN,
+    effectiveCompat: BENCHMARK_UNKNOWN,
+  };
+  try {
+    const preflight = await preflightPiWorker({
+      worker,
+      profile,
+      sourceAgentDir: runtime?.sourceAgentDir ?? defaultPiAgentDir(),
+      sourceEnv: runtime?.sourceEnv ?? process.env,
+    });
+    return {
+      sandbox: base.sandbox,
+      effectiveMaxTokens: preflight.maxTokens.value,
+      effectiveReasoning: preflight.effectiveReasoning ?? BENCHMARK_UNKNOWN,
+      effectiveThinkingControl: preflight.thinking.control ?? BENCHMARK_UNKNOWN,
+      effectiveThinkingReason: preflight.thinking.reason ?? BENCHMARK_UNKNOWN,
+      effectiveThinkingField: preflight.thinkingTokenBudgetField ?? BENCHMARK_UNKNOWN,
+      effectiveThinkingBudgetValue: preflight.thinkingBudget?.tokens ?? BENCHMARK_UNKNOWN,
+      effectiveCompat: preflight.effectiveCompat ?? BENCHMARK_UNKNOWN,
+    };
+  } catch {
+    return BENCHMARK_UNKNOWN;
+  }
+}
+
+async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget, checkLimits, verifierMode, suiteRoot, projectRoot, checkRunnerOptions: runnerOptions }) {
+  const options = resolveCheckRunnerConfig(checkLimits, runnerOptions);
   const verifierAvailability = checkRunnerAvailable(options);
   const workerAvailability = runtime?.test === true && typeof runtime.checkRunner === 'function'
     ? { available: true, reason: null, testInjected: true }
     : checkRunnerAvailable();
   const effectiveLimits = workerEffectiveLimits(worker);
   const effectiveCheckBudget = workerEffectiveCheckBudget(worker);
-  const effectiveCheckLimits = normalizeCheckLimits(checkLimits);
+  const effectiveCheckLimits = options.limits;
   const profileDigest = profile === undefined || profile === null ? BENCHMARK_UNKNOWN : digestJson(profile);
   const runtimeVersion = process.version;
-  const code = await resolveCodeRevision(projectRoot ?? suiteRoot, codeRevision);
+  const code = await resolveCodeRevision(TINYSDD_ROOT, codeRevision);
   const version = tinySddVersion ?? await packageVersion();
-  const resolvedModel = {
-    provider: worker?.provider,
-    id: worker?.model,
-    ...(model && typeof model === 'object' && !Array.isArray(model) ? model : {}),
-  };
+  const modelMetadata = model && typeof model === 'object' && !Array.isArray(model) ? model : {};
+  if (modelMetadata.provider !== undefined && modelMetadata.provider !== worker.provider) {
+    invalid('model metadata provider must match worker.provider');
+  }
+  if (modelMetadata.id !== undefined && modelMetadata.id !== worker.model) {
+    invalid('model metadata id must match worker.model');
+  }
+  const resolvedModel = { ...modelMetadata, provider: worker.provider, id: worker.model };
   const verifierConfigSha256 = digestJson({
     mode: verifierMode,
     checkLimits: effectiveCheckLimits,
@@ -254,6 +304,7 @@ async function buildIdentity({ suite, suiteSha256, challenges, worker, profile, 
       fixture: challenge.fixture,
       packet: challenge.packet,
       verifier: challenge.verifier,
+      verifierContent: verifierContent?.[challenge.id] ?? BENCHMARK_UNKNOWN,
     })),
   });
   const checkRunnerConfigSha256 = digestJson({
@@ -261,13 +312,15 @@ async function buildIdentity({ suite, suiteSha256, challenges, worker, profile, 
     limits: effectiveCheckLimits,
     availability: verifierAvailability,
     options: {
+      bwrapPath: options.bwrapPath ?? null,
+      prlimitPath: options.prlimitPath ?? null,
+      setprivPath: options.setprivPath ?? null,
       nodeRoot: options.nodeRoot ?? null,
+      tempRoot: options.tempRoot ?? null,
       runAs: options.runAs ?? null,
     },
   });
-  const settings = workerSettings === undefined
-    ? (runtime?.test ? { sandbox: 'test-runtime' } : BENCHMARK_UNKNOWN)
-    : workerSettings;
+  const settings = await resolveWorkerSettings(workerSettings, worker, profile, runtime);
   const identityInput = {
     model: resolvedModel,
     worker: { profileDigest, limits: effectiveLimits, settings },
@@ -313,7 +366,7 @@ async function loadSuite(suiteRoot, suitePath = 'suite.json') {
     ids.add(challenge.id);
     challenges.push({ ref, challenge, resource });
   }
-  return { root, suite, suiteSha256, suiteFile, suiteText, challenges };
+  return { root, suite, suiteSha256, suiteFile, suiteText, suitePath, challenges };
 }
 
 async function loadFixture(root, challenge) {
@@ -351,6 +404,98 @@ async function loadPacket(root, challenge) {
 async function loadVerifier(root, ref, challengeId, visibility) {
   const resource = await readSuiteFile(root, ref, `challenge ${challengeId} ${visibility} verifier`);
   return { resource, manifest: parseChecksManifest(resource.text) };
+}
+
+function verifierResourceArguments(check) {
+  const result = [];
+  for (let index = 1; index < check.argv.length; index += 1) {
+    const argument = check.argv[index];
+    const previous = check.argv[index - 1];
+    if (VALUE_FLAGS.has(previous) || PATH_FLAGS.has(previous)) continue;
+    if (argument.startsWith('-')) continue;
+    result.push(argument);
+  }
+  return result;
+}
+
+async function verifierSources(root, definition, visibility) {
+  const sources = [{ path: definition.resource.path, absolute: definition.resource.absolute, kind: 'manifest', sha256: definition.resource.sha256 }];
+  const seen = new Set([definition.resource.path]);
+  const addFile = async (source, kind) => {
+    if (seen.has(source.path)) return;
+    seen.add(source.path);
+    sources.push({ path: source.path, absolute: source.absolute, kind, sha256: sha256(await readFile(source.absolute)) });
+  };
+  for (const mount of definition.manifest.dependencyMounts) {
+    const source = await resolveVerifierResource(root, definition.resource.path, mount, `${visibility} dependency mount`, { directory: true });
+    await assertRegularTree(source.absolute, `${visibility} dependency mount`);
+    const tree = await treeDigest(source.absolute);
+    if (!seen.has(source.path)) {
+      seen.add(source.path);
+      sources.push({ path: source.path, absolute: source.absolute, kind: 'dependency-tree', treeSha256: tree.sha256 });
+    }
+  }
+  for (const check of definition.manifest.checks) {
+    for (const argument of verifierResourceArguments(check)) {
+      let source;
+      try {
+        source = await resolveVerifierResource(root, definition.resource.path, argument, `${visibility} verifier file`);
+      } catch (error) {
+        if (!argument.includes('/') && !/[./]/u.test(argument)) continue;
+        throw error;
+      }
+      await addFile(source, 'check-file');
+    }
+  }
+  return sources;
+}
+
+async function prepareVerifierDefinitions(suiteInfo) {
+  const verifierRoot = await existingPath(suiteInfo.root, 'verifier', 'suite verifier root', { directory: true });
+  const verifierTree = await treeDigest(verifierRoot.absolute);
+  const content = {};
+  for (const challengeInfo of suiteInfo.challenges) {
+    const visible = await loadVerifier(suiteInfo.root, challengeInfo.challenge.verifier.visible, challengeInfo.challenge.id, 'visible');
+    const heldOut = await loadVerifier(suiteInfo.root, challengeInfo.challenge.verifier.heldOut, challengeInfo.challenge.id, 'held-out');
+    const visibleSources = await verifierSources(suiteInfo.root, visible, 'visible');
+    const heldOutSources = await verifierSources(suiteInfo.root, heldOut, 'held-out');
+    challengeInfo.verifierDefinitions = { visible, heldOut };
+    content[challengeInfo.challenge.id] = {
+      verifierTreeSha256: verifierTree.sha256,
+      visible: visibleSources.map(({ path, kind, sha256: contentSha256, treeSha256 }) => ({ path, kind, ...(contentSha256 ? { sha256: contentSha256 } : {}), ...(treeSha256 ? { treeSha256 } : {}) })),
+      heldOut: heldOutSources.map(({ path, kind, sha256: contentSha256, treeSha256 }) => ({ path, kind, ...(contentSha256 ? { sha256: contentSha256 } : {}), ...(treeSha256 ? { treeSha256 } : {}) })),
+    };
+  }
+  return content;
+}
+
+async function assertVerifierOutsideFixture(fixture, definition, visibility, suiteRoot) {
+  const sources = await verifierSources(suiteRoot, definition, visibility);
+  for (const source of sources) {
+    if (isInside(fixture.absolute, source.absolute)) {
+      invalid(`${visibility} verifier material is inside the worker fixture`, { path: source.path });
+    }
+  }
+}
+
+function suiteInputDigest(suiteInfo) {
+  return digestJson({
+    suiteSha256: suiteInfo.suiteSha256,
+    challenges: suiteInfo.challenges.map(({ ref, resource, challenge }) => ({
+      path: ref.path,
+      sha256: resource.sha256,
+      challenge,
+    })),
+  });
+}
+
+async function assertBenchmarkInputsStable(suiteInfo, verifierContent) {
+  const current = await loadSuite(suiteInfo.root, suiteInfo.suitePath);
+  const currentVerifierContent = await prepareVerifierDefinitions(current);
+  if (suiteInputDigest(current) !== suiteInputDigest(suiteInfo)
+    || digestJson(currentVerifierContent) !== digestJson(verifierContent)) {
+    invalid('benchmark suite or verifier content changed during invocation');
+  }
 }
 
 function underOrEqual(parent, child) {
@@ -412,13 +557,7 @@ async function verifierPlan(root, manifestPath, manifest, visibility, candidateD
     }
   }
   for (const check of manifest.checks) {
-    for (let index = 1; index < check.argv.length; index += 1) {
-      const argument = check.argv[index];
-      const previous = check.argv[index - 1];
-      const isValue = VALUE_FLAGS.has(previous) || [...PATH_FLAGS].some((flag) => previous === flag);
-      if (argument.startsWith('-') && !isValue) continue;
-      if (VALUE_FLAGS.has(previous)) continue;
-      if (argument.startsWith('-') && !isValue) continue;
+    for (const argument of verifierResourceArguments(check)) {
       let source;
       try {
         source = await resolveVerifierResource(root, manifestPath, argument, `${visibility} verifier file`);
@@ -588,6 +727,7 @@ async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibilit
         definitionSha256: definition.resource.sha256,
         candidateDir: candidateSource,
         dependencyMounts: structuredClone(plan.mounts),
+        checkRunnerOptions: structuredClone(checkRunnerOptions),
       });
       record = normalizeInjectedVerifier(injected, check, definition.resource.sha256);
     } else {
@@ -680,6 +820,17 @@ async function copyEvidence(root, source, destinationRelative) {
   return { path: destinationRelative, sha256: sha256(await readFile(target)) };
 }
 
+async function copyTreeEvidence(root, source, destinationRelative, label) {
+  const target = join(root, ...destinationRelative.split('/'));
+  await copyRegularTree(source, target, label);
+  const tree = await treeDigest(target);
+  const manifestPath = `${destinationRelative}-manifest.json`;
+  const manifestTarget = join(root, ...manifestPath.split('/'));
+  const text = `${JSON.stringify({ root: destinationRelative, tree }, null, 2)}\n`;
+  await writeFile(manifestTarget, text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  return { path: manifestPath, sha256: sha256(text) };
+}
+
 async function writePacketEvidence(root, packet, destinationRelative) {
   const target = join(root, ...destinationRelative.split('/'));
   await assertNoSymlinkPath(dirname(target), { allowMissing: true, requireDirectory: false });
@@ -712,7 +863,41 @@ function assertWorkerRunChecksIdentity(config, runtimeMetadata) {
   }
 }
 
-async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, runtime, outputRoot, attemptId, repetition, verifier, checkRunnerOptions, checkBudget }) {
+function assertWorkerSettingsIdentity(config, runtimeMetadata) {
+  const expected = config.identity.worker.settings;
+  if (expected === BENCHMARK_UNKNOWN || !expected || typeof expected !== 'object') return;
+  const fields = ['effectiveMaxTokens', 'effectiveReasoning', 'effectiveThinkingControl', 'effectiveThinkingReason', 'effectiveThinkingField', 'effectiveThinkingBudgetValue', 'effectiveCompat'];
+  for (const field of fields) {
+    if (expected[field] === undefined || expected[field] === BENCHMARK_UNKNOWN) continue;
+    const actual = field === 'effectiveThinkingControl'
+      ? runtimeMetadata.effectiveThinkingControl
+      : field === 'effectiveThinkingReason'
+        ? runtimeMetadata.effectiveThinkingReason
+      : field === 'effectiveThinkingField'
+        ? runtimeMetadata.thinkingTokenBudgetField ?? BENCHMARK_UNKNOWN
+        : field === 'effectiveThinkingBudgetValue'
+          ? runtimeMetadata.effectiveThinkingBudget?.tokens ?? BENCHMARK_UNKNOWN
+          : runtimeMetadata[field];
+    if (actual === undefined || actual === null || digestJson(actual) !== digestJson(expected[field])) {
+      invalid(`worker runtime setting ${field} does not match benchmark config identity`);
+    }
+  }
+  if (expected.sandbox !== BENCHMARK_UNKNOWN && runtimeMetadata.sandbox !== expected.sandbox) {
+    invalid('worker runtime sandbox does not match benchmark config identity');
+  }
+}
+
+function assertWorkerLimitsIdentity(config, runtimeMetadata) {
+  const expected = config.identity.worker.limits;
+  const actual = runtimeMetadata.limits;
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) invalid('worker runtime limits are missing from benchmark identity evidence');
+  for (const field of ['timeoutMs', 'maxToolCalls', 'firstWriteMs']) {
+    if (expected[field] === BENCHMARK_UNKNOWN) continue;
+    if (actual[field] !== expected[field]) invalid(`worker runtime limit ${field} does not match benchmark config identity`);
+  }
+}
+
+async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, profile, worker, runtime, outputRoot, attemptId, repetition, verifier, checkRunnerOptions, checkBudget }) {
   const { root: suiteRoot, suiteSha256 } = suiteInfo;
   const { challenge, resource: challengeResource } = challengeInfo;
   const caseRelativeDirectory = `cases/${attemptId}`;
@@ -730,6 +915,8 @@ async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, 
   let setupError;
   let visibleRecords = [];
   let heldOutRecords = [];
+  let retainedCandidate;
+  let inputStable = true;
   let fixtureDigest = challenge.fixture.sha256;
   const packetPayload = {
     taskId: challenge.id,
@@ -740,15 +927,26 @@ async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, 
     checks: challenge.packet.checks,
   };
   try {
+    try {
+      await assertBenchmarkInputsStable(suiteInfo, verifierContent);
+    } catch (error) {
+      inputStable = false;
+      throw error;
+    }
     fixture = await loadFixture(suiteRoot, challenge);
     fixtureDigest = fixture.treeDigest.sha256;
-    fixtureWork = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-fixture-'));
-    await copyRegularTree(fixture.absolute, fixtureWork, `challenge ${challenge.id} fixture`);
     packetInfo = await loadPacket(suiteRoot, challenge);
     packetPayload.brief = packetInfo.packet.briefText;
     packetPayload.context = packetInfo.packet.context;
     packetPayload.checks = packetInfo.packet.checks;
-    visibleDefinition = await loadVerifier(suiteRoot, challenge.verifier.visible, challenge.id, 'visible');
+    visibleDefinition = challengeInfo.verifierDefinitions?.visible
+      ?? await loadVerifier(suiteRoot, challenge.verifier.visible, challenge.id, 'visible');
+    heldOutDefinition = challengeInfo.verifierDefinitions?.heldOut
+      ?? await loadVerifier(suiteRoot, challenge.verifier.heldOut, challenge.id, 'held-out');
+    await assertVerifierOutsideFixture(fixture, visibleDefinition, 'visible', suiteRoot);
+    await assertVerifierOutsideFixture(fixture, heldOutDefinition, 'held-out', suiteRoot);
+    fixtureWork = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-fixture-'));
+    await copyRegularTree(fixture.absolute, fixtureWork, `challenge ${challenge.id} fixture`);
     const caseRuntime = runtime && typeof runtime === 'object'
       ? { ...runtime, ...(runtime.test === true ? { testEnv: { ...(runtime.testEnv ?? {}), TINYSDD_TEST_CHALLENGE: challenge.id, TINYSDD_TEST_REPETITION: String(repetition) } } : {}) }
       : runtime;
@@ -759,15 +957,14 @@ async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, 
       profile,
       runtime: caseRuntime,
     });
+    try {
+      await assertBenchmarkInputsStable(suiteInfo, verifierContent);
+    } catch (error) {
+      inputStable = false;
+      throw error;
+    }
   } catch (error) {
     setupError = error instanceof Error ? error : new Error(String(error));
-  }
-
-  // Held-out material is resolved only after the worker attempt has ended.
-  try {
-    heldOutDefinition = await loadVerifier(suiteRoot, challenge.verifier.heldOut, challenge.id, 'held-out');
-  } catch (error) {
-    if (!setupError) setupError = error instanceof Error ? error : new Error(String(error));
   }
 
   const artifacts = {};
@@ -780,17 +977,32 @@ async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, 
       await assertRegularTree(workerResult.artifactPaths.candidate, 'worker candidate');
       const workerResultRef = await copyEvidence(outputRoot, join(workerResult.artifactPaths.directory, 'result.json'), `${caseRelativeDirectory}/worker-result.json`);
       artifacts.result = workerResultRef;
+      artifacts.prompt = await copyEvidence(outputRoot, workerResult.artifactPaths.prompt, `${caseRelativeDirectory}/worker-prompt.txt`);
+      artifacts.stderr = await copyEvidence(outputRoot, workerResult.artifactPaths.stderr, `${caseRelativeDirectory}/worker-stderr.txt`);
+      artifacts.stdout = await copyEvidence(outputRoot, workerResult.artifactPaths.stdout, `${caseRelativeDirectory}/worker-stdout.jsonl`);
+      artifacts['workspace-before'] = await copyTreeEvidence(outputRoot, workerResult.artifactPaths.workspaceBefore, `${caseRelativeDirectory}/workspace-before`, 'worker workspace before');
+      artifacts['workspace-after'] = await copyTreeEvidence(outputRoot, workerResult.artifactPaths.workspaceAfter, `${caseRelativeDirectory}/workspace-after`, 'worker workspace after');
+      retainedCandidate = join(caseDirectory, 'worker-candidate');
+      await copyRegularTree(workerResult.artifactPaths.candidate, retainedCandidate, 'worker candidate');
+      const candidateTree = await treeDigest(retainedCandidate);
+      const candidateManifestPath = `${caseRelativeDirectory}/candidate-files.json`;
+      const candidateManifestTarget = join(outputRoot, ...candidateManifestPath.split('/'));
+      const candidateManifestText = `${JSON.stringify({ root: `${caseRelativeDirectory}/worker-candidate`, tree: candidateTree }, null, 2)}\n`;
+      await writeFile(candidateManifestTarget, candidateManifestText, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      artifacts['candidate-files'] = { path: candidateManifestPath, sha256: sha256(candidateManifestText) };
       artifacts.candidate = await copyEvidence(outputRoot, workerResult.artifactPaths.afterSnapshot, `${caseRelativeDirectory}/candidate-snapshot.json`);
       if (workerResult.artifactPaths.runtime) artifacts.runtime = await copyEvidence(outputRoot, workerResult.artifactPaths.runtime, `${caseRelativeDirectory}/runtime.json`);
       if (workerResult.artifactPaths.patch) artifacts.patch = await copyEvidence(outputRoot, workerResult.artifactPaths.patch, `${caseRelativeDirectory}/patch.diff`);
       const runtimeMetadata = JSON.parse(await readFile(workerResult.artifactPaths.runtime, 'utf8'));
       assertWorkerRunChecksIdentity(config, runtimeMetadata);
+      assertWorkerLimitsIdentity(config, runtimeMetadata);
+      assertWorkerSettingsIdentity(config, runtimeMetadata);
       const budgetState = { used: 0, limit: checkBudget };
-      if (visibleDefinition) {
+      if (inputStable && visibleDefinition) {
         const evaluator = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-evaluator-'));
         try {
           const candidate = join(evaluator, 'candidate');
-          await copyRegularTree(workerResult.artifactPaths.candidate, candidate, 'worker candidate');
+          await copyRegularTree(retainedCandidate, candidate, 'retained worker candidate');
           const records = await runVerifierGroup({ suiteRoot, manifestPath: visibleDefinition.resource.path, definition: visibleDefinition, visibility: 'visible', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState });
           visibleRecords = records;
         } catch (error) {
@@ -800,11 +1012,11 @@ async function executeCase({ suiteInfo, challengeInfo, config, profile, worker, 
           await rm(evaluator, { recursive: true, force: true }).catch(() => {});
         }
       }
-      if (heldOutDefinition) {
+      if (inputStable && heldOutDefinition) {
         const evaluator = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-evaluator-'));
         try {
           const candidate = join(evaluator, 'candidate');
-          await copyRegularTree(workerResult.artifactPaths.candidate, candidate, 'worker candidate');
+          await copyRegularTree(retainedCandidate, candidate, 'retained worker candidate');
           const records = await runVerifierGroup({ suiteRoot, manifestPath: heldOutDefinition.resource.path, definition: heldOutDefinition, visibility: 'held-out', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState });
           heldOutRecords = records;
         } catch (error) {
@@ -903,6 +1115,7 @@ export async function runBenchmark({
   }
   if (typeof suiteRoot !== 'string') invalid('suiteRoot is required');
   const suiteInfo = await loadSuite(suiteRoot, suitePath);
+  const verifierContent = await prepareVerifierDefinitions(suiteInfo);
   const selectedRepeat = repeat ?? suiteInfo.suite.defaults.repeat;
   if (!Number.isInteger(selectedRepeat) || selectedRepeat < 1 || selectedRepeat > 1000) invalid('repeat must be an integer from 1 to 1000');
   if (!Number.isInteger(maxCheckRuns) || maxCheckRuns < 1 || maxCheckRuns > MAX_CHECK_BUDGET) invalid(`maxCheckRuns must be an integer from 1 to ${MAX_CHECK_BUDGET}`);
@@ -916,7 +1129,7 @@ export async function runBenchmark({
   } catch (error) {
     invalid(error instanceof Error ? error.message : String(error));
   }
-  const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions });
+  const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions });
   const root = resolve(outputRoot ?? join(projectRoot ?? suiteInfo.root, '.tinysdd', 'bench', suiteInfo.suite.id, invocationId));
   await assertNoSymlinkPath(root, { allowMissing: true, requireDirectory: false });
   if (await pathExists(root)) invalid(`benchmark invocation output already exists: ${root}`);
@@ -926,7 +1139,7 @@ export async function runBenchmark({
   for (const challengeInfo of suiteInfo.challenges) {
     for (let repetition = 1; repetition <= selectedRepeat; repetition += 1) {
       const attemptId = `${challengeInfo.challenge.id}-repeat-${repetition}`;
-      cases.push(await executeCase({ suiteInfo, challengeInfo, config, profile, worker, runtime, outputRoot: root, attemptId, repetition, verifier, checkRunnerOptions: config.checkRunnerOptions, checkBudget: maxCheckRuns }));
+      cases.push(await executeCase({ suiteInfo, challengeInfo, verifierContent, config, profile, worker, runtime, outputRoot: root, attemptId, repetition, verifier, checkRunnerOptions: config.checkRunnerOptions, checkBudget: maxCheckRuns }));
     }
   }
   const completedAt = new Date().toISOString();
