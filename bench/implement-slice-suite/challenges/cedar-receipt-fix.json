@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "cedar-receipt-fix",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "bugfix",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/cedar-receipt-fix",
+    "sha256": "b988c0807e894ac75344e9d15d2c186b3463eb1507f24cdf19a4d09f41c22168"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/cedar-receipt-fix/brief.md",
+      "sha256": "3f3f75ab155965b94a223afa106832d009f58b50177adab0cd28d5f942bf3d41"
+    },
+    "context": {
+      "path": "packets/cedar-receipt-fix/context.json",
+      "sha256": "f877fd63321d51046e6763850a9d854f2e65478042502f257518b892cb32cd10"
+    },
+    "checks": {
+      "path": "packets/cedar-receipt-fix/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/receipt.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/cedar-receipt-fix/visible.json",
+      "sha256": "1cb58d2671b4bfa142c5f4b8c6dda18787671010b4d7d2f22b2ff0f6f7d8daf9"
+    },
+    "heldOut": {
+      "path": "verifier/cedar-receipt-fix/held-out.json",
+      "sha256": "e1c60251b093666694ef859375ae3a42091197d68e6a7e9b3d8605a39ed34cf6"
+    }
+  }
+}

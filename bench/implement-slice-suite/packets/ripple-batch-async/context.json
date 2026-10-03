@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "Tasks are zero-argument functions that may return values or promises.",
+    "A rejection or timeout is recorded per task and must not reject the whole batch.",
+    "The concurrency bound applies while task promises are pending; output order is input order."
+  ],
+  "resources": []
+}

@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [{ "id": "held-out-settlement", "argv": ["node", "verifier/ripple-batch-async/held-out.mjs"], "timeoutMs": 120000, "criteria": ["C2"] }]
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The public function is tokenize(input).",
+    "Whitespace separators include spaces, tabs, and newlines; blank input returns [].",
+    "Non-string input is a programmer error and must throw TypeError."
+  ],
+  "resources": []
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "harbor-playlist",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "brownfield",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/harbor-playlist",
+    "sha256": "d596dadb8223cbe319f7304050dd0589128485fedc4fba6698dbf17a0ea3666c"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/harbor-playlist/brief.md",
+      "sha256": "9ae5348a43b484944ae99add5d688f5e1c31768294de2e8ca73ff1475b7ccf42"
+    },
+    "context": {
+      "path": "packets/harbor-playlist/context.json",
+      "sha256": "4365ae2d121f207ee61286969dded39d4cdea460b667e8e6f70f6602a26a0d5d"
+    },
+    "checks": {
+      "path": "packets/harbor-playlist/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/playlist.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/harbor-playlist/visible.json",
+      "sha256": "2371dfa756274603e47c8226565f0c5c26829384bda70c64346e0d85238ddd4c"
+    },
+    "heldOut": {
+      "path": "verifier/harbor-playlist/held-out.json",
+      "sha256": "ecb5587bbd75e168f552b584045ef8817492618be1cca3868587eaf15b13c72f"
+    }
+  }
+}

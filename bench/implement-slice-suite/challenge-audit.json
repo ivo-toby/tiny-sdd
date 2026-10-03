@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "implement-slice-v1",
+  "phase": "phase-1",
+  "challenges": [
+    {
+      "id": "copper-tokenize",
+      "category": "new-module",
+      "reference": {
+        "path": "candidates/copper-tokenize/reference",
+        "sha256": "6d38e69ee6a96bf2feb7e0aa06cc3ee7b3c90598a67d33e34b0778d88389e69a"
+      },
+      "wrong": [
+        {
+          "id": "wrong-single-space",
+          "path": "candidates/copper-tokenize/wrong-single-space",
+          "sha256": "72108ddd58d2bf1429bf76c75b882b440e5f60bae629316412e9a0937676b3ff",
+          "heldOutFailures": [
+            "held-out-whitespace"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "orbit-window",
+      "category": "new-module",
+      "reference": {
+        "path": "candidates/orbit-window/reference",
+        "sha256": "d1007be90cffc02fc11795c941b664f0571c7e9772a62609b31b339487c6d8b9"
+      },
+      "wrong": [
+        {
+          "id": "wrong-inclusive-end",
+          "path": "candidates/orbit-window/wrong-inclusive-end",
+          "sha256": "910849b9a01003c9498840959526d31c8a8f0ea70d1cace0b497d66622a0975b",
+          "heldOutFailures": [
+            "held-out-half-open"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "harbor-playlist",
+      "category": "brownfield",
+      "reference": {
+        "path": "candidates/harbor-playlist/reference",
+        "sha256": "ce45e1f516cfb4d51a917517dd3e3fed949891a92d36436d897ebcfb7ca3da1c"
+      },
+      "wrong": [
+        {
+          "id": "wrong-mutating",
+          "path": "candidates/harbor-playlist/wrong-mutating",
+          "sha256": "941d2e81a90e5d52483f93083852d623aac08286bd7afa5689e1aa19ccc2dd82",
+          "heldOutFailures": [
+            "held-out-immutability"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quartz-ledger",
+      "category": "brownfield",
+      "reference": {
+        "path": "candidates/quartz-ledger/reference",
+        "sha256": "e07e21bef127ff8790b6538cc93eb4ad328670a1b201842255b50dd52994582d"
+      },
+      "wrong": [
+        {
+          "id": "wrong-global-total",
+          "path": "candidates/quartz-ledger/wrong-global-total",
+          "sha256": "3f854e77777da5b834404d574c5f5d62571b351a25176cc76ff6f068f1d09599",
+          "heldOutFailures": [
+            "held-out-groups"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "maple-queue-fix",
+      "category": "bugfix",
+      "reference": {
+        "path": "candidates/maple-queue-fix/reference",
+        "sha256": "8aa39b5ccd553ae6359f9f7cfc5dae46e117ce4a324c365028a163ee8c1071d4"
+      },
+      "wrong": [
+        {
+          "id": "wrong-not-done",
+          "path": "candidates/maple-queue-fix/wrong-not-done",
+          "sha256": "570fde239ce236f82a4042e95400bf4b7472e7347f4598c08ba94939568d907c",
+          "heldOutFailures": [
+            "held-out-state"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cedar-receipt-fix",
+      "category": "bugfix",
+      "reference": {
+        "path": "candidates/cedar-receipt-fix/reference",
+        "sha256": "0829c2f0ad8baf12034b667e9a63ba77a6552b3444e16abdf19cc474698be2b5"
+      },
+      "wrong": [
+        {
+          "id": "wrong-number-coercion",
+          "path": "candidates/cedar-receipt-fix/wrong-number-coercion",
+          "sha256": "fa0414735fe1ed0b048866a96adce0aa5827c99ce156ea7bf0be53f87c2b7373",
+          "heldOutFailures": [
+            "held-out-format"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ripple-batch-async",
+      "category": "async-heavy",
+      "reference": {
+        "path": "candidates/ripple-batch-async/reference",
+        "sha256": "6cf89413c8d0797af5b89108e97c183673526a65c5a73a91d0817f0edc119993"
+      },
+      "wrong": [
+        {
+          "id": "wrong-all-rejects",
+          "path": "candidates/ripple-batch-async/wrong-all-rejects",
+          "sha256": "ee06fc31c0e2ea679933198df5e82e7ec80a4722b76914d9d8de7aa7c25c9efd",
+          "heldOutFailures": [
+            "held-out-settlement"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ember-option-api",
+      "category": "library-api-trap",
+      "reference": {
+        "path": "candidates/ember-option-api/reference",
+        "sha256": "b011dcd84b2ea152b68762dad724634c42938d1591c3cb38e5e2607312d760ef"
+      },
+      "wrong": [
+        {
+          "id": "wrong-value-property",
+          "path": "candidates/ember-option-api/wrong-value-property",
+          "sha256": "1b88bdeda1f88e56a1ce4f34e52e60bee0fadb5c63d784085596e2cf9c90ad28",
+          "heldOutFailures": [
+            "held-out-value"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "linen-retry-lint",
+      "category": "lint-rule-trap",
+      "reference": {
+        "path": "candidates/linen-retry-lint/reference",
+        "sha256": "5b2e60a83c24d75b61131c98df8005acbb6838a3ba776603799359949dde033a"
+      },
+      "wrong": [
+        {
+          "id": "wrong-async-no-await",
+          "path": "candidates/linen-retry-lint/wrong-async-no-await",
+          "sha256": "08e91a985a50008123ef9a51df466e920190f5de6f6b0b4e91cd7303fbd35e5d",
+          "heldOutFailures": [
+            "held-out-lint"
+          ]
+        }
+      ]
+    }
+  ]
+}

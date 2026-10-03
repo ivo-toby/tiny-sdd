@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "Option.some(value) sets isSome true and stores value in option.val.",
+    "Option.none() sets isSome false and val undefined.",
+    "The protected helper is the dependency API; do not substitute value or unwrap accessors."
+  ],
+  "resources": []
+}

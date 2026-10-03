@@ -1,0 +1,11 @@
+export async function retry(operation, attempts) {
+  let lastError;
+  for (let count = 0; count < attempts; count += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}

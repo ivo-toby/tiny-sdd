@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "ripple-batch-async",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "async-heavy",
+    "medium"
+  ],
+  "fixture": {
+    "path": "fixtures/ripple-batch-async",
+    "sha256": "881b154e8b9ed6a43c0c66a7dfaf05d8ee66a7a0d1f523f8e27347faeb7962ee"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/ripple-batch-async/brief.md",
+      "sha256": "4509f02e962e1e257760e5621729a4b8baae4a0e56c7b9c8e10cb6ee4fcbbf10"
+    },
+    "context": {
+      "path": "packets/ripple-batch-async/context.json",
+      "sha256": "6bce2974e8ed7a9cc934ee486a1b50f79734695fe12bf9d4800888dad0fb8076"
+    },
+    "checks": {
+      "path": "packets/ripple-batch-async/checks.json",
+      "sha256": "86e481ff49b440e5d2aa57d3ac0f995f3ac2a56baefa7a92500454123a0d141f"
+    },
+    "allowedPaths": [
+      "src/batch.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/ripple-batch-async/visible.json",
+      "sha256": "ed63100cce4f02b6374e2699d09b411e8f53cf700ecd7a94ad8805a8dbc24da2"
+    },
+    "heldOut": {
+      "path": "verifier/ripple-batch-async/held-out.json",
+      "sha256": "ecafb32180c6f0efaf44c48c2238b28c24bb595aa3f8375c3b071017ffef2438"
+    }
+  }
+}

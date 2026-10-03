@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "Only state === 'ready' is eligible; waiting, cancelled, and done are not eligible.",
+    "Removing a ready item preserves the order of the other queue entries.",
+    "An empty or ineligible queue returns null without removing anything."
+  ],
+  "resources": []
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "The separator is one literal pipe and the id must be nonempty.",
+    "The amount is a nonempty sequence of ASCII decimal digits representing cents.",
+    "Malformed input throws an Error mentioning amount."
+  ],
+  "resources": []
+}

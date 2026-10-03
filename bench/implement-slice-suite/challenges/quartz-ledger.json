@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "quartz-ledger",
+  "version": "1",
+  "role": "implement-slice",
+  "difficultyTags": [
+    "brownfield",
+    "small"
+  ],
+  "fixture": {
+    "path": "fixtures/quartz-ledger",
+    "sha256": "0114ad664d8bb37ef5dedca79e0d210de197cf31055608915784eb57e7547868"
+  },
+  "packet": {
+    "brief": {
+      "path": "packets/quartz-ledger/brief.md",
+      "sha256": "505423c26ad5c9a52aa8df3f8cd606da55a9c9348f8204288b35145daab7f0d1"
+    },
+    "context": {
+      "path": "packets/quartz-ledger/context.json",
+      "sha256": "0ef3739f2a9d03277f015431f87a67ea2fc05a03c33da09068a662cf4790f95e"
+    },
+    "checks": {
+      "path": "packets/quartz-ledger/checks.json",
+      "sha256": "61b7675644c39f41bea45669a9ea8144bbb31894122920a65755cb15e15b3e31"
+    },
+    "allowedPaths": [
+      "src/ledger.mjs"
+    ],
+    "protectedPaths": [
+      "tests/visible.test.mjs"
+    ]
+  },
+  "verifier": {
+    "visible": {
+      "path": "verifier/quartz-ledger/visible.json",
+      "sha256": "199968b64087db316d5355ef8405218d4ca76698f75796a23eee6c7a3ff75c9b"
+    },
+    "heldOut": {
+      "path": "verifier/quartz-ledger/held-out.json",
+      "sha256": "a16b1eb28eab666441f6188ec05bfb296d1428f84396cad4d572581f4abdaf6e"
+    }
+  }
+}

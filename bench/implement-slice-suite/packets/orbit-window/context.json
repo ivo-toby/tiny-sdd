@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "Window ends are exclusive: a range covers indices start <= i < end.",
+    "The final window is clipped to length; do not emit a zero-length window.",
+    "Invalid length or width must throw RangeError."
+  ],
+  "resources": []
+}
