@@ -2,7 +2,11 @@ const FAILURE_RULES = [
   {
     name: 'environment',
     decision: 'environment',
-    matches: (line) => /ECONNREFUSED|ENOTFOUND|ENOSPC|EACCES|ETIMEDOUT|out of memory|Killed/iu.test(line),
+    matches: (line) => (
+      /\b(?:ECONNREFUSED|ENOTFOUND|ENOSPC|EACCES|ETIMEDOUT)\b/u.test(line)
+      || /^\s*Killed\s*$/u.test(line)
+      || /JavaScript heap out of memory|FATAL ERROR: .* out of memory|Cannot allocate memory/u.test(line)
+    ),
   },
   {
     name: 'missing-context',
@@ -53,7 +57,7 @@ export function triageFailure({ checkLog } = {}) {
 function hasPublicApiChange(patch) {
   return String(patch ?? '').split(/\r?\n/u).some((line) => (
     (line.startsWith('+') || line.startsWith('-'))
-    && line.slice(1).startsWith('export ')
+    && line.slice(1).trimStart().startsWith('export ')
   ));
 }
 

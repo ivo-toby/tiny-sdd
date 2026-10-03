@@ -52,6 +52,17 @@ test('triageFailure prefers environment evidence and limits/truncates it', () =>
   assert.deepEqual(result.evidence.slice(1), ['ENOTFOUND host', 'ENOSPC']);
 });
 
+test('triageFailure does not treat passing test names as environment failures', () => {
+  const result = triageFailure({
+    checkLog: "✓ skips killed launcher and eacces fallback (3ms)\nReferenceError: Cannot access 'relative' before initialization",
+  });
+  assert.deepEqual(result, {
+    decision: 'fixable-from-log',
+    rule: 'tdz',
+    evidence: ["ReferenceError: Cannot access 'relative' before initialization"],
+  });
+});
+
 const cleanResult = { outcome: 'completed', scopeViolations: [] };
 const passingChecks = [{ name: 'test', passed: true }];
 const cleanPatch = 'diff --git a/src/file.mjs b/src/file.mjs\n+const value = 1;';
@@ -69,7 +80,7 @@ test('triageReview reports each failed review condition', () => {
     [{ outcome: 'completed', scopeViolations: [{ path: 'outside.mjs' }] }, passingChecks, cleanPatch, 'scope'],
     [cleanResult, [], cleanPatch, 'checks are missing'],
     [cleanResult, [{ name: 'test', passed: false }], cleanPatch, 'checks did not all pass'],
-    [cleanResult, passingChecks, '+export function publicApi() {}', 'public API'],
+    [cleanResult, passingChecks, '+  export function publicApi() {}', 'public API'],
   ];
   for (const [result, controllerChecks, patch, reason] of cases) {
     const triage = triageReview({ result, controllerChecks, patch });

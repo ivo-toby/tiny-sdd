@@ -45,7 +45,8 @@ before paying for a frontier review. The frontier reviewer pays today because
 every delivered slice is reviewed. The question shape is noul: does this
 candidate need frontier review? The deterministic baseline skips review only
 when the worker completed, scope is clean, at least one controller check passed,
-and the patch adds or removes no line beginning with `export `.
+and the patch adds or removes no line whose content begins with `export `.
+The controller checks must be non-empty and all passing.
 
 The talon table shows five delivered slices through S5a, each with a review
 decision, plus the failed initial S5 attempt that caused a behavior split.
