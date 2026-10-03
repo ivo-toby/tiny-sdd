@@ -175,9 +175,12 @@ test('task checks manifests are validated, approved, and carried in packets', as
     assert.equal(packet.checks.path, checksPath);
     assert.equal(packet.checks.text, checksText);
     assert.equal(packet.checks.sha256, sha256(checksText));
+    const benchmark = await resolveBenchmarkPacket(root, 'one');
+    assert.equal(benchmark.checks.sha256, sha256(checksText));
     assert.equal((await controllerStatus(root)).tasks[0].checks, checksPath);
     await writeFile(join(root, ...checksPath.split('/')), `${checksText}\n`);
     assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+    await assert.rejects(resolveBenchmarkPacket(root, 'one'), { code: 'STALE_BENCHMARK_CHECKS' });
   } finally {
     await cleanup(root);
   }

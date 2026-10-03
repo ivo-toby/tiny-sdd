@@ -651,7 +651,11 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
   let checks;
   if (task.checks) {
     const checksText = await readProjectFile(root, task.checks, taskBriefOptions());
-    checks = { path: task.checks, text: checksText, sha256: sha256(checksText) };
+    const checksSha256 = sha256(checksText);
+    if (checksSha256 !== task.approval.checksDigest) {
+      throw tinyError('STALE_BENCHMARK_CHECKS', `checks manifest has changed since the recorded approval: ${task.checks}`);
+    }
+    checks = { path: task.checks, text: checksText, sha256: checksSha256 };
   }
   return {
     schemaVersion: 1,
