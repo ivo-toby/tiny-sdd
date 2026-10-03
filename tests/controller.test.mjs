@@ -1648,6 +1648,24 @@ test('apply follows a --base-run chain from the root run and ends at the final c
   }
 });
 
+test('a --base-run revision of an already applied run conflicts, because the project left the lineage start', async () => {
+  const root = await applyProject({ 'src/a.ts': 'v0\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'v0\n' }, after: { 'src/a.ts': 'v1\n' } });
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
+    await assert.rejects(apply(root, RUN_TWO), { code: 'APPLY_CONFLICT', details: { paths: ['src/a.ts'], runId: RUN_TWO, rootRunId: RUN_ONE } });
+    assert.equal(await readProject(root, 'src/a.ts'), 'v1\n');
+    // The next attempt dispatched from the applied project applies cleanly.
+    await fakeRun(root, RUN_OTHER, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' } });
+    await apply(root, RUN_OTHER);
+    assert.equal(await readProject(root, 'src/a.ts'), 'v2\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('a three-run chain applies from the earliest run', async () => {
   const root = await applyProject({ 'src/a.ts': 'v0\n' });
   try {

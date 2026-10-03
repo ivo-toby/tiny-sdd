@@ -107,14 +107,27 @@ tinysdd next
 
 `task apply` copies the run's allowed files by content, so it works for a
 `--base-run` revision too (a revision's `patch.diff` is a delta against the prior
-candidate, not the project). It follows the lineage to the first run, and refuses
-with `APPLY_CONFLICT`, writing nothing, if a project file no longer matches the
-state that run started from; files that already equal the candidate are recorded
-as `already-applied`. It refuses another task's run, a benchmark replay, scope
+candidate, not the project). It follows the lineage to the first run, applies only
+the paths those runs recorded as changed, and refuses with `APPLY_CONFLICT`,
+writing nothing, if one of those project files no longer matches the state the
+lineage started from; files that already equal the candidate are recorded as
+`already-applied`. It refuses another task's run, a benchmark replay, scope
 violations and a run whose outcome is not `completed` (a timed-out run included),
-with no override. The record shows under `applied` in `status --json`; an accepting review adds
-`appliedFromRun` with `identical: false` if the files were edited after applying.
-Apply is neither verification nor acceptance.
+with no override. The record shows under `applied` in `status --json`; an
+accepting review adds `appliedFromRun` with `identical: false` if any allowed
+file differs from what apply left. Apply is neither verification nor acceptance.
+
+After an apply the approval keeps binding the context the worker started from
+(cited lines of an allowed file are read from the first run's starting copy), so
+applying does not stale it and nothing re-approves the new source; if that run's
+directory is deleted the approval reads stale. While an apply is recorded,
+`task packet` and `worker run` refuse with `TASK_APPLIED`: record the review
+first. Accepted and blocked reviews keep the record. A `revision` review records
+`appliedFromRun` and clears it, since the next attempt builds on the applied
+project; if the context cites an allowed file whose cited lines changed, the
+approval then reads `stale_approval` and must be re-approved explicitly. Do not
+start a `--base-run` revision from an already applied run: the project no longer
+matches the lineage's starting state, so its apply conflicts.
 
 Use `revision` for a bounded repair or `blocked` for missing authority/context.
 The next revision packet includes the recorded review evidence as feedback;

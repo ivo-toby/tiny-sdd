@@ -239,15 +239,29 @@ tinysdd next
 
 `task apply` copies the run's allowed files by content, not by patch, so it also
 works for a `--base-run` revision, whose `patch.diff` is a delta against the prior
-candidate. It follows the revision lineage back to the first run and refuses with
-`APPLY_CONFLICT`, writing nothing, when a project file no longer matches the state
-that run started from. A file that already equals the candidate (for example
+candidate. It follows the revision lineage back to the first run and applies only
+the paths those runs recorded as changed. It refuses with `APPLY_CONFLICT`,
+writing nothing, when one of those project files no longer matches the state the
+lineage started from. A file that already equals the candidate (for example
 applied by hand) is recorded as `already-applied`. It refuses a run of another
 task, a benchmark replay, a run with scope violations and a run whose outcome is
-`completed`, such as a timed-out one, with no override. The run is recorded under
-`applied` in `status --json`, and an accepting review adds `appliedFromRun`, with
-`identical: false` when you edited the files after applying. Applying is not
-verification or acceptance.
+not `completed` (a timed-out one included), with no override. The run is recorded
+under `applied` in `status --json`, and an accepting review adds `appliedFromRun`,
+with `identical: false` when any allowed file differs from what apply left, not
+only the files the run changed. Applying is not verification or acceptance.
+
+After an apply the approval keeps binding the context the worker started from: a
+cited line of an allowed file is read from the first run's starting copy, so
+applying does not make the approval stale, and nothing re-approves the new source.
+If that run's directory is gone the approval reads stale. While an apply is
+recorded, `task packet` and `worker run` refuse with `TASK_APPLIED`; record the
+review first. An accepted or blocked review keeps the apply record. A `revision`
+review records `appliedFromRun` and clears the apply record, because the next
+attempt builds on the applied project; if the context cites an allowed file whose
+cited lines changed, the approval then reads `stale_approval` and you re-approve
+it explicitly. A later run made with `--base-run` of an already applied run
+conflicts, because the project no longer matches the lineage's starting state;
+dispatch the next attempt from the applied project instead.
 
 Use `revision` or `blocked` instead of accepting an incomplete result. Caller
 evidence is labeled as such; the CLI does not claim to have executed its tests.
