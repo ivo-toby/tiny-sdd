@@ -52,6 +52,14 @@ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',stopRea
     sourceAgentDir: agent,
     sourceEnv: { FAKE_BASE: 'http://127.0.0.1:9/v1', FAKE_TOKEN: 'synthetic-test-token' },
     testEnv: { TINYSDD_TEST_CHALLENGE: 'normal-slice' },
+    checkRunner: async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      durationMs: 1,
+      output: { text: '', tail: '', truncated: false },
+      sandbox: { runner: 'test-check-runner', network: 'none' },
+    }),
   };
 }
 
@@ -150,7 +158,10 @@ test('runs fresh repeated fixtures, retains timeout/setup attempts, and defers h
     assert.equal(result.summary.groups[0].failed, 2);
     assert.equal(seen.length, 4);
     const invocation = parseBenchmarkInvocation(await readFile(join(output, 'invocation.json'), 'utf8'));
+    assert.equal(invocation.configIdentity.runChecks.available, true);
+    assert.equal(invocation.configIdentity.runChecks.budget, 12);
     const cases = await Promise.all(invocation.caseResults.map(async ({ path }) => JSON.parse(await readFile(join(output, path), 'utf8'))));
+    assert.ok(cases.every((entry) => entry.observed.runChecks.available === true));
     assert.equal(cases.filter((entry) => entry.outcome === 'timeout').length, 2);
     assert.equal(cases.filter((entry) => entry.failure.missing.some(({ field }) => field === 'attempt')).length, 2);
     for (const entry of cases) {

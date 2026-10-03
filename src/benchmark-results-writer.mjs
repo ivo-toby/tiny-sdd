@@ -1,4 +1,4 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import {
   atomicWriteJson,
@@ -9,8 +9,6 @@ import {
 } from './fs-utils.mjs';
 import {
   BENCHMARK_RESULTS_SCHEMA_VERSION,
-} from './benchmark-results.mjs';
-import {
   parseBenchmarkInvocation,
   parseBenchmarkSummary,
   validateBenchmarkCaseResult,
@@ -46,6 +44,12 @@ async function writeJson(root, path, value) {
   await assertNoSymlinkPath(dirname(target), { allowMissing: true, requireDirectory: false });
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   await assertNoSymlinkPath(dirname(target), { allowMissing: false, requireDirectory: true });
+  try {
+    await lstat(target);
+    invalid(`benchmark artifact already exists: ${relative}`);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
   await atomicWriteJson(target, value);
   const text = await readFile(target);
   return { path: relative, sha256: sha256(text) };
@@ -89,9 +93,15 @@ export async function writeBenchmarkResults({
   if (!Array.isArray(cases) || cases.length === 0) invalid('benchmark invocation must retain at least one case result');
   const caseRefs = [];
   const normalizedCases = [];
+  const attemptIds = new Set();
   for (const result of cases) {
     const normalized = validateBenchmarkCaseResult(result);
     if (normalized.configDigest !== configDigest) invalid('case result configDigest does not match invocation configDigest');
+    if (attemptIds.has(normalized.attemptId)) invalid(`duplicate benchmark attemptId: ${normalized.attemptId}`);
+    attemptIds.add(normalized.attemptId);
+    if (normalized.suite.id !== suite.id || normalized.suite.version !== suite.version || normalized.suite.sha256 !== suite.sha256) {
+      invalid(`case result suite does not match invocation suite: ${normalized.attemptId}`);
+    }
     normalizedCases.push(normalized);
     const path = `cases/${normalized.attemptId}/case-result.json`;
     caseRefs.push({ path, sha256: null });
