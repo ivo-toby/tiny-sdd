@@ -801,13 +801,41 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.outcome, "completed");
       assert.equal(result.observed.reads, 4);
       assert.equal(result.observed.citedRereads, 3);
-      assert.deepEqual(result.taskShape, { allowedFiles: 1, contextFacts: 0, compiledContextBytes: result.taskShape.compiledContextBytes, citedResources: 1, citedLines: 1, citedTestLines: 0 });
+      assert.deepEqual(result.taskShape, { allowedFiles: 1, contextFacts: 0, compiledContextBytes: result.taskShape.compiledContextBytes, citedResources: 1, citedLines: 1, citedTestLines: 0, citedFakeTimers: 0, citedDeferredPromises: 0, citedConcurrencyMarkers: 0, citedOrderingAssertions: 0 });
       assert.ok(result.taskShape.compiledContextBytes > 0);
       assert.deepEqual(result.observed.repeatedReads, { "src/allowed.txt": 3 });
       assert.equal(result.observed.compactions.length, 1);
       assert.equal(result.observed.compactions[0].tokensBefore, 90000);
       assert.equal(result.observed.compactions[0].summarySha256, createHash("sha256").update("Summary of the task so far.").digest("hex"));
       assert.ok(result.warnings.some((warning) => /compacted the worker context/u.test(warning)));
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("records cited test characteristics in result taskShape only", async () => {
+    const project = await makeProject();
+    try {
+      await mkdir(join(project, "tests"));
+      await writeFile(join(project, "tests", "timers.test.mjs"), "t.mock.timers.enable({ apis: ['setTimeout'] });\nPromise.withResolvers();\nPromise.race([]);\nassert.deepEqual(events, []);\n");
+      const contextText = JSON.stringify({ schemaVersion: 1, facts: [], resources: [{ path: "tests/timers.test.mjs", startLine: 1, endLine: 4, purpose: "Async edge tests." }] });
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), context: { path: ".tinysdd/tasks/task.context.json", text: contextText, sha256: createHash("sha256").update(contextText).digest("hex") } },
+        worker: worker(),
+        runtime: runtime(undefined, "complete"),
+      });
+      assert.equal(result.outcome, "completed");
+      const stored = JSON.parse(await readFile(join(result.artifactPaths.directory, "result.json"), "utf8"));
+      for (const shape of [result.taskShape, stored.taskShape]) {
+        assert.equal(shape.citedFakeTimers, 1);
+        assert.equal(shape.citedDeferredPromises, 1);
+        assert.equal(shape.citedConcurrencyMarkers, 1);
+        assert.equal(shape.citedOrderingAssertions, 1);
+      }
+      const context = JSON.parse(await readFile(result.artifactPaths.context, "utf8"));
+      assert.equal(Object.hasOwn(context.compiledContext, "testCharacteristics"), false);
+      assert.equal(Object.hasOwn(context.compiledContext.resources[0], "testCharacteristics"), false);
     } finally {
       await rm(project, { recursive: true, force: true });
     }

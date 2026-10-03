@@ -698,7 +698,7 @@ contexts grow.
 | `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |
 | Timeout candidate state | **Implemented** (#11) | Non-completed results report allowed paths touched and untouched; S4 timed out with a complete candidate. |
 | Shared briefs going stale | **Implemented** (#16) | One brief per slice, shared spec cited by line range. Approval binds the cited excerpts, not the whole file: the compiled text no longer carries `Source sha256:`. Older approvals keep binding the whole file through a legacy digest until re-approved. Addenda stay on hold. |
-| Behavior-split sizing signal | Designed (3.2) | Test characteristics (fake timers, deferred promises, races) recommend a behavior split. |
+| Behavior-split sizing signal | **Implemented** (#18) | Cited test characteristics (fake timers with deferred promises or races, or at least 8 ordering assertions) recommend a behavior split; thresholds are provisional and uncalibrated, pending the talon reruns. |
 | Standard manifest facts | **Implemented** (#19) | Lint rules and confusable library accessors, prompted by the skill. |
 | Run workers from a real worktree | **Documented** (quickstart) | Never from a hand-synced copy. |
 | Shell portability in examples | Checked | No `${var:+…}` constructs in this repository's skill or docs. Rule for future examples: one literal flag per argument, no conditional parameter expansion. |

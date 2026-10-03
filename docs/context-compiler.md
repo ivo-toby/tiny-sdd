@@ -54,7 +54,15 @@ part of task approval. It is not a place to smuggle extra scope into a task.
 an out-of-range line or an over-budget packet fails registration instead of
 surfacing first at approval. `task add` and `task approve` also return an
 advisory `sizing` report (allowed-file count, compiled-context bytes, cited test
-lines) with warnings above provisional thresholds; the warnings never block.
+lines, `citedFakeTimers`, `citedDeferredPromises`, `citedConcurrencyMarkers`,
+`citedOrderingAssertions`, and `behaviorSplit: { recommended, reasons }`).
+Only cited test-source ranges contribute to these provisional text heuristics.
+Fake timers with deferred promises or concurrency markers, or at least 8
+ordering assertions, recommend separating the sequential core from the async
+edge into their own test files. Thresholds are provisional and uncalibrated,
+pending the talon reruns; the warnings never block. The same four counts appear
+in worker `result.json` under `taskShape`, outside approval digests and worker
+context metadata.
 
 ## Share a spec between slices
 

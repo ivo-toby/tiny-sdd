@@ -68,6 +68,12 @@ file, so slices that cite one shared spec by line range stay current when the
 spec is appended to or edited outside their ranges. Inserting lines above a
 cited range shifts it and makes the slice stale: append addenda at the end.
 
+Sizing warnings at `task add` and `task approve` now include a behavior-split
+recommendation for cited tests with fake timers plus deferred promises or races,
+or at least 8 ordering assertions. Separate the sequential core from the async
+edge, each with its own test file. These advisory thresholds are provisional
+and uncalibrated, pending the talon reruns; warnings never block.
+
 When a task has fixed checks, declare them in a reviewed JSON file under
 `.tinysdd/tasks/` and pass it with `--checks`. TinySDD validates and binds the
 declaration into approval and the worker packet, but does not execute the checks

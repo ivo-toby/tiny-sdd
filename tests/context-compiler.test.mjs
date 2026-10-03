@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 
-import { compileContext, parseContextManifest } from '../src/context-compiler.mjs';
+import { analyzeTestSource, compileContext, contextSizeMetrics, MAX_CONTEXT_SOURCE_BYTES, parseContextManifest } from '../src/context-compiler.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 
 // Project roots may not resolve through a symlink, and tmpdir() does on macOS
@@ -17,6 +18,78 @@ async function project() {
   await writeFile(join(root, 'src', 'contract.ts'), 'export type Input = { id: string };\nexport function run(input: Input) {\n  return input.id;\n}\n');
   return root;
 }
+
+test('analyzes provisional test characteristics deterministically', () => {
+  const cases = [
+    ['vi.useFakeTimers(); vi.advanceTimersByTime(1); jest.runAllTimers(); jest.runOnlyPendingTimers();', { fakeTimers: 4 }],
+    ['t.mock.timers.enable({ apis: ["setTimeout"] }); clock.tick(1); clock.tickAsync(1);', { fakeTimers: 3 }],
+    ['Promise.withResolvers(); deferred(); new Promise((resolve) => { release = resolve; });', { deferredPromises: 3 }],
+    ['createDeferred<void>(); defer(); new Promise<void>((resolve) => { state.release = resolve; });', { deferredPromises: 3 }],
+    ['deferred<Result>(); new Promise<void>((resolve) => { release = resolve; });', { deferredPromises: 2 }],
+    ['new Promise((resolve) => setTimeout(resolve, 1));', {}],
+    ['Promise.race([]); Promise.all([]); Promise.allSettled([]); new AbortController();', { concurrencyMarkers: 4 }],
+    ['assert.deepEqual(events, []);\nexpect(callOrder).toEqual([]);\nexpect(result).toEqual({});\nassert.deepEqual(catalog, []);', { orderingAssertions: 2 }],
+    ['assert.deepStrictEqual(emittedEvents, []); expect(calls_log).toStrictEqual([]);\nassert.deepEqual(log, []);', { orderingAssertions: 2 }],
+    ['const result = sum(1, 2); assert.equal(result, 3);', {}],
+  ];
+  for (const [source, counts] of cases) {
+    const expected = { fakeTimers: 0, deferredPromises: 0, concurrencyMarkers: 0, orderingAssertions: 0, ...counts };
+    assert.deepEqual(analyzeTestSource(source), expected, source);
+    assert.deepEqual(analyzeTestSource(source), expected, 'Repeated calls must not retain regex state.');
+  }
+});
+
+for (const marker of ['new Promise<', 'deferred <']) {
+  test(`bounds generic matching on 512 KB of ${marker}`, (t) => {
+    const source = marker.repeat(Math.ceil(MAX_CONTEXT_SOURCE_BYTES / marker.length)).slice(0, MAX_CONTEXT_SOURCE_BYTES);
+    const started = performance.now();
+    const counts = analyzeTestSource(source);
+    const elapsedMs = performance.now() - started;
+    t.diagnostic(`Analyzed ${source.length} bytes in ${elapsedMs.toFixed(1)} ms`);
+    assert.ok(elapsedMs < 2000, `Expected analysis under 2000 ms, took ${elapsedMs.toFixed(1)} ms`);
+    assert.deepEqual(counts, { fakeTimers: 0, deferredPromises: 0, concurrencyMarkers: 0, orderingAssertions: 0 });
+  });
+}
+
+test('counts only cited test ranges and aggregates resources without changing context digests', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'tests'));
+    const source = 'vi.runAllTimers();\nvi.useFakeTimers();\nPromise.withResolvers();\nPromise.race([]);\nassert.deepEqual(events, []);\n';
+    await writeFile(join(root, 'tests', 'timers.test.ts'), source);
+    await writeFile(join(root, 'src', 'clock.ts'), source);
+    const compile = async (resources) => {
+      const text = JSON.stringify({ schemaVersion: 1, facts: [], resources });
+      return compileContext(root, { path: '.tinysdd/tasks/task.context.json', text, sha256: sha256(text) });
+    };
+    const selection = { path: 'tests/timers.test.ts', startLine: 2, endLine: 5, purpose: 'Async edge.' };
+    const compiled = await compile([selection]);
+    assert.deepEqual(compiled.testCharacteristics, { fakeTimers: 1, deferredPromises: 1, concurrencyMarkers: 1, orderingAssertions: 1 });
+    assert.deepEqual(contextSizeMetrics(compiled), {
+      contextFacts: 0, compiledContextBytes: compiled.bytes, citedResources: 1, citedLines: 4, citedTestLines: 4,
+      citedFakeTimers: 1, citedDeferredPromises: 1, citedConcurrencyMarkers: 1, citedOrderingAssertions: 1,
+    });
+    const uncitedTest = await compile([{ ...selection, path: 'src/clock.ts' }]);
+    assert.deepEqual(uncitedTest.testCharacteristics, analyzeTestSource(''));
+    const combined = await compile([selection, { ...selection, startLine: 1, endLine: 1 }, { ...selection, path: 'src/clock.ts' }]);
+    assert.deepEqual(combined.testCharacteristics, { fakeTimers: 2, deferredPromises: 1, concurrencyMarkers: 1, orderingAssertions: 1 });
+    assert.equal(Object.hasOwn(compiled.resources[0], 'testCharacteristics'), false);
+    assert.equal(Object.hasOwn(compiled.manifest, 'testCharacteristics'), false);
+    assert.doesNotMatch(compiled.rendered, /testCharacteristics|citedFakeTimers/u);
+    assert.equal(compiled.sha256, sha256(compiled.rendered));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('context size metrics default missing test characteristics to zero', () => {
+  for (const compiled of [null, { facts: [], resources: [], bytes: 0 }]) {
+    assert.deepEqual(contextSizeMetrics(compiled), {
+      contextFacts: 0, compiledContextBytes: 0, citedResources: 0, citedLines: 0, citedTestLines: 0,
+      citedFakeTimers: 0, citedDeferredPromises: 0, citedConcurrencyMarkers: 0, citedOrderingAssertions: 0,
+    });
+  }
+});
 
 test('compiles declared source line ranges with stable digests', async () => {
   const root = await project();

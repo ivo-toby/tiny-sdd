@@ -85,12 +85,23 @@ async function compileTaskContext(projectRoot, path) {
 // broker-contract: 8 files, 43 KB context, 64 tests, zero worker writes).
 // They warn; they never block registration or approval.
 export const TASK_SIZE_THRESHOLDS = Object.freeze({ allowedFiles: 3, compiledContextBytes: 40 * 1024, citedTestLines: 300 });
+// Provisional and uncalibrated; tune on the talon reruns.
+export const BEHAVIOR_SPLIT_THRESHOLDS = Object.freeze({ citedOrderingAssertions: 8 });
 function taskSizing(allow, compiled) {
   const metrics = { allowedFiles: allow.length, ...contextSizeMetrics(compiled) };
   const warnings = Object.entries(TASK_SIZE_THRESHOLDS)
     .filter(([key, limit]) => metrics[key] > limit)
     .map(([key, limit]) => `${key} ${metrics[key]} exceeds the advisory limit ${limit}; consider splitting the task`);
-  return { ...metrics, thresholds: { ...TASK_SIZE_THRESHOLDS }, warnings };
+  const reasons = [];
+  if (metrics.citedFakeTimers > 0 && (metrics.citedDeferredPromises > 0 || metrics.citedConcurrencyMarkers > 0)) {
+    reasons.push('fake timers with deferred promises or concurrency markers');
+  }
+  if (metrics.citedOrderingAssertions >= BEHAVIOR_SPLIT_THRESHOLDS.citedOrderingAssertions) {
+    reasons.push(`citedOrderingAssertions ${metrics.citedOrderingAssertions} meets the advisory limit ${BEHAVIOR_SPLIT_THRESHOLDS.citedOrderingAssertions}`);
+  }
+  const recommended = reasons.length > 0;
+  if (recommended) warnings.push(`behavior split recommended (${reasons.join('; ')}): separate the sequential core from the async edge, each with its own test file; fewer files alone will not help`);
+  return { ...metrics, behaviorSplit: { recommended, reasons }, thresholds: { ...TASK_SIZE_THRESHOLDS, ...BEHAVIOR_SPLIT_THRESHOLDS }, warnings };
 }
 
 function nowIso() {

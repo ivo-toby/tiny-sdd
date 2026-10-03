@@ -1,6 +1,7 @@
 # Local agent configuration
 .agents/
 .codex/
+.worktrees/
 
 # Raw model events and copied candidate repositories; retain locally.
 experiments/runs/

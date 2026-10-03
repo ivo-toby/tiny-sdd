@@ -24,6 +24,12 @@ Approval binds the cited lines, not the whole file, so slices that cite one shar
 spec by line range stay current when it is appended to or edited outside their
 ranges. Inserting lines above a cited range shifts it and stales the slice.
 
+Sizing warnings at `task add` and `task approve` now include a behavior-split
+recommendation for cited tests with fake timers plus deferred promises or races,
+or at least 8 ordering assertions. Separate the sequential core from the async
+edge, each with its own test file. The thresholds are provisional and
+uncalibrated, pending the talon reruns; warnings never block.
+
 Retire a task you abandoned or re-cut instead of leaving it open. `task close`
 and `task supersede` need no approval, so they work on a `stale_approval` task
 that `task review --verdict blocked` cannot reach. Both are terminal: the task
