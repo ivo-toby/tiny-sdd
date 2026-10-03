@@ -9,6 +9,7 @@ import {
   buildBenchmarkConfigIdentity,
   parseBenchmarkChallenge,
   parseBenchmarkSuite,
+  validateBenchmarkConfigIdentity,
 } from '../src/benchmark-schema.mjs';
 
 const digest = (letter) => letter.repeat(64);
@@ -107,7 +108,21 @@ test('rejects duplicate ids, unsafe roots, hidden fixture paths, and extra keys'
     extra: true,
   };
   assert.throws(() => parseBenchmarkChallenge(JSON.stringify(challenge)), { code: 'BENCHMARK_SCHEMA_INVALID' });
-  assert.throws(() => parseBenchmarkChallenge(JSON.stringify({ ...challenge, extra: undefined, difficultyTags: ['small'], fixture: { path: '../fixtures/slice', sha256: digest('a') } })), { code: 'BENCHMARK_SCHEMA_INVALID' });
+  const validChallenge = { ...challenge };
+  delete validChallenge.extra;
+  assert.throws(() => parseBenchmarkChallenge(JSON.stringify({ ...validChallenge, difficultyTags: ['small'], fixture: { path: '../fixtures/slice', sha256: digest('a') } })), { code: 'BENCHMARK_SCHEMA_INVALID' });
+  assert.throws(() => parseBenchmarkChallenge(JSON.stringify({
+    ...validChallenge,
+    difficultyTags: ['small'],
+    fixture: { path: 'fixtures/slice', sha256: digest('a') },
+    packet: { ...challenge.packet, allowedPaths: ['src/index.mjs'], protectedPaths: ['src/index.mjs'] },
+  })), { code: 'BENCHMARK_SCHEMA_INVALID' });
+  assert.throws(() => parseBenchmarkChallenge(JSON.stringify({
+    ...validChallenge,
+    difficultyTags: ['small'],
+    fixture: { path: 'fixtures/slice', sha256: digest('a') },
+    packet: { ...challenge.packet, allowedPaths: [] },
+  })), { code: 'BENCHMARK_SCHEMA_INVALID' });
 });
 
 test('config identity is canonical and changes when a benchmark condition changes', () => {
@@ -135,6 +150,18 @@ test('config identity is canonical and changes when a benchmark condition change
   }
 });
 
+test('known disabled firstWriteMs is distinct from historical UNKNOWN', () => {
+  const disabled = fullConfig();
+  disabled.worker.limits.firstWriteMs = null;
+  const historical = fullConfig();
+  delete historical.worker.limits.firstWriteMs;
+  const disabledIdentity = buildBenchmarkConfigIdentity(disabled);
+  const historicalIdentity = buildBenchmarkConfigIdentity(historical);
+  assert.equal(disabledIdentity.identity.worker.limits.firstWriteMs, null);
+  assert.equal(historicalIdentity.identity.worker.limits.firstWriteMs, BENCHMARK_UNKNOWN);
+  assert.notEqual(disabledIdentity.configDigest, historicalIdentity.configDigest);
+});
+
 test('missing identity fields are explicit UNKNOWN values with reasons', () => {
   const result = buildBenchmarkConfigIdentity({ model: { provider: 'p', id: 'm' } });
   assert.equal(result.identity.model.quantization, BENCHMARK_UNKNOWN);
@@ -144,8 +171,31 @@ test('missing identity fields are explicit UNKNOWN values with reasons', () => {
   assert.equal(result.identity.missing.length > 1, true);
 });
 
+test('uses worker check-run settings when no top-level section is supplied', () => {
+  const nested = fullConfig();
+  nested.worker.runChecks = nested.runChecks;
+  delete nested.runChecks;
+  const result = buildBenchmarkConfigIdentity(nested);
+  assert.equal(result.identity.runChecks.available, false);
+  assert.equal(result.identity.runChecks.budget, 12);
+  assert.equal(result.identity.runChecks.provenance.source, 'runtime.json');
+});
+
 test('config metadata rejects credential-shaped fields', () => {
   const config = fullConfig();
   config.worker.settings = { apiKey: 'should-never-be-recorded' };
   assert.throws(() => buildBenchmarkConfigIdentity(config), { code: 'BENCHMARK_CONFIG_INVALID' });
+  const userInfo = fullConfig();
+  userInfo.model.server.id = 'https://user:password@example.test';
+  assert.throws(() => buildBenchmarkConfigIdentity(userInfo), { code: 'BENCHMARK_CONFIG_INVALID' });
+});
+
+test('rejects discarded identity fields and missing entries that are not schema fields', () => {
+  const extraEnvironment = fullConfig();
+  extraEnvironment.environment.host = 'host-a';
+  assert.throws(() => buildBenchmarkConfigIdentity(extraEnvironment), { code: 'BENCHMARK_CONFIG_INVALID' });
+
+  const identity = buildBenchmarkConfigIdentity(fullConfig()).identity;
+  identity.missing = [{ field: 'environment.host', reason: 'not supplied' }];
+  assert.throws(() => validateBenchmarkConfigIdentity(identity), { code: 'BENCHMARK_CONFIG_INVALID' });
 });

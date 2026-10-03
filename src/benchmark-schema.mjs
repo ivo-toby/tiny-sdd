@@ -205,6 +205,13 @@ export function validateBenchmarkChallenge(value) {
     schemaInvalid('benchmark challenge.role', `must be one of ${BENCHMARK_ROLES.join(', ')}`);
   }
   const difficultyTags = uniqueStrings(challenge.difficultyTags, 'benchmark challenge.difficultyTags', { pattern: TAG_PATTERN });
+  const packet = validatePacket(challenge.packet, 'benchmark challenge.packet');
+  const protectedSet = new Set(packet.protectedPaths);
+  const overlap = packet.allowedPaths.filter((entry) => protectedSet.has(entry));
+  if (overlap.length > 0) schemaInvalid('benchmark challenge.packet', `allowedPaths and protectedPaths overlap: ${overlap.join(', ')}`);
+  if (challenge.role === 'implement-slice' && packet.allowedPaths.length === 0) {
+    schemaInvalid('benchmark challenge.packet.allowedPaths', 'must contain at least one path for implement-slice');
+  }
   return {
     schemaVersion: BENCHMARK_CHALLENGE_SCHEMA_VERSION,
     id,
@@ -212,7 +219,7 @@ export function validateBenchmarkChallenge(value) {
     role: challenge.role,
     difficultyTags,
     fixture: contentRef(challenge.fixture, 'benchmark challenge.fixture', { root: ROOTS.fixture, hidden: true }),
-    packet: validatePacket(challenge.packet, 'benchmark challenge.packet'),
+    packet,
     verifier: validateVerifierDefinition(challenge.verifier, 'benchmark challenge.verifier'),
   };
 }
@@ -245,7 +252,10 @@ function metadataInvalid(label, message) {
 
 function configObject(value, label) {
   try {
-    return assertPlainObject(value, 'BENCHMARK_CONFIG_INVALID', label);
+    const result = assertPlainObject(value, 'BENCHMARK_CONFIG_INVALID', label);
+    const prototype = Object.getPrototypeOf(result);
+    if (prototype !== Object.prototype && prototype !== null) metadataInvalid(label, 'must contain plain objects');
+    return result;
   } catch (error) {
     if (error?.code === 'BENCHMARK_CONFIG_INVALID') throw error;
     metadataInvalid(label, error instanceof Error ? error.message : String(error));
@@ -263,12 +273,22 @@ function configKeys(value, allowed, label) {
 
 const SENSITIVE_KEY_PATTERN = /(?:token|secret|password|credential|api[_-]?key|authorization|bearer)/iu;
 const SENSITIVE_VALUE_PATTERN = /(?:^|[?&\s])(?:token|secret|password|credential|api[_-]?key|authorization|bearer)\s*=/iu;
+const USERINFO_VALUE_PATTERN = /^[a-z][a-z\d+.-]*:\/\/[^/]*@/iu;
+const CONFIG_IDENTITY_FIELDS = new Set([
+  'model.provider', 'model.id', 'model.quantization', 'model.server.id', 'model.server.version',
+  'worker.profileDigest', 'worker.limits.timeoutMs', 'worker.limits.maxToolCalls', 'worker.limits.firstWriteMs', 'worker.settings',
+  'pi.version', 'tinySdd.version', 'tinySdd.codeRevision', 'suite.id', 'suite.version', 'suite.contentSha256',
+  'verifier.configSha256', 'verifier.checkRunner.version', 'verifier.checkRunner.configSha256',
+  'runChecks.declared', 'runChecks.available', 'runChecks.budget', 'runChecks.unavailableReason',
+  'runChecks.provenance.source', 'runChecks.provenance.unavailableReason',
+  'environment.runtime', 'environment.runtimeVersion', 'environment.platform', 'environment.arch',
+]);
 
 function assertSafeMetadata(value, label, seen = new Set()) {
   if (value === BENCHMARK_UNKNOWN) return value;
   if (value === null) metadataInvalid(label, 'must not be null');
   if (typeof value === 'string') {
-    if (SENSITIVE_VALUE_PATTERN.test(value)) metadataInvalid(label, 'must not contain credential material');
+    if (SENSITIVE_VALUE_PATTERN.test(value) || USERINFO_VALUE_PATTERN.test(value)) metadataInvalid(label, 'must not contain credential material');
     return value;
   }
   if (typeof value === 'number') {
@@ -338,7 +358,8 @@ function maybeBoolean(value, field, missing) {
   });
 }
 
-function maybeInteger(value, field, missing, { min = 0 } = {}) {
+function maybeInteger(value, field, missing, { min = 0, allowNull = false } = {}) {
+  if (allowNull && value === null) return null;
   return missingValue(value, field, missing, {
     validate: (entry, label) => {
       if (!Number.isInteger(entry) || entry < min) metadataInvalid(label, `must be an integer >= ${min} or UNKNOWN`);
@@ -347,40 +368,51 @@ function maybeInteger(value, field, missing, { min = 0 } = {}) {
   });
 }
 
-function sourceObject(input, key) {
-  if (input[key] === undefined) return {};
-  if (input[key] === null || typeof input[key] !== 'object' || Array.isArray(input[key])) {
-    metadataInvalid(key, 'must be an object when supplied');
-  }
-  return input[key];
-}
-
 function choose(...values) {
   return values.find((value) => value !== undefined);
 }
 
+function inputSection(input, key, allowed) {
+  if (input[key] === undefined) return undefined;
+  const section = configObject(input[key], `benchmark config identity input.${key}`);
+  configKeys(section, allowed, `benchmark config identity input.${key}`);
+  return section;
+}
+
 function normalizeConfigIdentityInput(input) {
-  const source = assertObject(input, 'benchmark config identity input');
+  const source = configObject(input, 'benchmark config identity input');
+  configKeys(source, [
+    'schemaVersion', 'model', 'provider', 'modelId', 'quantization', 'server', 'serverId', 'serverVersion',
+    'worker', 'workerSettings', 'profileDigest', 'timeoutMs', 'maxToolCalls', 'firstWriteMs',
+    'pi', 'piVersion', 'tinySdd', 'tinySddVersion', 'codeRevision', 'suite', 'suiteId', 'suiteVersion',
+    'suiteContentSha256', 'verifier', 'verifierConfigSha256', 'checkRunnerVersion', 'checkRunnerConfigSha256',
+    'runChecks', 'runChecksDeclared', 'runChecksAvailable', 'maxCheckRuns', 'environment',
+  ], 'benchmark config identity input');
+  if (source.schemaVersion !== undefined && source.schemaVersion !== BENCHMARK_CONFIG_SCHEMA_VERSION) {
+    metadataInvalid('benchmark config identity input.schemaVersion', `must be ${BENCHMARK_CONFIG_SCHEMA_VERSION}`);
+  }
   const missing = [];
-  const modelSource = typeof source.model === 'string' ? { id: source.model } : sourceObject(source, 'model');
-  const serverSource = modelSource.server === undefined ? sourceObject(source, 'server') : sourceObject(modelSource, 'server');
-  const workerSource = sourceObject(source, 'worker');
-  const limitsSource = sourceObject(workerSource, 'limits');
+  const modelSource = typeof source.model === 'string'
+    ? { id: source.model }
+    : inputSection(source, 'model', ['provider', 'id', 'model', 'quantization', 'server']) ?? {};
+  const modelServerSource = inputSection(modelSource, 'server', ['id', 'version']) ?? {};
+  const topLevelServerSource = inputSection(source, 'server', ['id', 'version']) ?? {};
+  const serverSource = modelSource.server === undefined ? topLevelServerSource : modelServerSource;
+  const workerSource = inputSection(source, 'worker', ['profileDigest', 'limits', 'settings', 'runChecks', 'provider', 'model']) ?? {};
+  const limitsSource = inputSection(workerSource, 'limits', ['timeoutMs', 'maxToolCalls', 'firstWriteMs']) ?? {};
   const settingsSource = choose(workerSource.settings, source.workerSettings);
-  const piSource = sourceObject(source, 'pi');
-  const tinySddSource = sourceObject(source, 'tinySdd');
-  const suiteSource = sourceObject(source, 'suite');
-  const verifierSource = sourceObject(source, 'verifier');
-  const checkerSource = sourceObject(verifierSource, 'checkRunner');
-  const environmentSource = choose(verifierSource.environment, source.environment) ?? {};
-  if (environmentSource === null || typeof environmentSource !== 'object' || Array.isArray(environmentSource)) {
-    metadataInvalid('environment', 'must be an object when supplied');
-  }
-  const runChecksSource = choose(source.runChecks, workerSource.runChecks) ?? {};
-  if (runChecksSource === null || typeof runChecksSource !== 'object' || Array.isArray(runChecksSource)) {
-    metadataInvalid('runChecks', 'must be an object when supplied');
-  }
-  const runChecksProvenance = sourceObject(runChecksSource, 'provenance');
+  const piSource = inputSection(source, 'pi', ['version']) ?? {};
+  const tinySddSource = inputSection(source, 'tinySdd', ['version', 'codeRevision']) ?? {};
+  const suiteSource = inputSection(source, 'suite', ['id', 'version', 'contentSha256', 'contentDigest', 'sha256']) ?? {};
+  const verifierSource = inputSection(source, 'verifier', ['configSha256', 'configDigest', 'sha256', 'checkRunner', 'environment']) ?? {};
+  const checkerSource = inputSection(verifierSource, 'checkRunner', ['version', 'configSha256', 'configDigest', 'sha256']) ?? {};
+  const verifierEnvironmentSource = inputSection(verifierSource, 'environment', ['runtime', 'runtimeVersion', 'platform', 'arch']) ?? {};
+  const topLevelEnvironmentSource = inputSection(source, 'environment', ['runtime', 'runtimeVersion', 'platform', 'arch']) ?? {};
+  const environmentSource = verifierSource.environment === undefined ? topLevelEnvironmentSource : verifierEnvironmentSource;
+  const sourceRunChecks = inputSection(source, 'runChecks', ['declared', 'available', 'budget', 'maxCheckRuns', 'unavailableReason', 'provenance']);
+  const workerRunChecks = inputSection(workerSource, 'runChecks', ['declared', 'available', 'budget', 'maxCheckRuns', 'unavailableReason', 'provenance']);
+  const runChecksSource = choose(sourceRunChecks, workerRunChecks) ?? {};
+  const runChecksProvenance = inputSection(runChecksSource, 'provenance', ['source', 'unavailableReason']) ?? {};
 
   const workerSettings = settingsSource === undefined || settingsSource === BENCHMARK_UNKNOWN
     ? missingValue(settingsSource, 'worker.settings', missing)
@@ -402,7 +434,7 @@ function normalizeConfigIdentityInput(input) {
       limits: {
         timeoutMs: maybeInteger(choose(limitsSource.timeoutMs, source.timeoutMs), 'worker.limits.timeoutMs', missing, { min: 1 }),
         maxToolCalls: maybeInteger(choose(limitsSource.maxToolCalls, source.maxToolCalls), 'worker.limits.maxToolCalls', missing, { min: 1 }),
-        firstWriteMs: maybeInteger(choose(limitsSource.firstWriteMs, source.firstWriteMs), 'worker.limits.firstWriteMs', missing, { min: 1 }),
+        firstWriteMs: maybeInteger(choose(limitsSource.firstWriteMs, source.firstWriteMs), 'worker.limits.firstWriteMs', missing, { min: 1, allowNull: true }),
       },
       settings: workerSettings,
     },
@@ -455,6 +487,7 @@ function validateMissing(value, label) {
     configKeys(item, ['field', 'reason'], itemLabel);
     const field = requiredString(item.field, `${itemLabel}.field`);
     const reason = requiredString(item.reason, `${itemLabel}.reason`);
+    if (!CONFIG_IDENTITY_FIELDS.has(field)) metadataInvalid(`${itemLabel}.field`, `is not a recognized identity field: ${field}`);
     if (seen.has(field)) metadataInvalid(label, `contains duplicate field: ${field}`);
     seen.add(field);
     return { field, reason };
@@ -477,6 +510,10 @@ function validateMaybe(value, label, kind) {
   }
   if (kind === 'integer') {
     if (!Number.isInteger(value) || value < 1) metadataInvalid(label, 'must be a positive integer or UNKNOWN');
+    return value;
+  }
+  if (kind === 'nullableInteger') {
+    if (value !== null && (!Number.isInteger(value) || value < 1)) metadataInvalid(label, 'must be a positive integer, null, or UNKNOWN');
     return value;
   }
   return assertSafeMetadata(value, label);
@@ -508,7 +545,7 @@ function validateWorkerObject(value, label) {
     limits: {
       timeoutMs: validateMaybe(limits.timeoutMs, `${label}.limits.timeoutMs`, 'integer'),
       maxToolCalls: validateMaybe(limits.maxToolCalls, `${label}.limits.maxToolCalls`, 'integer'),
-      firstWriteMs: validateMaybe(limits.firstWriteMs, `${label}.limits.firstWriteMs`, 'integer'),
+      firstWriteMs: validateMaybe(limits.firstWriteMs, `${label}.limits.firstWriteMs`, 'nullableInteger'),
     },
     settings: worker.settings === BENCHMARK_UNKNOWN ? BENCHMARK_UNKNOWN : assertSafeMetadata(worker.settings, `${label}.settings`),
   };

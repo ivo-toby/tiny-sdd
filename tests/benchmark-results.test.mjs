@@ -29,12 +29,12 @@ function verifier(checkId, status = 'passed') {
     checkId,
     definitionSha256: digest(checkId === 'visible' ? '1' : '2'),
     status,
-    exitCode: status === 'passed' ? 0 : BENCHMARK_UNKNOWN,
+    exitCode: status === 'passed' ? 0 : status === 'failed' ? 1 : BENCHMARK_UNKNOWN,
     signal: null,
-    timedOut: status === 'unavailable' ? BENCHMARK_UNKNOWN : false,
-    durationMs: status === 'unavailable' ? BENCHMARK_UNKNOWN : 4,
-    output: { ref: status === 'not_run' ? BENCHMARK_UNKNOWN : `artifacts/${checkId}.txt`, sha256: status === 'not_run' ? BENCHMARK_UNKNOWN : digest('3'), truncated: false },
-    sandbox: status === 'unavailable' ? BENCHMARK_UNKNOWN : { network: 'none', runner: 'bwrap' },
+    timedOut: status === 'passed' || status === 'failed' ? false : BENCHMARK_UNKNOWN,
+    durationMs: status === 'unavailable' || status === 'not_run' ? BENCHMARK_UNKNOWN : 4,
+    output: { ref: status === 'not_run' ? BENCHMARK_UNKNOWN : `artifacts/${checkId}.txt`, sha256: status === 'not_run' ? BENCHMARK_UNKNOWN : digest('3'), truncated: status === 'not_run' ? BENCHMARK_UNKNOWN : false },
+    sandbox: status === 'unavailable' || status === 'not_run' ? BENCHMARK_UNKNOWN : { network: 'none', runner: 'bwrap' },
   };
 }
 
@@ -98,6 +98,27 @@ test('retains unavailable and not-run verifier observations without turning them
   assert.equal(normalized.outcome, 'unavailable');
 });
 
+test('requires status-consistent verifier execution evidence', () => {
+  for (const mutate of [
+    (entry) => { entry.exitCode = 9; },
+    (entry) => { entry.timedOut = true; },
+    (entry) => { entry.exitCode = BENCHMARK_UNKNOWN; entry.signal = BENCHMARK_UNKNOWN; entry.timedOut = BENCHMARK_UNKNOWN; entry.durationMs = BENCHMARK_UNKNOWN; entry.sandbox = BENCHMARK_UNKNOWN; entry.output.ref = BENCHMARK_UNKNOWN; entry.output.sha256 = BENCHMARK_UNKNOWN; },
+  ]) {
+    const result = caseResult();
+    mutate(result.verifier.visible[0]);
+    assert.throws(() => validateBenchmarkCaseResult(result), { code: 'BENCHMARK_RESULTS_INVALID' });
+  }
+
+  const failed = caseResult();
+  failed.verifier.visible = [verifier('visible', 'failed')];
+  assert.doesNotThrow(() => validateBenchmarkCaseResult(failed));
+
+  const unavailableWithGreenEvidence = caseResult();
+  unavailableWithGreenEvidence.verifier.visible = [verifier('visible', 'unavailable')];
+  Object.assign(unavailableWithGreenEvidence.verifier.visible[0], { exitCode: 0, signal: null, timedOut: false, durationMs: 4, sandbox: { network: 'none' } });
+  assert.throws(() => validateBenchmarkCaseResult(unavailableWithGreenEvidence), { code: 'BENCHMARK_RESULTS_INVALID' });
+});
+
 test('rejects acceptance claims and duplicate verifier ids', () => {
   const result = caseResult();
   result.accepted = false;
@@ -112,6 +133,34 @@ test('rejects acceptance claims and duplicate verifier ids', () => {
   assert.throws(() => validateBenchmarkCaseResult(mismatchedConfig), { code: 'BENCHMARK_RESULTS_INVALID' });
 });
 
+test('rejects unknown path-change kinds and prototype-polluting observations', () => {
+  const badChange = caseResult();
+  badChange.changedPaths[0].change = 'renamed';
+  assert.throws(() => validateBenchmarkCaseResult(badChange), { code: 'BENCHMARK_RESULTS_INVALID' });
+
+  const polluted = caseResult();
+  polluted.observed = JSON.parse('{"__proto__":{"polluted":true}}');
+  assert.throws(() => validateBenchmarkCaseResult(polluted), { code: 'BENCHMARK_RESULTS_INVALID' });
+  const inherited = caseResult();
+  inherited.observed = Object.create({ polluted: true });
+  assert.throws(() => validateBenchmarkCaseResult(inherited), { code: 'BENCHMARK_RESULTS_INVALID' });
+  assert.equal({}.polluted, undefined);
+});
+
+test('binds suite, packet, and profile provenance to the config identity', () => {
+  for (const mutate of [
+    (result) => { result.suite.sha256 = digest('z'); },
+    (result) => { result.provenance.suiteSha256 = digest('z'); },
+    (result) => { result.packet.packetSha256 = digest('z'); },
+    (result) => { result.provenance.profileSha256 = digest('z'); },
+    (result) => { result.packet.profileSha256 = digest('z'); },
+  ]) {
+    const result = caseResult();
+    mutate(result);
+    assert.throws(() => validateBenchmarkCaseResult(result), { code: 'BENCHMARK_RESULTS_INVALID' });
+  }
+});
+
 test('parses a summary and invocation manifest with exact category accounting', () => {
   const identity = config();
   const suite = { id: 'contract-fixture', version: '1', sha256: digest('c') };
@@ -124,6 +173,8 @@ test('parses a summary and invocation manifest with exact category accounting', 
   };
   assert.equal(parseBenchmarkSummary(JSON.stringify(summary)).groups[0].unavailable, 1);
   assert.throws(() => parseBenchmarkSummary(JSON.stringify({ ...summary, groups: [{ ...summary.groups[0], scheduled: 3 }] })), { code: 'BENCHMARK_RESULTS_INVALID' });
+  assert.throws(() => parseBenchmarkSummary(JSON.stringify({ ...summary, groups: [{ ...summary.groups[0], caseResults: [] }] })), { code: 'BENCHMARK_RESULTS_INVALID' });
+  assert.throws(() => parseBenchmarkSummary(JSON.stringify({ ...summary, groups: [{ ...summary.groups[0], caseResults: [summary.groups[0].caseResults[0], summary.groups[0].caseResults[0]] }] })), { code: 'BENCHMARK_RESULTS_INVALID' });
 
   const invocation = {
     schemaVersion: 1,
@@ -139,4 +190,6 @@ test('parses a summary and invocation manifest with exact category accounting', 
     summary: { path: 'artifacts/summary.json', sha256: digest('c') },
   };
   assert.equal(parseBenchmarkInvocation(JSON.stringify(invocation)).invocationId, 'invocation-1');
+  const mismatchedInvocation = { ...invocation, worker: { ...invocation.worker, profileSha256: digest('z') } };
+  assert.throws(() => parseBenchmarkInvocation(JSON.stringify(mismatchedInvocation)), { code: 'BENCHMARK_RESULTS_INVALID' });
 });

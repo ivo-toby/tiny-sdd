@@ -25,6 +25,7 @@ export const BENCHMARK_RESULT_OUTCOMES = Object.freeze([
 export const BENCHMARK_PROVENANCE_TYPES = Object.freeze(['benchmark-invocation', 'approved-replay']);
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
+const CHANGE_TYPES = new Set(['created', 'modified', 'deleted', 'type_changed']);
 const FORBIDDEN_RESULT_KEYS = new Set(['accepted', 'acceptance', 'qualified', 'qualification', 'isAccepted', 'isQualified']);
 
 function invalid(message, details = undefined) {
@@ -33,7 +34,10 @@ function invalid(message, details = undefined) {
 
 function object(value, label) {
   try {
-    return assertPlainObject(value, 'BENCHMARK_RESULTS_INVALID', label);
+    const result = assertPlainObject(value, 'BENCHMARK_RESULTS_INVALID', label);
+    const prototype = Object.getPrototypeOf(result);
+    if (prototype !== Object.prototype && prototype !== null) invalid(`${label} must contain plain objects`);
+    return result;
   } catch (error) {
     if (error?.code === 'BENCHMARK_RESULTS_INVALID') throw error;
     invalid(error instanceof Error ? error.message : String(error));
@@ -124,10 +128,20 @@ function safeMetadata(value, label, seen = new Set()) {
     return result;
   }
   if (typeof value === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) invalid(`${label} must contain plain objects`);
     if (seen.has(value)) invalid(`${label} must not contain cycles`);
     seen.add(value);
     const result = {};
-    for (const [key, entry] of Object.entries(value)) result[key] = safeMetadata(entry, `${label}.${key}`, seen);
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') invalid(`${label}.${key} is not allowed`);
+      Object.defineProperty(result, key, {
+        value: safeMetadata(entry, `${label}.${key}`, seen),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
     seen.delete(value);
     return result;
   }
@@ -189,18 +203,44 @@ function validateProvenance(value, label) {
   };
 }
 
+function bindKnown(label, left, right) {
+  if (left === BENCHMARK_UNKNOWN || right === BENCHMARK_UNKNOWN) {
+    if (left !== right) invalid(`${label} must use UNKNOWN consistently`);
+    return;
+  }
+  if (left !== right) invalid(`${label} does not match`);
+}
+
+function validateCaseBindings(result) {
+  const identity = result.configIdentity;
+  if (identity === undefined) invalid('benchmark case result.configIdentity is required to bind configDigest');
+  bindKnown('benchmark case result suite id', result.suite.id, identity.suite.id);
+  bindKnown('benchmark case result suite version', result.suite.version, identity.suite.version);
+  bindKnown('benchmark case result suite digest', result.suite.sha256, identity.suite.contentSha256);
+  bindKnown('benchmark case result provenance suite digest', result.provenance.suiteSha256, result.suite.sha256);
+  bindKnown('benchmark case result profile digest', result.provenance.profileSha256, result.packet.profileSha256);
+  bindKnown('benchmark case result profile identity', result.packet.profileSha256, identity.worker.profileDigest);
+  const resultArtifact = result.artifacts.result;
+  if (resultArtifact !== undefined && resultArtifact !== BENCHMARK_UNKNOWN) {
+    bindKnown('benchmark case result artifact digest', result.provenance.workerResultSha256, resultArtifact.sha256);
+  }
+}
+
 function validatePathChanges(value, label, { violations = false } = {}) {
   if (!Array.isArray(value)) invalid(`${label} must be an array`);
   return value.map((entry, index) => {
     const itemLabel = `${label}[${index}]`;
     const change = object(entry, itemLabel);
-    const allowed = violations ? ['path', 'change', 'reason'] : ['path', 'change'];
+    const allowed = violations ? ['path', 'change', 'reason'] : ['path', 'change', 'before', 'after'];
     keys(change, allowed, itemLabel);
+    if (!CHANGE_TYPES.has(change.change)) invalid(`${itemLabel}.change is invalid`);
     const normalized = {
       path: path(change.path, `${itemLabel}.path`),
       change: string(change.change, `${itemLabel}.change`),
     };
     if (violations) normalized.reason = string(change.reason, `${itemLabel}.reason`);
+    if (!violations && change.before !== undefined) normalized.before = safeMetadata(change.before, `${itemLabel}.before`);
+    if (!violations && change.after !== undefined) normalized.after = safeMetadata(change.after, `${itemLabel}.after`);
     return normalized;
   });
 }
@@ -210,11 +250,17 @@ function validateArtifactMap(value, label) {
   const result = {};
   for (const [name, entry] of Object.entries(artifacts)) {
     if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(name)) invalid(`${label} contains an invalid artifact name: ${name}`);
+    if (name === '__proto__' || name === 'constructor' || name === 'prototype') invalid(`${label}.${name} is not allowed`);
     if (entry === BENCHMARK_UNKNOWN) {
-      result[name] = BENCHMARK_UNKNOWN;
+      Object.defineProperty(result, name, { value: BENCHMARK_UNKNOWN, enumerable: true, configurable: true, writable: true });
       continue;
     }
-    result[name] = contentRef(entry, `${label}.${name}`);
+    Object.defineProperty(result, name, {
+      value: contentRef(entry, `${label}.${name}`),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   return result;
 }
@@ -227,7 +273,7 @@ function validateVerifierRecord(value, label) {
   if (!BENCHMARK_VERIFIER_STATUSES.includes(record.status)) invalid(`${label}.status is invalid`);
   const output = object(record.output, `${label}.output`);
   keys(output, ['ref', 'sha256', 'truncated'], `${label}.output`);
-  return {
+  const normalized = {
     checkId,
     definitionSha256,
     status: record.status,
@@ -242,6 +288,31 @@ function validateVerifierRecord(value, label) {
     },
     sandbox: record.sandbox === BENCHMARK_UNKNOWN ? BENCHMARK_UNKNOWN : safeMetadata(record.sandbox, `${label}.sandbox`),
   };
+  const unknownExecution = normalized.exitCode === BENCHMARK_UNKNOWN
+    && (normalized.signal === BENCHMARK_UNKNOWN || normalized.signal === null)
+    && normalized.timedOut === BENCHMARK_UNKNOWN
+    && normalized.durationMs === BENCHMARK_UNKNOWN;
+  const greenExecution = normalized.exitCode === 0
+    && normalized.signal === null
+    && normalized.timedOut === false;
+  if (normalized.status === 'passed') {
+    if (!greenExecution || normalized.durationMs === BENCHMARK_UNKNOWN || normalized.sandbox === BENCHMARK_UNKNOWN
+      || normalized.output.ref === BENCHMARK_UNKNOWN || normalized.output.sha256 === BENCHMARK_UNKNOWN) {
+      invalid(`${label}.passed requires successful execution evidence`);
+    }
+  } else if (normalized.status === 'failed') {
+    const failedExecution = (Number.isInteger(normalized.exitCode) && normalized.exitCode !== 0)
+      || (typeof normalized.signal === 'string' && normalized.signal !== BENCHMARK_UNKNOWN)
+      || normalized.timedOut === true;
+    if (!failedExecution || unknownExecution) invalid(`${label}.failed requires failure execution evidence`);
+  } else if (normalized.status === 'unavailable') {
+    if (greenExecution && normalized.sandbox !== BENCHMARK_UNKNOWN) invalid(`${label}.unavailable must not contain green execution evidence`);
+  } else if (normalized.status === 'not_run') {
+    if (!unknownExecution || normalized.sandbox !== BENCHMARK_UNKNOWN || normalized.output.ref !== BENCHMARK_UNKNOWN || normalized.output.sha256 !== BENCHMARK_UNKNOWN) {
+      invalid(`${label}.not_run must not contain execution evidence`);
+    }
+  }
+  return normalized;
 }
 
 function validateVerifierRecords(value, label) {
@@ -343,6 +414,7 @@ export function validateBenchmarkCaseResult(value) {
   if (normalized.configIdentity !== undefined && benchmarkConfigDigest(normalized.configIdentity) !== normalized.configDigest) {
     invalid('benchmark case result.configDigest does not match configIdentity');
   }
+  validateCaseBindings(normalized);
   if (!BENCHMARK_RESULT_OUTCOMES.includes(normalized.outcome)) invalid(`benchmark case result.outcome is unsupported: ${normalized.outcome}`);
   return normalized;
 }
@@ -373,9 +445,17 @@ function validateSummaryCounts(value, label) {
   return normalized;
 }
 
-function validateArtifactRefs(value, label) {
+function validateArtifactRefs(value, label, { uniqueByPath = false } = {}) {
   if (!Array.isArray(value)) invalid(`${label} must be an array`);
-  return value.map((entry, index) => contentRef(entry, `${label}[${index}]`));
+  const seen = new Set();
+  return value.map((entry, index) => {
+    const ref = contentRef(entry, `${label}[${index}]`);
+    if (uniqueByPath) {
+      if (seen.has(ref.path)) invalid(`${label} contains duplicate path: ${ref.path}`);
+      seen.add(ref.path);
+    }
+    return ref;
+  });
 }
 
 export function validateBenchmarkSummary(value) {
@@ -396,14 +476,16 @@ export function validateBenchmarkSummary(value) {
     if (seen.has(key)) invalid(`benchmark summary.groups contains duplicate group: ${role}/${configDigest}`);
     seen.add(key);
     const counts = validateSummaryCounts(group, label);
-    return { role, configDigest, ...counts, caseResults: validateArtifactRefs(group.caseResults, `${label}.caseResults`) };
+    const caseResults = validateArtifactRefs(group.caseResults, `${label}.caseResults`, { uniqueByPath: true });
+    if (caseResults.length !== counts.scheduled) invalid(`${label}.caseResults must contain one reference per scheduled attempt`);
+    return { role, configDigest, ...counts, caseResults };
   });
   const normalized = {
     schemaVersion: BENCHMARK_RESULTS_SCHEMA_VERSION,
     suite: suiteReference(summary.suite, 'benchmark summary.suite'),
     configDigest: digest(summary.configDigest, 'benchmark summary.configDigest'),
     groups: normalizedGroups,
-    artifacts: validateArtifactRefs(summary.artifacts, 'benchmark summary.artifacts'),
+    artifacts: validateArtifactRefs(summary.artifacts, 'benchmark summary.artifacts', { uniqueByPath: true }),
   };
   if (normalizedGroups.some((group) => group.configDigest !== normalized.configDigest)) {
     invalid('benchmark summary group configDigest must match the summary configDigest');
@@ -431,6 +513,13 @@ function validateInvocationWorker(value, label) {
   };
 }
 
+function validateInvocationBindings(invocation) {
+  bindKnown('benchmark invocation suite id', invocation.suite.id, invocation.configIdentity.suite.id);
+  bindKnown('benchmark invocation suite version', invocation.suite.version, invocation.configIdentity.suite.version);
+  bindKnown('benchmark invocation suite digest', invocation.suite.sha256, invocation.configIdentity.suite.contentSha256);
+  bindKnown('benchmark invocation worker profile', invocation.worker.profileSha256, invocation.configIdentity.worker.profileDigest);
+}
+
 export function validateBenchmarkInvocation(value) {
   const invocation = object(value, 'benchmark invocation');
   rejectClaims(invocation, 'benchmark invocation');
@@ -451,12 +540,13 @@ export function validateBenchmarkInvocation(value) {
     repeat: integer(invocation.repeat, 'benchmark invocation.repeat', { min: 1 }),
     startedAt,
     completedAt,
-    caseResults: validateArtifactRefs(invocation.caseResults, 'benchmark invocation.caseResults'),
+    caseResults: validateArtifactRefs(invocation.caseResults, 'benchmark invocation.caseResults', { uniqueByPath: true }),
     summary: contentRef(invocation.summary, 'benchmark invocation.summary'),
   };
   if (benchmarkConfigDigest(normalized.configIdentity) !== normalized.configDigest) {
     invalid('benchmark invocation.configDigest does not match configIdentity');
   }
+  validateInvocationBindings(normalized);
   return normalized;
 }
 
