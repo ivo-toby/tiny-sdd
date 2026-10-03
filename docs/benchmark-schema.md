@@ -54,3 +54,36 @@ Summaries require category counts to add to `scheduled` and exactly one unique
 case-result reference per scheduled attempt. Invocation case-result references
 are also unique. These validators do not execute checks, inspect live models,
 start services, or apply worker output to a source project.
+
+## Runner contract
+
+Phase 2 and phase 3 provide the measurement runner behind
+`tinysdd bench run --worker NAME [--suite PATH] [--repeat K]`. The default suite
+path is the project-relative `bench` directory; `--suite` may name that
+directory or its `suite.json`. The CLI resolves the named worker and its
+profile through the effective project configuration, then calls the normal
+`runWorker()` path for each challenge and repetition. Only `implement-slice`
+roles have a runner adapter in v1; the schema continues to record the other
+approved role tags for later issues.
+
+The runner copies every worker attempt into the benchmark result directory
+before removing its disposable fixture. It stores the worker result, prompt,
+stdout/stderr, before/after workspace snapshots, candidate files and snapshots,
+runtime metadata, patch, packet, and verifier output references with digests.
+It then evaluates a retained candidate in a separate evaluator directory.
+Visible and held-out verifier resources are overlaid only under the reserved
+verifier root after collision, symlink, and dependency-overlap checks. Held-out
+resources are loaded and hashed on the host; they are never part of the worker
+packet, prompt, fixture, candidate evidence, or a later revision input.
+
+The config identity binds the effective worker/provider/model and runtime
+settings, profile and TinySDD revisions, suite and verifier bytes, checker
+availability and limits, and environment identifiers. A changed suite,
+verifier, dependency tree, model setting, checker limit, or TinySDD revision
+therefore produces a different digest. A mutation detected between attempts
+leaves the attempt inspectable as `setup_error` and skips verifier execution.
+
+On macOS or when the Linux check runner is unavailable, verifier records retain
+`unavailable` observations and the CLI warns on stderr. Unavailable checks are
+never reported as passed. The runner has no repair, scoring, qualification,
+approval, acceptance, apply, or source-project mutation path.

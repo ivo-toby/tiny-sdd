@@ -300,6 +300,30 @@ Every non-completed worker result includes `candidateState`: the number of
 allowed paths changed and the sorted allowed paths left untouched. A non-completed
 result with changed paths is a candidate for review, not a reason to discard it.
 
+## Run an isolated benchmark
+
+Use the benchmark command for an operator-selected suite of `implement-slice`
+challenges. A suite directory contains `suite.json`, fixture snapshots, packet
+resources, and verifier-only resources. The default suite path is `bench`; pass
+the directory or its `suite.json` explicitly when it is elsewhere:
+
+```sh
+tinysdd bench run --worker qwen --suite bench --repeat 2 --json
+```
+
+The command creates immutable results under
+`.tinysdd/bench/<suite-id>/<invocation-id>/`: one case result for every
+challenge and repetition, a config identity and digest, and a summary. Each
+attempt starts from a fresh fixture. Worker output is retained before visible
+and held-out checks run in a separate evaluator input; held-out files never
+enter the worker prompt, workspace, candidate snapshot, or a later revision.
+
+`--repeat` is an integer from 1 to 1000. `--json` writes one result object to
+stdout; progress and unavailable `run_checks` warnings go to stderr. The
+benchmark records verifier unavailability separately and never turns it into a
+passing check. It does not apply files, change controller task state, record
+acceptance, or qualify a model.
+
 ## Controlled benchmark replay
 
 To compare workers fairly after the live project has moved on, replay the

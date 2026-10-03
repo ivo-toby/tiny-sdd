@@ -148,6 +148,26 @@ sending a signal. Stopping an already stopping launch only waits.
 Every non-completed worker result includes `candidateState`, which reports the
 allowed paths changed and the sorted allowed paths left untouched. If any
 allowed path changed, review the candidate before discarding it.
+
+Run an operator-selected benchmark suite with the serial CLI lane:
+
+```sh
+tinysdd bench run --worker qwen --suite bench --repeat 2 --json
+```
+
+`--suite` accepts a project-relative suite directory or its `suite.json`; when
+omitted it defaults to `bench`. V1 executes `implement-slice` challenges only.
+Every challenge and repetition gets a fresh fixture and a retained case result
+under `.tinysdd/bench/<suite-id>/<invocation-id>/`. The worker runs through the
+normal disposable path, then visible and held-out checks run against a separate
+candidate copy. Held-out resources do not enter the prompt, worker workspace,
+candidate snapshots, or future revision inputs.
+
+`--repeat` must be an integer from 1 through 1000. With `--json`, stdout is one
+JSON result object; progress and `run_checks` availability warnings are written
+to stderr. The command records measurement artifacts only. It never applies a
+candidate, mutates controller task state, accepts a task, or qualifies a model.
+
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new
