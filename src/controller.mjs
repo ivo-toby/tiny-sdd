@@ -41,6 +41,13 @@ import {
   JUDGE_UNAVAILABLE_ACTION,
   SHADOW_POLICY_ACTION,
 } from './semantic-policy.mjs';
+import {
+  appendFeatureEvent,
+  createFeatureAcceptanceEvent,
+  readFeatureEvents,
+} from './feature-events.mjs';
+import { withUsageLedgerLock } from './usage.mjs';
+import { buildUsageReport } from './usage-report.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -1255,6 +1262,129 @@ export async function reviewTask(projectRoot, options = {}) {
   });
 }
 
+async function inspectFeature(root, state, feature) {
+  const tasks = Object.values(state.tasks)
+    .filter((task) => task.feature === feature)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const membership = [];
+  const activeAcceptanceDigests = {};
+  const statuses = {};
+  const reportTasks = [];
+  for (const task of tasks) {
+    const retired = Boolean(task.closure);
+    const stateInfo = await inspectTask(root, state, task);
+    membership.push({ id: task.id, retired });
+    statuses[task.id] = stateInfo.status;
+    reportTasks.push({ id: task.id, feature, retired });
+    if (!retired && stateInfo.status === 'accepted' && stateInfo.acceptanceDigest) {
+      activeAcceptanceDigests[task.id] = stateInfo.acceptanceDigest;
+    }
+  }
+  return { tasks, membership, activeAcceptanceDigests, statuses, reportTasks };
+}
+
+function assertFeatureAcceptanceReady(feature, snapshot) {
+  if (snapshot.membership.length === 0) throw tinyError('FEATURE_NOT_FOUND', `feature has no labelled tasks: ${feature}`);
+  const rejected = snapshot.membership
+    .filter((item) => !item.retired && (snapshot.statuses[item.id] !== 'accepted' || !snapshot.activeAcceptanceDigests[item.id]))
+    .map((item) => ({ id: item.id, status: snapshot.statuses[item.id] }));
+  if (rejected.length > 0) {
+    throw tinyError('FEATURE_NOT_ACCEPTED', `feature has non-retired tasks that are not accepted: ${rejected.map((item) => `${item.id} (${item.status})`).join(', ')}`, { tasks: rejected });
+  }
+}
+
+function currentFeatureMetadata(snapshot) {
+  return {
+    membership: structuredClone(snapshot.membership),
+    activeAcceptanceDigests: structuredClone(snapshot.activeAcceptanceDigests),
+    statuses: structuredClone(snapshot.statuses),
+  };
+}
+
+function featureStaleness(event, current) {
+  const reasons = [];
+  if (stableStringify(event.membership) !== stableStringify(current.membership)) reasons.push('labelled task membership changed');
+  if (stableStringify(event.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) reasons.push('active task acceptance digests changed');
+  for (const item of current.membership) {
+    if (!item.retired && current.statuses[item.id] !== 'accepted') reasons.push(`task ${item.id} is currently ${current.statuses[item.id]}`);
+  }
+  return { stale: reasons.length > 0, reasons };
+}
+
+async function liveFeatureReport(root, feature, snapshot, usageRecords) {
+  return buildUsageReport({ projectRoot: root, feature, tasks: snapshot.reportTasks, usageRecords });
+}
+
+function latestFeatureEvent(events, feature) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].feature === feature) return events[index];
+  }
+  return undefined;
+}
+
+export async function reportFeature(projectRoot, options = {}) {
+  const feature = validateFeature(options.feature);
+  const root = await canonicalProjectRoot(projectRoot);
+  const info = await layout(root, { create: true });
+  return withExclusiveLock(info.lock, async () => {
+    const state = await readState(info);
+    const current = await inspectFeature(root, state, feature);
+    const event = latestFeatureEvent(await readFeatureEvents(root), feature);
+    if (!event) {
+      return {
+        feature,
+        accepted: false,
+        stale: false,
+        current: currentFeatureMetadata(current),
+        report: await withUsageLedgerLock(root, (usageRecords) => liveFeatureReport(root, feature, current, usageRecords)),
+      };
+    }
+    const stale = featureStaleness(event, current);
+    return {
+      feature,
+      accepted: true,
+      stale: stale.stale,
+      staleReasons: stale.reasons,
+      current: currentFeatureMetadata(current),
+      acceptance: event,
+      report: event.report,
+    };
+  });
+}
+
+export async function acceptFeature(projectRoot, options = {}) {
+  const feature = validateFeature(options.feature);
+  const by = requireText(options.by, 'feature acceptance by');
+  const reason = requireText(options.reason, 'feature acceptance reason');
+  const root = await canonicalProjectRoot(projectRoot);
+  const info = await layout(root, { create: true });
+  return withExclusiveLock(info.lock, async () => {
+    const state = await readState(info);
+    const current = await inspectFeature(root, state, feature);
+    assertFeatureAcceptanceReady(feature, current);
+    return withUsageLedgerLock(root, async (usageRecords) => {
+      const report = await liveFeatureReport(root, feature, current, usageRecords);
+      const event = createFeatureAcceptanceEvent({
+        feature,
+        by,
+        reason,
+        membership: current.membership,
+        activeAcceptanceDigests: current.activeAcceptanceDigests,
+        report,
+      });
+      const appended = await appendFeatureEvent(root, event);
+      return {
+        feature,
+        accepted: true,
+        stale: false,
+        current: currentFeatureMetadata(current),
+        acceptance: appended,
+        report: appended.report,
+      };
+    });
+  });
+}
+
 export async function controllerStatus(projectRoot, { feature } = {}) {
   const selectedFeature = feature === undefined ? undefined : validateFeature(feature);
   const root = await canonicalProjectRoot(projectRoot);
@@ -1336,6 +1466,8 @@ export function createController(projectRoot) {
     closeTask: (options) => closeTask(projectRoot, options),
     supersedeTask: (options) => supersedeTask(projectRoot, options),
     reviewTask: (options) => reviewTask(projectRoot, options),
+    acceptFeature: (options) => acceptFeature(projectRoot, options),
+    reportFeature: (options) => reportFeature(projectRoot, options),
     status: (options) => controllerStatus(projectRoot, options),
     next: () => controllerNext(projectRoot),
     packet: (taskId) => resolveTaskPacket(projectRoot, taskId),

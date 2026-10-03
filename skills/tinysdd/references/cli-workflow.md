@@ -33,6 +33,55 @@ broker-s1  accepted (applied from worker-…)
 └─ broker-s3  pending_approval
 ```
 
+Record a manually observed usage row with explicit phase, model and feature or
+task attribution. Counts are nonnegative safe integers and missing telemetry is
+never converted to zero:
+
+```sh
+tinysdd usage record --phase review --model frontier/model --input 1200 --output 400 --feature reservations
+tinysdd usage report --feature reservations
+```
+
+For external data, use the normalized import envelope with a `source`, an
+`exportId`, and a stable `externalRecordId` on every record. TinySDD validates
+the complete file before appending it; this contract does not claim a native
+Pi or Claude Code adapter:
+
+```json
+{
+  "schemaVersion": 1,
+  "type": "usage-import",
+  "source": "synthetic-talon",
+  "exportId": "export-1",
+  "records": [
+    {
+      "externalRecordId": "record-1",
+      "phase": "review",
+      "model": "frontier/model",
+      "feature": "broker",
+      "input": 7,
+      "output": 3
+    }
+  ]
+}
+```
+
+```sh
+tinysdd usage import --file usage-export.json
+```
+
+After reviewing every active labelled task, close a feature window explicitly:
+
+```sh
+tinysdd feature accept --feature reservations --by operator --reason 'Reviewed the feature window'
+tinysdd feature report --feature reservations
+```
+
+The acceptance event freezes report numbers and run references. Later usage is
+visible only after an explicit re-acceptance; current membership or task
+freshness changes mark the frozen snapshot stale while preserving its numbers.
+Unknown or partial observations remain `UNKNOWN` with their provenance.
+
 A task may cite exact source lines with `--context MANIFEST`, a JSON file under
 `.tinysdd/tasks/` (format in `docs/context-compiler.md` of the TinySDD repository).
 Approval binds the cited lines, not the whole file, so slices that cite one shared

@@ -89,6 +89,59 @@ tinysdd task add --id validation --feature reservations --brief docs/tasks/valid
 tinysdd status --feature reservations
 ```
 
+Record manual usage only when the phase, model and attribution are known. The
+token fields accept nonnegative safe integers; use the named phases shown by
+`tinysdd --help` and provide either `--task` or `--feature`:
+
+```sh
+tinysdd usage record --phase review --model frontier/model --input 1200 --output 400 --reasoning 80 --feature reservations
+tinysdd usage report --feature reservations
+```
+
+Normalized imports use a versioned JSON envelope with `source`, `exportId` and
+stable per-record `externalRecordId` values. The entire file is validated before
+anything is appended:
+
+```json
+{
+  "schemaVersion": 1,
+  "type": "usage-import",
+  "source": "synthetic-talon",
+  "exportId": "export-1",
+  "records": [
+    {
+      "externalRecordId": "record-1",
+      "phase": "review",
+      "model": "frontier/model",
+      "feature": "broker",
+      "input": 7,
+      "output": 3
+    }
+  ]
+}
+```
+
+```sh
+tinysdd usage import --file usage-export.json
+```
+
+An import is a normalized contract; it does not claim that a native Pi or Claude
+Code adapter was run. Missing or partial telemetry remains `UNKNOWN`, while
+known subtotals and their missing-value provenance stay visible. Use the
+explicit feature decision after every currently active labelled task is
+accepted:
+
+```sh
+tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'
+tinysdd feature report --feature reservations
+```
+
+Acceptance appends an immutable report snapshot. Later imports leave that
+snapshot unchanged; `feature report` marks it stale when membership or current
+task freshness changes. Re-run `feature accept` to record a new window. A
+deterministic synthetic talon-shaped fixture is covered by the tests; no real
+historical frontier usage is claimed without supplied records.
+
 `status` renders open tasks as a dependency tree. Each task also has a global
 topological `order` and sorted `dependents` in `status --json`; filtering by a
 feature keeps those positions global. Accepted tasks show the applied worker
