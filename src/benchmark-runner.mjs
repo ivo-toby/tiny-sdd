@@ -1321,6 +1321,9 @@ export async function runBenchmark({
   if (typeof invocationId !== 'string' || !BENCHMARK_ID_PATTERN.test(invocationId)) {
     invalid('invocationId must be a lowercase benchmark identifier');
   }
+  if (runChecksDeclared !== true) {
+    invalid('benchmark runner requires a declared task check context');
+  }
   if (verifier !== undefined && (typeof verifier !== 'function' || runtime?.test !== true)) {
     invalid('test verifier injection requires runtime.test === true');
   }

@@ -7,7 +7,7 @@ import { basename, join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
-import { benchmarkFixtureDigest, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
+import { benchmarkFixtureDigest, inspectBenchmarkIdentity, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
 import { parseBenchmarkInvocation } from '../src/benchmark-results.mjs';
 
 const digest = (value) => sha256(value);
@@ -245,10 +245,22 @@ test('keeps an undeclared task check context distinct in the benchmark identity'
     const runtime = await makeRuntime(root);
     const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } };
     const declared = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'declared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }) });
-    const undeclared = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'undeclared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }), runChecksDeclared: false });
+    await assert.rejects(
+      runBenchmark({ suiteRoot: root, outputRoot: join(root, 'undeclared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }), runChecksDeclared: false }),
+      (error) => error.code === 'BENCHMARK_RUNNER_INVALID' && /declared task check context/u.test(error.message),
+    );
+    await assert.rejects(access(join(root, 'undeclared')), { code: 'ENOENT' });
+    const undeclared = await inspectBenchmarkIdentity({
+      projectRoot: root,
+      suiteRoot: root,
+      worker,
+      runtime,
+      verifierMode: 'test-injection',
+      runChecksDeclared: false,
+    });
     assert.equal(declared.config.identity.runChecks.declared, true);
-    assert.equal(undeclared.config.identity.runChecks.declared, false);
-    assert.notEqual(declared.config.configDigest, undeclared.config.configDigest);
+    assert.equal(undeclared.identity.runChecks.declared, false);
+    assert.notEqual(declared.config.configDigest, undeclared.configDigest);
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
