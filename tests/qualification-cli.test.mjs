@@ -70,6 +70,13 @@ test('bench rescore and qualification show work offline from a retained record',
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-qualification-cli-'));
   try {
     const saved = await writeQualificationRecord(root, retainedRecord());
+    const prototypeTarget = await invoke(root, 'bench', 'rescore', '--record', saved.path, '--target', '__proto__=0.9');
+    assert.equal(prototypeTarget.status, 1);
+    const prototypeError = parseSingleJson(prototypeTarget);
+    assert.equal(prototypeError.ok, false);
+    assert.equal(prototypeError.error.code, 'INVALID_ARGUMENT');
+    assert.match(prototypeError.error.message, /--target role/u);
+
     const rescored = await invoke(root, 'bench', 'rescore', '--record', saved.path, '--target', 'implement-slice=0.9');
     assert.equal(rescored.status, 0);
     const rescoredJson = parseSingleJson(rescored);

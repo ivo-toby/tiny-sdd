@@ -32,6 +32,7 @@ import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
+import { BENCHMARK_ROLES } from '../src/benchmark-schema.mjs';
 import { readQualificationEvidence } from '../src/qualification-reader.mjs';
 import {
   compareQualificationApplicability,
@@ -379,6 +380,7 @@ function parseQualificationTargets(values) {
     const separator = value.indexOf('=');
     if (separator <= 0 || separator === value.length - 1) throw cliError('--target must use ROLE=NUMBER');
     const role = value.slice(0, separator);
+    if (!BENCHMARK_ROLES.includes(role)) throw cliError(`--target role must be one of ${BENCHMARK_ROLES.join(', ')}`);
     const raw = value.slice(separator + 1);
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) throw cliError('--target number must be finite and between 0 and 1');
