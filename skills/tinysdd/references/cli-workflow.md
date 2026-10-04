@@ -411,4 +411,10 @@ counts toward the worker deadline; checks are cancelled when the worker ends.
 Inspect `checks.jsonl`, bounded check-output artifacts and
 `result.workerObservedChecks`. The observations identify the checked input
 digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
-independent operator verification remains required.
+independent operator verification remains required. When the client is
+available, the worker contract makes the named host tool explicit and directs
+an edit → `run_checks` → fix loop after each allowed write or edit. Failures are
+fixed only within the approved scope; the worker stops and reports when the
+declared budget or required information or permission is exhausted, and names
+observed checks separately from checks still unrun. An unavailable client keeps
+the existing no-check prompt and Pi tool arguments.

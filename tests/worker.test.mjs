@@ -260,6 +260,10 @@ if (action === "check-exit") {
   await delay(250);
   process.exit(0);
 }
+if (action === "args") {
+  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: JSON.stringify(process.argv.slice(2)) }] } }));
+  process.exit(0);
+}
 console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Changed the file; verification is unrun."}]}}));
 `);
   await chmod(fakePi, 0o755);
@@ -277,6 +281,15 @@ function packet(allowedPaths = ["src/allowed.txt"]) {
 function checksPacket(ids = ["first", "second"]) {
   const text = JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: ids.map((id) => ({ id, argv: ["node", "-e", "0"], timeoutMs: 1000 })) });
   return { path: ".tinysdd/tasks/checks.json", text, sha256: createHash("sha256").update(text).digest("hex") };
+}
+
+function normalizePiArgs(result) {
+  const args = JSON.parse(result.modelClaims.text);
+  return args.map((value, index) => {
+    if (index > 0 && ["--session", "--append-system-prompt"].includes(args[index - 1])) return "<temporary-path>";
+    if (value.startsWith("@/") && value.endsWith("/task-prompt.txt")) return "@<temporary-path>";
+    return value;
+  });
 }
 
 function runtime(runtimeRoot, action = "complete") {
@@ -824,6 +837,65 @@ describe("Pi worker capture and scope", () => {
       assert.match(result.warnings.find((warning) => warning.startsWith("run_checks unavailable: ")), /requires Linux|test runtime did not provide/u);
       assert.equal(result.artifactPaths.checks, undefined);
       assert.equal(result.runChecks.available, false);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("guides the available check loop while retaining no-tool prompt and argument bytes", async () => {
+    const project = await makeProject();
+    try {
+      const { context } = await approvedContextPacket(project);
+      const checks = checksPacket(["first"]);
+      const noTool = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), context },
+        worker: worker(),
+        runtime: runtime(undefined, "args"),
+      });
+      const unavailable = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), context, checks },
+        worker: worker(),
+        runtime: runtime(undefined, "args"),
+      });
+      const available = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), context, checks },
+        worker: worker(),
+        runtime: {
+          ...runtime(undefined, "args"),
+          checkRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok\n", tail: "ok\n", totalBytes: 3, truncated: false } }),
+        },
+      });
+      const noToolPrompt = await readFile(noTool.artifactPaths.prompt, "utf8");
+      const unavailablePrompt = await readFile(unavailable.artifactPaths.prompt, "utf8");
+      const availablePrompt = await readFile(available.artifactPaths.prompt, "utf8");
+      assert.equal(noToolPrompt, unavailablePrompt);
+      assert.match(noToolPrompt, /report checks as unrun unless the packet itself supplies observed evidence/u);
+      assert.match(noToolPrompt, /Start by planning the allowed-file edit/u);
+      assert.match(availablePrompt, /named `run_checks` host tool/u);
+      assert.match(availablePrompt, /After each written or edited allowed file, call `run_checks`/u);
+      assert.match(availablePrompt, /fix reported failures within the approved scope/u);
+      assert.match(availablePrompt, /do not simulate checks in reasoning/u);
+      assert.match(availablePrompt, /declared check budget is exhausted/u);
+      assert.match(availablePrompt, /missing information or permission/u);
+      assert.match(availablePrompt, /worker-observed host-check evidence, never operator verification or acceptance/u);
+      assert.match(availablePrompt, /final handoff, name observed checks separately from checks still unrun/u);
+      assert.doesNotMatch(availablePrompt, /report checks as unrun unless the packet itself supplies observed evidence/u);
+      assert.doesNotMatch(availablePrompt, /Start by planning the allowed-file edit/u);
+
+      const noToolArgs = normalizePiArgs(noTool);
+      const unavailableArgs = normalizePiArgs(unavailable);
+      assert.deepEqual(noToolArgs, unavailableArgs);
+      assert.equal(noToolArgs[noToolArgs.indexOf("--tools") + 1], "read,write,edit");
+      assert.equal(available.modelClaims.unverified, true);
+      assert.equal(available.workerObservedChecks.acceptanceEvidence, false);
+      const availableArgs = normalizePiArgs(available);
+      assert.equal(availableArgs[availableArgs.indexOf("--tools") + 1], "read,write,edit,run_checks");
+      assert.equal(availableArgs.includes("bash"), false);
+      assert.equal(availableArgs.includes("sh"), false);
+      assert.equal(availableArgs.includes("shell"), false);
     } finally {
       await rm(project, { recursive: true, force: true });
     }
