@@ -147,6 +147,10 @@ test('records the default target and exact best-case counts for 9/10', () => {
 test('handles all-pass, all-fail, no observations, invalid inputs, and large counts', () => {
   assert.equal(scoreRoleCounts({ n: 10, passes: 10 }).status, 'insufficient_evidence');
   assert.equal(scoreRoleCounts({ n: 10, passes: 0 }).status, 'not_qualified');
+  assert.equal(wilsonInterval(3, 0).lowerBound, 0);
+  assert.equal(wilsonInterval(10, 10).upperBound, 1);
+  assert.equal(scoreRoleCounts({ n: 3, passes: 0, target: Number.MIN_VALUE }).status, 'insufficient_evidence');
+  assert.equal(scoreRoleCounts({ n: 10, passes: 10, target: 1 }).status, 'insufficient_evidence');
   assert.equal(scoreRoleCounts({ n: 0, passes: 0 }).status, 'insufficient_evidence');
   assert.equal(scoreRoleCounts({ n: 100, passes: 100 }).status, 'qualified');
   assert.throws(() => scoreRoleCounts({ n: 3, passes: 4 }), { code: 'QUALIFICATION_INVALID' });

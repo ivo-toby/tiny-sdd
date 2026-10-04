@@ -173,8 +173,10 @@ export function wilsonInterval(n, passes, { confidence = QUALIFICATION_CONFIDENC
   const denominator = 1 + zSquared / n;
   const center = (phat + zSquared / (2 * n)) / denominator;
   const halfWidth = z * Math.sqrt((phat * (1 - phat) / n) + (zSquared / (4 * n * n))) / denominator;
-  const lowerBound = Math.max(0, center - halfWidth);
-  const upperBound = Math.min(1, center + halfWidth);
+  // The Wilson endpoints are exact for an all-failure or all-success sample;
+  // make that explicit instead of allowing rounding to change a status.
+  const lowerBound = passes === 0 ? 0 : Math.max(0, center - halfWidth);
+  const upperBound = passes === n ? 1 : Math.min(1, center + halfWidth);
   if (!Number.isFinite(lowerBound) || !Number.isFinite(upperBound)) invalid('Wilson interval is not finite');
   return { lowerBound, upperBound };
 }
