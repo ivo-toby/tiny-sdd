@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto';
 
 import {
   atomicWriteFile,
-  atomicWriteJson,
   assertNoSymlinkPath,
   canonicalProjectRoot,
   digestJson,
@@ -21,6 +20,23 @@ export const QUALIFICATION_STORE_DIRECTORY = '.tinysdd/qualifications';
 export const QUALIFICATION_PROFILE_REFERENCES_PATH = `${QUALIFICATION_STORE_DIRECTORY}/profile-references.json`;
 export const QUALIFICATION_STORE_LOCK_PATH = `${QUALIFICATION_STORE_DIRECTORY}/.lock`;
 const MAX_STORE_BYTES = 4 * 1024 * 1024;
+
+function boundedJson(value, label) {
+  let text;
+  try {
+    text = JSON.stringify(value, null, 2);
+  } catch (error) {
+    invalid(`${label} could not be serialized`, { causeCode: error?.code });
+  }
+  if (typeof text !== 'string') invalid(`${label} could not be serialized`);
+  const serialized = `${text}\n`;
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_STORE_BYTES) invalid(`${label} exceeds the ${MAX_STORE_BYTES}-byte write limit`);
+  return serialized;
+}
+
+async function atomicWriteBoundedJson(target, value, label) {
+  await atomicWriteFile(target, boundedJson(value, label));
+}
 
 function invalid(message, details = undefined) {
   throw tinyError('QUALIFICATION_STORE_INVALID', message, details);
@@ -159,7 +175,7 @@ async function writeRecordUnlocked(root, record, { replace = false } = {}) {
   }
   if (existing !== undefined && !replace) invalid(`qualification record already exists: ${target.path}`);
   if (existing?.isSymbolicLink()) invalid(`qualification record may not be a symlink: ${target.path}`);
-  await atomicWriteJson(target.absolute, normalized);
+  await atomicWriteFile(target.absolute, boundedJson(normalized, 'qualification record'));
   const saved = await recordBytes({ root, path: target.path });
   return { record: saved.record, path: target.path, sha256: saved.sha256 };
 }
@@ -190,7 +206,17 @@ async function restoreRecordFile(snapshot, saved) {
 export async function writeQualificationRecord(projectRoot, record, { replace = false } = {}) {
   const normalized = validateQualificationRecord(record);
   if (replace) return replaceQualificationRecord(projectRoot, normalized);
-  return withQualificationStoreLock(projectRoot, (root) => writeRecordUnlocked(root, normalized, { replace }));
+  return withQualificationStoreLock(projectRoot, async (root) => {
+    const snapshot = await snapshotRecordFile(root, normalized.configDigest);
+    let writeAttempted = false;
+    try {
+      writeAttempted = true;
+      return await writeRecordUnlocked(root, normalized, { replace });
+    } catch (error) {
+      if (writeAttempted) await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });
+      throw error;
+    }
+  });
 }
 
 function profileReference(value, label) {
@@ -358,7 +384,9 @@ export async function persistQualificationRecord(projectRoot, record, {
     }, 'qualification profile association');
     const snapshot = await snapshotRecordFile(root, normalizedRecord.configDigest);
     let saved;
+    let writeAttempted = false;
     try {
+      writeAttempted = true;
       saved = await writeRecordUnlocked(root, normalizedRecord, { replace });
       const association = { ...associationTemplate, record: { path: saved.path, sha256: saved.sha256 } };
       const key = `${association.profilePath ?? ''}\0${association.profileDigest}\0${association.workerName}\0${association.configDigest}\0${association.record.path}`;
@@ -372,10 +400,10 @@ export async function persistQualificationRecord(projectRoot, record, {
       withoutSame.push(association);
       const data = { schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION, associations: withoutSame };
       const sidecar = storePath(root, QUALIFICATION_PROFILE_REFERENCES_PATH);
-      await atomicWriteJson(sidecar.absolute, data);
+      await atomicWriteBoundedJson(sidecar.absolute, data, 'qualification profile references');
       return { ...saved, association, profileReferences: data };
     } catch (error) {
-      if (saved !== undefined) await restoreRecordFile(snapshot, saved);
+      if (writeAttempted) await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });
       throw error;
     }
   });
@@ -398,7 +426,7 @@ export async function replaceQualificationRecord(projectRoot, record) {
           .map((entry) => ({ ...entry, record: { path: saved.path, sha256: saved.sha256 } })));
       const data = { schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION, associations };
       const sidecar = storePath(root, QUALIFICATION_PROFILE_REFERENCES_PATH);
-      if (associations.length > 0 || loaded.sha256 !== null) await atomicWriteJson(sidecar.absolute, data);
+      if (associations.length > 0 || loaded.sha256 !== null) await atomicWriteBoundedJson(sidecar.absolute, data, 'qualification profile references');
       return { ...saved, profileReferences: data };
     } catch (error) {
       await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });

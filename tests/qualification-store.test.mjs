@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { buildBenchmarkConfigIdentity } from '../src/benchmark-schema.mjs';
-import { buildQualificationRecord, rescoreQualificationRecord } from '../src/qualification.mjs';
+import { buildQualificationRecord, rescoreQualificationRecord, validateQualificationRecord } from '../src/qualification.mjs';
 import {
   persistQualificationRecord,
   compareQualificationApplicability,
+  qualificationRecordPath,
   readQualificationProfileReferences,
   readQualificationRecord,
   replaceQualificationRecord,
@@ -41,6 +42,13 @@ function record() {
       },
     },
   });
+}
+
+function oversizedRecord() {
+  const value = record();
+  value.roles['implement-slice'].perChallenge[0].version = 'x'.repeat(4 * 1024 * 1024 + 1);
+  validateQualificationRecord(value);
+  return value;
 }
 
 test('stores records under a locked config path and preserves distinct profile associations on replacement', async () => {
@@ -79,6 +87,42 @@ test('stores records under a locked config path and preserves distinct profile a
     const loaded = await readQualificationRecord(root, replaced.path);
     assert.equal(loaded.record.roles['implement-slice'].target, 0.9);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('bounds serialized records before public, replacement, and profile-associated writes', async () => {
+  const emptyRoot = await mkdtemp(join(tmpdir(), 'tinysdd-qualification-store-size-'));
+  const root = await mkdtemp(join(tmpdir(), 'tinysdd-qualification-store-size-existing-'));
+  try {
+    const oversized = oversizedRecord();
+    await assert.rejects(writeQualificationRecord(emptyRoot, oversized), { code: 'QUALIFICATION_STORE_INVALID' });
+    await assert.rejects(readFile(qualificationRecordPath(emptyRoot, oversized.configDigest).absolute));
+
+    await mkdir(join(root, 'profiles'), { recursive: true });
+    await writeFile(join(root, 'profiles', 'a.json'), JSON.stringify({ schemaVersion: 1, id: 'profile-a' }));
+    const base = record();
+    const saved = await persistQualificationRecord(root, base, {
+      profilePath: 'profiles/a.json',
+      profile: { schemaVersion: 1, id: 'profile-a' },
+      workerName: 'worker-a',
+    });
+    const before = await readFile(join(root, saved.path));
+
+    await assert.rejects(writeQualificationRecord(root, oversized, { replace: true }), { code: 'QUALIFICATION_STORE_INVALID' });
+    assert.deepEqual(await readFile(join(root, saved.path)), before);
+    assert.equal((await readQualificationProfileReferences(root)).associations.length, 1);
+
+    await assert.rejects(persistQualificationRecord(root, oversized, {
+      replace: true,
+      profilePath: 'profiles/a.json',
+      profile: { schemaVersion: 1, id: 'profile-a' },
+      workerName: 'worker-a',
+    }), { code: 'QUALIFICATION_STORE_INVALID' });
+    assert.deepEqual(await readFile(join(root, saved.path)), before);
+    assert.equal((await readQualificationProfileReferences(root)).associations.length, 1);
+  } finally {
+    await rm(emptyRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
