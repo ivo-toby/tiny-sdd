@@ -5,8 +5,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { buildBenchmarkConfigIdentity } from '../src/benchmark-schema.mjs';
-import { buildQualificationRecord, rescoreQualificationRecord, validateQualificationRecord } from '../src/qualification.mjs';
 import {
+  buildQualificationRecord,
+  rescoreQualificationRecord,
+  scoreRoleCounts,
+  validateQualificationRecord,
+} from '../src/qualification.mjs';
+import {
+  accumulateQualificationRecord,
   persistQualificationRecord,
   compareQualificationApplicability,
   qualificationRecordPath,
@@ -49,6 +55,29 @@ function oversizedRecord() {
   value.roles['implement-slice'].perChallenge[0].version = 'x'.repeat(4 * 1024 * 1024 + 1);
   validateQualificationRecord(value);
   return value;
+}
+
+function recordWithObservation({ invocationId, passed, sourcePath, sourceDigest, target = 0.8 }) {
+  const value = record();
+  const source = { path: sourcePath, sha256: sourceDigest };
+  value.source = {
+    invocations: [{ path: sourcePath.replace(/\/case\.json$/u, '/invocation.json'), sha256: digest(invocationId === 'invocation-a' ? '1' : '2') }],
+    cases: [source],
+  };
+  value.roles['implement-slice'] = scoreRoleCounts({
+    n: 1,
+    passes: passed ? 1 : 0,
+    target,
+    perChallenge: [{
+      id: 'challenge-a',
+      version: '1',
+      sha256: digest('f'),
+      n: 1,
+      passes: passed ? 1 : 0,
+      results: [{ invocationId, attemptId: 'attempt-1', repetition: 1, passed, source }],
+    }],
+  });
+  return validateQualificationRecord(value);
 }
 
 test('stores records under a locked config path and preserves distinct profile associations on replacement', async () => {
@@ -123,6 +152,63 @@ test('bounds serialized records before public, replacement, and profile-associat
     assert.equal((await readQualificationProfileReferences(root)).associations.length, 1);
   } finally {
     await rm(emptyRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('accumulation preserves every observation, stored targets, and all profile aliases through rescore', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tinysdd-qualification-store-accumulate-'));
+  try {
+    await mkdir(join(root, 'profiles'), { recursive: true });
+    await writeFile(join(root, 'profiles', 'a.json'), JSON.stringify({ schemaVersion: 1, id: 'profile-a' }));
+    const first = recordWithObservation({
+      invocationId: 'invocation-a',
+      passed: true,
+      sourcePath: '.tinysdd/bench/store-suite/invocation-a/case.json',
+      sourceDigest: digest('3'),
+      target: 0.9,
+    });
+    const second = recordWithObservation({
+      invocationId: 'invocation-b',
+      passed: false,
+      sourcePath: '.tinysdd/bench/store-suite/invocation-b/case.json',
+      sourceDigest: digest('4'),
+      target: 0.7,
+    });
+    const firstSaved = await accumulateQualificationRecord(root, first, {
+      profilePath: 'profiles/a.json',
+      profile: { schemaVersion: 1, id: 'profile-a' },
+      workerName: 'worker-a',
+      targets: { 'implement-slice': 0.7 },
+    });
+    await accumulateQualificationRecord(root, second, {
+      profilePath: 'profiles/a.json',
+      profile: { schemaVersion: 1, id: 'profile-a' },
+      workerName: 'worker-b',
+    });
+    const accumulated = (await readQualificationRecord(root, firstSaved.path)).record;
+    const score = accumulated.roles['implement-slice'];
+    assert.equal(score.n, 2);
+    assert.equal(score.passes, 1);
+    assert.equal(score.target, 0.7);
+    assert.deepEqual(score.perChallenge[0].results.map((entry) => [entry.invocationId, entry.passed]), [
+      ['invocation-a', true],
+      ['invocation-b', false],
+    ]);
+    assert.equal(accumulated.source.invocations.length, 2);
+    assert.equal(accumulated.source.cases.length, 2);
+
+    const rescored = await replaceQualificationRecord(root, rescoreQualificationRecord(accumulated, { 'implement-slice': 0.95 }));
+    const afterRescore = (await readQualificationRecord(root, rescored.path)).record;
+    assert.equal(afterRescore.roles['implement-slice'].n, 2);
+    assert.equal(afterRescore.roles['implement-slice'].passes, 1);
+    assert.equal(afterRescore.roles['implement-slice'].target, 0.95);
+    assert.equal(afterRescore.source.invocations.length, 2);
+    assert.equal(afterRescore.source.cases.length, 2);
+    const aliases = await readQualificationProfileReferences(root);
+    assert.equal(aliases.associations.length, 2);
+    assert.ok(aliases.associations.every((entry) => entry.record.sha256 === rescored.sha256));
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

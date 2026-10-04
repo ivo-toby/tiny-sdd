@@ -648,7 +648,7 @@ export async function accumulateQualificationRecord(projectRoot, record, {
     const sidecarSnapshot = await snapshotStoreFile(root, QUALIFICATION_PROFILE_REFERENCES_PATH, 'qualification profile references');
     const existing = snapshot.bytes === null ? null : (await recordBytes({ root, path: snapshot.target.path }));
     const merged = existing === null
-      ? normalizedRecord
+      ? mergeQualificationRecords([normalizedRecord], undefined, { targets: targets ?? target })
       : mergeQualificationRecords(existing.record, normalizedRecord, { targets: targets ?? target });
     let saved;
     try {

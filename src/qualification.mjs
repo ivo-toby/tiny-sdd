@@ -818,7 +818,7 @@ function mergeReferences(left, right, label) {
 }
 
 function sameChallenge(left, right) {
-  return left.id === right.id && left.version === right.version && left.sha256 === right.sha256;
+  return stableStringify(left) === stableStringify(right);
 }
 
 function mergeRosters(left, right) {
@@ -935,6 +935,9 @@ export function mergeQualificationRecords(recordsOrLeft, maybeRight, options = {
   if (records.length === 0 || records.some((record) => record === undefined)) invalid('qualification record merge requires records');
   const targetOverrides = validateTargets(options.targets ?? options.target, 'qualification merge targets');
   let merged = validateQualificationRecord(records[0]);
+  if (records.length === 1 && Object.keys(targetOverrides).length > 0) {
+    merged = rescoreQualificationRecord(merged, targetOverrides);
+  }
   for (const record of records.slice(1)) {
     merged = mergeQualificationRecordPair(
       merged,

@@ -375,7 +375,7 @@ export async function readQualificationEvidencePool({ projectRoot, suitePath, co
       continue;
     }
     const header = await readInvocationHeader(root, path, maxBytes);
-    if (header.invocation.configDigest === configDigest && equalSuite(header.invocation.suite, roster.suite)) paths.add(path);
+    if (header.invocation.configDigest === configDigest && equalSuite(header.invocation.suite, roster.suite)) paths.add(header.path);
   }
   if (paths.size === 0) invalid(`no retained benchmark invocations exist for configDigest ${configDigest}`);
   const evidence = await readQualificationEvidence({

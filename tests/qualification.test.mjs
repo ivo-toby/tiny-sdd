@@ -66,6 +66,42 @@ function recordInput(overrides = {}) {
   };
 }
 
+function rosteredRecord(heldOutDefinitionSha256) {
+  const identity = config();
+  const value = caseResult();
+  value.verifier.heldOut[0].definitionSha256 = heldOutDefinitionSha256;
+  const casePath = '.tinysdd/bench/invocation-a/cases/case-result.json';
+  const caseSha256 = digest('1');
+  return buildQualificationRecord({
+    observations: [{ caseResult: value, invocationId: 'invocation-a', source: { path: casePath, sha256: caseSha256 } }],
+    source: {
+      invocations: [{ path: '.tinysdd/bench/invocation-a/invocation.json', sha256: digest('3') }],
+      cases: [{ path: casePath, sha256: caseSha256 }],
+    },
+    roster: {
+      suite: value.suite,
+      challenges: [{
+        id: 'challenge-a',
+        version: '1',
+        sha256: digest('4'),
+        role: 'implement-slice',
+        visible: [{ id: 'visible', definitionSha256: digest('1') }],
+        heldOut: [{ id: 'held-out', definitionSha256: heldOutDefinitionSha256 }],
+      }],
+      invocations: [{
+        invocationId: 'invocation-a',
+        path: '.tinysdd/bench/invocation-a/invocation.json',
+        sha256: digest('3'),
+        repeat: 1,
+        expected: [{ challengeId: 'challenge-a', repetitions: [1] }],
+      }],
+    },
+    configIdentity: identity.identity,
+    configDigest: identity.configDigest,
+    suite: value.suite,
+  });
+}
+
 function verifier(checkId, status = 'passed') {
   return {
     checkId,
@@ -331,4 +367,18 @@ test('merges cumulative records by invocation and attempt without dropping failu
     merged,
     makeRecord(caseResult({ attemptId: 'attempt-1', status: 'failed' }), 'invocation-a', '.tinysdd/bench/a/other.json', digest('3')),
   ), { code: 'QUALIFICATION_INVALID' });
+});
+
+test('applies an explicit target override when merging one retained record', () => {
+  const record = buildQualificationRecord(recordInput());
+  const merged = mergeQualificationRecords([record], undefined, { targets: { 'implement-slice': 0.7 } });
+  assert.equal(merged.roles['implement-slice'].target, 0.7);
+  assert.deepEqual(merged.source, record.source);
+  assert.deepEqual(merged.roles['implement-slice'].perChallenge, record.roles['implement-slice'].perChallenge);
+});
+
+test('refuses roster merges when verifier challenge definitions differ', () => {
+  const first = rosteredRecord(digest('2'));
+  const second = rosteredRecord(digest('6'));
+  assert.throws(() => mergeQualificationRecords(first, second), { code: 'QUALIFICATION_INVALID' });
 });
