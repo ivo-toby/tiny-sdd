@@ -161,6 +161,28 @@ client. Source files may appear in local raw events and sent
 model context: use only authorized projects and providers. Excluded filenames
 are a precaution, not a general detector for secrets embedded in source.
 
+Context compaction is default-off. A selected profile can opt into the
+model-free deterministic hook with `runtime.compaction.enabled: true`:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "compact-worker",
+  "runtime": {
+    "compaction": { "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }
+  }
+}
+```
+
+`reserveTokens` must be at least effective `maxTokens`; omitting it derives the
+effective value. The host stages a read-only approved-packet anchor and wrapper
+for both bubblewrap and Seatbelt, independent of `run_checks`. Only paired old
+`read` and `run_checks` results are replaced by bounded digest and replay-marker
+text. `runtime.json.compaction` records the choice and anchor identity, while
+`result.json.observed.compactions` records summary/detail digests. A deterministic
+event has no model-written-summary warning. Refusal and cancellation reasons
+remain explicit in the extension result.
+
 On macOS, Seatbelt allows writes to the candidate and temporary Pi state;
 the original project, original Pi configuration and other home files are denied.
 Only trusted Node/Pi code and system libraries are readable outside those copies.

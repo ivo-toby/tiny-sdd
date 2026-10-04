@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { compileContext } from "../src/context-compiler.mjs";
 import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
 import { copyProjectTree, runWorker } from "../src/worker.mjs";
+import { buildSessionContext } from "./pi100-session-projection.mjs";
 
 const execFileAsync = promisify(execFile);
 // The worker rejects a project root or temp dir that resolves through a symlink,
@@ -101,6 +102,7 @@ async function makeRuntime() {
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 const action = process.env.TINYSDD_TEST_ACTION || "complete";
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const checkChannel = process.env.TINYSDD_CHECK_CHANNEL;
@@ -161,6 +163,77 @@ if (action === "reread") {
   }
   console.log(JSON.stringify({type:"compaction_end",reason:"threshold",aborted:false,willRetry:false,result:{summary:"Summary of the task so far.",firstKeptEntryId:"e7",tokensBefore:90000,estimatedTokensAfter:24000}}));
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Done reading."}]}}));
+  process.exit(0);
+}
+if (action === "deterministic-compaction") {
+  const extensionIndex = process.argv.indexOf("-e");
+  const extensionPath = extensionIndex >= 0 ? process.argv[extensionIndex + 1] : null;
+  const anchorPath = process.env.TINYSDD_COMPACTION_ANCHOR;
+  const anchor = anchorPath ? JSON.parse(readFileSync(anchorPath, "utf8")).anchor : null;
+  const sessionIndex = process.argv.indexOf("--session");
+  const sessionPath = sessionIndex >= 0 ? process.argv[sessionIndex + 1] : null;
+  if (extensionIndex < 0 || !extensionPath || !anchor || !sessionPath) throw new Error("deterministic compaction extension was not loaded with its anchor and session");
+  const entries = [
+    { type: "session", version: 3, id: "session-1", parentId: null },
+    { type: "message", id: "old-1", parentId: "session-1", message: { role: "user", content: "old context" } },
+    { type: "message", id: "keep-1", parentId: "old-1", message: { role: "assistant", content: [{ type: "text", text: "kept context" }] } },
+  ];
+  writeFileSync(sessionPath, \`\${entries.map((entry) => JSON.stringify(entry)).join("\\n")}\\n\`, { mode: 0o600 });
+  const handlers = new Map();
+  const pi = {
+    on(event, handler) { handlers.set(event, handler); return () => handlers.delete(event); },
+    appendEntry(customType, data) {
+      const entry = { type: "custom", customType, data, id: \`custom-\${entries.length}\`, parentId: entries.at(-1)?.id ?? null, timestamp: "2026-10-04T10:00:00.000Z" };
+      entries.push(entry);
+      appendFileSync(sessionPath, \`\${JSON.stringify(entry)}\\n\`);
+    },
+  };
+  const extension = await import(pathToFileURL(extensionPath).href);
+  extension.default(pi);
+  const handler = handlers.get("session_before_compact");
+  if (typeof handler !== "function") throw new Error("deterministic compaction hook was not registered");
+  const response = await handler({
+    preparation: {
+      firstKeptEntryId: "keep-1",
+      tokensBefore: 90000,
+      messagesToSummarize: [{ role: "user", content: "old context" }],
+      turnPrefixMessages: [],
+    },
+    branchEntries: entries,
+    reason: "threshold",
+    willRetry: false,
+    signal: new AbortController().signal,
+  }, {});
+  if (response.cancel || !response.compaction) throw new Error("deterministic compaction hook refused synthetic retained input");
+  const compactionEntry = {
+    type: "compaction",
+    id: "compact-1",
+    parentId: "keep-1",
+    summary: response.compaction.summary,
+    firstKeptEntryId: response.compaction.firstKeptEntryId,
+    tokensBefore: response.compaction.tokensBefore,
+    details: response.compaction.details,
+    fromHook: true,
+    timestamp: "2026-10-04T10:00:01.000Z",
+  };
+  entries.push(compactionEntry);
+  appendFileSync(sessionPath, \`\${JSON.stringify(compactionEntry)}\\n\`);
+  const newMessage = { type: "message", id: "new-1", parentId: "compact-1", message: { role: "assistant", content: [{ type: "text", text: "after retained compaction" }] } };
+  entries.push(newMessage);
+  appendFileSync(sessionPath, \`\${JSON.stringify(newMessage)}\\n\`);
+  const refusal = await handler({
+    preparation: { firstKeptEntryId: "new-1", tokensBefore: 1, messagesToSummarize: [], turnPrefixMessages: [] },
+    branchEntries: entries,
+    reason: "threshold",
+    willRetry: false,
+    signal: new AbortController().signal,
+  }, {});
+  if (!refusal.cancel || refusal.details?.code !== "COMPACTION_EMPTY") throw new Error("deterministic compaction hook did not refuse empty input");
+  // Pi 1.0 emits no cancel details in compaction_end; the custom audit entry
+  // above is the persisted refusal record and remains outside model context.
+  console.log(JSON.stringify({ type: "compaction_end", reason: "threshold", aborted: false, willRetry: false, result: { summary: response.compaction.summary, firstKeptEntryId: response.compaction.firstKeptEntryId, tokensBefore: response.compaction.tokensBefore, estimatedTokensAfter: response.compaction.estimatedTokensAfter, details: response.compaction.details, fromHook: true } }));
+  console.log(JSON.stringify({ type: "compaction_end", reason: "threshold", aborted: true, willRetry: false }));
+  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done after deterministic compaction." }] } }));
   process.exit(0);
 }
 if (action === "tools") {
@@ -267,6 +340,22 @@ describe("Pi environment filtering", () => {
     await assert.rejects(
       preparePiEnvironment({ worker: { ...worker(), provider: "other" }, sourceAgentDir }),
       /Configured Pi provider is unavailable/u,
+    );
+  });
+
+  test("writes opt-in deterministic compaction settings and refuses an undersized reserve", async () => {
+    const profile = { schemaVersion: 1, id: "compact", runtime: { compaction: { enabled: true } } };
+    const prepared = await preparePiEnvironment({ worker: worker(), profile, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } });
+    try {
+      const settings = JSON.parse(await readFile(join(prepared.stateDir, "settings.json"), "utf8"));
+      assert.deepEqual(settings.compaction, { enabled: true, reserveTokens: 256 });
+      assert.deepEqual(prepared.metadata.compaction, { enabled: true, reserveTokens: 256, profile: { enabled: true } });
+    } finally {
+      await prepared.cleanup();
+    }
+    await assert.rejects(
+      preparePiEnvironment({ worker: worker(), profile: { ...profile, runtime: { compaction: { enabled: true, reserveTokens: 128 } } }, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } }),
+      /reserveTokens 128 must be at least effective maxTokens 256/u,
     );
   });
 });
@@ -1051,6 +1140,57 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.observed.compactions[0].tokensBefore, 90000);
       assert.equal(result.observed.compactions[0].summarySha256, createHash("sha256").update("Summary of the task so far.").digest("hex"));
       assert.ok(result.warnings.some((warning) => /compacted the worker context/u.test(warning)));
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("loads deterministic compaction from an opt-in profile and records trusted anchor and details digests", async () => {
+    const project = await makeProject();
+    try {
+      const profile = { schemaVersion: 1, id: "deterministic-compaction", runtime: { compaction: { enabled: true } } };
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), profile, runtime: runtime(undefined, "deterministic-compaction") });
+      assert.equal(result.outcome, "completed");
+      const metadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.deepEqual(metadata.capabilities.extensions, ["compaction-extension.mjs"]);
+      assert.equal(metadata.session.available, true);
+      assert.equal(metadata.session.sha256, result.observed.session.sha256);
+      assert.deepEqual(metadata.compaction, {
+        enabled: true,
+        mode: "deterministic",
+        reserveTokens: 256,
+        keepRecentTokens: null,
+        extensionVersion: 1,
+        anchorId: "task-worker-test",
+        anchorSha256: metadata.compaction.anchorSha256,
+        anchorBytes: metadata.compaction.anchorBytes,
+      });
+      assert.ok(metadata.compaction.anchorBytes > 0);
+      const anchorArtifact = JSON.parse(await readFile(join(result.artifactPaths.compaction, "anchor.json"), "utf8"));
+      assert.equal((await stat(join(result.artifactPaths.compaction, "anchor.json"))).mode & 0o777, 0o400);
+      const prompt = await readFile(result.artifactPaths.prompt, "utf8");
+      assert.equal(prompt.endsWith(anchorArtifact.anchor.text), true);
+      assert.equal(result.observed.compactions.length, 2);
+      assert.equal(result.observed.compactions[0].deterministic, true);
+      assert.equal(result.observed.compactions[0].fromHook, true);
+      assert.match(result.observed.compactions[0].detailsSha256, /^[a-f0-9]{64}$/u);
+      assert.equal(result.observed.compactions[1].aborted, true);
+      assert.equal(result.observed.compactions[1].details, null);
+      assert.equal(result.observed.session.available, true);
+      assert.ok(result.observed.session.bytes > 0);
+      assert.match(result.observed.session.sha256, /^[a-f0-9]{64}$/u);
+      assert.equal(result.artifactPaths.session.endsWith("/session.jsonl"), true);
+      const retainedEntries = (await readFile(result.artifactPaths.session, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      const refusalAudit = retainedEntries.find((entry) => entry.type === "custom" && entry.data?.code === "COMPACTION_EMPTY");
+      assert.ok(refusalAudit);
+      assert.equal(refusalAudit.customType, "tinysdd.compaction-audit");
+      assert.equal(retainedEntries.some((entry) => entry.type === "custom_message"), false);
+      const rebuilt = buildSessionContext(retainedEntries);
+      const summaryMessage = rebuilt.messages.find((message) => message.role === "compactionSummary");
+      assert.ok(summaryMessage);
+      assert.equal(Buffer.from(summaryMessage.summary, "utf8").includes(Buffer.from(anchorArtifact.anchor.text, "utf8")), true);
+      assert.equal(rebuilt.messages.some((message) => message.role === "assistant" && message.content?.[0]?.text === "after retained compaction"), true);
+      assert.equal(result.warnings.some((warning) => /model-written summary/u.test(warning)), false);
     } finally {
       await rm(project, { recursive: true, force: true });
     }

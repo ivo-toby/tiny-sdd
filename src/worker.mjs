@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -21,7 +21,14 @@ import { createCheckChannel } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
-import { digestJson, stableStringify } from "./fs-utils.mjs";
+import { digestJson, stableStringify as fsStableStringify } from "./fs-utils.mjs";
+import {
+  COMPACTION_ANCHOR_ENV,
+  compactionIdentity,
+  normalizeCompactionProfile,
+  writeCompactionBundle,
+} from "./compaction-runtime.mjs";
+import { createApprovedPacketAnchor, stableStringify as compactionStableStringify } from "./deterministic-compaction.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -32,6 +39,7 @@ const MAX_COPY_FILES = 20_000;
 const MAX_COPY_BYTES = 512 * 1024 * 1024;
 const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
 const MAX_CLAIM_BYTES = 128 * 1024;
+const MAX_SESSION_BYTES = 16 * 1024 * 1024;
 const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
 const CONTROLLER_TASKS_PREFIX = ".tinysdd/tasks/";
@@ -465,6 +473,34 @@ async function hashFile(path) {
   return hash.digest("hex");
 }
 
+export async function retainSessionArtifact(sourcePath, destinationPath) {
+  let handle;
+  try {
+    handle = await open(sourcePath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
+    const info = await handle.stat();
+    if (!info.isFile()) return { available: false, reason: "not_regular" };
+    if (info.size > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: info.size, limit: MAX_SESSION_BYTES };
+    const buffer = Buffer.allocUnsafe(MAX_SESSION_BYTES + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, null);
+      if (read.bytesRead === 0) break;
+      bytesRead += read.bytesRead;
+    }
+    if (bytesRead > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: bytesRead, limit: MAX_SESSION_BYTES };
+    const bytes = buffer.subarray(0, bytesRead);
+    await writeFile(destinationPath, bytes, { mode: 0o600, flag: "wx" });
+    return { available: true, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { available: false, reason: "not_written" };
+    if (error?.code === "ELOOP") return { available: false, reason: "symlink" };
+    if (error?.code === "EFBIG") return { available: false, reason: "oversize", limit: MAX_SESSION_BYTES };
+    return { available: false, reason: "read_failed" };
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 async function snapshotTree(root) {
   const output = {};
   async function visit(current, relativePath) {
@@ -538,7 +574,7 @@ function validateProfile(value) {
   if (value.instructions !== undefined && typeof value.instructions !== "string") fail("Worker profile.instructions must be a string");
   if (value.runtime !== undefined) {
     if (!value.runtime || typeof value.runtime !== "object" || Array.isArray(value.runtime)) fail("Worker profile.runtime must be an object");
-    const allowed = new Set(["thinking", "reasoning", "compat", "thinkingBudgets"]);
+    const allowed = new Set(["thinking", "reasoning", "compat", "thinkingBudgets", "compaction"]);
     for (const key of Object.keys(value.runtime)) if (!allowed.has(key)) fail(`Worker profile.runtime.${key} is unsupported`);
     if (value.runtime.thinking !== undefined && !["off", "minimal", "low", "medium", "high"].includes(value.runtime.thinking)) fail("Worker profile.runtime.thinking is invalid");
     if (value.runtime.reasoning !== undefined && typeof value.runtime.reasoning !== "boolean") fail("Worker profile.runtime.reasoning must be boolean");
@@ -552,6 +588,13 @@ function validateProfile(value) {
       for (const [level, tokens] of Object.entries(budgets)) {
         if (!["minimal", "low", "medium", "high"].includes(level)) fail(`Worker profile.runtime.thinkingBudgets.${level} is unsupported`);
         if (!Number.isInteger(tokens) || tokens <= 0) fail(`Worker profile.runtime.thinkingBudgets.${level} must be a positive integer`);
+      }
+    }
+    if (value.runtime.compaction !== undefined) {
+      try {
+        normalizeCompactionProfile(value.runtime);
+      } catch (error) {
+        fail(error?.message ?? "Worker profile.runtime.compaction is invalid");
       }
     }
   }
@@ -911,7 +954,7 @@ function qualificationRuntimeMismatches(qualification, actual) {
     ["environment.arch", expected.environment?.arch, actual.environment.arch],
   ];
   return comparisons
-    .filter(([, expectedValue, actualValue]) => expectedValue !== UNKNOWN && stableStringify(expectedValue) !== stableStringify(actualValue))
+    .filter(([, expectedValue, actualValue]) => expectedValue !== UNKNOWN && fsStableStringify(expectedValue) !== fsStableStringify(actualValue))
     .map(([field]) => field);
 }
 
@@ -927,7 +970,7 @@ function invalidatedQualification(qualification, changedFields) {
   };
 }
 
-function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt, checkExtension }) {
+function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt, checkExtension, compactionExtension }) {
   const args = [
     "--offline",
     "--print",
@@ -951,12 +994,12 @@ function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath,
     "--append-system-prompt",
     systemPromptPath,
   ];
-  if (checkExtension) args.push("-e", checkExtension);
+  for (const extension of [checkExtension, compactionExtension].filter(Boolean)) args.push("-e", extension);
   args.push(userPrompt);
   return args;
 }
 
-function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, env, checkChannel }) {
+export function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, env, checkChannel, compactionBundle }) {
   const requiredMounts = ["/usr", "/bin", "/lib", "/lib64"];
   const args = ["--die-with-parent", "--unshare-user", "--unshare-pid", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--dir", "/etc"];
   for (const mount of requiredMounts) args.push("--ro-bind", mount, mount);
@@ -974,9 +1017,12 @@ function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalP
   ]) args.push("--ro-bind-try", path, path);
   args.push("--dir", "/opt", "--ro-bind", nodeRoot, "/opt/node", "--dir", "/work", "--bind", workspace, "/work", "--dir", "/pi-state", "--bind", stateDir, "/pi-state", "--chdir", "/work");
   if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--dir", "/opt/tinysdd", "--ro-bind", checkChannel.extension, "/opt/tinysdd/run-checks.mjs");
+  if (compactionBundle && !checkChannel) args.push("--dir", "/opt/tinysdd");
+  if (compactionBundle) args.push("--dir", "/opt/tinysdd/compaction", "--ro-bind", compactionBundle.directory, "/opt/tinysdd/compaction");
   // No --unshare-net: model inference must reach the configured proxy.  The
   // only writable mounts are the disposable candidate and temporary Pi state.
   args.push("--setenv", "HOME", "/home", "--setenv", "PI_CODING_AGENT_DIR", "/pi-state", "--setenv", "PATH", "/opt/node/bin:/usr/bin:/bin");
+  if (compactionBundle) args.push("--setenv", COMPACTION_ANCHOR_ENV, "/opt/tinysdd/compaction/anchor.json");
   args.push(piLexicalPath, ...piArgs);
   return args;
 }
@@ -1008,6 +1054,8 @@ function parseEvents(text) {
     }
     if (event.type === "compaction_end") {
       const summary = typeof event.result?.summary === "string" ? event.result.summary : null;
+      const details = event.result?.details && typeof event.result.details === "object" ? event.result.details : null;
+      const detailsSerialized = details === null ? null : compactionStableStringify(details);
       compactions.push({
         reason: event.reason ?? null,
         aborted: event.aborted === true,
@@ -1015,6 +1063,11 @@ function parseEvents(text) {
         estimatedTokensAfter: Number.isFinite(event.result?.estimatedTokensAfter) ? event.result.estimatedTokensAfter : null,
         summarySha256: summary === null ? null : createHash("sha256").update(summary).digest("hex"),
         summaryBytes: summary === null ? null : Buffer.byteLength(summary),
+        detailsSha256: detailsSerialized === null ? null : createHash("sha256").update(detailsSerialized).digest("hex"),
+        detailsBytes: detailsSerialized === null ? null : Buffer.byteLength(detailsSerialized),
+        details,
+        deterministic: details?.strategy === "deterministic",
+        fromHook: event.result?.fromHook === true || details?.strategy === "deterministic",
         errorMessage: typeof event.errorMessage === "string" ? event.errorMessage : null,
       });
     }
@@ -1360,16 +1413,20 @@ async function resolveReview(projectRoot, review) {
   return { ...review, evidence };
 }
 
-function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks, qualification) {
+function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks, compaction, qualification) {
   const qualificationValue = qualification === undefined ? undefined : {
     recordDigest: qualification.recordDigest ?? null,
     path: qualification.path ?? null,
-    status: qualification.status ?? 'unknown',
-    mode: qualification.mode ?? 'warn',
+    status: qualification.status ?? "unknown",
+    mode: qualification.mode ?? "warn",
     reason: qualification.reason ?? null,
     changedFields: Array.isArray(qualification.changedFields) ? [...qualification.changedFields] : [],
     warnings: Array.isArray(qualification.warnings) ? [...qualification.warnings] : [],
   };
+  const extensions = [
+    ...(runChecks?.available ? ["run-checks.mjs"] : []),
+    ...(compaction?.enabled ? ["compaction-extension.mjs"] : []),
+  ];
   return {
     schemaVersion: 1,
     adapter: "pi",
@@ -1404,14 +1461,13 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     runChecks,
     capabilities: {
       tools: ["read", "write", "edit", ...(runChecks?.available ? ["run_checks"] : [])],
-      extensions: runChecks?.available ? ["run-checks.mjs"] : false,
+      extensions: extensions.length > 0 ? extensions : false,
       globalSkills: false,
       contextFiles: false,
       generatedCodeExecution: false,
       inferenceNetwork: true,
     },
     limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxCheckRuns: prepared.metadata.maxCheckRuns, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
-    ...(qualificationValue === undefined ? {} : { qualification: qualificationValue, warnings: qualificationValue.warnings }),
     accounting: {
       maxToolCallsIncludesRunChecks: true,
       firstWriteMsIncludesRunChecks: false,
@@ -1421,6 +1477,8 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     },
     credentialEnvironmentNames: prepared.metadata.credentialEnvironmentNames,
     generatedCredentialReferenceCount: prepared.metadata.generatedCredentialReferenceCount,
+    ...(qualificationValue === undefined ? {} : { qualification: qualificationValue, warnings: qualificationValue.warnings }),
+    compaction,
   };
 }
 
@@ -1480,6 +1538,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const inlineProfileResource = resolvedProfile.resource || (resolvedProfile.value ? { path: "<inline-profile>", text: JSON.stringify(resolvedProfile.value) } : null);
   const contextResources = [brief.resource, inlineProfileResource, builtInPrompt, review?.evidence, ...agents, ...skills, ...instructions].filter(Boolean).map(({ text, ...digest }) => ({ ...digest, sha256: digest.sha256 ?? createHash("sha256").update(text).digest("hex"), bytes: digest.bytes ?? Buffer.byteLength(text) }));
   const prepared = await preparePiEnvironment({ worker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
+
   let piPackage;
   let piVersion;
   let effectiveQualification = qualification;
@@ -1512,6 +1571,13 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let baseline;
   let inferenceRelay;
   let checkChannel;
+  let compactionStage;
+  let compactionBundle;
+  let compactionAnchor;
+  let compaction;
+  let runtimeRecord;
+  let sessionHostPath;
+  let retainedSession;
   try {
     artifactDir = await createArtifactDir(sourceRoot, runId);
     workspace = await mkdtemp(join(tempRoot, "tinysdd-worker-"));
@@ -1536,7 +1602,16 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
     }
     const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
-    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, effectiveQualification));
+    if (prepared.metadata.compaction?.enabled) {
+      // The user prompt is the approved packet that Pi places in compactable history.
+      // It is anchored before the extension enters either OS sandbox.
+      compactionAnchor = createApprovedPacketAnchor({ id: normalizedPacket.taskId, text: prompt.user });
+      compactionStage = await mkdtemp(join(tempRoot, "tinysdd-compaction-"));
+      compactionBundle = await writeCompactionBundle(compactionStage, compactionAnchor);
+    }
+    compaction = compactionIdentity(prepared.metadata.compaction, compactionAnchor);
+    runtimeRecord = runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification);
+    await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
       resources: contextResources,
@@ -1565,12 +1640,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const nativePaths = runtimeChoice.test || runtimeChoice.sandbox === "seatbelt";
     const promptStateDir = runtimeChoice.sandbox === "seatbelt" ? await realpath(prepared.stateDir) : prepared.stateDir;
     const sessionPath = nativePaths ? join(promptStateDir, "session.jsonl") : "/pi-state/session.jsonl";
+    sessionHostPath = join(prepared.stateDir, "session.jsonl");
     const userPromptPath = join(prepared.stateDir, "task-prompt.txt");
     await writeFile(userPromptPath, prompt.user, { mode: 0o600 });
     const promptArgumentPath = nativePaths ? join(promptStateDir, "task-prompt.txt") : "/pi-state/task-prompt.txt";
     const appendPromptPath = nativePaths ? join(promptStateDir, "system-prompt.txt") : "/pi-state/system-prompt.txt";
     const checkExtension = checkChannel ? (nativePaths ? checkChannel.extension : "/opt/tinysdd/run-checks.mjs") : null;
-    const piArgs = buildPiArgs({ checkExtension, provider: worker.provider, model: worker.model, sessionPath, thinking, systemPromptPath: appendPromptPath, userPrompt: promptArgumentPath.startsWith("/") ? `@${promptArgumentPath}` : prompt.user });
+    const compactionExtension = compactionBundle ? (nativePaths ? compactionBundle.entryPath : "/opt/tinysdd/compaction/entry.mjs") : null;
+    const piArgs = buildPiArgs({ checkExtension, compactionExtension, provider: worker.provider, model: worker.model, sessionPath, thinking, systemPromptPath: appendPromptPath, userPrompt: promptArgumentPath.startsWith("/") ? `@${promptArgumentPath}` : prompt.user });
     let command;
     let args;
     let childEnv;
@@ -1578,6 +1655,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.pi.path;
       args = piArgs;
       childEnv = { ...prepared.env, HOME: prepared.env.HOME, PATH: process.env.PATH || "/usr/bin:/bin", TINYSDD_TEST_WORKSPACE: workspace };
+      if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
       for (const [key, value] of Object.entries(runtime?.testEnv ?? {})) {
         if (!key.startsWith("TINYSDD_TEST_")) fail("Test runtime may only add TINYSDD_TEST_* environment values");
         childEnv[key] = String(value);
@@ -1591,7 +1669,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       let sandboxProfile;
       try {
         inferenceRelay = await startInferenceRelay({ provider, model: provider.models[0], env: prepared.env });
-        sandboxProfile = buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, nodeExecutable: runtimeChoice.node.resolved, piExecutable: runtimeChoice.pi.resolved, piRoot: piPackage.root, inferencePort: inferenceRelay.port });
+        sandboxProfile = buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, compactionBundle: compactionBundle?.directory, nodeExecutable: runtimeChoice.node.resolved, piExecutable: runtimeChoice.pi.resolved, piRoot: piPackage.root, inferencePort: inferenceRelay.port });
       } catch (error) {
         fail(`Cannot prepare macOS sandbox: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1603,13 +1681,15 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.sandboxExec.path;
       args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
       childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
-      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, effectiveQualification), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
+      if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
+      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` };
+      await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
       command = runtimeChoice.bwrap.path;
       childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
-      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv, checkChannel });
+      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv, checkChannel, compactionBundle });
     }
     if (checkChannel) {
       childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";
@@ -1618,8 +1698,22 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     capture = await captureProcess({ checkChannel, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
     if (inferenceRelay) await inferenceRelay.close();
     inferenceRelay = null;
+    if (compactionBundle) {
+      retainedSession = await retainSessionArtifact(sessionHostPath, join(artifactDir, "session.jsonl"));
+      runtimeRecord = {
+        ...runtimeRecord,
+        session: {
+          available: retainedSession.available,
+          bytes: retainedSession.bytes ?? null,
+          sha256: retainedSession.sha256 ?? null,
+          reason: retainedSession.reason ?? null,
+        },
+      };
+      await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
+    }
     after = await snapshotTree(workspace);
     await copySnapshotTree(workspace, afterArtifact);
+    if (compactionBundle) await copyRegularTree(compactionBundle.directory, join(artifactDir, "compaction"));
     await writeJson(join(artifactDir, "after-snapshot.json"), after);
     const changes = changedFiles(before, after);
     patchInfo = await runGitDiff(beforeArtifact, afterArtifact, join(artifactDir, "patch.diff"), artifactDir);
@@ -1667,6 +1761,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         firstWriteAtMs: capture.firstWriteAtMs,
         ...readObservations(capture.parsed.readPaths, workspace, compiledContext),
         compactions: capture.parsed.compactions,
+        ...(retainedSession ? {
+          session: {
+            available: retainedSession.available,
+            bytes: retainedSession.bytes ?? null,
+            sha256: retainedSession.sha256 ?? null,
+            reason: retainedSession.reason ?? null,
+          },
+        } : {}),
         rawOutputBytes: capture.rawBytes,
       },
       ...(limitDetails ? { limitDetails } : {}),
@@ -1685,23 +1787,40 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         stdout: join(artifactDir, "stdout.jsonl"),
         stderr: join(artifactDir, "stderr.txt"),
         patch: join(artifactDir, "patch.diff"),
+        ...(compactionBundle ? { compaction: join(artifactDir, "compaction") } : {}),
+        ...(retainedSession?.available ? { session: join(artifactDir, "session.jsonl") } : {}),
         workspaceBefore: beforeArtifact,
         workspaceAfter: afterArtifact,
         candidate: afterArtifact,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
-      ...(effectiveQualification === undefined ? {} : { qualification: runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, effectiveQualification).qualification }),
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256 && !entry.deterministic) ? ["Pi compacted the worker context with a model-written summary; inspect packet retention before relying on later turns."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      ...(effectiveQualification === undefined ? {} : { qualification: runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification).qualification }),
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;
   } finally {
     if (inferenceRelay) await inferenceRelay.close().catch(() => {});
     if (checkChannel) await checkChannel.cleanup().catch(() => {});
+    if (compactionBundle && !retainedSession && sessionHostPath && artifactDir) {
+      retainedSession = await retainSessionArtifact(sessionHostPath, join(artifactDir, "session.jsonl"));
+      if (runtimeRecord) {
+        await writeJson(join(artifactDir, "runtime.json"), {
+          ...runtimeRecord,
+          session: {
+            available: retainedSession.available,
+            bytes: retainedSession.bytes ?? null,
+            sha256: retainedSession.sha256 ?? null,
+            reason: retainedSession.reason ?? null,
+          },
+        }).catch(() => {});
+      }
+    }
     await prepared.cleanup().catch(() => {});
     if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (baseline) await rm(baseline, { recursive: true, force: true }).catch(() => {});
+    if (compactionStage) await rm(compactionStage, { recursive: true, force: true }).catch(() => {});
   }
 }
 
