@@ -146,8 +146,9 @@ test('worker start reports an unavailable declared runner once on stderr in JSON
     const result = JSON.parse(completed.stdout);
     launch = result.data;
     assert.equal(result.ok, true);
-    assert.equal(result.data.warnings.length, 1);
+    assert.equal(result.data.warnings.length, 2);
     assert.match(result.data.warnings[0], /^run_checks unavailable: /u);
+    assert.match(result.data.warnings[1], /^qualification unqualified: /u);
     assert.equal((completed.stderr.match(/run_checks unavailable/g) ?? []).length, 1);
     assert.match(completed.stderr, /^Warning: run_checks unavailable: .+$/mu);
   } finally {
@@ -156,6 +157,33 @@ test('worker start reports an unavailable declared runner once on stderr in JSON
       await new Promise((resolve) => setTimeout(resolve, 100));
       try { process.kill(launch.pid, 'SIGKILL'); } catch { /* launcher may have exited */ }
     }
+    await rm(root, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test('enforced qualification refuses before creating a detached launch', async () => {
+  const { root, agentDir } = await configuredCheckWorker();
+  try {
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'qwen',
+      qualification: { mode: 'enforce', suite: 'missing-suite' },
+      workers: { qwen: { type: 'pi', provider: 'titan', model: 'qwen-bare' } },
+    }));
+    await assert.rejects(
+      exec(process.execPath, [cli.pathname, '--json', '--project', root, 'worker', 'start', '--task', 'one'], {
+        env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+      }),
+      (error) => {
+        const result = JSON.parse(error.stdout);
+        assert.equal(result.error.code, 'MODEL_NOT_QUALIFIED');
+        assert.match(result.error.details.qualification.warnings[0], /current qualification suite is unavailable/u);
+        return true;
+      },
+    );
+    await assert.rejects(readdir(join(root, '.tinysdd', 'launches')), { code: 'ENOENT' });
+  } finally {
     await rm(root, { recursive: true, force: true });
     await rm(agentDir, { recursive: true, force: true });
   }

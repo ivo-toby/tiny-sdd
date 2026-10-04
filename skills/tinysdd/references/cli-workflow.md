@@ -243,14 +243,26 @@ tinysdd bench qualify \
   --target write-tests=0.8 --json
 ```
 
-`bench qualify` requires `--suite` and reads the suite, challenge files,
+`--suite` is optional when the project has `qualification.suite`; otherwise it
+defaults to `bench`. The first `--results` path anchors the historical digest,
+then `bench qualify` reads every retained invocation for that exact digest and
+suite, including later failures. It reads the suite, challenge files,
 verifier manifests, invocation manifests, summaries, and all case results. It
 hash-checks those files, validates the declared challenge x repetition roster
 and exact visible/held-out check IDs and definition hashes, then stores the
 record in `.tinysdd/qualifications/`. It performs no worker, inference,
 service, or live check execution. Repeating the same invocation input is
 deduplicated by its retained invocation identity; an `attemptId` may repeat in
-different invocation IDs and is pooled with that provenance.
+different invocation IDs and is pooled with that provenance. Dispatch refreshes
+an existing exact record from this full retained pool and never creates one
+from raw evidence.
+
+Worker dispatch qualification uses the current worker, suite, verifier,
+runtime, endpoint fingerprint, check declaration, and budget. Configure
+`qualification.mode` as `warn` (the default), `enforce`, or `off`; enforce
+refuses an unqualified `implement-slice` before launch. Runtime and result
+artifacts retain the digest, record path, status, reason, changed identity
+fields, mode, and warnings.
 
 Each role defaults to target `0.8`, provisional until #33 calibrates it; use
 repeated `--target ROLE=NUMBER` values for per-role overrides. Results use the

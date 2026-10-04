@@ -236,6 +236,26 @@ test('binds a missing test check runner as unavailable in worker identity', asyn
   }
 });
 
+test('keeps an undeclared task check context distinct in the benchmark identity', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-runner-check-declaration-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } };
+    const declared = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'declared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }) });
+    const undeclared = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'undeclared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }), runChecksDeclared: false });
+    assert.equal(declared.config.identity.runChecks.declared, true);
+    assert.equal(undeclared.config.identity.runChecks.declared, false);
+    assert.notEqual(declared.config.configDigest, undeclared.config.configDigest);
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects held-out resources inside a hashed worker fixture before Pi starts', async () => {
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-hidden-')));
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
@@ -277,6 +297,7 @@ test('binds effective model settings and checker limits into the config digest',
     const first = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'first'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12345 } }, workerSettings: supplemental, verifier });
     assert.equal(first.config.identity.worker.settings.note, 'operator metadata');
     assert.equal(first.config.identity.worker.settings.sandbox, 'test-runtime');
+    assert.equal(first.config.identity.worker.settings.endpointFingerprint, 'http://127.0.0.1:9/v1');
     assert.equal(first.config.identity.worker.settings.effectiveMaxTokens, 256);
     const second = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'second'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(first.invocation.configDigest, second.invocation.configDigest);
@@ -296,6 +317,19 @@ test('binds effective model settings and checker limits into the config digest',
     await writeFile(join(root, 'verifier', 'slow-slice-visible.test.mjs'), 'changed verifier bytes\n');
     const fourth = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'fourth'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(third.invocation.configDigest, fourth.invocation.configDigest);
+    await writeJson(join(root, 'agent', 'models.json'), {
+      providers: {
+        fake: {
+          api: 'openai-completions',
+          baseUrl: 'http://127.0.0.1:10/v1',
+          apiKey: '$FAKE_TOKEN',
+          models: [{ id: 'fake/model', contextWindow: 4096, maxTokens: 128, input: ['text'], reasoning: false }],
+        },
+      },
+    });
+    const fifth = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'fifth'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
+    assert.equal(fifth.config.identity.worker.settings.endpointFingerprint, 'http://127.0.0.1:10/v1');
+    assert.notEqual(fourth.invocation.configDigest, fifth.invocation.configDigest);
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;

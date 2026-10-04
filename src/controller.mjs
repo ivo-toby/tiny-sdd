@@ -48,6 +48,7 @@ import {
 } from './feature-events.mjs';
 import { withUsageLedgerLock } from './usage.mjs';
 import { buildUsageReport } from './usage-report.mjs';
+import { assessQualification } from './qualification-dispatch.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -1437,6 +1438,14 @@ export async function dispatchWorker(projectRoot, options = {}) {
   const packet = options.baselineRunId
     ? await resolveBenchmarkPacket(root, options.taskId)
     : await resolveTaskPacket(root, options.taskId);
+  const qualification = await assessQualification({
+    projectRoot: root,
+    resolved,
+    workerName: resolved.workerName,
+    role: 'implement-slice',
+    checksDeclared: packet.checks !== undefined && packet.checks !== null,
+    runtime: options.runtime,
+  });
   let adapter;
   try {
     adapter = await import(new URL('./worker.mjs', import.meta.url));
@@ -1450,6 +1459,8 @@ export async function dispatchWorker(projectRoot, options = {}) {
     packet,
     worker: resolved.worker,
     profile: resolved.profile,
+    runtime: options.runtime,
+    qualification,
     baseRunId: options.baseRunId,
     baselineRunId: options.baselineRunId,
     signal: options.signal,

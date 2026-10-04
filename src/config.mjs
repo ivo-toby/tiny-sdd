@@ -18,7 +18,11 @@ export const MAX_TIMEOUT_MS = 3_600_000;
 export const DEFAULT_MAX_TOOL_CALLS = 40;
 export const MAX_TOOL_CALLS = 100;
 
-const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits'];
+const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits', 'modelMetadata'];
+const MODEL_METADATA_KEYS = ['quantization', 'server'];
+const MODEL_SERVER_KEYS = ['id', 'version'];
+const QUALIFICATION_KEYS = ['mode', 'suite'];
+const QUALIFICATION_MODES = ['off', 'warn', 'enforce'];
 const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs', 'maxCheckRuns'];
 const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
 const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets'];
@@ -92,6 +96,22 @@ function validateLimits(value, label) {
   return { timeoutMs, maxToolCalls, maxCheckRuns, firstWriteMs: value.firstWriteMs };
 }
 
+function validateModelMetadata(value, label) {
+  assertPlainObject(value, 'CONFIG_INVALID', label);
+  assertExactKeys(value, MODEL_METADATA_KEYS, 'CONFIG_INVALID', label);
+  const metadata = {};
+  if (value.quantization !== undefined) metadata.quantization = assertString(value.quantization, `${label}.quantization`);
+  if (value.server !== undefined) {
+    assertPlainObject(value.server, 'CONFIG_INVALID', `${label}.server`);
+    assertExactKeys(value.server, MODEL_SERVER_KEYS, 'CONFIG_INVALID', `${label}.server`);
+    const server = {};
+    if (value.server.id !== undefined) server.id = assertString(value.server.id, `${label}.server.id`);
+    if (value.server.version !== undefined) server.version = assertString(value.server.version, `${label}.server.version`);
+    metadata.server = server;
+  }
+  return metadata;
+}
+
 function validateWorker(raw, name, label = `workers.${name}`) {
   assertPlainObject(raw, 'CONFIG_INVALID', label);
   assertExactKeys(raw, WORKER_KEYS, 'CONFIG_INVALID', label);
@@ -109,6 +129,7 @@ function validateWorker(raw, name, label = `workers.${name}`) {
   }
   if (raw.skills !== undefined) worker.skills = validateStringArray(raw.skills, `${label}.skills`, 'SKILL.md');
   if (raw.instructions !== undefined) worker.instructions = validateStringArray(raw.instructions, `${label}.instructions`);
+  if (raw.modelMetadata !== undefined) worker.modelMetadata = validateModelMetadata(raw.modelMetadata, `${label}.modelMetadata`);
   return worker;
 }
 
@@ -159,9 +180,20 @@ function validateSemanticGate(raw) {
   return { mode: raw.mode, endpoint, model, thresholds };
 }
 
+function validateQualification(raw, label = 'config.qualification') {
+  assertPlainObject(raw, 'CONFIG_INVALID', label);
+  assertExactKeys(raw, QUALIFICATION_KEYS, 'CONFIG_INVALID', label);
+  const mode = raw.mode === undefined ? 'warn' : raw.mode;
+  if (!QUALIFICATION_MODES.includes(mode)) throw tinyError('CONFIG_INVALID', `${label}.mode must be off, warn, or enforce`);
+  return {
+    mode,
+    ...(raw.suite === undefined ? {} : { suite: validatePathValue(raw.suite, `${label}.suite`) }),
+  };
+}
+
 export function validateConfigDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config');
-  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate'], 'CONFIG_INVALID', 'config');
+  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate', 'qualification'], 'CONFIG_INVALID', 'config');
   if (raw.schemaVersion !== CONFIG_SCHEMA_VERSION) {
     throw tinyError('CONFIG_INVALID', `config.schemaVersion must be ${CONFIG_SCHEMA_VERSION}`);
   }
@@ -171,22 +203,26 @@ export function validateConfigDocument(raw) {
     throw tinyError('CONFIG_INVALID', `config.defaultWorker is not defined: ${defaultWorker}`);
   }
   const semanticGate = raw.semanticGate === undefined ? undefined : validateSemanticGate(raw.semanticGate);
+  const qualification = raw.qualification === undefined ? undefined : validateQualification(raw.qualification);
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     workers,
     ...(semanticGate === undefined ? {} : { semanticGate }),
+    ...(qualification === undefined ? {} : { qualification }),
   };
 }
 
 export function validateLocalDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config.local');
-  assertExactKeys(raw, ['defaultWorker', 'workers'], 'CONFIG_INVALID', 'config.local');
+  assertExactKeys(raw, ['defaultWorker', 'workers', 'qualification'], 'CONFIG_INVALID', 'config.local');
   const workers = raw.workers === undefined ? undefined : validateWorkers(raw.workers, 'config.local.workers');
   const defaultWorker = raw.defaultWorker === undefined ? undefined : assertSafeName(raw.defaultWorker, 'config.local.defaultWorker');
+  const qualification = raw.qualification === undefined ? undefined : validateQualification(raw.qualification, 'config.local.qualification');
   return {
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     ...(workers === undefined ? {} : { workers }),
+    ...(qualification === undefined ? {} : { qualification }),
   };
 }
 
@@ -314,6 +350,7 @@ export async function resolveConfig(projectRoot, options = {}) {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     ...(base.semanticGate === undefined ? {} : { semanticGate: base.semanticGate }),
+    ...(local.qualification === undefined && base.qualification === undefined ? {} : { qualification: local.qualification ?? base.qualification }),
     workers: effectiveWorkers,
   };
   const selectedWorkerName = selectedName ?? defaultWorker;

@@ -1253,7 +1253,16 @@ async function resolveReview(projectRoot, review) {
   return { ...review, evidence };
 }
 
-function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks) {
+function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks, qualification) {
+  const qualificationValue = qualification === undefined ? undefined : {
+    recordDigest: qualification.recordDigest ?? null,
+    path: qualification.path ?? null,
+    status: qualification.status ?? 'unknown',
+    mode: qualification.mode ?? 'warn',
+    reason: qualification.reason ?? null,
+    changedFields: Array.isArray(qualification.changedFields) ? [...qualification.changedFields] : [],
+    warnings: Array.isArray(qualification.warnings) ? [...qualification.warnings] : [],
+  };
   return {
     schemaVersion: 1,
     adapter: "pi",
@@ -1275,6 +1284,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     maxTokensSource: prepared.metadata.preflight.maxTokens.source,
     thinkingTokenBudgetField: prepared.metadata.preflight.thinkingTokenBudgetField,
     effectiveThinkingBudget: prepared.metadata.preflight.thinkingBudget,
+    endpointFingerprint: prepared.metadata.preflight.endpointFingerprint ?? "UNKNOWN",
     preflight: { basis: prepared.metadata.preflight.basis, warnings: prepared.metadata.preflight.warnings },
     reasoningRequested: profile?.runtime?.reasoning ?? null,
     rawReasoning: prepared.metadata.rawReasoning,
@@ -1294,6 +1304,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
       inferenceNetwork: true,
     },
     limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxCheckRuns: prepared.metadata.maxCheckRuns, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    ...(qualificationValue === undefined ? {} : { qualification: qualificationValue, warnings: qualificationValue.warnings }),
     accounting: {
       maxToolCallsIncludesRunChecks: true,
       firstWriteMsIncludesRunChecks: false,
@@ -1313,7 +1324,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
  * harness explicitly enables it.  Production callers use the four documented
  * arguments and therefore require Linux bubblewrap or macOS Seatbelt.
  */
-export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal } = {}) {
+export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal, qualification } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
@@ -1395,7 +1406,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const piPackage = await piPackageInfo(runtimeChoice.pi);
     const piVersion = piPackage.version;
     const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
-    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks));
+    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, qualification));
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
       resources: contextResources,
@@ -1462,7 +1473,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.sandboxExec.path;
       args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
       childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
-      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
+      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, qualification), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
@@ -1550,7 +1561,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(qualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      ...(qualification === undefined ? {} : { qualification: runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, qualification).qualification }),
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;

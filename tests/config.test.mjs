@@ -172,6 +172,25 @@ test('semanticGate is optional: absent key keeps validating unchanged with mode 
   }
 });
 
+test('qualification mode, suite and worker model metadata are validated and retained', () => {
+  const document = validateConfigDocument({
+    schemaVersion: 1,
+    qualification: { mode: 'enforce', suite: 'bench/current' },
+    workers: {
+      pi: {
+        type: 'pi',
+        provider: 'p',
+        model: 'm',
+        modelMetadata: { quantization: 'Q4_K_M', server: { id: 'local', version: '1' } },
+      },
+    },
+  });
+  assert.deepEqual(document.qualification, { mode: 'enforce', suite: 'bench/current' });
+  assert.deepEqual(document.workers.pi.modelMetadata, { quantization: 'Q4_K_M', server: { id: 'local', version: '1' } });
+  assert.throws(() => validateConfigDocument({ schemaVersion: 1, workers: {}, qualification: { mode: 'sometimes' } }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateConfigDocument({ schemaVersion: 1, workers: { pi: { type: 'pi', provider: 'p', model: 'm', modelMetadata: { server: { host: 'x' } } } } }), { code: 'CONFIG_INVALID' });
+});
+
 test('rejects invalid semanticGate shapes without accepting partial overrides', () => {
   const base = { schemaVersion: 1, workers: {} };
   const invalid = [

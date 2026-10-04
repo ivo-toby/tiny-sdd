@@ -278,6 +278,7 @@ async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
     effectiveThinkingField: BENCHMARK_UNKNOWN,
     effectiveThinkingBudgetValue: BENCHMARK_UNKNOWN,
     effectiveCompat: BENCHMARK_UNKNOWN,
+    endpointFingerprint: BENCHMARK_UNKNOWN,
   };
   try {
     const preflight = await preflightPiWorker({
@@ -295,6 +296,7 @@ async function resolveWorkerSettings(workerSettings, worker, profile, runtime) {
       effectiveThinkingField: preflight.thinkingTokenBudgetField ?? BENCHMARK_UNKNOWN,
       effectiveThinkingBudgetValue: preflight.thinkingBudget?.tokens ?? BENCHMARK_UNKNOWN,
       effectiveCompat: preflight.effectiveCompat ?? BENCHMARK_UNKNOWN,
+      endpointFingerprint: preflight.endpointFingerprint ?? BENCHMARK_UNKNOWN,
     };
     if (workerSettings === undefined || workerSettings === BENCHMARK_UNKNOWN) return observed;
     return workerSettings && typeof workerSettings === 'object' && !Array.isArray(workerSettings)
@@ -346,7 +348,7 @@ function workerCheckAvailability(runtime) {
   return { ...checkRunnerAvailable(), testInjected: false };
 }
 
-async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget, checkLimits, verifierMode, suiteRoot, projectRoot, checkRunnerOptions: runnerOptions }) {
+async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, worker, profile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget, checkLimits, verifierMode, suiteRoot, projectRoot, checkRunnerOptions: runnerOptions, runChecksDeclared = true }) {
   const options = resolveCheckRunnerConfig(checkLimits, runnerOptions);
   const verifierAvailability = checkRunnerAvailable(options);
   const workerAvailability = workerCheckAvailability(runtime);
@@ -357,7 +359,8 @@ async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, 
   const runtimeVersion = process.version;
   const code = await resolveCodeRevision(TINYSDD_ROOT, codeRevision);
   const version = tinySddVersion ?? await packageVersion();
-  const modelMetadata = model && typeof model === 'object' && !Array.isArray(model) ? model : {};
+  const modelMetadata = model ?? worker.modelMetadata ?? {};
+  if (!modelMetadata || typeof modelMetadata !== 'object' || Array.isArray(modelMetadata)) invalid('model metadata must be an object');
   if (modelMetadata.provider !== undefined && modelMetadata.provider !== worker.provider) {
     invalid('model metadata provider must match worker.provider');
   }
@@ -411,13 +414,13 @@ async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, 
       checkRunner: { version: CHECK_RUNNER_VERSION, configSha256: checkRunnerConfigSha256 },
     },
     runChecks: {
-      declared: true,
-      available: workerAvailability.available,
+      declared: runChecksDeclared,
+      available: runChecksDeclared && workerAvailability.available,
       budget: effectiveCheckBudget,
-      unavailableReason: workerAvailability.available ? BENCHMARK_UNKNOWN : workerAvailability.reason,
+      unavailableReason: !runChecksDeclared || workerAvailability.available ? BENCHMARK_UNKNOWN : workerAvailability.reason,
       provenance: {
         source: 'worker.runtime.json',
-        unavailableReason: workerAvailability.available ? BENCHMARK_UNKNOWN : workerAvailability.reason,
+        unavailableReason: !runChecksDeclared || workerAvailability.available ? BENCHMARK_UNKNOWN : workerAvailability.reason,
       },
     },
     environment: {
@@ -579,6 +582,7 @@ export async function inspectBenchmarkIdentity({
   checkLimits,
   checkRunnerOptions,
   verifierMode = 'runCheck',
+  runChecksDeclared = true,
 } = {}) {
   if (typeof suiteRoot !== 'string') invalid('suiteRoot is required');
   if (!worker || worker.type !== 'pi') invalid('benchmark identity inspection supports only the pi worker adapter');
@@ -610,6 +614,7 @@ export async function inspectBenchmarkIdentity({
     suiteRoot: suiteInfo.root,
     projectRoot,
     checkRunnerOptions,
+    runChecksDeclared,
   });
   return {
     suite: { id: suiteInfo.suite.id, version: suiteInfo.suite.version, sha256: suiteInfo.suiteSha256 },
@@ -1311,6 +1316,7 @@ export async function runBenchmark({
   maxCheckRuns = DEFAULT_CHECK_BUDGET,
   checkLimits,
   checkRunnerOptions,
+  runChecksDeclared = true,
 } = {}) {
   if (typeof invocationId !== 'string' || !BENCHMARK_ID_PATTERN.test(invocationId)) {
     invalid('invocationId must be a lowercase benchmark identifier');
@@ -1335,7 +1341,7 @@ export async function runBenchmark({
     invalid(error instanceof Error ? error.message : String(error));
   }
   const effectiveProfile = await resolveBenchmarkProfile({ profile, worker, projectRoot, suiteRoot: suiteInfo.root });
-  const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile: effectiveProfile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions });
+  const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile: effectiveProfile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions, runChecksDeclared });
   const root = resolve(outputRoot ?? join(projectRoot ?? suiteInfo.root, '.tinysdd', 'bench', suiteInfo.suite.id, invocationId));
   await assertNoSymlinkPath(root, { allowMissing: true, requireDirectory: false });
   if (await pathExists(root)) invalid(`benchmark invocation output already exists: ${root}`);

@@ -174,6 +174,17 @@ function rejectCredentialUrl(value, description) {
   }
 }
 
+function endpointFingerprint(value) {
+  if (typeof value !== "string") return "UNKNOWN";
+  try {
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return "UNKNOWN";
+    return `${parsed.origin}${parsed.pathname || "/"}`;
+  } catch {
+    return "UNKNOWN";
+  }
+}
+
 function credentialValue(value, description, sourceEnv, generatedEnv, nextSecret) {
   const rewritten = rewriteTemplate(value, description, sourceEnv, generatedEnv, nextSecret, false);
   const name = `TINYSDD_PI_SECRET_${nextSecret.value++}`;
@@ -448,7 +459,11 @@ async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
   const nextSecret = { value: 0 };
   const safeProvider = sanitizeProvider(provider, worker.provider, model, sourceEnv, generatedEnv, nextSecret);
   const api = model.api ?? provider.api ?? null;
-  const preflight = piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off", thinkingBudgets: profileRuntime?.thinkingBudgets ?? null });
+  const endpoint = endpointFingerprint(safeProvider.models[0]?.baseUrl ?? safeProvider.baseUrl);
+  const preflight = {
+    ...piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off", thinkingBudgets: profileRuntime?.thinkingBudgets ?? null }),
+    endpointFingerprint: endpoint,
+  };
   return { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight };
 }
 
