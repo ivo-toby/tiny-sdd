@@ -31,7 +31,16 @@ import { appendUsageRecord, importUsageRecords, USAGE_LEDGER_MAX_BYTES } from '.
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
-import { runBenchmark } from '../src/benchmark-runner.mjs';
+import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
+import { readQualificationEvidence } from '../src/qualification-reader.mjs';
+import {
+  compareQualificationApplicability,
+  persistQualificationRecord,
+  readQualificationRecord,
+  replaceQualificationRecord,
+  writeQualificationRecord,
+} from '../src/qualification-store.mjs';
+import { buildQualificationRecord, rescoreQualificationRecord } from '../src/qualification.mjs';
 
 const VERSION = '0.1.0';
 const HELP = `TinySDD ${VERSION}
@@ -54,6 +63,9 @@ Usage:
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
   tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K]
+  tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] --suite PATH [--worker NAME] [--target ROLE=NUMBER,...]
+  tinysdd [--json] [--project PATH] bench rescore --record PATH [--target ROLE=NUMBER,...]
+  tinysdd [--json] [--project PATH] bench qualification show --record PATH [--suite PATH] [--worker NAME]
   tinysdd [--json] [--project PATH] usage record --phase PHASE --model MODEL --input N --output N [--reasoning N] [--cache-read N] [--cache-write N] [--total N] [--task ID] [--feature NAME]
   tinysdd [--json] [--project PATH] usage import --file PATH
   tinysdd [--json] [--project PATH] usage report --feature NAME
@@ -185,10 +197,22 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'bench') {
-    if (subcommand !== 'run') throw cliError('bench requires run');
-    const { values, positional } = parseFlags(rest, new Map([
-      ['worker', 'value'], ['suite', 'value'], ['repeat', 'value'],
-    ]));
+    if (subcommand === 'qualification') {
+      const [action, ...actionRest] = rest;
+      if (action !== 'show') throw cliError('bench qualification requires show');
+      const { values, positional } = parseFlags(actionRest, new Map([
+        ['record', 'value'], ['suite', 'value'], ['worker', 'value'],
+      ]));
+      if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+      return { command, subcommand, action, values };
+    }
+    if (!['run', 'qualify', 'rescore'].includes(subcommand)) throw cliError('bench requires run, qualify, or rescore');
+    const allowedBySubcommand = {
+      run: new Map([['worker', 'value'], ['suite', 'value'], ['repeat', 'value']]),
+      qualify: new Map([['results', 'list'], ['suite', 'value'], ['worker', 'value'], ['target', 'list']]),
+      rescore: new Map([['record', 'value'], ['target', 'list']]),
+    };
+    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -348,6 +372,22 @@ function parseBenchmarkRepeat(value) {
   return repeat;
 }
 
+function parseQualificationTargets(values) {
+  if (values === undefined) return {};
+  const targets = {};
+  for (const value of values) {
+    const separator = value.indexOf('=');
+    if (separator <= 0 || separator === value.length - 1) throw cliError('--target must use ROLE=NUMBER');
+    const role = value.slice(0, separator);
+    const raw = value.slice(separator + 1);
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) throw cliError('--target number must be finite and between 0 and 1');
+    if (Object.hasOwn(targets, role)) throw cliError(`duplicate --target role: ${role}`);
+    targets[role] = parsed;
+  }
+  return targets;
+}
+
 async function resolveBenchmarkSuite(project, requested) {
   const relativeSuite = normalizeProjectRelative(requested ?? 'bench', '--suite');
   const target = await assertInternalPath(project, relativeSuite.split('/'), { allowMissing: false });
@@ -381,6 +421,87 @@ async function runBenchmarkCommand(project, options) {
     : [`run_checks unavailable: ${result.config.checkRunner.reason}`];
   process.stderr.write(`Benchmark complete: ${result.invocation.caseResults.length} attempt(s); results ${result.directory}\n`);
   return warnings.length === 0 ? result : { ...result, warnings };
+}
+
+function suiteFilePath(suite) {
+  return suite.relative.endsWith('/suite.json') ? suite.relative : `${suite.relative}/suite.json`;
+}
+
+function qualificationApplicabilityUnavailable() {
+  return { status: 'not_checked', reason: 'current_identity_unavailable' };
+}
+
+async function currentQualificationIdentity(project, suite, workerName) {
+  if (workerName === undefined) return { resolved: undefined, applicability: qualificationApplicabilityUnavailable() };
+  const resolved = await configShow(project, { worker: workerName });
+  if (!resolved.workerName || !resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
+  const current = await inspectBenchmarkIdentity({
+    projectRoot: resolved.projectRoot,
+    suiteRoot: suite.root,
+    suitePath: suite.path,
+    worker: resolved.worker,
+    profile: resolved.profile,
+  });
+  return { resolved, current };
+}
+
+async function qualifyBenchmarkCommand(project, options) {
+  const resultPaths = options.results;
+  if (!Array.isArray(resultPaths) || resultPaths.length === 0) throw cliError('--results requires a value');
+  const requestedSuite = requiredOption(options, 'suite');
+  const suite = await resolveBenchmarkSuite(project, requestedSuite);
+  const targets = parseQualificationTargets(options.target);
+  const evidence = await readQualificationEvidence({
+    projectRoot: project,
+    results: resultPaths,
+    suitePath: suiteFilePath(suite),
+  });
+  const built = buildQualificationRecord({
+    observations: evidence.observations,
+    source: evidence.source,
+    roster: evidence.roster,
+    configIdentity: evidence.configIdentity,
+    configDigest: evidence.configDigest,
+    suite: evidence.suite,
+    targets,
+  });
+  const current = await currentQualificationIdentity(project, suite, options.worker);
+  const applicability = current.current === undefined
+    ? qualificationApplicabilityUnavailable()
+    : compareQualificationApplicability(built, current.current);
+  const stored = current.resolved === undefined
+    ? await writeQualificationRecord(project, built)
+    : await persistQualificationRecord(project, built, {
+      profilePath: current.resolved.worker.profile ?? null,
+      profile: current.resolved.profile,
+      workerName: current.resolved.workerName,
+    });
+  return {
+    record: stored.record,
+    path: stored.path,
+    sha256: stored.sha256,
+    applicability,
+    duplicateInputs: evidence.duplicateInputs,
+  };
+}
+
+async function rescoreBenchmarkCommand(project, options) {
+  const recordPath = requiredOption(options, 'record');
+  const loaded = await readQualificationRecord(project, recordPath);
+  const rescored = rescoreQualificationRecord(loaded.record, parseQualificationTargets(options.target));
+  const stored = await replaceQualificationRecord(project, rescored);
+  return { record: stored.record, path: stored.path, sha256: stored.sha256, applicability: qualificationApplicabilityUnavailable() };
+}
+
+async function showQualificationCommand(project, options) {
+  const loaded = await readQualificationRecord(project, requiredOption(options, 'record'));
+  let applicability = qualificationApplicabilityUnavailable();
+  if (options.worker !== undefined && options.suite !== undefined) {
+    const suite = await resolveBenchmarkSuite(project, options.suite);
+    const current = await currentQualificationIdentity(project, suite, options.worker);
+    applicability = current.current === undefined ? applicability : compareQualificationApplicability(loaded.record, current.current);
+  }
+  return { record: loaded.record, path: loaded.path, sha256: loaded.sha256, applicability };
 }
 
 async function loadLaunch(project, rawId) {
@@ -539,6 +660,31 @@ function renderUsageReport(data) {
   process.stdout.write(`Local input ${reportMetricText(local, 'input')}; output ${reportMetricText(local, 'output')}\n`);
 }
 
+function qualificationStatusLabel(status) {
+  if (status === 'qualified') return 'qualified';
+  if (status === 'not_qualified') return 'not qualified';
+  return 'insufficient evidence';
+}
+
+function qualificationBoundLabel(value, reason) {
+  if (value === null) return `unavailable (${reason ?? 'unknown'})`;
+  return String(value);
+}
+
+function renderQualification(data) {
+  const record = data.record;
+  process.stdout.write(`Qualification ${record.suite.id}@${record.suite.version}\n`);
+  for (const [role, score] of Object.entries(record.roles)) {
+    process.stdout.write(`Role ${role}: ${qualificationStatusLabel(score.status)}\n`);
+    process.stdout.write(`n: ${score.n}; passes: ${score.passes}; lowerBound: ${score.lowerBound}; upperBound: ${score.upperBound}; target: ${score.target}\n`);
+    process.stdout.write(`passesToQualify: ${qualificationBoundLabel(score.passesToQualify, score.passesToQualifyReason)} (best-case bound, not a prediction)\n`);
+    process.stdout.write(`failuresToRuleOut: ${qualificationBoundLabel(score.failuresToRuleOut, score.failuresToRuleOutReason)} (best-case bound, not a prediction)\n`);
+  }
+  if (data.applicability) process.stdout.write(`Applicability: ${data.applicability.status}\n`);
+  if (data.path) process.stdout.write(`Record: ${data.path}\n`);
+  for (const duplicate of data.duplicateInputs ?? []) process.stdout.write(`Duplicate input ignored: ${duplicate}\n`);
+}
+
 async function run(argv) {
   const { args, json, help, version, project } = extractGlobals(argv);
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
@@ -609,6 +755,18 @@ async function run(argv) {
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'stop') data = await workerStop(project, { id: parsed.values.id, waitMs: parsed.values['wait-ms'] });
   else if (parsed.command === 'bench' && parsed.subcommand === 'run') data = await runBenchmarkCommand(project, parsed.values);
+  else if (parsed.command === 'bench' && parsed.subcommand === 'qualify') {
+    data = await qualifyBenchmarkCommand(project, parsed.values);
+    presentation = 'qualification';
+  }
+  else if (parsed.command === 'bench' && parsed.subcommand === 'rescore') {
+    data = await rescoreBenchmarkCommand(project, parsed.values);
+    presentation = 'qualification';
+  }
+  else if (parsed.command === 'bench' && parsed.subcommand === 'qualification' && parsed.action === 'show') {
+    data = await showQualificationCommand(project, parsed.values);
+    presentation = 'qualification';
+  }
   else if (parsed.command === 'usage' && parsed.subcommand === 'record') {
     data = await recordUsageCommand(project, parsed.values);
     presentation = 'usage-record';
@@ -749,6 +907,10 @@ function writeResult(result, json) {
   if (result.presentation === 'usage-report' || result.presentation === 'feature-accept') {
     if (result.presentation === 'feature-accept') process.stdout.write(`Feature ${result.data.feature}: acceptance recorded.\n`);
     renderUsageReport(result.data);
+    return;
+  }
+  if (result.presentation === 'qualification') {
+    renderQualification(result.data);
     return;
   }
   if (result.ok) {

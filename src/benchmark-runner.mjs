@@ -557,6 +557,67 @@ async function prepareVerifierDefinitions(suiteInfo) {
   return content;
 }
 
+/**
+ * Rebuild benchmark identity from local inputs without running a worker or a
+ * verifier. This is used for read-only qualification applicability checks.
+ */
+export async function inspectBenchmarkIdentity({
+  projectRoot,
+  suiteRoot,
+  suitePath = 'suite.json',
+  worker,
+  profile = null,
+  runtime,
+  model,
+  workerSettings,
+  piVersion,
+  tinySddVersion,
+  codeRevision,
+  maxCheckRuns = DEFAULT_CHECK_BUDGET,
+  checkLimits,
+  checkRunnerOptions,
+  verifierMode = 'runCheck',
+} = {}) {
+  if (typeof suiteRoot !== 'string') invalid('suiteRoot is required');
+  if (!worker || worker.type !== 'pi') invalid('benchmark identity inspection supports only the pi worker adapter');
+  try {
+    validatePiWorker(worker);
+  } catch (error) {
+    invalid(error instanceof Error ? error.message : String(error));
+  }
+  const suiteInfo = await loadSuite(suiteRoot, suitePath);
+  const verifierContent = await prepareVerifierDefinitions(suiteInfo);
+  const effectiveProfile = await resolveBenchmarkProfile({ profile, worker, projectRoot, suiteRoot: suiteInfo.root });
+  if (!Number.isInteger(maxCheckRuns) || maxCheckRuns < 1 || maxCheckRuns > MAX_CHECK_BUDGET) invalid(`maxCheckRuns must be an integer from 1 to ${MAX_CHECK_BUDGET}`);
+  const config = await buildIdentity({
+    suite: suiteInfo.suite,
+    suiteSha256: suiteInfo.suiteSha256,
+    challenges: suiteInfo.challenges,
+    verifierContent,
+    worker,
+    profile: effectiveProfile,
+    runtime,
+    model,
+    workerSettings,
+    piVersion,
+    tinySddVersion,
+    codeRevision,
+    checkBudget: maxCheckRuns,
+    checkLimits,
+    verifierMode,
+    suiteRoot: suiteInfo.root,
+    projectRoot,
+    checkRunnerOptions,
+  });
+  return {
+    suite: { id: suiteInfo.suite.id, version: suiteInfo.suite.version, sha256: suiteInfo.suiteSha256 },
+    identity: config.identity,
+    configDigest: config.configDigest,
+    profile: effectiveProfile,
+    checkRunner: config.availability,
+  };
+}
+
 async function assertVerifierOutsideFixture(fixture, definition, visibility, suiteRoot) {
   const sources = await verifierSources(suiteRoot, definition, visibility);
   for (const source of sources) {

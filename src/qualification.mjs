@@ -136,6 +136,94 @@ function defaultSource() {
   return { invocations: [], cases: [] };
 }
 
+function validateCheckRoster(value, label) {
+  const check = object(value, label);
+  keys(check, ['id', 'definitionSha256'], label);
+  return {
+    id: string(check.id, `${label}.id`, { pattern: ID_PATTERN }),
+    definitionSha256: digest(check.definitionSha256, `${label}.definitionSha256`),
+  };
+}
+
+function validateQualificationRoster(value, label = 'qualification roster') {
+  const roster = object(value, label);
+  keys(roster, ['suite', 'challenges', 'invocations'], label);
+  const suite = validateSuite(roster.suite, `${label}.suite`);
+  if (!Array.isArray(roster.challenges) || roster.challenges.length === 0) invalid(`${label}.challenges must be a nonempty array`);
+  const challengeIds = new Set();
+  const challenges = roster.challenges.map((valueForChallenge, index) => {
+    const itemLabel = `${label}.challenges[${index}]`;
+    const challenge = object(valueForChallenge, itemLabel);
+    keys(challenge, ['id', 'version', 'sha256', 'role', 'visible', 'heldOut'], itemLabel);
+    const id = string(challenge.id, `${itemLabel}.id`, { pattern: ID_PATTERN });
+    if (challengeIds.has(id)) invalid(`${label}.challenges contains duplicate id: ${id}`);
+    challengeIds.add(id);
+    const role = string(challenge.role, `${itemLabel}.role`, { pattern: ID_PATTERN });
+    if (!BENCHMARK_ROLES.includes(role)) invalid(`${itemLabel}.role is unsupported`);
+    const checks = (entries, checksLabel) => {
+      if (!Array.isArray(entries) || entries.length === 0) invalid(`${checksLabel} must be a nonempty array`);
+      const seen = new Set();
+      return entries.map((entry, checkIndex) => {
+        const check = validateCheckRoster(entry, `${checksLabel}[${checkIndex}]`);
+        if (seen.has(check.id)) invalid(`${checksLabel} contains duplicate id: ${check.id}`);
+        seen.add(check.id);
+        return check;
+      });
+    };
+    return {
+      id,
+      version: string(challenge.version, `${itemLabel}.version`),
+      sha256: digest(challenge.sha256, `${itemLabel}.sha256`),
+      role,
+      visible: checks(challenge.visible, `${itemLabel}.visible`),
+      heldOut: checks(challenge.heldOut, `${itemLabel}.heldOut`),
+    };
+  });
+  if (!Array.isArray(roster.invocations) || roster.invocations.length === 0) invalid(`${label}.invocations must be a nonempty array`);
+  const invocationIds = new Set();
+  const invocationPaths = new Set();
+  const invocations = roster.invocations.map((valueForInvocation, index) => {
+    const itemLabel = `${label}.invocations[${index}]`;
+    const invocation = object(valueForInvocation, itemLabel);
+    keys(invocation, ['invocationId', 'path', 'sha256', 'repeat', 'expected'], itemLabel);
+    const invocationId = string(invocation.invocationId, `${itemLabel}.invocationId`, { pattern: ID_PATTERN });
+    if (invocationIds.has(invocationId)) invalid(`${label}.invocations contains duplicate invocationId: ${invocationId}`);
+    invocationIds.add(invocationId);
+    const path = pathReference(invocation.path, `${itemLabel}.path`);
+    if (invocationPaths.has(path)) invalid(`${label}.invocations contains duplicate path: ${path}`);
+    invocationPaths.add(path);
+    const repeat = count(invocation.repeat, `${itemLabel}.repeat`);
+    if (repeat < 1) invalid(`${itemLabel}.repeat must be at least 1`);
+    if (!Array.isArray(invocation.expected) || invocation.expected.length !== challenges.length) {
+      invalid(`${itemLabel}.expected must list every roster challenge exactly once`);
+    }
+    const expectedIds = new Set();
+    const expected = invocation.expected.map((valueForExpected, expectedIndex) => {
+      const expectedLabel = `${itemLabel}.expected[${expectedIndex}]`;
+      const item = object(valueForExpected, expectedLabel);
+      keys(item, ['challengeId', 'repetitions'], expectedLabel);
+      const challengeId = string(item.challengeId, `${expectedLabel}.challengeId`, { pattern: ID_PATTERN });
+      if (!challengeIds.has(challengeId)) invalid(`${expectedLabel}.challengeId is not in the roster`);
+      if (expectedIds.has(challengeId)) invalid(`${itemLabel}.expected contains duplicate challenge: ${challengeId}`);
+      expectedIds.add(challengeId);
+      if (!Array.isArray(item.repetitions) || item.repetitions.length !== repeat) {
+        invalid(`${expectedLabel}.repetitions must contain repeat entries`);
+      }
+      const repetitions = item.repetitions.map((entry, repetitionIndex) => {
+        const repetition = count(entry, `${expectedLabel}.repetitions[${repetitionIndex}]`);
+        if (repetition < 1 || repetition > repeat) invalid(`${expectedLabel}.repetitions must be from 1 to repeat`);
+        return repetition;
+      });
+      if (new Set(repetitions).size !== repetitions.length) invalid(`${expectedLabel}.repetitions contains duplicates`);
+      if (repetitions.some((entry, repetitionIndex) => entry !== repetitionIndex + 1)) invalid(`${expectedLabel}.repetitions must list every repetition in order`);
+      return { challengeId, repetitions };
+    });
+    if (expectedIds.size !== challengeIds.size) invalid(`${itemLabel}.expected must list every roster challenge exactly once`);
+    return { invocationId, path, sha256: digest(invocation.sha256, `${itemLabel}.sha256`), repeat, expected };
+  });
+  return { suite, challenges, invocations };
+}
+
 function validateTargets(value, label = 'qualification targets') {
   if (value === undefined) return {};
   const values = object(value, label);
@@ -261,8 +349,8 @@ function minimumExtraFailures(n, passes, targetValue, upperBound) {
 
 function resultEntry(value, label) {
   const result = object(value, label);
-  keys(result, ['attemptId', 'repetition', 'passed'], label);
-  return {
+  keys(result, ['invocationId', 'attemptId', 'repetition', 'passed', 'source'], label);
+  const normalized = {
     attemptId: string(result.attemptId, `${label}.attemptId`, { pattern: ID_PATTERN }),
     repetition: (() => {
       const repetition = count(result.repetition, `${label}.repetition`);
@@ -273,6 +361,11 @@ function resultEntry(value, label) {
       ? result.passed
       : invalid(`${label}.passed must be a boolean`),
   };
+  if (result.invocationId !== undefined) {
+    normalized.invocationId = string(result.invocationId, `${label}.invocationId`, { pattern: ID_PATTERN });
+  }
+  if (result.source !== undefined) normalized.source = contentReference(result.source, `${label}.source`);
+  return normalized;
 }
 
 function normalizePerChallenge(value, label = 'qualification perChallenge') {
@@ -296,8 +389,11 @@ function normalizePerChallenge(value, label = 'qualification perChallenge') {
     if (challenge.results.length !== n) invalid(`${itemLabel}.results length must equal n`);
     const results = challenge.results.map((entryForResult, resultIndex) => {
       const result = resultEntry(entryForResult, `${itemLabel}.results[${resultIndex}]`);
-      if (seenAttempts.has(result.attemptId)) invalid(`qualification results contain duplicate attemptId: ${result.attemptId}`);
-      seenAttempts.add(result.attemptId);
+      const observationKey = result.invocationId === undefined
+        ? result.attemptId
+        : `${result.invocationId}\0${result.attemptId}`;
+      if (seenAttempts.has(observationKey)) invalid(`qualification results contain duplicate invocation/attempt: ${observationKey.replaceAll('\0', '/')}`);
+      seenAttempts.add(observationKey);
       return result;
     });
     const derivedPasses = results.reduce((sum, result) => sum + (result.passed ? 1 : 0), 0);
@@ -374,9 +470,23 @@ function deriveRoleScores(cases, targets) {
   const identities = new Map();
   const suites = new Map();
   for (const [index, value] of cases.entries()) {
-    const result = validateBenchmarkCaseResult(value);
-    if (attempts.has(result.attemptId)) invalid(`qualification cases contain duplicate attemptId: ${result.attemptId}`);
-    attempts.add(result.attemptId);
+    const observation = value && typeof value === 'object' && Object.hasOwn(value, 'caseResult')
+      ? (() => {
+        const wrapper = object(value, `qualification observations[${index}]`);
+        keys(wrapper, ['caseResult', 'invocationId', 'source'], `qualification observations[${index}]`);
+        return {
+          result: validateBenchmarkCaseResult(wrapper.caseResult),
+          invocationId: string(wrapper.invocationId, `qualification observations[${index}].invocationId`, { pattern: ID_PATTERN }),
+          source: wrapper.source === undefined ? undefined : contentReference(wrapper.source, `qualification observations[${index}].source`),
+        };
+      })()
+      : { result: validateBenchmarkCaseResult(value), invocationId: undefined, source: undefined };
+    const result = observation.result;
+    const observationKey = observation.invocationId === undefined
+      ? result.attemptId
+      : `${observation.invocationId}\0${result.attemptId}`;
+    if (attempts.has(observationKey)) invalid(`qualification cases contain duplicate invocation/attempt: ${observationKey.replaceAll('\0', '/')}`);
+    attempts.add(observationKey);
     const configDigest = benchmarkConfigDigest(result.configIdentity);
     if (configDigest !== result.configDigest) invalid(`qualification case ${result.attemptId} has an invalid config digest`);
     if (identities.size > 0 && !identities.has(configDigest)) invalid('qualification cases contain mixed config identities');
@@ -401,7 +511,13 @@ function deriveRoleScores(cases, targets) {
     const passed = casePasses(result);
     challengeData.n += 1;
     challengeData.passes += passed ? 1 : 0;
-    challengeData.results.push({ attemptId: result.attemptId, repetition: result.repetition, passed });
+    challengeData.results.push({
+      ...(observation.invocationId === undefined ? {} : { invocationId: observation.invocationId }),
+      attemptId: result.attemptId,
+      repetition: result.repetition,
+      passed,
+      ...(observation.source === undefined ? {} : { source: observation.source }),
+    });
     role.set(challengeKey, challengeData);
     roleData.set(result.role, role);
     if (index === 0) identities.set('selected', result.configIdentity);
@@ -421,12 +537,25 @@ function deriveRoleScores(cases, targets) {
   };
 }
 
+export function aggregateBenchmarkObservations(observations, options = {}) {
+  if (!Array.isArray(observations)) invalid('qualification observations must be an array');
+  const targets = validateTargets(options.targets ?? options.target);
+  const derived = deriveRoleScores(observations, targets);
+  return {
+    roles: derived.roles,
+    configIdentity: derived.configIdentity,
+    configDigest: derived.configDigest,
+    suite: derived.suite,
+  };
+}
+
 function normalizeRecordInput(input) {
   const source = object(input, 'qualification record input');
   const targets = validateTargets(source.targets ?? source.target);
-  if (source.cases !== undefined) {
-    if (!Array.isArray(source.cases)) invalid('qualification record input.cases must be an array');
-    const derived = deriveRoleScores(source.cases, targets);
+  const observations = source.observations ?? source.cases;
+  if (observations !== undefined) {
+    if (!Array.isArray(observations)) invalid('qualification record input.cases must be an array');
+    const derived = deriveRoleScores(observations, targets);
     const configIdentity = source.configIdentity === undefined
       ? derived.configIdentity
       : validateBenchmarkConfigIdentity(source.configIdentity);
@@ -445,6 +574,7 @@ function normalizeRecordInput(input) {
       configIdentity,
       configDigest,
       suite,
+      ...(source.roster === undefined ? {} : { roster: validateQualificationRoster(source.roster) }),
       source: source.source === undefined ? defaultSource() : validateSource(source.source),
     };
   }
@@ -471,12 +601,13 @@ function normalizeRecordInput(input) {
     configIdentity,
     configDigest,
     suite,
+    ...(source.roster === undefined ? {} : { roster: validateQualificationRoster(source.roster) }),
     roles: normalizedRoles,
     source: source.source === undefined ? defaultSource() : validateSource(source.source),
   };
 }
 
-function makeRecord({ configIdentity, configDigest, suite, source, roles }) {
+function makeRecord({ configIdentity, configDigest, suite, source, roles, roster }) {
   if (configIdentity === undefined) invalid('qualification configIdentity is required');
   const normalizedIdentity = validateBenchmarkConfigIdentity(configIdentity);
   const normalizedDigest = configDigest === undefined ? benchmarkConfigDigest(normalizedIdentity) : digest(configDigest, 'qualification configDigest');
@@ -496,6 +627,7 @@ function makeRecord({ configIdentity, configDigest, suite, source, roles }) {
     source: source === undefined ? defaultSource() : validateSource(source),
     roles: {},
   };
+  if (roster !== undefined) result.roster = validateQualificationRoster(roster);
   for (const [role, entry] of Object.entries(normalizedRoles)) {
     result.roles[role] = buildRoleScore({
       n: entry.n,
@@ -551,7 +683,7 @@ function validateRoleScore(value, role) {
 export function validateQualificationRecord(value) {
   const record = object(value, 'qualification record');
   keys(record, [
-    'schemaVersion', 'method', 'sides', 'confidence', 'z', 'configDigest', 'configIdentity', 'suite', 'source', 'roles',
+    'schemaVersion', 'method', 'sides', 'confidence', 'z', 'configDigest', 'configIdentity', 'suite', 'source', 'roles', 'roster',
   ], 'qualification record');
   if (record.schemaVersion !== QUALIFICATION_SCHEMA_VERSION) invalid(`qualification record.schemaVersion must be ${QUALIFICATION_SCHEMA_VERSION}`);
   if (record.method !== QUALIFICATION_METHOD) invalid(`qualification record.method must be ${QUALIFICATION_METHOD}`);
@@ -568,18 +700,61 @@ export function validateQualificationRecord(value) {
     invalid('qualification record.suite does not match configIdentity.suite');
   }
   const source = validateSource(record.source);
+  const roster = record.roster === undefined ? undefined : validateQualificationRoster(record.roster);
+  if (roster !== undefined) {
+    if (!suiteEqual(roster.suite, suite)) invalid('qualification roster.suite does not match qualification suite');
+    const sourceInvocations = new Map(source.invocations.map((entry) => [entry.path, entry.sha256]));
+    if (sourceInvocations.size !== roster.invocations.length) invalid('qualification source.invocations does not match roster');
+    for (const invocation of roster.invocations) {
+      if (sourceInvocations.get(invocation.path) !== invocation.sha256) invalid('qualification roster invocation is not bound to source');
+    }
+  }
   const roles = roleMap(record.roles);
   const normalizedRoles = {};
   for (const [role, entry] of Object.entries(roles)) normalizedRoles[role] = validateRoleScore(entry, role);
   const attempts = new Set();
-  for (const [role, entry] of Object.entries(normalizedRoles)) {
-    for (const challenge of entry.perChallenge) {
-      for (const result of challenge.results) {
-        if (attempts.has(result.attemptId)) invalid(`qualification results contain duplicate attemptId: ${result.attemptId}`);
-        attempts.add(result.attemptId);
+  const sourceCases = new Map(source.cases.map((entry) => [entry.path, entry.sha256]));
+  const usedCases = new Map();
+  const expectedCoverage = new Map();
+  if (roster !== undefined) {
+    for (const invocation of roster.invocations) {
+      for (const expected of invocation.expected) {
+        for (const repetition of expected.repetitions) {
+          expectedCoverage.set(`${invocation.invocationId}\0${expected.challengeId}\0${repetition}`, false);
+        }
       }
     }
   }
+  for (const [role, entry] of Object.entries(normalizedRoles)) {
+    for (const challenge of entry.perChallenge) {
+      const rosterChallenge = roster?.challenges.find((candidate) => candidate.id === challenge.id);
+      if (roster !== undefined && (rosterChallenge === undefined
+        || rosterChallenge.version !== challenge.version
+        || rosterChallenge.sha256 !== challenge.sha256
+        || rosterChallenge.role !== role)) invalid(`qualification challenge ${challenge.id} does not match roster`);
+      for (const result of challenge.results) {
+        const observationKey = result.invocationId === undefined
+          ? result.attemptId
+          : `${result.invocationId}\0${result.attemptId}`;
+        if (attempts.has(observationKey)) invalid(`qualification results contain duplicate invocation/attempt: ${observationKey.replaceAll('\0', '/')}`);
+        attempts.add(observationKey);
+        if (roster !== undefined) {
+          if (result.invocationId === undefined || result.source === undefined) invalid('qualification roster records require invocation and case provenance');
+          if (!roster.invocations.some((invocation) => invocation.invocationId === result.invocationId)) invalid('qualification result invocationId is not in roster');
+          const sourceSha256 = sourceCases.get(result.source.path);
+          if (sourceSha256 === undefined || sourceSha256 !== result.source.sha256) invalid('qualification result source is not bound to source.cases');
+          if (usedCases.has(result.source.path)) invalid('qualification result source is duplicated');
+          usedCases.set(result.source.path, result.source.sha256);
+          const coverageKey = `${result.invocationId}\0${challenge.id}\0${result.repetition}`;
+          if (!expectedCoverage.has(coverageKey)) invalid('qualification result does not match roster challenge/repetition coverage');
+          if (expectedCoverage.get(coverageKey) === true) invalid('qualification roster challenge/repetition is duplicated');
+          expectedCoverage.set(coverageKey, true);
+        }
+      }
+    }
+  }
+  if (roster !== undefined && usedCases.size !== sourceCases.size) invalid('qualification source.cases does not match retained results');
+  if (roster !== undefined && [...expectedCoverage.values()].some((seen) => !seen)) invalid('qualification results do not contain every roster challenge/repetition');
   return {
     schemaVersion: QUALIFICATION_SCHEMA_VERSION,
     method: QUALIFICATION_METHOD,
@@ -590,6 +765,7 @@ export function validateQualificationRecord(value) {
     configIdentity,
     suite,
     source,
+    ...(roster === undefined ? {} : { roster }),
     roles: normalizedRoles,
   };
 }
@@ -623,6 +799,7 @@ export function rescoreQualificationRecord(record, targets = {}) {
     suite: normalized.suite,
     source: normalized.source,
     roles,
+    ...(normalized.roster === undefined ? {} : { roster: normalized.roster }),
   });
 }
 

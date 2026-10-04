@@ -8,6 +8,7 @@ import {
   QUALIFICATION_CONFIDENCE,
   QUALIFICATION_Z,
   aggregateBenchmarkCases,
+  aggregateBenchmarkObservations,
   buildQualificationRecord,
   isSuccessfulBenchmarkCase,
   parseQualificationRecord,
@@ -273,4 +274,21 @@ test('refuses mixed configuration identities and duplicate attempts', () => {
   mixed.configIdentity.model.id = 'another-model';
   mixed.configDigest = config().configDigest;
   assert.throws(() => aggregateBenchmarkCases([first, mixed]), { code: 'BENCHMARK_RESULTS_INVALID' });
+});
+
+test('pools repeated attempt IDs only when invocation provenance is distinct', () => {
+  const first = caseResult({ attemptId: 'attempt-1', repetition: 1 });
+  const second = caseResult({ attemptId: 'attempt-1', repetition: 1, status: 'failed' });
+  const aggregate = aggregateBenchmarkObservations([
+    { caseResult: first, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case.json', sha256: digest('1') } },
+    { caseResult: second, invocationId: 'invocation-b', source: { path: '.tinysdd/bench/b/case.json', sha256: digest('2') } },
+  ]);
+  const role = aggregate.roles['implement-slice'];
+  assert.equal(role.n, 2);
+  assert.equal(role.passes, 1);
+  assert.deepEqual(role.perChallenge[0].results.map(({ invocationId, attemptId }) => `${invocationId}/${attemptId}`), ['invocation-a/attempt-1', 'invocation-b/attempt-1']);
+  assert.throws(() => aggregateBenchmarkObservations([
+    { caseResult: first, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case.json', sha256: digest('1') } },
+    { caseResult: second, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case-2.json', sha256: digest('2') } },
+  ]), { code: 'QUALIFICATION_INVALID' });
 });

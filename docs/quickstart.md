@@ -395,6 +395,53 @@ measurement data only. These values are derived from the existing verifier
 records; they do not change the result shape. Run it with
 `--suite bench/write-tests-suite`.
 
+### Score retained benchmark evidence
+
+Qualification reads immutable benchmark results; it does not run Pi, checks, or
+another live suite. Pass the suite explicitly so TinySDD can hash its roster and
+verify every declared challenge, repetition, and visible or held-out check:
+
+```sh
+tinysdd bench qualify \
+  --results .tinysdd/bench/write-tests-v1/INVOCATION \
+  --suite bench/write-tests-suite \
+  --target write-tests=0.8 \
+  --json
+```
+
+The default target is `0.8` for each role and can be overridden with repeated
+`--target ROLE=NUMBER` values. Scores use the two-sided 95% Wilson interval
+with z `1.959963984540054`: `qualified` requires lower bound >= target,
+`not qualified` requires upper bound < target, and all other results are
+`insufficient evidence`. The record retains n, passes, both bounds, confidence,
+target, method, invocation and case hashes, the suite roster, and both
+best-case counters. `passesToQualify` and `failuresToRuleOut` are minimum extra
+consecutive passes or failures under the corresponding best-case bound; they are
+not predictions. Repeated cases are pooled as a correlated approximation, so
+the interval is evidence for this retained run rather than an independence
+claim.
+
+Qualification records are stored under `.tinysdd/qualifications/` with a
+dedicated lock and profile sidecar. A repeated exact invocation input is ignored
+once and reported as a duplicate; the same attempt ID from different invocation
+IDs remains distinct evidence. Rescore a saved record offline without rerunning
+anything:
+
+```sh
+tinysdd bench rescore \
+  --record .tinysdd/qualifications/CONFIG_DIGEST.json \
+  --target write-tests=0.9
+tinysdd bench qualification show \
+  --record .tinysdd/qualifications/CONFIG_DIGEST.json \
+  --suite bench/write-tests-suite --worker qwen
+```
+
+`show` reports current identity applicability separately from the historical
+qualification status. A profile or any other config identity change makes the
+record stale; unavailable identity fields remain `UNKNOWN` and are not treated
+as a completeness or eligibility gate. Qualification is evidence only and does
+not authorize dispatch or acceptance.
+
 ## Controlled benchmark replay
 
 To compare workers fairly after the live project has moved on, replay the

@@ -234,6 +234,52 @@ syntax/import, setup, timeout, process, and unavailable runs do not. The
 reference pass and killed/declared count are derived from existing records;
 they never qualify a worker or accept a task.
 
+Score retained results with the qualification lane:
+
+```sh
+tinysdd bench qualify \
+  --results .tinysdd/bench/write-tests-v1/INVOCATION \
+  --suite bench/write-tests-suite \
+  --target write-tests=0.8 --json
+```
+
+`bench qualify` requires `--suite` and reads the suite, challenge files,
+verifier manifests, invocation manifests, summaries, and all case results. It
+hash-checks those files, validates the declared challenge x repetition roster
+and exact visible/held-out check IDs and definition hashes, then stores the
+record in `.tinysdd/qualifications/`. It performs no worker, inference,
+service, or live check execution. Repeating the same invocation input is
+deduplicated by its retained invocation identity; an `attemptId` may repeat in
+different invocation IDs and is pooled with that provenance.
+
+Each role defaults to target `0.8`; use repeated `--target ROLE=NUMBER` values
+for per-role overrides. Results use the two-sided 95% Wilson interval with
+z `1.959963984540054`: lower bound >= target is `qualified`, upper bound <
+target is `not qualified`, and the remaining interval is `insufficient
+evidence`. The record keeps n, passes, bounds, confidence, target, method,
+source hashes, the suite/check roster, and both `passesToQualify` and
+`failuresToRuleOut` counters. These counters are minimum extra consecutive
+passes or failures under the best-case bound, not predictions. Repeated cases
+are pooled as a correlated approximation.
+
+Rescore a stored record without rerunning evidence:
+
+```sh
+tinysdd bench rescore \
+  --record .tinysdd/qualifications/CONFIG_DIGEST.json \
+  --target write-tests=0.9
+tinysdd bench qualification show \
+  --record .tinysdd/qualifications/CONFIG_DIGEST.json \
+  --suite bench/write-tests-suite --worker qwen
+```
+
+Omitted rescore targets retain each role's saved target. `show` reports current
+full config identity applicability separately from historical role status;
+profile, suite, verifier, runtime, or other identity changes make a record
+stale. `UNKNOWN` availability fields remain distinct from known-disabled
+configuration and are not converted into an eligibility or completeness gate.
+Qualification is evidence only; dispatch and enforcement remain separate.
+
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays only that prior run's changed allowed files into the new
