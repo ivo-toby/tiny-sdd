@@ -232,6 +232,16 @@ test('elided details and own __proto__ fields remain digest-distinguishable', ()
   ] }), { approvedPacketAnchor: anchor });
   assert.notEqual(first.summary, second.summary);
   assert.notEqual(first.details.omissions[0].detailsSha256, second.details.omissions[0].detailsSha256);
+  const structured = compactDeterministically(preparation({ messagesToSummarize: [
+    assistantTool('read-1', 'read', { path: 'a' }),
+    toolResult('read-1', 'same', { toolName: 'read', details: { diagnostic: 'typed metadata' } }),
+  ] }), { approvedPacketAnchor: anchor });
+  const serialized = compactDeterministically(preparation({ messagesToSummarize: [
+    assistantTool('read-1', 'read', { path: 'a' }),
+    toolResult('read-1', 'same', { toolName: 'read', details: '{"diagnostic":"typed metadata"}' }),
+  ] }), { approvedPacketAnchor: anchor });
+  assert.notEqual(structured.summary, serialized.summary);
+  assert.notEqual(structured.details.omissions[0].detailsSha256, serialized.details.omissions[0].detailsSha256);
   const injected = JSON.parse('{"role":"user","content":"message","__proto__":{"constraint":"MUST RETAIN"}}');
   const retained = compactDeterministically(preparation({ messagesToSummarize: [injected] }), { approvedPacketAnchor: anchor });
   assert.equal(retained.cancel, undefined);

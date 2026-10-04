@@ -224,6 +224,11 @@ function contentDigest(content, maxDepth) {
   return { bytes: bytes.length, sha256: sha256(bytes) };
 }
 
+function structuredDigest(value, maxDepth) {
+  const bytes = Buffer.from(stableStringify(value, { maxDepth }), 'utf8');
+  return { bytes: bytes.length, sha256: sha256(bytes) };
+}
+
 function markerFor(descriptor, digest) {
   const identity = descriptor.tool === 'read'
     ? `path=${JSON.stringify(descriptor.path)}`
@@ -264,7 +269,7 @@ function collectCalls(sections) {
 function compactMessage(message, descriptor, maxDepth) {
   if (!descriptor || message.role !== 'toolResult') return { message, omission: null };
   const digest = contentDigest(message.content, maxDepth);
-  const detailsDigest = Object.hasOwn(message, 'details') ? contentDigest(message.details, maxDepth) : null;
+  const detailsDigest = Object.hasOwn(message, 'details') ? structuredDigest(message.details, maxDepth) : null;
   const marker = markerFor(descriptor, digest);
   const compacted = { ...message, content: replacementContent(message, marker) };
   // Tool result details are extension-owned and may contain a duplicate raw output.
