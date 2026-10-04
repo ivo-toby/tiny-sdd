@@ -1,16 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { addTask, approveTask, configShow, dispatchWorker, initProject } from '../src/controller.mjs';
 import { assessQualification, changedIdentityFields, resolveBenchmarkSuite } from '../src/qualification-dispatch.mjs';
-import { benchmarkFixtureDigest, runBenchmark } from '../src/benchmark-runner.mjs';
+import { benchmarkFixtureDigest, inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
 import { readQualificationEvidencePool } from '../src/qualification-reader.mjs';
-import { accumulateQualificationRecord } from '../src/qualification-store.mjs';
+import { accumulateQualificationRecord, persistQualificationRecord } from '../src/qualification-store.mjs';
 import { buildQualificationRecord } from '../src/qualification.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 
@@ -268,6 +270,110 @@ test('dispatch qualification refreshes every retained invocation and refuses a l
         return true;
       },
     );
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('dispatch rechecks prepared runtime identity before launch', async () => {
+  const fixture = await dispatchFixture();
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await initProject(fixture.root);
+    await mkdir(join(fixture.root, 'src'), { recursive: true });
+    await writeFile(join(fixture.root, 'src', 'index.mjs'), 'before\n');
+    await addTask(fixture.root, { id: 'probe', brief: 'bench/packets/one/brief.md', allow: ['src/index.mjs'] });
+    await approveTask(fixture.root, { id: 'probe', by: 'reviewer', reason: 'synthetic endpoint race' });
+    await writeFile(join(fixture.root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'fake',
+      workers: { fake: fixture.worker },
+      qualification: { mode: 'enforce', suite: 'bench' },
+    }));
+    const resolved = await configShow(fixture.root);
+    const current = await inspectBenchmarkIdentity({
+      projectRoot: fixture.root,
+      suiteRoot: join(fixture.root, 'bench'),
+      worker: resolved.worker,
+      profile: resolved.profile,
+      runtime: fixture.runtime,
+      runChecksDeclared: false,
+      maxCheckRuns: resolved.worker.limits.maxCheckRuns,
+    });
+    const score = {
+      n: 20,
+      passes: 20,
+      target: 0.8,
+      perChallenge: [{
+        id: 'one',
+        version: '1',
+        sha256: 'a'.repeat(64),
+        n: 20,
+        passes: 20,
+        results: Array.from({ length: 20 }, (_, index) => ({ attemptId: `attempt-${index}`, repetition: 1, passed: true })),
+      }],
+    };
+    await persistQualificationRecord(fixture.root, buildQualificationRecord({
+      configIdentity: current.identity,
+      configDigest: current.configDigest,
+      suite: current.suite,
+      roles: { 'implement-slice': score },
+    }), { workerName: 'fake' });
+
+    const modelPath = join(fixture.root, 'agent', 'models.json');
+    const changedModels = JSON.parse(await readFile(modelPath, 'utf8'));
+    changedModels.providers.fake.baseUrl = 'http://127.0.0.1:10/changed-path';
+    let changed = false;
+    const raceEnv = { ...fixture.runtime.sourceEnv };
+    Object.defineProperty(raceEnv, 'FAKE_BASE', {
+      enumerable: true,
+      get() {
+        if (!changed) {
+          changed = true;
+          writeFileSync(modelPath, JSON.stringify(changedModels));
+        }
+        return 'http://127.0.0.1:9/v1';
+      },
+    });
+    await assert.rejects(
+      dispatchWorker(fixture.root, { taskId: 'probe', worker: 'fake', runtime: { ...fixture.runtime, sourceEnv: raceEnv } }),
+      (error) => {
+        assert.equal(error.code, 'MODEL_NOT_QUALIFIED');
+        assert.equal(error.details.qualification.reason, 'qualification_invalidated_by_config');
+        assert.ok(error.details.qualification.changedFields.includes('worker.settings.endpointFingerprint'));
+        return true;
+      },
+    );
+    assert.equal(await readFile(join(fixture.root, 'src', 'index.mjs'), 'utf8'), 'before\n');
+
+    await writeFile(join(fixture.root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'fake',
+      workers: { fake: fixture.worker },
+      qualification: { mode: 'warn', suite: 'bench' },
+    }));
+    await writeFile(modelPath, JSON.stringify({
+      providers: {
+        fake: {
+          api: 'openai-completions',
+          baseUrl: '$FAKE_BASE',
+          apiKey: '$FAKE_TOKEN',
+          models: [{ id: 'fake/model', contextWindow: 4096, maxTokens: 256, input: ['text'], reasoning: false }],
+        },
+      },
+    }));
+    changed = false;
+    const warned = await dispatchWorker(fixture.root, { taskId: 'probe', worker: 'fake', runtime: { ...fixture.runtime, sourceEnv: raceEnv } });
+    assert.equal(warned.outcome, 'completed');
+    assert.equal(warned.qualification.status, 'unqualified');
+    assert.equal(warned.qualification.reason, 'qualification_invalidated_by_config');
+    assert.ok(warned.qualification.changedFields.includes('worker.settings.endpointFingerprint'));
+    assert.match(warned.qualification.warnings[0], /qualification invalidated by config change/u);
+    const runtime = JSON.parse(await readFile(warned.artifactPaths.runtime, 'utf8'));
+    assert.deepEqual(runtime.qualification, warned.qualification);
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
