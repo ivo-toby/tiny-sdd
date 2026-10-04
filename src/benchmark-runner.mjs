@@ -35,6 +35,7 @@ import {
 } from './benchmark-schema.mjs';
 import { BENCHMARK_VERIFIER_STATUSES, parseBenchmarkCaseResult } from './benchmark-results.mjs';
 import { writeBenchmarkResults } from './benchmark-results-writer.mjs';
+import { registerQualificationInvocation } from './qualification-store.mjs';
 import { runWorker, workerLimits } from './worker.mjs';
 import { defaultPiAgentDir, preflightPiWorker, validatePiWorker } from './pi-environment.mjs';
 
@@ -566,6 +567,7 @@ export async function inspectBenchmarkIdentity({
   suiteRoot,
   suitePath = 'suite.json',
   worker,
+  workerName,
   profile = null,
   runtime,
   model,
@@ -1295,6 +1297,7 @@ export async function runBenchmark({
   suitePath = 'suite.json',
   repeat,
   worker,
+  workerName,
   profile = null,
   runtime,
   verifier,
@@ -1358,6 +1361,20 @@ export async function runBenchmark({
     completedAt,
     cases,
   });
+  const benchmarkProjectRoot = resolve(projectRoot ?? suiteRoot);
+  const invocationPath = relative(benchmarkProjectRoot, join(root, 'invocation.json')).replaceAll('\\', '/');
+  const recordedSuitePath = relative(benchmarkProjectRoot, suiteInfo.suiteFile.absolute).replaceAll('\\', '/');
+  const registrationEscapesProject = invocationPath.startsWith('../') || invocationPath === '..'
+    || recordedSuitePath.startsWith('../') || recordedSuitePath === '..';
+  if (!registrationEscapesProject) {
+    await registerQualificationInvocation(benchmarkProjectRoot, {
+      invocationPath,
+      invocationSha256: result.invocationRef.sha256,
+      invocation: result.invocation,
+      suitePath: recordedSuitePath,
+      workerName: workerName ?? null,
+    });
+  }
   return {
     ...result,
     suite: suiteInfo.suite,

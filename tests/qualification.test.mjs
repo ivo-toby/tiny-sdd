@@ -11,6 +11,7 @@ import {
   aggregateBenchmarkObservations,
   buildQualificationRecord,
   isSuccessfulBenchmarkCase,
+  mergeQualificationRecords,
   parseQualificationRecord,
   rescoreQualificationRecord,
   scoreRoleCounts,
@@ -302,4 +303,32 @@ test('pools repeated attempt IDs only when invocation provenance is distinct', (
     { caseResult: first, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case.json', sha256: digest('1') } },
     { caseResult: second, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case-2.json', sha256: digest('2') } },
   ]), { code: 'QUALIFICATION_INVALID' });
+});
+
+test('merges cumulative records by invocation and attempt without dropping failures', () => {
+  const first = caseResult({ attemptId: 'attempt-1' });
+  const second = caseResult({ attemptId: 'attempt-1', status: 'failed' });
+  const identity = config();
+  const makeRecord = (value, invocationId, sourcePath, sourceDigest) => buildQualificationRecord({
+    observations: [{ caseResult: value, invocationId, source: { path: sourcePath, sha256: sourceDigest } }],
+    source: { invocations: [], cases: [{ path: sourcePath, sha256: sourceDigest }] },
+    configIdentity: identity.identity,
+    configDigest: identity.configDigest,
+    suite: value.suite,
+  });
+  const merged = mergeQualificationRecords(
+    makeRecord(first, 'invocation-a', '.tinysdd/bench/a/case.json', digest('1')),
+    makeRecord(second, 'invocation-b', '.tinysdd/bench/b/case.json', digest('2')),
+  );
+  const score = merged.roles['implement-slice'];
+  assert.equal(score.n, 2);
+  assert.equal(score.passes, 1);
+  assert.deepEqual(score.perChallenge[0].results.map(({ invocationId, attemptId }) => `${invocationId}/${attemptId}`), [
+    'invocation-a/attempt-1',
+    'invocation-b/attempt-1',
+  ]);
+  assert.throws(() => mergeQualificationRecords(
+    merged,
+    makeRecord(caseResult({ attemptId: 'attempt-1', status: 'failed' }), 'invocation-a', '.tinysdd/bench/a/other.json', digest('3')),
+  ), { code: 'QUALIFICATION_INVALID' });
 });

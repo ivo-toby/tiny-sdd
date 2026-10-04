@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 
 import { BENCHMARK_UNKNOWN, buildBenchmarkConfigIdentity } from '../src/benchmark-schema.mjs';
 import { readQualificationEvidence } from '../src/qualification-reader.mjs';
+import { readQualificationEvidencePool } from '../src/qualification-reader.mjs';
+import { readQualificationEvidenceIndex, registerQualificationInvocation } from '../src/qualification-store.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 import { buildQualificationRecord, validateQualificationRecord } from '../src/qualification.mjs';
 
@@ -139,7 +141,7 @@ async function makeEvidenceRoot() {
     summary: summaryRef,
   };
   await writeJson(join(outputRoot, 'invocation.json'), invocation);
-  return { root, suitePath: 'bench/suite.json', invocationPath: '.tinysdd/bench/reader-suite/invocation-a' };
+  return { root, suitePath: 'bench/suite.json', invocationPath: '.tinysdd/bench/reader-suite/invocation-a', configDigest: config.configDigest };
 }
 
 test('reads roster-bound evidence, preserves provenance, and deduplicates repeated invocation inputs', async () => {
@@ -185,6 +187,52 @@ test('refuses a case with missing declared repetition', async () => {
       readQualificationEvidence({ projectRoot: fixture.root, suitePath: fixture.suitePath, results: [fixture.invocationPath] }),
       { code: 'QUALIFICATION_READ_INVALID' },
     );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('discovers every retained invocation for an exact digest and records idempotent registrations', async () => {
+  const fixture = await makeEvidenceRoot();
+  try {
+    const invocationPath = `${fixture.invocationPath}/invocation.json`;
+    const invocationText = await readFile(join(fixture.root, invocationPath), 'utf8');
+    const invocation = JSON.parse(invocationText);
+    const registration = await registerQualificationInvocation(fixture.root, {
+      invocationPath,
+      invocationSha256: sha256(invocationText),
+      invocation,
+      suitePath: fixture.suitePath,
+      workerName: 'resolved-worker',
+    });
+    assert.equal(registration.entry.workerName, 'resolved-worker');
+    const repeated = await registerQualificationInvocation(fixture.root, {
+      invocationPath,
+      invocationSha256: sha256(invocationText),
+      invocation,
+      suitePath: fixture.suitePath,
+      workerName: 'resolved-worker',
+    });
+    assert.equal(repeated.index.entries.length, 1);
+    assert.equal((await readQualificationEvidenceIndex(fixture.root)).entries.length, 1);
+    await assert.rejects(
+      registerQualificationInvocation(fixture.root, {
+        invocationPath,
+        invocationSha256: sha256(invocationText),
+        invocation,
+        suitePath: fixture.suitePath,
+        workerName: 'different-worker',
+      }),
+      { code: 'QUALIFICATION_STORE_INVALID' },
+    );
+    const evidence = await readQualificationEvidencePool({
+      projectRoot: fixture.root,
+      suitePath: fixture.suitePath,
+      configDigest: fixture.configDigest,
+    });
+    assert.equal(evidence.pool, true);
+    assert.deepEqual(evidence.registeredInputs, [invocationPath]);
+    assert.equal(evidence.observations.length, 1);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

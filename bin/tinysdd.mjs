@@ -416,6 +416,7 @@ async function runBenchmarkCommand(project, options) {
     suitePath: suite.path,
     repeat,
     worker: resolved.worker,
+    workerName: resolved.workerName,
     profile: resolved.profile,
   });
   const warnings = result.config.checkRunner.available
