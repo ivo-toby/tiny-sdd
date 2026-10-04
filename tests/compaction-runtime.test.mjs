@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { createApprovedPacketAnchor, compactDeterministically } from '../src/deterministic-compaction.mjs';
 import {
   COMPACTION_ANCHOR_ENV,
@@ -19,10 +22,11 @@ import { piRuntimePreflight } from '../src/pi-environment.mjs';
 import { resolveConfig, validateConfigDocument } from '../src/config.mjs';
 import { digestJson } from '../src/fs-utils.mjs';
 import { buildMacosSandboxProfile } from '../src/macos-sandbox.mjs';
-import { buildBubblewrapArgs } from '../src/worker.mjs';
+import { buildBubblewrapArgs, retainSessionArtifact } from '../src/worker.mjs';
 import { buildSessionContext } from './pi100-session-projection.mjs';
 
 const temp = () => mkdtemp(join(tmpdir(), 'tinysdd-compaction-runtime-'));
+const execFileAsync = promisify(execFile);
 
 function fakePi() {
   const handlers = new Map();
@@ -164,6 +168,35 @@ test('retained Pi session files preserve the anchor across ordinary, split and r
       previousSummary = result.summary;
       entries.push({ id: `keep-${index + 1}`, parentId: entries.at(-1).id, type: 'message', message: { role: 'user', content: `kept-${index + 1}` } });
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('retained session reader refuses FIFOs without blocking and bounds regular reads', { skip: process.platform === 'win32' }, async () => {
+  const root = await temp();
+  try {
+    const fifo = join(root, 'session.pipe');
+    await execFileAsync('mkfifo', [fifo]);
+    const started = performance.now();
+    const refused = await retainSessionArtifact(fifo, join(root, 'fifo.out'));
+    assert.equal(refused.available, false);
+    assert.equal(refused.reason, 'not_regular');
+    assert.ok(performance.now() - started < 500);
+
+    const regular = join(root, 'session.jsonl');
+    await writeFile(regular, 'x'.repeat(512 * 1024));
+    const retained = await retainSessionArtifact(regular, join(root, 'regular.out'));
+    assert.equal(retained.available, true);
+    assert.equal(retained.bytes, 512 * 1024);
+
+    const oversized = join(root, 'oversized');
+    const oversizedHandle = await open(oversized, 'wx');
+    await oversizedHandle.truncate(17 * 1024 * 1024);
+    await oversizedHandle.close();
+    const refusedOversize = await retainSessionArtifact(oversized, join(root, 'oversized.out'));
+    assert.equal(refusedOversize.available, false);
+    assert.equal(refusedOversize.reason, 'oversize');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

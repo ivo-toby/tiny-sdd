@@ -471,15 +471,22 @@ async function hashFile(path) {
   return hash.digest("hex");
 }
 
-async function retainSessionArtifact(sourcePath, destinationPath) {
+export async function retainSessionArtifact(sourcePath, destinationPath) {
   let handle;
   try {
-    handle = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    handle = await open(sourcePath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
     const info = await handle.stat();
     if (!info.isFile()) return { available: false, reason: "not_regular" };
     if (info.size > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: info.size, limit: MAX_SESSION_BYTES };
-    const bytes = await handle.readFile();
-    if (bytes.length > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: bytes.length, limit: MAX_SESSION_BYTES };
+    const buffer = Buffer.allocUnsafe(MAX_SESSION_BYTES + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, null);
+      if (read.bytesRead === 0) break;
+      bytesRead += read.bytesRead;
+    }
+    if (bytesRead > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: bytesRead, limit: MAX_SESSION_BYTES };
+    const bytes = buffer.subarray(0, bytesRead);
     await writeFile(destinationPath, bytes, { mode: 0o600, flag: "wx" });
     return { available: true, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
   } catch (error) {
