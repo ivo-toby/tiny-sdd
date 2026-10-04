@@ -54,6 +54,8 @@ export class WorkerError extends Error {
   constructor(message, options = {}) {
     super(message, options);
     this.name = "WorkerError";
+    if (options.code !== undefined) this.code = options.code;
+    if (options.details !== undefined) this.details = options.details;
   }
 }
 
