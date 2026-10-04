@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile, lstat, rm } from "node:fs/promises
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_MAX_TOOL_CALLS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_TOOL_CALLS } from "./config.mjs";
+import { piCompactionSettings, resolveCompactionSettings } from "./compaction-runtime.mjs";
 
 /**
  * The worker owns a very small copy of Pi's model configuration.  In
@@ -174,6 +175,16 @@ function rejectCredentialUrl(value, description) {
   }
 }
 
+function credentialValue(value, description, sourceEnv, generatedEnv, nextSecret) {
+  const rewritten = rewriteTemplate(value, description, sourceEnv, generatedEnv, nextSecret, false);
+  const name = `TINYSDD_PI_SECRET_${nextSecret.value++}`;
+  // Resolve the complete approved template once.  Leaving escaped dollars or
+  // mixed literal/env fragments in models.json would make Pi parse them a
+  // second time and could accidentally reference an unsafe process variable.
+  generatedEnv[name] = rewritten.resolved;
+  return `$${name}`;
+}
+
 function endpointFingerprint(value) {
   if (typeof value !== "string") return "UNKNOWN";
   try {
@@ -183,16 +194,6 @@ function endpointFingerprint(value) {
   } catch {
     return "UNKNOWN";
   }
-}
-
-function credentialValue(value, description, sourceEnv, generatedEnv, nextSecret) {
-  const rewritten = rewriteTemplate(value, description, sourceEnv, generatedEnv, nextSecret, false);
-  const name = `TINYSDD_PI_SECRET_${nextSecret.value++}`;
-  // Resolve the complete approved template once.  Leaving escaped dollars or
-  // mixed literal/env fragments in models.json would make Pi parse them a
-  // second time and could accidentally reference an unsafe process variable.
-  generatedEnv[name] = rewritten.resolved;
-  return `$${name}`;
 }
 
 function copyScalar(value, description) {
@@ -402,7 +403,7 @@ function thinkingControl({ api, thinking, reasoning, compat, thinkingLevelMap })
  * Errors mean the request cannot be honored and the run must not start.
  * Warnings are recorded in runtime.json and the result envelope.
  */
-export function piRuntimePreflight({ api, model, thinking = "off", thinkingBudgets = null }) {
+export function piRuntimePreflight({ api, model, thinking = "off", thinkingBudgets = null, compaction: compactionProfile = undefined }) {
   const errors = [];
   const warnings = [];
   const control = thinkingControl({ api, thinking, reasoning: model.reasoning, compat: model.compat, thinkingLevelMap: model.thinkingLevelMap });
@@ -434,7 +435,14 @@ export function piRuntimePreflight({ api, model, thinking = "off", thinkingBudge
     thinkingBudget = { field: budgetField, tokens, source: configured === undefined ? "pi-default" : "profile", clamped: tokens < levelBudget, sent: tokens > 0 };
     if (tokens === 0) warnings.push(`maxTokens ${maxTokens.value} leaves no room for a thinking budget after Pi's ${PI_MIN_ANSWER_TOKENS}-token answer reserve, so none is sent`);
   }
-  return { basis: PREFLIGHT_BASIS, thinking: control, maxTokens, thinkingTokenBudgetField: budgetField, thinkingBudget, errors, warnings };
+  let compaction;
+  try {
+    compaction = resolveCompactionSettings({ compaction: compactionProfile }, maxTokens.value);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+    compaction = { enabled: false, invalid: true, code: error?.code ?? "COMPACTION_PROFILE_INVALID" };
+  }
+  return { basis: PREFLIGHT_BASIS, thinking: control, maxTokens, thinkingTokenBudgetField: budgetField, thinkingBudget, compaction, errors, warnings };
 }
 
 async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
@@ -461,7 +469,7 @@ async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
   const api = model.api ?? provider.api ?? null;
   const endpoint = endpointFingerprint(safeProvider.models[0]?.baseUrl ?? safeProvider.baseUrl);
   const preflight = {
-    ...piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off", thinkingBudgets: profileRuntime?.thinkingBudgets ?? null }),
+    ...piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off", thinkingBudgets: profileRuntime?.thinkingBudgets ?? null, compaction: profileRuntime?.compaction }),
     endpointFingerprint: endpoint,
   };
   return { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight };
@@ -498,7 +506,7 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
     await writeFile(join(stateDir, "models.json"), `${JSON.stringify({ providers: { [worker.provider]: safeProvider } }, null, 2)}\n`, { mode: 0o600 });
     // The user's global Pi settings are never inherited; a profile's thinking
     // budgets are the only settings it contributes.
-    const settings = { retry: { enabled: false, provider: { maxRetries: 0, timeoutMs: 120000 } }, compaction: { enabled: false } };
+    const settings = { retry: { enabled: false, provider: { maxRetries: 0, timeoutMs: 120000 } }, compaction: piCompactionSettings(preflight.compaction) };
     if (profile?.runtime?.thinkingBudgets) settings.thinkingBudgets = { ...profile.runtime.thinkingBudgets };
     await writeFile(join(stateDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
     // Pi's startup/auth checks may create this file.  It is intentionally an
@@ -535,6 +543,7 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
     credentialEnvironmentNames: [],
     generatedCredentialReferenceCount: Object.keys(generatedEnv).length,
     preflight,
+    compaction: preflight.compaction,
   };
   return {
     stateDir,

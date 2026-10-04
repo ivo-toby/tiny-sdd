@@ -308,6 +308,29 @@ medium 8192, high 16384). `runtime.json` records the effective budget as
 `effectiveThinkingBudget`. The server must honor the field; check one run's
 `usage.reasoning` against it.
 
+Context compaction stays off unless a profile opts in. To enable deterministic
+compaction, add this to the selected profile:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "qwen-compaction",
+  "runtime": {
+    "compaction": { "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }
+  }
+}
+```
+
+`reserveTokens` must be at least the worker's effective `maxTokens`; an omitted
+reserve uses that effective value. The host writes an immutable approved-packet
+anchor and loads TinySDD's deterministic extension through the Linux bubblewrap
+or macOS Seatbelt sandbox. It elides only paired old `read` and `run_checks`
+outputs, retaining their digests and replay markers. Inspect `runtime.json` for
+the compaction mode and anchor identity, then `result.json` at
+`observed.compactions` for summary and extension-detail digests. Deterministic
+events do not receive the model-summary warning; malformed, aborted or
+oversized compactions cancel with an explicit reason.
+
 Optional `limits.firstWriteMs` (below `timeoutMs`) is a no-progress watchdog:
 if no `write` or `edit` tool call has started by then, the run stops with outcome
 `no_progress` and keeps its raw events, including the partial reasoning. It is

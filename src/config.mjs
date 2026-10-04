@@ -25,9 +25,10 @@ const QUALIFICATION_KEYS = ['mode', 'suite'];
 const QUALIFICATION_MODES = ['off', 'warn', 'enforce'];
 const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs', 'maxCheckRuns'];
 const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
-const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets'];
+const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets', 'compaction'];
 const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole', 'thinkingTokenBudgetField'];
 const THINKING_BUDGET_KEYS = ['minimal', 'low', 'medium', 'high'];
+const COMPACTION_KEYS = ['enabled', 'reserveTokens', 'keepRecentTokens'];
 const SEMANTIC_GATE_KEYS = ['mode', 'endpoint', 'model', 'thresholds'];
 const SEMANTIC_GATE_MODES = ['off', 'shadow', 'enforce'];
 const SEMANTIC_GATE_THRESHOLD_KEYS = ['accept', 'reject'];
@@ -269,6 +270,20 @@ function validateProfileDocument(raw, path) {
         if (!Number.isInteger(tokens) || tokens <= 0) throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.thinkingBudgets.${level} must be a positive integer`);
       }
       runtime.thinkingBudgets = { ...raw.runtime.thinkingBudgets };
+    }
+    if (raw.runtime.compaction !== undefined) {
+      assertPlainObject(raw.runtime.compaction, 'PROFILE_INVALID', `profile ${path}.runtime.compaction`);
+      assertExactKeys(raw.runtime.compaction, COMPACTION_KEYS, 'PROFILE_INVALID', `profile ${path}.runtime.compaction`);
+      const enabled = raw.runtime.compaction.enabled === undefined ? false : raw.runtime.compaction.enabled;
+      if (typeof enabled !== 'boolean') throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.compaction.enabled must be boolean`);
+      const compaction = { enabled };
+      for (const key of ['reserveTokens', 'keepRecentTokens']) {
+        const value = raw.runtime.compaction[key];
+        if (value === undefined) continue;
+        if (!Number.isSafeInteger(value) || value < 0) throw tinyError('PROFILE_INVALID', `profile ${path}.runtime.compaction.${key} must be a nonnegative safe integer`);
+        compaction[key] = value;
+      }
+      runtime.compaction = compaction;
     }
     profile.runtime = runtime;
   }

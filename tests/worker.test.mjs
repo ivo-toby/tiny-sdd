@@ -163,6 +163,15 @@ if (action === "reread") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"Done reading."}]}}));
   process.exit(0);
 }
+if (action === "deterministic-compaction") {
+  const extensionIndex = process.argv.indexOf("-e");
+  const anchorPath = process.env.TINYSDD_COMPACTION_ANCHOR;
+  const anchor = anchorPath ? JSON.parse(readFileSync(anchorPath, "utf8")).anchor : null;
+  if (extensionIndex < 0 || !anchor) throw new Error("deterministic compaction extension was not loaded with its anchor");
+  console.log(JSON.stringify({ type: "compaction_end", reason: "threshold", aborted: false, willRetry: false, result: { summary: anchor.text, firstKeptEntryId: "keep-1", tokensBefore: 90000, estimatedTokensAfter: 24000, details: { schemaVersion: 1, strategy: "deterministic", packet: { id: anchor.id, sha256: anchor.sha256, bytes: anchor.bytes }, omissions: [{ tool: "read", contentSha256: "a".repeat(64), replayMarker: "re-read required" }] }, fromHook: true } }));
+  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done after deterministic compaction." }] } }));
+  process.exit(0);
+}
 if (action === "tools") {
   for (let i = 0; i < 4; i += 1) console.log(JSON.stringify({type:"tool_execution_start",toolName:"read"}));
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -267,6 +276,22 @@ describe("Pi environment filtering", () => {
     await assert.rejects(
       preparePiEnvironment({ worker: { ...worker(), provider: "other" }, sourceAgentDir }),
       /Configured Pi provider is unavailable/u,
+    );
+  });
+
+  test("writes opt-in deterministic compaction settings and refuses an undersized reserve", async () => {
+    const profile = { schemaVersion: 1, id: "compact", runtime: { compaction: { enabled: true } } };
+    const prepared = await preparePiEnvironment({ worker: worker(), profile, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } });
+    try {
+      const settings = JSON.parse(await readFile(join(prepared.stateDir, "settings.json"), "utf8"));
+      assert.deepEqual(settings.compaction, { enabled: true, reserveTokens: 256 });
+      assert.deepEqual(prepared.metadata.compaction, { enabled: true, reserveTokens: 256, profile: { enabled: true } });
+    } finally {
+      await prepared.cleanup();
+    }
+    await assert.rejects(
+      preparePiEnvironment({ worker: worker(), profile: { ...profile, runtime: { compaction: { enabled: true, reserveTokens: 128 } } }, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } }),
+      /reserveTokens 128 must be at least effective maxTokens 256/u,
     );
   });
 });
@@ -1051,6 +1076,38 @@ describe("Pi worker capture and scope", () => {
       assert.equal(result.observed.compactions[0].tokensBefore, 90000);
       assert.equal(result.observed.compactions[0].summarySha256, createHash("sha256").update("Summary of the task so far.").digest("hex"));
       assert.ok(result.warnings.some((warning) => /compacted the worker context/u.test(warning)));
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("loads deterministic compaction from an opt-in profile and records trusted anchor and details digests", async () => {
+    const project = await makeProject();
+    try {
+      const profile = { schemaVersion: 1, id: "deterministic-compaction", runtime: { compaction: { enabled: true } } };
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), profile, runtime: runtime(undefined, "deterministic-compaction") });
+      assert.equal(result.outcome, "completed");
+      const metadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.deepEqual(metadata.compaction, {
+        enabled: true,
+        mode: "deterministic",
+        reserveTokens: 256,
+        keepRecentTokens: null,
+        extensionVersion: 1,
+        anchorId: "task-worker-test",
+        anchorSha256: metadata.compaction.anchorSha256,
+        anchorBytes: metadata.compaction.anchorBytes,
+      });
+      assert.ok(metadata.compaction.anchorBytes > 0);
+      const anchorArtifact = JSON.parse(await readFile(join(result.artifactPaths.compaction, "anchor.json"), "utf8"));
+      assert.equal((await stat(join(result.artifactPaths.compaction, "anchor.json"))).mode & 0o777, 0o400);
+      const prompt = await readFile(result.artifactPaths.prompt, "utf8");
+      assert.equal(prompt.endsWith(anchorArtifact.anchor.text), true);
+      assert.equal(result.observed.compactions.length, 1);
+      assert.equal(result.observed.compactions[0].deterministic, true);
+      assert.equal(result.observed.compactions[0].fromHook, true);
+      assert.match(result.observed.compactions[0].detailsSha256, /^[a-f0-9]{64}$/u);
+      assert.equal(result.warnings.some((warning) => /model-written summary/u.test(warning)), false);
     } finally {
       await rm(project, { recursive: true, force: true });
     }

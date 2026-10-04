@@ -732,6 +732,7 @@ contexts grow.
 | Manifest validation at add | **Implemented** | `task add` compiles the manifest (schema, ranges, budget) before mutating state. |
 | `worker status` polling field | **Implemented** | `data.request.status` → `data.request.launchStatus`; poll `data.status`. Documented in the skill and quickstart. |
 | Thinking budget in profiles | **Implemented** | `runtime.compat.thinkingTokenBudgetField`, `runtime.thinkingBudgets`; written to the worker's temporary Pi settings; reported by the preflight. |
+| Deterministic context compaction (#43) | **Implemented (opt-in)** | `runtime.compaction.enabled` keeps the default off. The host enforces `reserveTokens >= effectiveMaxTokens`, stages a read-only approved-packet anchor and extension for bubblewrap and Seatbelt, records summary/detail digests and deterministic omission metadata, and retains the exact packet bytes through Pi 1.0.0 session projection. |
 | Timeout cap | **Implemented (single source)** | `MAX_TIMEOUT_MS` was declared in config.mjs and pi-environment.mjs: 15 min on `main`, 60 min since the Jev gate commit. Now one constant in config.mjs, kept at 60 min. `main` stays at 15 min until this branch merges. |
 | Run measurements | **Implemented** | `taskShape`, `observed.toolCallsByName`, `writeCalls`, `firstWriteAtMs`, `reads`, `citedRereads`, `repeatedReads`, `compactions`, `cumulativeUsage`. |
 | `task close` / `task supersede` | **Implemented** (#14) | Terminal `closed`/`superseded` status; refused while open tasks depend on it; supersede records successors. |

@@ -15,11 +15,11 @@ function inside(root, path) {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-export function buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, nodeExecutable, piExecutable, piRoot, inferencePort }) {
-  const paths = [workspace, stateDir, sourceRoot, sourceAgentDir, nodeExecutable, piExecutable, piRoot];
+export function buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, compactionBundle, nodeExecutable, piExecutable, piRoot, inferencePort }) {
+  const paths = [workspace, stateDir, sourceRoot, sourceAgentDir, compactionBundle, nodeExecutable, piExecutable, piRoot].filter(Boolean);
   for (const path of paths) pathString(path);
   if (!inside(piRoot, piExecutable)) throw new Error("Pi executable must be inside its installed package");
-  const readable = [...SYSTEM_READ_ROOTS, piRoot];
+  const readable = [...SYSTEM_READ_ROOTS, piRoot, ...(compactionBundle ? [compactionBundle] : [])];
   const writable = [workspace, stateDir];
   const privateRoots = [sourceRoot, sourceAgentDir];
   for (const privateRoot of privateRoots) {
