@@ -56,6 +56,26 @@ npm test
 node bin/tinysdd.mjs --help
 ```
 
+The offline decision-evaluation foundation is documented in
+[docs/decision-evaluation.md](decision-evaluation.md). It compares saved
+provider predictions with separately reviewed labels and never performs live
+inference. Run it with explicit dataset and prediction files when those
+artifacts exist:
+
+```sh
+node scripts/evaluate-decisions.mjs \
+  --dataset data/decision-dataset.json \
+  --predictions data/predictions.json \
+  --metrics data/metrics.json \
+  --output data/evaluation-report.json \
+  --json
+```
+
+Synthetic fixtures are useful for checking the tooling but do not count toward
+the 50 real failure-triage labels required by issue #32. The current checkout
+does not contain those real labels or measured provider runs; the evaluator
+reports the missing evidence as `UNKNOWN`/warnings.
+
 Use `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs` wherever the examples below
 say `tinysdd`. `--project /path/to/project` selects the target explicitly;
 otherwise commands use the current directory. No global npm/Pi setup is changed.

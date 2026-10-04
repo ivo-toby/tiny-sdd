@@ -4,6 +4,25 @@ Run `tinysdd --help` for the installed interface. In a source checkout use
 `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs`; run it from the target project
 or select `--project /path/to/project`. Add `--json` for machine-readable output.
 
+For the separate, offline decision-model evaluation foundation, see
+[docs/decision-evaluation.md](../../../docs/decision-evaluation.md). It consumes
+explicit dataset, saved-prediction, and optional metrics files; it does not call
+a provider or alter controller state:
+
+```sh
+node scripts/evaluate-decisions.mjs \
+  --dataset data/decision-dataset.json \
+  --predictions data/predictions.json \
+  --metrics data/metrics.json \
+  --output data/evaluation-report.json \
+  --json
+```
+
+The dataset keeps worker observations separate from human-reviewed labels,
+verifies source-file digests, rejects split-group leakage, and counts synthetic
+fixtures separately from the 50 real failure-triage labels still required by
+issue #32. Missing measurements remain `UNKNOWN`.
+
 Controller-only setup needs no model:
 
 ```sh
