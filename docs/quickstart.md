@@ -419,8 +419,8 @@ target, method, invocation and case hashes, the suite roster, and both
 best-case counters. `passesToQualify` and `failuresToRuleOut` are minimum extra
 consecutive passes or failures under the corresponding best-case bound; they are
 not predictions. Repeated cases are pooled as a correlated, provisional
-approximation until #33 calibrates it, so the interval is evidence for this
-retained run rather than an independence claim.
+approximation, so the interval is evidence for this retained run rather than
+an independence claim.
 
 Qualification records are stored under `.tinysdd/qualifications/` with a
 dedicated lock and profile sidecar. A repeated exact invocation input is ignored

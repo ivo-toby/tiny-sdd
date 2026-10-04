@@ -261,7 +261,7 @@ evidence`. The record keeps n, passes, bounds, confidence, target, method,
 source hashes, the suite/check roster, and both `passesToQualify` and
 `failuresToRuleOut` counters. These counters are minimum extra consecutive
 passes or failures under the best-case bound, not predictions. Repeated cases
-are pooled as a correlated, provisional approximation until #33 calibrates it.
+are pooled as a correlated, provisional approximation.
 
 Rescore a stored record without rerunning evidence:
 
