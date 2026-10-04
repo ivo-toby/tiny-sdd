@@ -5,7 +5,7 @@
     {
       "path": "src/cache.mjs",
       "startLine": 1,
-      "endLine": 7,
+      "endLine": 11,
       "purpose": "Cache lookup, refresh, and missing-value contract."
     }
   ]

@@ -36,9 +36,11 @@ For valid inputs, each file's inclusive line ranges are merged before counting.
 The result reports `goldLines`, `candidateLines`, `intersectionLines`,
 `precision`, `recall`, and the compiled UTF-8 byte counts. `precision` is the
 intersection divided by candidate lines; `recall` is the intersection divided
-by gold lines. A zero denominator is `UNKNOWN` with a reason. Over-budget
-compiled context is reported and gives `status: "hard_gate_failed"`; no range
-is truncated or discarded to improve a score.
+by gold lines. A zero denominator is `UNKNOWN` with a reason. The caller
+budget gates candidate compiled bytes; an oversized gold manifest remains a
+distinct reference observation and does not fail an otherwise in-budget
+candidate. An oversized candidate gives `status: "hard_gate_failed"`; no
+range is truncated or discarded to improve a score.
 
 `facts` and `purpose` text is retained only as manifest context. It is not a
 semantic-truth judgment and cannot approve a manifest, task, model, or

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { performance } from 'node:perf_hooks';
+import { fileURLToPath } from 'node:url';
 
 import { compileContext, MAX_COMPILED_CONTEXT_BYTES } from '../src/context-compiler.mjs';
 import { scoreResearchSelection } from '../src/research-scoring.mjs';
@@ -225,6 +226,54 @@ test('reports exact caller budget boundaries using compiled UTF-8 bytes', async 
   }
 });
 
+test('applies the caller budget to the candidate and reports an oversized gold reference separately', async () => {
+  const root = await makeProject();
+  const sourcePath = join(root, 'src', 'alpha.mjs');
+  try {
+    const large = manifest([{ path: 'src/alpha.mjs', startLine: 1, endLine: 8, purpose: 'complete interface context' }]);
+    const small = manifest([{ path: 'src/alpha.mjs', startLine: 1, endLine: 1, purpose: 'entry point' }]);
+    const candidateBaseline = await score(root, large, small);
+    const candidateBudget = candidateBaseline.candidate.bytes;
+    assert.ok(candidateBaseline.gold.bytes > candidateBudget);
+
+    const largerGold = await score(root, large, small, candidateBudget);
+    assert.equal(largerGold.status, 'scored');
+    assert.equal(largerGold.evaluation, 'scored');
+    assert.equal(largerGold.budget.status, 'passed');
+    assert.equal(largerGold.budget.candidateExceeded, false);
+    assert.equal(largerGold.budget.reference.status, 'exceeded');
+    assert.equal(largerGold.budget.reference.bytes, largerGold.gold.bytes);
+    assert.equal(largerGold.hardGates.budget.status, 'passed');
+
+    const inverse = await score(root, small, large, candidateBudget);
+    assert.equal(inverse.status, 'hard_gate_failed');
+    assert.equal(inverse.evaluation, 'budget_exceeded');
+    assert.equal(inverse.budget.candidateExceeded, true);
+    assert.equal(inverse.budget.reference.status, 'within');
+    assert.equal(inverse.hardGates.budget.status, 'failed');
+
+    const exactLarge = await score(root, small, large, inverse.candidate.bytes);
+    assert.equal(exactLarge.status, 'scored');
+    assert.equal(exactLarge.budget.candidateExceeded, false);
+    const underLarge = await score(root, small, large, inverse.candidate.bytes - 1);
+    assert.equal(underLarge.status, 'hard_gate_failed');
+    assert.equal(underLarge.budget.candidateExceeded, true);
+
+    const original = await readFile(sourcePath);
+    await withSourceReversal(sourcePath, Buffer.from('export function shortened() {\n}\n'), async (restored) => {
+      const brokenReference = await score(root, large, small, candidateBudget);
+      assert.equal(brokenReference.status, 'refused');
+      assert.equal(brokenReference.evaluation, 'invalid_gold');
+      assert.deepEqual(restored, original);
+    });
+    const afterRestore = await score(root, large, small, candidateBudget);
+    assert.equal(afterRestore.status, 'scored');
+    assert.equal(afterRestore.budget.candidateExceeded, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('restores a reversed source hunk and then returns to the valid score', async () => {
   const root = await makeProject();
   const sourcePath = join(root, 'src', 'alpha.mjs');
@@ -272,6 +321,19 @@ test('matches the existing compiler output and remains stable across repeated ca
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('keeps the Cobalt preparation gold range over the declared refresh interface', async () => {
+  const fixture = fileURLToPath(new URL('../bench/research-scoring-fixtures/cobalt-cache-refresh/', import.meta.url));
+  const projectRoot = join(fixture, 'project');
+  const text = await readFile(join(fixture, 'gold.context.json'), 'utf8');
+  const value = JSON.parse(text);
+  const resource = value.resources[0];
+  assert.equal(resource.path, 'src/cache.mjs');
+  assert.equal(resource.endLine, 11);
+  const compiled = await compileContext(projectRoot, { path: 'gold.context.json', text, sha256: sha256(text) });
+  assert.match(compiled.rendered, /const existed = values\.has\(key\)/u);
+  assert.match(compiled.rendered, /return \{ existed \}/u);
 });
 
 test('bounds a malformed 512 KiB manifest without executing anything', async () => {

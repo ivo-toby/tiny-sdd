@@ -297,7 +297,10 @@ export async function scoreResearchSelection(first, second, third, fourth) {
     gold: gold.compiled.bytes > budgetBytes,
     candidate: candidate.compiled.bytes > budgetBytes,
   };
-  const budgetFailed = budgetExceeded.gold || budgetExceeded.candidate;
+  // The caller's budget constrains the candidate selection. Gold is a
+  // reference observation: it may exceed that budget without making an
+  // otherwise in-budget candidate fail its hard gate.
+  const budgetFailed = budgetExceeded.candidate;
   const goldUnion = rangeUnion(gold.compiled.resources);
   const candidateUnion = rangeUnion(candidate.compiled.resources);
   const metrics = {
@@ -324,6 +327,14 @@ export async function scoreResearchSelection(first, second, third, fourth) {
     goldExceeded: budgetExceeded.gold,
     candidateExceeded: budgetExceeded.candidate,
     exceeded: budgetFailed,
+    reference: {
+      status: budgetExceeded.gold ? 'exceeded' : 'within',
+      bytes: gold.compiled.bytes,
+    },
+    candidate: {
+      status: budgetExceeded.candidate ? 'exceeded' : 'within',
+      bytes: candidate.compiled.bytes,
+    },
   };
   return {
     schemaVersion: RESEARCH_SCORING_SCHEMA_VERSION,
