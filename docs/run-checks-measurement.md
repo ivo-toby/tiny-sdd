@@ -8,8 +8,8 @@ this document.
 
 Compare the unchanged `main` baseline at
 `66a4f47762afe1f067ad73aa21c98a37548353b5` with the exact changed issue #42
-revision recorded by each run's `configIdentity.codeRevision`. Resolve and
-retain both revisions before launching either arm. Use the same:
+revision recorded by each run's `configIdentity.tinySdd.codeRevision`. Resolve
+and retain both revisions before launching either arm. Use the same:
 
 - worker model and quantization, provider/server and endpoint configuration;
 - worker profile and effective limits (`timeoutMs`, `maxToolCalls`,
@@ -29,6 +29,76 @@ before removing the checkout. Record the exact command, model/profile/server
 settings, suite path, repetition and budgets in the invocation notes. The
 benchmark identity and its `configDigest` must be retained with the run.
 
+## Isolated setup and invocation
+
+Prepare two disposable worktrees before either run. Set `CHANGED_REVISION` to
+the exact issue #42 implementation revision; do not use a moving branch name:
+
+```sh
+BASE_REVISION=66a4f47762afe1f067ad73aa21c98a37548353b5
+: "${CHANGED_REVISION:?set CHANGED_REVISION to the exact issue #42 implementation revision}"
+BASE_ARM=/tmp/tinysdd-42-baseline
+CHANGED_ARM=/tmp/tinysdd-42-changed
+: "${WORKER:?set WORKER to the same named worker in both arms}"
+: "${K:?set K to the fixed positive repetition count}"
+git worktree add --detach "$BASE_ARM" "$BASE_REVISION"
+git worktree add --detach "$CHANGED_ARM" "$CHANGED_REVISION"
+```
+
+Prepare the named worker separately in each arm, or copy only an explicitly
+selected non-secret worker configuration. Keep the provider, model, profile,
+server metadata, suite/verifier bytes and effective worker limits identical.
+Configure limits under `workers.<name>.limits` in the worker configuration:
+`timeoutMs`, `maxToolCalls`, optional `firstWriteMs`, and `maxCheckRuns`.
+There are no benchmark limit flags; do not add unsupported options to the
+invocation. Do not read, copy or export auth state, credential files, secret
+environment variables or Pi state. If an operator must prepare an arm
+manually, record that preparation and its resulting config digest instead.
+
+Inspect only the effective non-secret worker configuration in each arm:
+
+```sh
+node bin/tinysdd.mjs --project "$BASE_ARM" config show --worker "$WORKER" --json
+node bin/tinysdd.mjs --project "$CHANGED_ARM" config show --worker "$WORKER" --json
+```
+
+The current invocation, with placeholders, is:
+
+```sh
+node bin/tinysdd.mjs --project <arm> bench run --worker <name> --suite bench/implement-slice-suite --repeat <K> --json
+```
+
+Run it once per arm from that arm's checkout, using the same worker name and
+fixed `K`:
+
+```sh
+for arm in "$BASE_ARM" "$CHANGED_ARM"; do
+  (cd "$arm" && node bin/tinysdd.mjs --project "$arm" bench run \
+    --worker "$WORKER" --suite bench/implement-slice-suite --repeat "$K" --json \
+    > bench-stdout.json 2> bench-stderr.log)
+done
+```
+
+The host determines effective check availability. A declared but unavailable
+runner keeps the normal no-check prompt and Pi tool arguments, records the
+unavailable reason and provenance, and is analyzed as its own stratum. Do not
+set `runChecksDeclared: false` to make an unavailable host appear comparable;
+the #34 declared-context guard must remain in force. Do not silently switch
+providers, models or endpoints when the selected worker is unavailable; retain
+the setup failure and stop that arm.
+
+Before removing either checkout, copy the complete
+`.tinysdd/bench/<suite-id>/<invocation-id>/` directory to durable measurement
+storage. Retain `invocation.json`, `summary.json`, every case result and every
+case artifact reference with its digest, including the case prompt, worker
+result, runtime metadata, stdout/stderr, packet and candidate/patch artifacts.
+Retain `checks.jsonl` when present and the `workerObservedChecks.runs` data in
+the worker result. Keep the invocation command, arm revision, worker config
+digest and `configIdentity.tinySdd.codeRevision` beside the copied artifacts.
+Do not delete an invocation or reconstruct missing prompt/result/runtime data
+from a summary. These artifacts are measurements only; they do not grant the
+worker or its output acceptance or verification authority.
+
 ## Availability strata
 
 Record check declaration and effective availability independently. The
@@ -40,8 +110,9 @@ and Pi tool arguments and must be analyzed as its own stratum. An available
 runner adds only the named `run_checks` tool and the check-guided contract.
 
 Compare the contract effect only between baseline and changed revisions with
-the same effective availability. Compare availability effects separately; a
-different host or runner cannot be attributed to the prompt contract.
+the same effective availability. Compare availability effects separately;
+unavailable-host comparisons are confounded by the host and runner, so they
+cannot be attributed to the prompt contract.
 
 ## Retained measurements
 
