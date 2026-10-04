@@ -252,15 +252,16 @@ service, or live check execution. Repeating the same invocation input is
 deduplicated by its retained invocation identity; an `attemptId` may repeat in
 different invocation IDs and is pooled with that provenance.
 
-Each role defaults to target `0.8`; use repeated `--target ROLE=NUMBER` values
-for per-role overrides. Results use the two-sided 95% Wilson interval with
+Each role defaults to target `0.8`, provisional until #33 calibrates it; use
+repeated `--target ROLE=NUMBER` values for per-role overrides. Results use the
+two-sided 95% Wilson interval with
 z `1.959963984540054`: lower bound >= target is `qualified`, upper bound <
 target is `not qualified`, and the remaining interval is `insufficient
 evidence`. The record keeps n, passes, bounds, confidence, target, method,
 source hashes, the suite/check roster, and both `passesToQualify` and
 `failuresToRuleOut` counters. These counters are minimum extra consecutive
 passes or failures under the best-case bound, not predictions. Repeated cases
-are pooled as a correlated approximation.
+are pooled as a correlated, provisional approximation until #33 calibrates it.
 
 Rescore a stored record without rerunning evidence:
 

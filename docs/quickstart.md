@@ -409,17 +409,18 @@ tinysdd bench qualify \
   --json
 ```
 
-The default target is `0.8` for each role and can be overridden with repeated
-`--target ROLE=NUMBER` values. Scores use the two-sided 95% Wilson interval
+The default target is `0.8` for each role, provisional until #33 calibrates it,
+and can be overridden with repeated `--target ROLE=NUMBER` values. Scores use
+the two-sided 95% Wilson interval
 with z `1.959963984540054`: `qualified` requires lower bound >= target,
 `not qualified` requires upper bound < target, and all other results are
 `insufficient evidence`. The record retains n, passes, both bounds, confidence,
 target, method, invocation and case hashes, the suite roster, and both
 best-case counters. `passesToQualify` and `failuresToRuleOut` are minimum extra
 consecutive passes or failures under the corresponding best-case bound; they are
-not predictions. Repeated cases are pooled as a correlated approximation, so
-the interval is evidence for this retained run rather than an independence
-claim.
+not predictions. Repeated cases are pooled as a correlated, provisional
+approximation until #33 calibrates it, so the interval is evidence for this
+retained run rather than an independence claim.
 
 Qualification records are stored under `.tinysdd/qualifications/` with a
 dedicated lock and profile sidecar. A repeated exact invocation input is ignored
