@@ -435,6 +435,7 @@ function normalizeRecordInput(input) {
       : digest(source.configDigest, 'qualification input.configDigest');
     if (configIdentity === undefined || configDigest === undefined) invalid('qualification input requires configIdentity and configDigest when cases is empty');
     if (benchmarkConfigDigest(configIdentity) !== configDigest) invalid('qualification input.configIdentity does not match cases');
+    if (derived.configDigest !== undefined && derived.configDigest !== configDigest) invalid('qualification input.configDigest does not match cases');
     const suite = source.suite === undefined ? derived.suite : validateSuite(source.suite);
     if (suite === undefined) invalid('qualification input requires suite when cases is empty');
     if (derived.suite !== undefined && !suiteEqual(suite, derived.suite)) invalid('qualification input.suite does not match cases');
@@ -522,6 +523,9 @@ function validateRoleScore(value, role) {
   const counts = validateCounts(entry.n, entry.passes, `qualification roles.${role}`);
   const targetValue = target(entry.target, `qualification roles.${role}.target`);
   const interval = wilsonInterval(counts.n, counts.passes);
+  const lowerBound = probability(entry.lowerBound, `qualification roles.${role}.lowerBound`);
+  const upperBound = probability(entry.upperBound, `qualification roles.${role}.upperBound`);
+  if (!closeEnough(lowerBound, interval.lowerBound) || !closeEnough(upperBound, interval.upperBound)) invalid(`qualification roles.${role} bounds do not match counts`);
   if (!closeEnough(entry.lowerBound, interval.lowerBound) || !closeEnough(entry.upperBound, interval.upperBound)) invalid(`qualification roles.${role} bounds do not match counts`);
   if (entry.confidence !== QUALIFICATION_CONFIDENCE) invalid(`qualification roles.${role}.confidence must be ${QUALIFICATION_CONFIDENCE}`);
   if (!QUALIFICATION_STATUSES.includes(entry.status)) invalid(`qualification roles.${role}.status is invalid`);
@@ -558,6 +562,11 @@ export function validateQualificationRecord(value) {
   const configDigest = digest(record.configDigest, 'qualification record.configDigest');
   if (benchmarkConfigDigest(configIdentity) !== configDigest) invalid('qualification record.configDigest does not match configIdentity');
   const suite = validateSuite(record.suite);
+  if (suite.id !== configIdentity.suite.id
+    || suite.version !== configIdentity.suite.version
+    || suite.sha256 !== configIdentity.suite.contentSha256) {
+    invalid('qualification record.suite does not match configIdentity.suite');
+  }
   const source = validateSource(record.source);
   const roles = roleMap(record.roles);
   const normalizedRoles = {};

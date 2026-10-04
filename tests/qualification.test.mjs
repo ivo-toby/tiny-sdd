@@ -214,6 +214,43 @@ test('validates tamper-resistant status, bounds, counters, identity, and raw-sch
   assert.throws(() => validateBenchmarkCaseResult({ ...raw, qualified: false }), { code: 'BENCHMARK_RESULTS_INVALID' });
 });
 
+test('binds caller-supplied cases to their full identity and suite', () => {
+  const original = caseResult();
+  const other = buildBenchmarkConfigIdentity({
+    model: { provider: 'local-provider', id: 'other-model', quantization: 'Q4_K_M', server: { id: 'server-a', version: '1.2.3' } },
+    worker: { profileDigest: digest('a'), limits: { timeoutMs: 300000, maxToolCalls: 40, firstWriteMs: 120000 }, settings: { sandbox: 'bubblewrap' } },
+    pi: { version: '1.0.0' },
+    tinySdd: { version: '0.1.0', codeRevision: digest('b') },
+    suite: { id: 'contract-fixture', version: '1', contentSha256: digest('c') },
+    verifier: { configSha256: digest('d'), checkRunner: { version: 'runner-1', configSha256: digest('e') } },
+    runChecks: { declared: true, available: true, budget: 12, unavailableReason: BENCHMARK_UNKNOWN, provenance: { source: 'runtime.json', unavailableReason: BENCHMARK_UNKNOWN } },
+    environment: { runtime: 'node', runtimeVersion: '22.19.0', platform: 'linux', arch: 'x64' },
+  });
+  assert.throws(() => buildQualificationRecord({
+    cases: [original],
+    configIdentity: other.identity,
+    configDigest: other.configDigest,
+    suite: original.suite,
+  }), { code: 'QUALIFICATION_INVALID' });
+
+  const record = buildQualificationRecord(recordInput());
+  record.suite.id = 'other-suite';
+  assert.throws(() => validateQualificationRecord(record), { code: 'QUALIFICATION_INVALID' });
+});
+
+test('rejects nonnumeric persisted bounds, including null and numeric strings', () => {
+  const empty = roleInput({ n: 0, passes: 0 });
+  const record = buildQualificationRecord({
+    ...recordInput(),
+    roles: { 'implement-slice': empty },
+  });
+  for (const value of [null, '0', Number.NaN, Number.POSITIVE_INFINITY]) {
+    const tampered = structuredClone(record);
+    tampered.roles['implement-slice'].lowerBound = value;
+    assert.throws(() => validateQualificationRecord(tampered), { code: 'QUALIFICATION_INVALID' });
+  }
+});
+
 test('aggregates raw cases without dropping unsuccessful or repeated challenge attempts', () => {
   const cases = [
     caseResult({ attemptId: 'attempt-1', repetition: 1 }),
