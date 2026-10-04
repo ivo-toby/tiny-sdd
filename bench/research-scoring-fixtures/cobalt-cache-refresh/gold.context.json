@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "facts": ["A missing key returns undefined without changing the cache."],
+  "resources": [
+    {
+      "path": "src/cache.mjs",
+      "startLine": 1,
+      "endLine": 7,
+      "purpose": "Cache lookup, refresh, and missing-value contract."
+    }
+  ]
+}

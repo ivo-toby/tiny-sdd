@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "facts": ["Snapshots must not expose the internal mutable event array."],
+  "resources": [
+    {
+      "path": "src/events.mjs",
+      "startLine": 1,
+      "endLine": 8,
+      "purpose": "Event record shape and insertion-order snapshot contract."
+    }
+  ]
+}
