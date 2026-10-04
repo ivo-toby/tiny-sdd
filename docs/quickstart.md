@@ -422,6 +422,11 @@ not predictions. Repeated cases are pooled as a correlated, provisional
 approximation, so the interval is evidence for this retained run rather than
 an independence claim.
 
+Qualification scoring is independent of task apply and acceptance: a retained
+timeout may count as a statistical case pass when all visible and held-out
+checks pass with no hard-gate violation; the raw outcome and task rules remain
+unchanged.
+
 Qualification records are stored under `.tinysdd/qualifications/` with a
 dedicated lock and profile sidecar. A repeated exact invocation input is ignored
 once and reported as a duplicate; the same attempt ID from different invocation

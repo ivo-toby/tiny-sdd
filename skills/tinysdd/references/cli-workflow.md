@@ -263,6 +263,11 @@ source hashes, the suite/check roster, and both `passesToQualify` and
 passes or failures under the best-case bound, not predictions. Repeated cases
 are pooled as a correlated, provisional approximation.
 
+Qualification scoring is independent of task apply and acceptance: a retained
+timeout may count as a statistical case pass when all visible and held-out
+checks pass with no hard-gate violation; the raw outcome and task rules remain
+unchanged.
+
 Rescore a stored record without rerunning evidence:
 
 ```sh

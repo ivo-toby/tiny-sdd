@@ -215,6 +215,17 @@ test('validates tamper-resistant status, bounds, counters, identity, and raw-sch
   assert.throws(() => validateBenchmarkCaseResult({ ...raw, qualified: false }), { code: 'BENCHMARK_RESULTS_INVALID' });
 });
 
+test('scores a timeout by retained checks and hard gates, independently of raw outcome', () => {
+  const timeoutPass = caseResult({ attemptId: 'timeout-pass', outcome: 'timeout' });
+  const failedCheck = caseResult({ attemptId: 'timeout-check-fail', outcome: 'timeout', status: 'failed' });
+  const gated = caseResult({ attemptId: 'timeout-gate-fail', outcome: 'timeout', requiredPatchAbsent: true });
+  assert.equal(isSuccessfulBenchmarkCase(timeoutPass), true);
+  assert.equal(isSuccessfulBenchmarkCase(failedCheck), false);
+  assert.equal(isSuccessfulBenchmarkCase(gated), false);
+  const aggregate = aggregateBenchmarkCases([timeoutPass, failedCheck, gated]);
+  assert.equal(aggregate.roles['implement-slice'].passes, 1);
+});
+
 test('binds caller-supplied cases to their full identity and suite', () => {
   const original = caseResult();
   const other = buildBenchmarkConfigIdentity({
@@ -261,9 +272,9 @@ test('aggregates raw cases without dropping unsuccessful or repeated challenge a
   const aggregate = aggregateBenchmarkCases(cases, { targets: { 'implement-slice': 0.8 } });
   const role = aggregate.roles['implement-slice'];
   assert.equal(role.n, 3);
-  assert.equal(role.passes, 1);
+  assert.equal(role.passes, 2);
   assert.equal(role.perChallenge[0].results.map((entry) => entry.repetition).join(','), '1,2,3');
-  assert.deepEqual(role.perChallenge[0].results.map((entry) => entry.passed), [true, false, false]);
+  assert.deepEqual(role.perChallenge[0].results.map((entry) => entry.passed), [true, false, true]);
 });
 
 test('refuses mixed configuration identities and duplicate attempts', () => {

@@ -433,7 +433,6 @@ export function scoreRoleCounts({ n, passes, target: targetValue = DEFAULT_QUALI
 export const scoreRole = scoreRoleCounts;
 
 function casePasses(caseResult) {
-  if (caseResult.outcome !== 'completed') return false;
   if (!Array.isArray(caseResult.verifier.visible) || caseResult.verifier.visible.length === 0) return false;
   if (!Array.isArray(caseResult.verifier.heldOut) || caseResult.verifier.heldOut.length === 0) return false;
   const checks = [...caseResult.verifier.visible, ...caseResult.verifier.heldOut];
