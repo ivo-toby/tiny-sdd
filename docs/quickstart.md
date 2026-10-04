@@ -241,6 +241,13 @@ dependency mounts cannot overlap any allowed path.
 the digests of the candidate bytes checked. `result.workerObservedChecks` labels
 these as `source: "worker run_checks", acceptanceEvidence: false`. They are
 feedback for the worker; the operator still verifies and accepts separately.
+When the tool is available, the worker contract asks for an edit → `run_checks`
+→ fix loop: run the named checks after each allowed write or edit, fix failures
+within scope, and stop/report when the check budget or required information or
+permission is exhausted. The handoff lists observed checks separately from
+checks still unrun. This contract does not add a shell or arbitrary execution
+tool; an unavailable runner keeps the existing no-check prompt and Pi tool
+arguments.
 
 ## Configure a worker
 

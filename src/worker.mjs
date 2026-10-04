@@ -721,12 +721,19 @@ function formatContext(resource) {
   return `\n--- ${resource.path} (sha256:${resource.sha256}) ---\n${resource.text}`;
 }
 
-function buildPrompt({ packet, profile, review, compiledContext, agents, skills, instructions, builtInPrompt }) {
+function buildPrompt({ packet, profile, review, compiledContext, agents, skills, instructions, builtInPrompt, checkAvailability, checkManifest }) {
   const systemSections = [builtInPrompt?.text || DEFAULT_WORKER_GUIDANCE];
-  systemSections.push(`\n\n## TinySDD worker contract\nYou are operating in a disposable candidate workspace. Read, write and edit only. Do not run commands, tests, shells, package managers, network clients or services. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. The caller performs all verification separately; report checks as unrun unless the packet itself supplies observed evidence.\n\nAllowed exact paths (scope is reported by the caller, not permission to edit others):\n${packet.allowedPaths.map((path) => `- ${path}`).join("\n")}`);
+  const runChecksAvailable = checkAvailability?.available === true && checkManifest !== null && checkManifest !== undefined;
+  const contract = runChecksAvailable
+    ? "You are operating in a disposable candidate workspace. Read, write and edit only, plus the named `run_checks` host tool for the declared checks. Do not run commands, shells, package managers, network clients or services, or use any other execution tool. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. After each written or edited allowed file, call `run_checks`, fix reported failures within the approved scope, and do not simulate checks in reasoning. Stop and report when the declared check budget is exhausted or the next fix needs missing information or permission. Tool output is worker-observed host-check evidence, never operator verification or acceptance. In the final handoff, name observed checks separately from checks still unrun."
+    : "You are operating in a disposable candidate workspace. Read, write and edit only. Do not run commands, tests, shells, package managers, network clients or services. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. The caller performs all verification separately; report checks as unrun unless the packet itself supplies observed evidence.";
+  systemSections.push(`\n\n## TinySDD worker contract\n${contract}\n\nAllowed exact paths (scope is reported by the caller, not permission to edit others):\n${packet.allowedPaths.map((path) => `- ${path}`).join("\n")}`);
   if (packet.protectedPaths.length > 0) systemSections.push(`\n\n## Protected contract files (read-only)\nRead these files; never write, edit, create, delete or rename them. A change is reported as a scope violation.\n${packet.protectedPaths.map((path) => `- ${path}`).join("\n")}`);
   if (profile?.instructions) systemSections.push(`\n\n## Model profile guidance\n${profile.instructions}`);
-  if (compiledContext) systemSections.push(`\n\n## Compiled-context operating rule\nThe caller has supplied a bounded implementation context with approved facts and exact source excerpts. Treat it as the authoritative working set for the cited contracts and acceptance assertions. Do not re-read cited source files or the source specification merely to rediscover injected facts. Read uncited code only when needed for the allowed edit, or when a concrete contradiction requires escalation. Start by planning the allowed-file edit.`);
+  if (compiledContext) {
+    const planning = runChecksAvailable ? "" : " Start by planning the allowed-file edit.";
+    systemSections.push(`\n\n## Compiled-context operating rule\nThe caller has supplied a bounded implementation context with approved facts and exact source excerpts. Treat it as the authoritative working set for the cited contracts and acceptance assertions. Do not re-read cited source files or the source specification merely to rediscover injected facts. Read uncited code only when needed for the allowed edit, or when a concrete contradiction requires escalation.${planning}`);
+  }
   if (review) systemSections.push(`\n\n## Caller revision constraints\nThis is a bounded revision under the existing task approval. Do not broaden the task or reinterpret the contract. Address only the named review evidence; report any contradiction instead of inventing a requirement. Reviewer: ${review.by}\n${formatContext(review.evidence)}`);
   for (const resource of agents) systemSections.push(formatContext(resource));
   for (const resource of skills) systemSections.push(formatContext(resource));
@@ -1534,7 +1541,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const instructions = [];
   for (const path of instructionPaths) instructions.push(await readTextResource(sourceRoot, path, "worker instruction"));
   const builtInPrompt = await optionalProductPrompt();
-  const prompt = buildPrompt({ packet: { ...normalizedPacket, briefText: brief.text }, profile: resolvedProfile.value, review, compiledContext, agents, skills, instructions, builtInPrompt });
+  const prompt = buildPrompt({ packet: { ...normalizedPacket, briefText: brief.text }, profile: resolvedProfile.value, review, compiledContext, agents, skills, instructions, builtInPrompt, checkAvailability, checkManifest });
   const inlineProfileResource = resolvedProfile.resource || (resolvedProfile.value ? { path: "<inline-profile>", text: JSON.stringify(resolvedProfile.value) } : null);
   const contextResources = [brief.resource, inlineProfileResource, builtInPrompt, review?.evidence, ...agents, ...skills, ...instructions].filter(Boolean).map(({ text, ...digest }) => ({ ...digest, sha256: digest.sha256 ?? createHash("sha256").update(text).digest("hex"), bytes: digest.bytes ?? Buffer.byteLength(text) }));
   const prepared = await preparePiEnvironment({ worker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
