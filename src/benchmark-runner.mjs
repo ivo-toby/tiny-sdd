@@ -1062,7 +1062,7 @@ function assertWorkerPiVersionIdentity(config, runtimeMetadata, runtime) {
 function assertWorkerSettingsIdentity(config, runtimeMetadata) {
   const expected = config.identity.worker.settings;
   if (expected === BENCHMARK_UNKNOWN || !expected || typeof expected !== 'object') return;
-  const fields = ['effectiveMaxTokens', 'effectiveReasoning', 'effectiveThinkingControl', 'effectiveThinkingReason', 'effectiveThinkingField', 'effectiveThinkingBudgetValue', 'effectiveCompat'];
+  const fields = ['effectiveMaxTokens', 'effectiveReasoning', 'effectiveThinkingControl', 'effectiveThinkingReason', 'effectiveThinkingField', 'effectiveThinkingBudgetValue', 'effectiveCompat', 'endpointFingerprint'];
   for (const field of fields) {
     if (expected[field] === undefined || expected[field] === BENCHMARK_UNKNOWN) continue;
     const actual = field === 'effectiveThinkingControl'

@@ -349,6 +349,55 @@ test('binds effective model settings and checker limits into the config digest',
   }
 });
 
+test('refuses a runtime endpoint change between repeated attempts', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-endpoint-mutation-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 4000, maxToolCalls: 10 } };
+    let mutated = false;
+    let verifierCalls = 0;
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker,
+      runtime,
+      repeat: 2,
+      verifier: async () => {
+        verifierCalls += 1;
+        if (!mutated) {
+          mutated = true;
+          await writeJson(join(root, 'agent', 'models.json'), {
+            providers: {
+              fake: {
+                api: 'openai-completions',
+                baseUrl: 'http://127.0.0.1:10/changed-path',
+                apiKey: '$FAKE_TOKEN',
+                models: [{ id: 'fake/model', contextWindow: 4096, maxTokens: 256, input: ['text'], reasoning: false }],
+              },
+            },
+          });
+        }
+        return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
+      },
+    });
+    const invocation = parseBenchmarkInvocation(await readFile(join(root, 'results', 'invocation.json'), 'utf8'));
+    const cases = await Promise.all(invocation.caseResults.map(async ({ path }) => JSON.parse(await readFile(join(root, 'results', path), 'utf8'))));
+    assert.equal(cases[0].outcome, 'completed');
+    assert.equal(cases[1].outcome, 'setup_error');
+    assert.equal(cases[1].failure.category, 'setup_error');
+    assert.match(cases[1].failure.missing.find(({ field }) => field === 'attempt')?.reason ?? '', /endpointFingerprint/u);
+    assert.equal(verifierCalls, 2);
+    assert.equal(result.invocation.configIdentity.worker.settings.endpointFingerprint, 'http://127.0.0.1:9/v1');
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects a supplied Pi version that conflicts with the installed runtime', async () => {
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-pi-version-')));
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
