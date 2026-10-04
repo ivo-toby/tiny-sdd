@@ -2,7 +2,7 @@ import {
   compactDeterministically,
   createApprovedPacketAnchor,
 } from './deterministic-compaction.mjs';
-import { COMPACTION_ANCHOR_ENV, loadCompactionAnchorSync } from './compaction-runtime.mjs';
+import { COMPACTION_ANCHOR_ENV, COMPACTION_AUDIT_ENTRY, loadCompactionAnchorSync } from './compaction-runtime.mjs';
 
 function previousCompaction(branchEntries) {
   if (!Array.isArray(branchEntries)) return undefined;
@@ -24,6 +24,22 @@ function refusal(reason, message) {
   };
 }
 
+function appendRefusalAudit(pi, event, details) {
+  if (typeof pi.appendEntry !== 'function') return;
+  try {
+    pi.appendEntry(COMPACTION_AUDIT_ENTRY, {
+      schemaVersion: 1,
+      kind: 'deterministic-compaction-refusal',
+      code: details.code,
+      message: details.message,
+      reason: typeof event?.reason === 'string' ? event.reason : null,
+      details,
+    });
+  } catch {
+    // A refusal must remain a refusal even if a host cannot persist its audit.
+  }
+}
+
 /**
  * Register the model-free deterministic compaction hook with a Pi extension
  * API. The anchor is captured once when the host creates the extension and is
@@ -41,7 +57,11 @@ export function registerCompactionExtension(pi, options = {}) {
     }
   }
   return pi.on('session_before_compact', (event) => {
-    if (anchorError) return refusal(anchorError.code ?? 'PACKET_ANCHOR_INVALID', anchorError.message);
+    if (anchorError) {
+      const result = refusal(anchorError.code ?? 'PACKET_ANCHOR_INVALID', anchorError.message);
+      appendRefusalAudit(pi, event, result.details);
+      return result;
+    }
     const preparation = event?.preparation;
     const outcome = compactDeterministically(preparation, {
       ...options,
@@ -49,7 +69,11 @@ export function registerCompactionExtension(pi, options = {}) {
       previousCompaction: previousCompaction(event?.branchEntries),
       signal: event?.signal,
     });
-    if (outcome.cancel) return { cancel: true, details: outcome.details };
+    if (outcome.cancel) {
+      const result = { cancel: true, details: outcome.details };
+      appendRefusalAudit(pi, event, result.details);
+      return result;
+    }
     return { compaction: outcome.compaction };
   });
 }

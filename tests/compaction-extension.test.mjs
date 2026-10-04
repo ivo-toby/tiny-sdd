@@ -5,6 +5,7 @@ import {
   extractApprovedPacket,
 } from '../src/deterministic-compaction.mjs';
 import registerCompactionExtension from '../src/compaction-extension.mjs';
+import { COMPACTION_AUDIT_ENTRY } from '../src/compaction-runtime.mjs';
 
 const anchor = createApprovedPacketAnchor({
   id: 'extension-packet',
@@ -19,6 +20,13 @@ function fakePi() {
       return () => handlers.delete(event);
     },
   };
+}
+
+function auditableFakePi() {
+  const pi = fakePi();
+  pi.entries = [];
+  pi.appendEntry = (customType, data) => pi.entries.push({ type: 'custom', customType, data });
+  return pi;
 }
 
 function preparation() {
@@ -69,6 +77,30 @@ test('extension returns an explicit cancellation reason for abort and missing an
   const missing = await missingPi.handlers.get('session_before_compact')({ preparation: preparation(), signal: new AbortController().signal }, {});
   assert.equal(missing.cancel, true);
   assert.equal(missing.details.code, 'PACKET_ANCHOR_MISSING');
+});
+
+test('extension records refusal details as a non-context Pi custom entry', async () => {
+  const pi = auditableFakePi();
+  registerCompactionExtension(pi, { approvedPacketAnchor: anchor });
+  const response = await pi.handlers.get('session_before_compact')({
+    preparation: { ...preparation(), messagesToSummarize: [] },
+    reason: 'threshold',
+    signal: new AbortController().signal,
+  }, {});
+  assert.equal(response.cancel, true);
+  assert.equal(response.details.code, 'COMPACTION_EMPTY');
+  assert.deepEqual(pi.entries, [{
+    type: 'custom',
+    customType: COMPACTION_AUDIT_ENTRY,
+    data: {
+      schemaVersion: 1,
+      kind: 'deterministic-compaction-refusal',
+      code: 'COMPACTION_EMPTY',
+      message: response.details.message,
+      reason: 'threshold',
+      details: response.details,
+    },
+  }]);
 });
 
 test('extension carries previous compaction identity without copying its summary', async () => {

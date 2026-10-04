@@ -11,6 +11,7 @@ import {
 
 export const COMPACTION_ANCHOR_ENV = 'TINYSDD_COMPACTION_ANCHOR';
 export const COMPACTION_SCHEMA_VERSION = DETERMINISTIC_COMPACTION_VERSION;
+export const COMPACTION_AUDIT_ENTRY = 'tinysdd.compaction-audit';
 export const COMPACTION_EXTENSION_ENTRY = 'entry.mjs';
 export const COMPACTION_ANCHOR_FILE = 'anchor.json';
 

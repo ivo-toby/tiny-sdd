@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -39,6 +39,7 @@ const MAX_COPY_FILES = 20_000;
 const MAX_COPY_BYTES = 512 * 1024 * 1024;
 const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
 const MAX_CLAIM_BYTES = 128 * 1024;
+const MAX_SESSION_BYTES = 16 * 1024 * 1024;
 const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
 const CONTROLLER_TASKS_PREFIX = ".tinysdd/tasks/";
@@ -468,6 +469,27 @@ async function hashFile(path) {
     stream.on("end", resolvePromise);
   });
   return hash.digest("hex");
+}
+
+async function retainSessionArtifact(sourcePath, destinationPath) {
+  let handle;
+  try {
+    handle = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const info = await handle.stat();
+    if (!info.isFile()) return { available: false, reason: "not_regular" };
+    if (info.size > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: info.size, limit: MAX_SESSION_BYTES };
+    const bytes = await handle.readFile();
+    if (bytes.length > MAX_SESSION_BYTES) return { available: false, reason: "oversize", bytes: bytes.length, limit: MAX_SESSION_BYTES };
+    await writeFile(destinationPath, bytes, { mode: 0o600, flag: "wx" });
+    return { available: true, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { available: false, reason: "not_written" };
+    if (error?.code === "ELOOP") return { available: false, reason: "symlink" };
+    if (error?.code === "EFBIG") return { available: false, reason: "oversize", limit: MAX_SESSION_BYTES };
+    return { available: false, reason: "read_failed" };
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 async function snapshotTree(root) {
@@ -1544,6 +1566,9 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let compactionBundle;
   let compactionAnchor;
   let compaction;
+  let runtimeRecord;
+  let sessionHostPath;
+  let retainedSession;
   try {
     artifactDir = await createArtifactDir(sourceRoot, runId);
     workspace = await mkdtemp(join(tempRoot, "tinysdd-worker-"));
@@ -1576,7 +1601,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       compactionBundle = await writeCompactionBundle(compactionStage, compactionAnchor);
     }
     compaction = compactionIdentity(prepared.metadata.compaction, compactionAnchor);
-    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification));
+    runtimeRecord = runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification);
+    await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
       resources: contextResources,
@@ -1605,6 +1631,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const nativePaths = runtimeChoice.test || runtimeChoice.sandbox === "seatbelt";
     const promptStateDir = runtimeChoice.sandbox === "seatbelt" ? await realpath(prepared.stateDir) : prepared.stateDir;
     const sessionPath = nativePaths ? join(promptStateDir, "session.jsonl") : "/pi-state/session.jsonl";
+    sessionHostPath = join(prepared.stateDir, "session.jsonl");
     const userPromptPath = join(prepared.stateDir, "task-prompt.txt");
     await writeFile(userPromptPath, prompt.user, { mode: 0o600 });
     const promptArgumentPath = nativePaths ? join(promptStateDir, "task-prompt.txt") : "/pi-state/task-prompt.txt";
@@ -1646,7 +1673,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
       childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
       if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
-      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
+      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` };
+      await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
@@ -1661,6 +1689,19 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     capture = await captureProcess({ checkChannel, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
     if (inferenceRelay) await inferenceRelay.close();
     inferenceRelay = null;
+    if (compactionBundle) {
+      retainedSession = await retainSessionArtifact(sessionHostPath, join(artifactDir, "session.jsonl"));
+      runtimeRecord = {
+        ...runtimeRecord,
+        session: {
+          available: retainedSession.available,
+          bytes: retainedSession.bytes ?? null,
+          sha256: retainedSession.sha256 ?? null,
+          reason: retainedSession.reason ?? null,
+        },
+      };
+      await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
+    }
     after = await snapshotTree(workspace);
     await copySnapshotTree(workspace, afterArtifact);
     if (compactionBundle) await copyRegularTree(compactionBundle.directory, join(artifactDir, "compaction"));
@@ -1711,6 +1752,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         firstWriteAtMs: capture.firstWriteAtMs,
         ...readObservations(capture.parsed.readPaths, workspace, compiledContext),
         compactions: capture.parsed.compactions,
+        ...(retainedSession ? {
+          session: {
+            available: retainedSession.available,
+            bytes: retainedSession.bytes ?? null,
+            sha256: retainedSession.sha256 ?? null,
+            reason: retainedSession.reason ?? null,
+          },
+        } : {}),
         rawOutputBytes: capture.rawBytes,
       },
       ...(limitDetails ? { limitDetails } : {}),
@@ -1730,6 +1779,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         stderr: join(artifactDir, "stderr.txt"),
         patch: join(artifactDir, "patch.diff"),
         ...(compactionBundle ? { compaction: join(artifactDir, "compaction") } : {}),
+        ...(retainedSession?.available ? { session: join(artifactDir, "session.jsonl") } : {}),
         workspaceBefore: beforeArtifact,
         workspaceAfter: afterArtifact,
         candidate: afterArtifact,
@@ -1744,6 +1794,20 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   } finally {
     if (inferenceRelay) await inferenceRelay.close().catch(() => {});
     if (checkChannel) await checkChannel.cleanup().catch(() => {});
+    if (compactionBundle && !retainedSession && sessionHostPath && artifactDir) {
+      retainedSession = await retainSessionArtifact(sessionHostPath, join(artifactDir, "session.jsonl"));
+      if (runtimeRecord) {
+        await writeJson(join(artifactDir, "runtime.json"), {
+          ...runtimeRecord,
+          session: {
+            available: retainedSession.available,
+            bytes: retainedSession.bytes ?? null,
+            sha256: retainedSession.sha256 ?? null,
+            reason: retainedSession.reason ?? null,
+          },
+        }).catch(() => {});
+      }
+    }
     await prepared.cleanup().catch(() => {});
     if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (baseline) await rm(baseline, { recursive: true, force: true }).catch(() => {});
