@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -319,6 +319,57 @@ test('dispatch reports an older matching-worker record as invalidated with chang
     assert.equal(decision.reason, 'qualification_invalidated_by_config');
     assert.ok(decision.changedFields.includes('model.id'));
     assert.equal(decision.invalidated.length, 1);
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('dispatch refuses to preserve an old observation when its retained source disappears', async () => {
+  const fixture = await dispatchFixture();
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  const resolved = {
+    config: { qualification: { mode: 'warn', suite: 'bench' } },
+    workerName: 'worker-a',
+    worker: fixture.worker,
+  };
+  try {
+    const first = await runBenchmark({
+      projectRoot: fixture.root,
+      suiteRoot: join(fixture.root, 'bench'),
+      worker: fixture.worker,
+      workerName: 'worker-a',
+      runtime: fixture.runtime,
+      repeat: 1,
+      verifier: async () => ({ status: 'passed' }),
+    });
+    await storeBenchmarkEvidence(fixture, first);
+    const indexPath = join(fixture.root, '.tinysdd', 'qualifications', 'evidence.json');
+    const index = JSON.parse(await readFile(indexPath, 'utf8'));
+    index.entries = index.entries.filter((entry) => entry.invocationId !== first.invocation.invocationId);
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    await rm(first.directory, { recursive: true, force: true });
+    await runBenchmark({
+      projectRoot: fixture.root,
+      suiteRoot: join(fixture.root, 'bench'),
+      worker: fixture.worker,
+      workerName: 'worker-a',
+      runtime: fixture.runtime,
+      repeat: 1,
+      verifier: async () => ({ status: 'passed' }),
+    });
+    const decision = await assessQualification({
+      projectRoot: fixture.root,
+      resolved,
+      runtime: fixture.runtime,
+      checksDeclared: true,
+      verifierMode: 'test-injection',
+    });
+    assert.equal(decision.status, 'unqualified');
+    assert.equal(decision.reason, 'current_evidence_unavailable');
+    assert.match(decision.warnings[0], /current qualification evidence unavailable/u);
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;

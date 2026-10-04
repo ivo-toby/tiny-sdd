@@ -116,6 +116,21 @@ async function readCurrentRecord(root, digest) {
   }
 }
 
+function assertRetainedSources(record, evidence) {
+  const retainedInvocations = new Map((evidence.source?.invocations ?? []).map((entry) => [entry.path, entry.sha256]));
+  for (const reference of record.source?.invocations ?? []) {
+    if (retainedInvocations.get(reference.path) !== reference.sha256) {
+      throw tinyError('QUALIFICATION_READ_INVALID', `retained qualification invocation is missing or changed: ${reference.path}`);
+    }
+  }
+  const retainedCases = new Map((evidence.source?.cases ?? []).map((entry) => [entry.path, entry.sha256]));
+  for (const reference of record.source?.cases ?? []) {
+    if (retainedCases.get(reference.path) !== reference.sha256) {
+      throw tinyError('QUALIFICATION_READ_INVALID', `retained qualification case is missing or changed: ${reference.path}`);
+    }
+  }
+}
+
 async function refreshRecord(root, record, current, suite, workerName) {
   let evidence;
   try {
@@ -136,6 +151,7 @@ async function refreshRecord(root, record, current, suite, workerName) {
     if (pathError(error) || error?.code === 'QUALIFICATION_READ_INVALID') return { record, refreshed: false, error };
     throw error;
   }
+  assertRetainedSources(record, evidence);
   const targets = Object.fromEntries(Object.entries(record.roles ?? {}).map(([role, score]) => [role, score.target]));
   const retained = buildQualificationRecord({
     observations: evidence.observations,
