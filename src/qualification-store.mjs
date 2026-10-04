@@ -12,13 +12,22 @@ import {
   sha256,
   tinyError,
 } from './fs-utils.mjs';
-import { BENCHMARK_UNKNOWN, benchmarkConfigDigest } from './benchmark-schema.mjs';
-import { validateQualificationRecord } from './qualification.mjs';
+import {
+  BENCHMARK_UNKNOWN,
+  benchmarkConfigDigest,
+  validateBenchmarkConfigIdentity,
+} from './benchmark-schema.mjs';
+import { validateBenchmarkInvocation } from './benchmark-results.mjs';
+import {
+  mergeQualificationRecords,
+  validateQualificationRecord,
+} from './qualification.mjs';
 
 export const QUALIFICATION_STORE_SCHEMA_VERSION = 1;
 export const QUALIFICATION_STORE_DIRECTORY = '.tinysdd/qualifications';
 export const QUALIFICATION_PROFILE_REFERENCES_PATH = `${QUALIFICATION_STORE_DIRECTORY}/profile-references.json`;
 export const QUALIFICATION_STORE_LOCK_PATH = `${QUALIFICATION_STORE_DIRECTORY}/.lock`;
+export const QUALIFICATION_EVIDENCE_INDEX_PATH = `${QUALIFICATION_STORE_DIRECTORY}/evidence.json`;
 const MAX_STORE_BYTES = 4 * 1024 * 1024;
 
 function boundedJson(value, label) {
@@ -57,6 +66,104 @@ function contentRef(value, label) {
     invalid(error instanceof Error ? error.message : String(error));
   }
   return { path, sha256: value.sha256 };
+}
+
+function evidenceSuite(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(`${label} must be an object`);
+  if (typeof value.id !== 'string' || value.id.length === 0) invalid(`${label}.id must be a nonempty string`);
+  if (typeof value.version !== 'string' || value.version.length === 0) invalid(`${label}.version must be a nonempty string`);
+  if (typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.sha256)) invalid(`${label}.sha256 must be a lowercase SHA-256 digest`);
+  return { id: value.id, version: value.version, sha256: value.sha256 };
+}
+
+function evidenceSuitePath(value, label) {
+  if (typeof value !== 'string' || value.length === 0) invalid(`${label} must be a project-relative path`);
+  try {
+    return normalizeProjectRelative(value, label);
+  } catch (error) {
+    invalid(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function evidenceWorkerName(value, label) {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0) invalid(`${label} must be a nonempty string or null`);
+  return value;
+}
+
+function evidenceContext(value, identity, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(`${label} must be an object`);
+  if (!Object.hasOwn(value, 'verifier') || !Object.hasOwn(value, 'runChecks')) invalid(`${label} must contain verifier and runChecks`);
+  const normalized = {
+    verifier: value.verifier,
+    runChecks: value.runChecks,
+  };
+  if (digestJson(normalized) !== digestJson({ verifier: identity.verifier, runChecks: identity.runChecks })) {
+    invalid(`${label} does not match configIdentity`);
+  }
+  return normalized;
+}
+
+function evidenceEntry(value, label = 'qualification evidence entry') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(`${label} must be an object`);
+  const allowed = [
+    'invocationId', 'invocation', 'caseResults', 'suitePath', 'suite', 'configDigest',
+    'configIdentity', 'workerName', 'worker', 'verifierContext',
+  ];
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) invalid(`${label} contains unknown key: ${key}`);
+  if (typeof value.invocationId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(value.invocationId)) invalid(`${label}.invocationId is invalid`);
+  const invocation = contentRef(value.invocation, `${label}.invocation`);
+  if (!Array.isArray(value.caseResults)) invalid(`${label}.caseResults must be an array`);
+  const caseResults = value.caseResults.map((entry, index) => contentRef(entry, `${label}.caseResults[${index}]`));
+  if (new Set(caseResults.map((entry) => entry.path)).size !== caseResults.length) invalid(`${label}.caseResults contains duplicate paths`);
+  const suite = evidenceSuite(value.suite, `${label}.suite`);
+  const configIdentity = validateBenchmarkConfigIdentity(value.configIdentity);
+  if (typeof value.configDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(value.configDigest)) invalid(`${label}.configDigest must be a lowercase SHA-256 digest`);
+  if (benchmarkConfigDigest(configIdentity) !== value.configDigest) invalid(`${label}.configDigest does not match configIdentity`);
+  if (suite.id !== configIdentity.suite.id || suite.version !== configIdentity.suite.version || suite.sha256 !== configIdentity.suite.contentSha256) {
+    invalid(`${label}.suite does not match configIdentity`);
+  }
+  const worker = value.worker;
+  if (!worker || typeof worker !== 'object' || Array.isArray(worker)
+    || typeof worker.name !== 'string' || worker.name.length === 0
+    || typeof worker.profileSha256 !== 'string' || !/^(?:UNKNOWN|[a-f0-9]{64})$/u.test(worker.profileSha256)) {
+    invalid(`${label}.worker is invalid`);
+  }
+  const normalizedWorker = { name: worker.name, profileSha256: worker.profileSha256 };
+  return {
+    invocationId: value.invocationId,
+    invocation,
+    caseResults,
+    suitePath: evidenceSuitePath(value.suitePath, `${label}.suitePath`),
+    suite,
+    configDigest: value.configDigest,
+    configIdentity,
+    workerName: evidenceWorkerName(value.workerName, `${label}.workerName`),
+    worker: normalizedWorker,
+    verifierContext: evidenceContext(value.verifierContext, configIdentity, `${label}.verifierContext`),
+  };
+}
+
+function parseEvidenceIndex(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('qualification evidence index must be an object');
+  const keys = Object.keys(value);
+  if (keys.some((key) => !['schemaVersion', 'entries'].includes(key))) invalid('qualification evidence index contains unknown keys');
+  if (value.schemaVersion !== QUALIFICATION_STORE_SCHEMA_VERSION) invalid(`qualification evidence index schemaVersion must be ${QUALIFICATION_STORE_SCHEMA_VERSION}`);
+  if (!Array.isArray(value.entries)) invalid('qualification evidence index.entries must be an array');
+  const entries = value.entries.map((entry, index) => evidenceEntry(entry, `qualification evidence index.entries[${index}]`));
+  const seenIds = new Set();
+  const seenPaths = new Set();
+  for (const entry of entries) {
+    if (seenIds.has(entry.invocationId)) invalid(`qualification evidence index contains duplicate invocationId: ${entry.invocationId}`);
+    if (seenPaths.has(entry.invocation.path)) invalid(`qualification evidence index contains duplicate invocation path: ${entry.invocation.path}`);
+    seenIds.add(entry.invocationId);
+    seenPaths.add(entry.invocation.path);
+  }
+  return {
+    schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION,
+    entries: entries.sort((left, right) => `${left.configDigest}\0${left.suite.id}\0${left.suite.version}\0${left.suite.sha256}\0${left.invocationId}\0${left.invocation.path}`
+      .localeCompare(`${right.configDigest}\0${right.suite.id}\0${right.suite.version}\0${right.suite.sha256}\0${right.invocationId}\0${right.invocation.path}`)),
+  };
 }
 
 function storePath(root, relativePath) {
@@ -149,10 +256,113 @@ export async function withQualificationStoreLock(projectRoot, callback) {
   }
 }
 
+async function readEvidenceIndexUnlocked(root) {
+  const target = storePath(root, QUALIFICATION_EVIDENCE_INDEX_PATH);
+  try {
+    const loaded = await regularJson(root, target.path, 'qualification evidence index');
+    return { target, data: parseEvidenceIndex(loaded.value), sha256: loaded.sha256 };
+  } catch (error) {
+    if (error?.details?.causeCode === 'ENOENT' || error?.details?.causeCode === 'PATH_NOT_FOUND') {
+      return { target, data: { schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION, entries: [] }, sha256: null };
+    }
+    throw error;
+  }
+}
+
+export async function readQualificationEvidenceIndex(projectRoot) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const loaded = await readEvidenceIndexUnlocked(root);
+  return { ...loaded.data, path: loaded.target.path, sha256: loaded.sha256 };
+}
+
+function sameEvidenceEntry(left, right) {
+  return digestJson(left) === digestJson(right);
+}
+
+function registrationEntry({ invocationPath, invocationSha256, invocation, suitePath, workerName }) {
+  let normalizedInvocation;
+  try {
+    normalizedInvocation = validateBenchmarkInvocation(invocation);
+  } catch (error) {
+    invalid(error instanceof Error ? error.message : String(error), { causeCode: error?.code });
+  }
+  if (typeof invocationPath !== 'string' || invocationPath.length === 0) invalid('qualification evidence invocationPath is required');
+  if (typeof invocationSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(invocationSha256)) invalid('qualification evidence invocationSha256 must be a lowercase SHA-256 digest');
+  if (normalizedInvocation.invocationId === undefined) invalid('qualification evidence invocationId is required');
+  const entry = {
+    invocationId: normalizedInvocation.invocationId,
+    invocation: { path: invocationPath, sha256: invocationSha256 },
+    caseResults: normalizedInvocation.caseResults,
+    suitePath,
+    suite: normalizedInvocation.suite,
+    configDigest: normalizedInvocation.configDigest,
+    configIdentity: normalizedInvocation.configIdentity,
+    workerName: workerName ?? null,
+    worker: normalizedInvocation.worker,
+    verifierContext: {
+      verifier: normalizedInvocation.configIdentity.verifier,
+      runChecks: normalizedInvocation.configIdentity.runChecks,
+    },
+  };
+  return evidenceEntry(entry);
+}
+
+/** Register one immutable benchmark invocation for cumulative qualification discovery. */
+export async function registerQualificationInvocation(projectRoot, input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('qualification evidence registration must be an object');
+  const entry = registrationEntry(input);
+  return withQualificationStoreLock(projectRoot, async (root) => {
+    const loaded = await readEvidenceIndexUnlocked(root);
+    const previous = loaded.data.entries.find((candidate) => candidate.invocationId === entry.invocationId);
+    if (previous !== undefined) {
+      if (!sameEvidenceEntry(previous, entry)) {
+        invalid(`qualification evidence invocationId is bound to different evidence: ${entry.invocationId}`);
+      }
+      return { entry: previous, path: loaded.target.path, sha256: loaded.sha256, index: loaded.data };
+    }
+    const snapshot = await snapshotStoreFile(root, QUALIFICATION_EVIDENCE_INDEX_PATH, 'qualification evidence index');
+    const data = parseEvidenceIndex({
+      schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION,
+      entries: [...loaded.data.entries, entry],
+    });
+    try {
+      await atomicWriteBoundedJson(loaded.target.absolute, data, 'qualification evidence index');
+      const saved = await regularJson(root, loaded.target.path, 'qualification evidence index');
+      return { entry, path: loaded.target.path, sha256: saved.sha256, index: data };
+    } catch (error) {
+      await restoreStoreFile(snapshot);
+      throw error;
+    }
+  });
+}
+
 async function recordBytes(recordPath) {
   const info = await regularJson(recordPath.root, recordPath.path, 'qualification record');
   const record = validateQualificationRecord(info.value);
   return { ...info, record };
+}
+
+async function snapshotStoreFile(root, relativePath, label) {
+  const target = storePath(root, relativePath);
+  try {
+    const info = await lstat(target.absolute);
+    if (info.isSymbolicLink() || !info.isFile()) invalid(`${label} must be a regular file: ${target.path}`);
+    if (info.size > MAX_STORE_BYTES) invalid(`${label} exceeds the ${MAX_STORE_BYTES}-byte read limit`);
+    const bytes = await readFile(target.absolute);
+    if (bytes.byteLength > MAX_STORE_BYTES) invalid(`${label} exceeds the ${MAX_STORE_BYTES}-byte read limit`);
+    return { target, bytes };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { target, bytes: null };
+    throw error;
+  }
+}
+
+async function restoreStoreFile(snapshot) {
+  if (snapshot.bytes === null) {
+    await unlink(snapshot.target.absolute).catch(() => {});
+    return;
+  }
+  await atomicWriteFile(snapshot.target.absolute, snapshot.bytes);
 }
 
 export async function readQualificationRecord(projectRoot, recordPath) {
@@ -367,27 +577,33 @@ export async function persistQualificationRecord(projectRoot, record, {
   workerName,
 } = {}) {
   const normalizedRecord = validateQualificationRecord(record);
+  boundedJson(normalizedRecord, 'qualification record');
   if (workerName === undefined) return writeQualificationRecord(projectRoot, normalizedRecord, { replace });
   if (typeof workerName !== 'string' || workerName.length === 0) invalid('qualification profile association requires workerName');
   return withQualificationStoreLock(projectRoot, async (root) => {
     const loaded = await readProfileReferencesUnlocked(root);
     await validateAssociationBindings(root, loaded.data);
     const profileDigest = profile === undefined ? BENCHMARK_UNKNOWN : digestJson(profile);
-    const target = qualificationRecordPath(root, normalizedRecord.configDigest);
+    const snapshot = await snapshotRecordFile(root, normalizedRecord.configDigest);
+    const sidecarSnapshot = await snapshotStoreFile(root, QUALIFICATION_PROFILE_REFERENCES_PATH, 'qualification profile references');
+    const existing = snapshot.bytes === null ? null : (await recordBytes({ root, path: snapshot.target.path }));
+    const normalizedToWrite = existing !== null && replace
+      ? mergeQualificationRecords(existing.record, normalizedRecord, { preferIncomingTargets: true })
+      : normalizedRecord;
+    const target = qualificationRecordPath(root, normalizedToWrite.configDigest);
     const associationTemplate = profileReference({
       profilePath,
       profileDigest,
       workerName,
       record: { path: target.path, sha256: '0'.repeat(64) },
-      configDigest: normalizedRecord.configDigest,
-      suite: normalizedRecord.suite,
+      configDigest: normalizedToWrite.configDigest,
+      suite: normalizedToWrite.suite,
     }, 'qualification profile association');
-    const snapshot = await snapshotRecordFile(root, normalizedRecord.configDigest);
     let saved;
     let writeAttempted = false;
     try {
       writeAttempted = true;
-      saved = await writeRecordUnlocked(root, normalizedRecord, { replace });
+      saved = await writeRecordUnlocked(root, normalizedToWrite, { replace });
       const association = { ...associationTemplate, record: { path: saved.path, sha256: saved.sha256 } };
       const key = `${association.profilePath ?? ''}\0${association.profileDigest}\0${association.workerName}\0${association.configDigest}\0${association.record.path}`;
       const refreshed = loaded.data.associations.map((entry) => entry.record.path === saved.path
@@ -403,7 +619,78 @@ export async function persistQualificationRecord(projectRoot, record, {
       await atomicWriteBoundedJson(sidecar.absolute, data, 'qualification profile references');
       return { ...saved, association, profileReferences: data };
     } catch (error) {
-      if (writeAttempted) await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });
+      if (writeAttempted) {
+        await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });
+        await restoreStoreFile(sidecarSnapshot);
+      }
+      throw error;
+    }
+  });
+}
+
+/** Append retained observations for one exact config digest, preserving prior evidence. */
+export async function accumulateQualificationRecord(projectRoot, record, {
+  profilePath = null,
+  profile,
+  workerName,
+  targets,
+  target,
+} = {}) {
+  const normalizedRecord = validateQualificationRecord(record);
+  boundedJson(normalizedRecord, 'qualification record');
+  if (workerName !== undefined && (typeof workerName !== 'string' || workerName.length === 0)) {
+    invalid('qualification profile association requires workerName');
+  }
+  return withQualificationStoreLock(projectRoot, async (root) => {
+    const loaded = await readProfileReferencesUnlocked(root);
+    await validateAssociationBindings(root, loaded.data);
+    const snapshot = await snapshotRecordFile(root, normalizedRecord.configDigest);
+    const sidecarSnapshot = await snapshotStoreFile(root, QUALIFICATION_PROFILE_REFERENCES_PATH, 'qualification profile references');
+    const existing = snapshot.bytes === null ? null : (await recordBytes({ root, path: snapshot.target.path }));
+    const merged = existing === null
+      ? mergeQualificationRecords([normalizedRecord], undefined, { targets: targets ?? target })
+      : mergeQualificationRecords(existing.record, normalizedRecord, { targets: targets ?? target });
+    let saved;
+    try {
+      saved = await writeRecordUnlocked(root, merged, { replace: existing !== null });
+      let association;
+      let data = loaded.data;
+      if (workerName !== undefined) {
+        const profileDigest = profile === undefined ? BENCHMARK_UNKNOWN : digestJson(profile);
+        const associationTemplate = profileReference({
+          profilePath,
+          profileDigest,
+          workerName,
+          record: { path: saved.path, sha256: '0'.repeat(64) },
+          configDigest: merged.configDigest,
+          suite: merged.suite,
+        }, 'qualification profile association');
+        association = { ...associationTemplate, record: { path: saved.path, sha256: saved.sha256 } };
+        const key = `${association.profilePath ?? ''}\0${association.profileDigest}\0${association.workerName}\0${association.configDigest}\0${association.record.path}`;
+        const refreshed = loaded.data.associations.map((entry) => entry.record.path === saved.path
+          ? { ...entry, record: { path: saved.path, sha256: saved.sha256 } }
+          : entry);
+        data = {
+          schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION,
+          associations: refreshed.filter((entry) => {
+            const entryKey = `${entry.profilePath ?? ''}\0${entry.profileDigest}\0${entry.workerName}\0${entry.configDigest}\0${entry.record.path}`;
+            return entryKey !== key;
+          }).concat(association),
+        };
+        await atomicWriteBoundedJson(loaded.target.absolute, data, 'qualification profile references');
+      } else if (loaded.sha256 !== null) {
+        data = {
+          schemaVersion: QUALIFICATION_STORE_SCHEMA_VERSION,
+          associations: loaded.data.associations.map((entry) => entry.record.path === saved.path
+            ? { ...entry, record: { path: saved.path, sha256: saved.sha256 } }
+            : entry),
+        };
+        await atomicWriteBoundedJson(loaded.target.absolute, data, 'qualification profile references');
+      }
+      return { ...saved, ...(association === undefined ? {} : { association }), profileReferences: data };
+    } catch (error) {
+      await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });
+      await restoreStoreFile(sidecarSnapshot);
       throw error;
     }
   });
@@ -412,13 +699,19 @@ export async function persistQualificationRecord(projectRoot, record, {
 /** Replace a rescored record while retaining every existing profile association. */
 export async function replaceQualificationRecord(projectRoot, record) {
   const normalizedRecord = validateQualificationRecord(record);
+  boundedJson(normalizedRecord, 'qualification record');
   return withQualificationStoreLock(projectRoot, async (root) => {
     const loaded = await readProfileReferencesUnlocked(root);
     await validateAssociationBindings(root, loaded.data);
     const snapshot = await snapshotRecordFile(root, normalizedRecord.configDigest);
+    const sidecarSnapshot = await snapshotStoreFile(root, QUALIFICATION_PROFILE_REFERENCES_PATH, 'qualification profile references');
+    const existing = snapshot.bytes === null ? null : (await recordBytes({ root, path: snapshot.target.path }));
+    const normalizedToWrite = existing === null
+      ? normalizedRecord
+      : mergeQualificationRecords(existing.record, normalizedRecord, { preferIncomingTargets: true });
     let saved;
     try {
-      saved = await writeRecordUnlocked(root, normalizedRecord, { replace: true });
+      saved = await writeRecordUnlocked(root, normalizedToWrite, { replace: true });
       const associations = loaded.data.associations
         .filter((entry) => entry.record.path !== saved.path)
         .concat(loaded.data.associations
@@ -430,6 +723,7 @@ export async function replaceQualificationRecord(projectRoot, record) {
       return { ...saved, profileReferences: data };
     } catch (error) {
       await restoreRecordFile(snapshot, { absolute: snapshot.target.absolute });
+      await restoreStoreFile(sidecarSnapshot);
       throw error;
     }
   });

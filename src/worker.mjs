@@ -21,6 +21,7 @@ import { createCheckChannel } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
+import { digestJson, stableStringify } from "./fs-utils.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -39,11 +40,14 @@ const PROJECT_SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:
 const PROJECT_SECRET_DIR = /^(?:\.aws|\.azure|\.gcloud|\.ssh|secrets?|credentials?)$/iu;
 const PRODUCT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_WORKER_GUIDANCE = `You are a TinySDD implementation worker. Use only the supplied read, write and edit tools in the disposable workspace. Do not execute commands, tests, package managers, shells, network clients or services. Implement exactly the approved task packet, preserve unrelated behavior and assertions, and hand back changed paths plus unrun verification notes. A model completion is not acceptance or test evidence.`;
+const UNKNOWN = "UNKNOWN";
 
 export class WorkerError extends Error {
   constructor(message, options = {}) {
     super(message, options);
     this.name = "WorkerError";
+    if (options.code !== undefined) this.code = options.code;
+    if (options.details !== undefined) this.details = options.details;
   }
 }
 
@@ -820,6 +824,109 @@ function runChecksMetadata({ declared, availability, maxCheckRuns, checkChannel,
   return current;
 }
 
+function qualificationRuntimeFacts({ prepared, worker, profile, runtimeChoice, limits, runChecks, piVersion }) {
+  const preflight = prepared.metadata.preflight;
+  const profileDigest = profile === undefined || profile === null ? UNKNOWN : digestJson(profile);
+  const modelMetadata = worker.modelMetadata && typeof worker.modelMetadata === "object" && !Array.isArray(worker.modelMetadata)
+    ? worker.modelMetadata
+    : {};
+  const sandbox = runtimeChoice.test
+    ? "test-runtime"
+    : runtimeChoice.sandbox ?? (process.platform === "darwin" ? "seatbelt" : "bubblewrap");
+  return {
+    model: {
+      provider: prepared.metadata.provider ?? UNKNOWN,
+      id: prepared.metadata.model ?? UNKNOWN,
+      quantization: modelMetadata.quantization ?? UNKNOWN,
+      server: modelMetadata.server ?? { id: UNKNOWN, version: UNKNOWN },
+    },
+    worker: {
+      profileDigest,
+      limits: {
+        timeoutMs: limits.timeoutMs,
+        maxToolCalls: limits.maxToolCalls,
+        firstWriteMs: limits.firstWriteMs,
+      },
+      settings: {
+        sandbox,
+        effectiveMaxTokens: preflight.maxTokens.value,
+        effectiveReasoning: prepared.metadata.effectiveReasoning ?? UNKNOWN,
+        effectiveThinkingControl: preflight.thinking.control ?? UNKNOWN,
+        effectiveThinkingReason: preflight.thinking.reason ?? UNKNOWN,
+        effectiveThinkingField: preflight.thinkingTokenBudgetField ?? UNKNOWN,
+        effectiveThinkingBudgetValue: preflight.thinkingBudget?.tokens ?? UNKNOWN,
+        effectiveCompat: prepared.metadata.effectiveCompat ?? UNKNOWN,
+        endpointFingerprint: preflight.endpointFingerprint ?? UNKNOWN,
+      },
+    },
+    pi: { version: piVersion ?? UNKNOWN },
+    runChecks: {
+      declared: runChecks.declared,
+      available: runChecks.available,
+      budget: runChecks.maxCheckRuns ?? limits.maxCheckRuns,
+      unavailableReason: runChecks.reason ?? UNKNOWN,
+      provenance: { source: "worker.runtime.json", unavailableReason: runChecks.reason ?? UNKNOWN },
+    },
+    environment: {
+      runtime: process.release?.name ?? UNKNOWN,
+      runtimeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+  };
+}
+
+function qualificationRuntimeMismatches(qualification, actual) {
+  if (qualification?.status !== "qualified" || !qualification.identity || typeof qualification.identity !== "object") return [];
+  const expected = qualification.identity;
+  const comparisons = [
+    ["model.provider", expected.model?.provider, actual.model.provider],
+    ["model.id", expected.model?.id, actual.model.id],
+    ["model.quantization", expected.model?.quantization, actual.model.quantization],
+    ["model.server.id", expected.model?.server?.id, actual.model.server.id],
+    ["model.server.version", expected.model?.server?.version, actual.model.server.version],
+    ["worker.profileDigest", expected.worker?.profileDigest, actual.worker.profileDigest],
+    ["worker.limits.timeoutMs", expected.worker?.limits?.timeoutMs, actual.worker.limits.timeoutMs],
+    ["worker.limits.maxToolCalls", expected.worker?.limits?.maxToolCalls, actual.worker.limits.maxToolCalls],
+    ["worker.limits.firstWriteMs", expected.worker?.limits?.firstWriteMs, actual.worker.limits.firstWriteMs],
+    ["worker.settings.sandbox", expected.worker?.settings?.sandbox, actual.worker.settings.sandbox],
+    ["worker.settings.effectiveMaxTokens", expected.worker?.settings?.effectiveMaxTokens, actual.worker.settings.effectiveMaxTokens],
+    ["worker.settings.effectiveReasoning", expected.worker?.settings?.effectiveReasoning, actual.worker.settings.effectiveReasoning],
+    ["worker.settings.effectiveThinkingControl", expected.worker?.settings?.effectiveThinkingControl, actual.worker.settings.effectiveThinkingControl],
+    ["worker.settings.effectiveThinkingReason", expected.worker?.settings?.effectiveThinkingReason, actual.worker.settings.effectiveThinkingReason],
+    ["worker.settings.effectiveThinkingField", expected.worker?.settings?.effectiveThinkingField, actual.worker.settings.effectiveThinkingField],
+    ["worker.settings.effectiveThinkingBudgetValue", expected.worker?.settings?.effectiveThinkingBudgetValue, actual.worker.settings.effectiveThinkingBudgetValue],
+    ["worker.settings.effectiveCompat", expected.worker?.settings?.effectiveCompat, actual.worker.settings.effectiveCompat],
+    ["worker.settings.endpointFingerprint", expected.worker?.settings?.endpointFingerprint, actual.worker.settings.endpointFingerprint],
+    ["pi.version", expected.pi?.version, actual.pi.version],
+    ["runChecks.declared", expected.runChecks?.declared, actual.runChecks.declared],
+    ["runChecks.available", expected.runChecks?.available, actual.runChecks.available],
+    ["runChecks.budget", expected.runChecks?.budget, actual.runChecks.budget],
+    ["runChecks.unavailableReason", expected.runChecks?.unavailableReason, actual.runChecks.unavailableReason],
+    ["runChecks.provenance.source", expected.runChecks?.provenance?.source, actual.runChecks.provenance.source],
+    ["runChecks.provenance.unavailableReason", expected.runChecks?.provenance?.unavailableReason, actual.runChecks.provenance.unavailableReason],
+    ["environment.runtime", expected.environment?.runtime, actual.environment.runtime],
+    ["environment.runtimeVersion", expected.environment?.runtimeVersion, actual.environment.runtimeVersion],
+    ["environment.platform", expected.environment?.platform, actual.environment.platform],
+    ["environment.arch", expected.environment?.arch, actual.environment.arch],
+  ];
+  return comparisons
+    .filter(([, expectedValue, actualValue]) => expectedValue !== UNKNOWN && stableStringify(expectedValue) !== stableStringify(actualValue))
+    .map(([field]) => field);
+}
+
+function invalidatedQualification(qualification, changedFields) {
+  const fields = [...new Set(changedFields)].sort();
+  const warning = `qualification unqualified: qualification invalidated by config change [qualification_invalidated_by_config] (changed: ${fields.join(", ")})`;
+  return {
+    ...qualification,
+    status: "unqualified",
+    reason: "qualification_invalidated_by_config",
+    changedFields: fields,
+    warnings: [warning],
+  };
+}
+
 function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt, checkExtension }) {
   const args = [
     "--offline",
@@ -1253,7 +1360,16 @@ async function resolveReview(projectRoot, review) {
   return { ...review, evidence };
 }
 
-function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks) {
+function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks, qualification) {
+  const qualificationValue = qualification === undefined ? undefined : {
+    recordDigest: qualification.recordDigest ?? null,
+    path: qualification.path ?? null,
+    status: qualification.status ?? 'unknown',
+    mode: qualification.mode ?? 'warn',
+    reason: qualification.reason ?? null,
+    changedFields: Array.isArray(qualification.changedFields) ? [...qualification.changedFields] : [],
+    warnings: Array.isArray(qualification.warnings) ? [...qualification.warnings] : [],
+  };
   return {
     schemaVersion: 1,
     adapter: "pi",
@@ -1275,6 +1391,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
     maxTokensSource: prepared.metadata.preflight.maxTokens.source,
     thinkingTokenBudgetField: prepared.metadata.preflight.thinkingTokenBudgetField,
     effectiveThinkingBudget: prepared.metadata.preflight.thinkingBudget,
+    endpointFingerprint: prepared.metadata.preflight.endpointFingerprint ?? "UNKNOWN",
     preflight: { basis: prepared.metadata.preflight.basis, warnings: prepared.metadata.preflight.warnings },
     reasoningRequested: profile?.runtime?.reasoning ?? null,
     rawReasoning: prepared.metadata.rawReasoning,
@@ -1294,6 +1411,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
       inferenceNetwork: true,
     },
     limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxCheckRuns: prepared.metadata.maxCheckRuns, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    ...(qualificationValue === undefined ? {} : { qualification: qualificationValue, warnings: qualificationValue.warnings }),
     accounting: {
       maxToolCallsIncludesRunChecks: true,
       firstWriteMsIncludesRunChecks: false,
@@ -1313,7 +1431,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
  * harness explicitly enables it.  Production callers use the four documented
  * arguments and therefore require Linux bubblewrap or macOS Seatbelt.
  */
-export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal } = {}) {
+export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal, qualification } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
@@ -1362,6 +1480,31 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const inlineProfileResource = resolvedProfile.resource || (resolvedProfile.value ? { path: "<inline-profile>", text: JSON.stringify(resolvedProfile.value) } : null);
   const contextResources = [brief.resource, inlineProfileResource, builtInPrompt, review?.evidence, ...agents, ...skills, ...instructions].filter(Boolean).map(({ text, ...digest }) => ({ ...digest, sha256: digest.sha256 ?? createHash("sha256").update(text).digest("hex"), bytes: digest.bytes ?? Buffer.byteLength(text) }));
   const prepared = await preparePiEnvironment({ worker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
+  let piPackage;
+  let piVersion;
+  let effectiveQualification = qualification;
+  try {
+    piPackage = await piPackageInfo(runtimeChoice.pi);
+    piVersion = runtimeChoice.test ? "test-harness" : piPackage.version;
+    const preparedRunChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel: null, baseline: null });
+    const qualificationMismatches = qualificationRuntimeMismatches(
+      qualification,
+      qualificationRuntimeFacts({ prepared, worker, profile: resolvedProfile.value, runtimeChoice, limits, runChecks: preparedRunChecks, piVersion }),
+    );
+    if (qualificationMismatches.length > 0) {
+      const invalidated = invalidatedQualification(qualification, qualificationMismatches);
+      if (qualification?.mode === "enforce") {
+        throw new WorkerError("worker qualification no longer matches the prepared runtime", {
+          code: "MODEL_NOT_QUALIFIED",
+          details: { qualification: invalidated },
+        });
+      }
+      effectiveQualification = invalidated;
+    }
+  } catch (error) {
+    await prepared.cleanup();
+    throw error;
+  }
 
   const runId = `worker-${new Date().toISOString().replace(/[:.]/gu, "-")}-${Math.random().toString(16).slice(2, 10)}`;
   let artifactDir;
@@ -1392,10 +1535,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     if (checkManifest) {
       checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
     }
-    const piPackage = await piPackageInfo(runtimeChoice.pi);
-    const piVersion = piPackage.version;
     const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
-    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks));
+    await writeJson(join(artifactDir, "runtime.json"), runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, effectiveQualification));
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
       resources: contextResources,
@@ -1462,7 +1603,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.sandboxExec.path;
       args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
       childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
-      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
+      await writeJson(join(artifactDir, "runtime.json"), { ...runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, effectiveQualification), generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` });
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
@@ -1550,7 +1691,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256) ? ["Pi compacted the worker context: later turns saw a model-written summary instead of earlier messages, possibly including the approved packet."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      ...(effectiveQualification === undefined ? {} : { qualification: runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, effectiveQualification).qualification }),
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;

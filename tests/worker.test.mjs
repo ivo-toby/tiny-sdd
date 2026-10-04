@@ -372,6 +372,29 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("persists the dispatch qualification decision in runtime and result artifacts", async () => {
+    const project = await makeProject();
+    try {
+      const qualification = {
+        recordDigest: "a".repeat(64),
+        path: ".tinysdd/qualifications/" + "a".repeat(64) + ".json",
+        status: "unqualified",
+        mode: "warn",
+        reason: "insufficient_evidence",
+        changedFields: ["model.id"],
+        warnings: ["qualification unqualified: insufficient_evidence"],
+      };
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed"), qualification });
+      const runtimeMetadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      const resultJson = JSON.parse(await readFile(result.artifactPaths.directory + "/result.json", "utf8"));
+      assert.deepEqual(runtimeMetadata.qualification, qualification);
+      assert.deepEqual(resultJson.qualification, qualification);
+      assert.ok(resultJson.warnings.includes(qualification.warnings[0]));
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("retains an out-of-scope edit as a violation without applying it to source", async () => {
     const project = await makeProject();
     try {

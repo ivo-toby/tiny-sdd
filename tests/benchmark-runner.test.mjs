@@ -7,7 +7,7 @@ import { basename, join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
-import { benchmarkFixtureDigest, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
+import { benchmarkFixtureDigest, inspectBenchmarkIdentity, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
 import { parseBenchmarkInvocation } from '../src/benchmark-results.mjs';
 
 const digest = (value) => sha256(value);
@@ -236,6 +236,38 @@ test('binds a missing test check runner as unavailable in worker identity', asyn
   }
 });
 
+test('keeps an undeclared task check context distinct in the benchmark identity', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-runner-check-declaration-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 1000, maxToolCalls: 10 } };
+    const declared = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'declared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }) });
+    await assert.rejects(
+      runBenchmark({ suiteRoot: root, outputRoot: join(root, 'undeclared'), worker, runtime, repeat: 1, verifier: async () => ({ status: 'passed' }), runChecksDeclared: false }),
+      (error) => error.code === 'BENCHMARK_RUNNER_INVALID' && /declared task check context/u.test(error.message),
+    );
+    await assert.rejects(access(join(root, 'undeclared')), { code: 'ENOENT' });
+    const undeclared = await inspectBenchmarkIdentity({
+      projectRoot: root,
+      suiteRoot: root,
+      worker,
+      runtime,
+      verifierMode: 'test-injection',
+      runChecksDeclared: false,
+    });
+    assert.equal(declared.config.identity.runChecks.declared, true);
+    assert.equal(undeclared.identity.runChecks.declared, false);
+    assert.notEqual(declared.config.configDigest, undeclared.configDigest);
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects held-out resources inside a hashed worker fixture before Pi starts', async () => {
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-hidden-')));
   const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
@@ -277,6 +309,7 @@ test('binds effective model settings and checker limits into the config digest',
     const first = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'first'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12345 } }, workerSettings: supplemental, verifier });
     assert.equal(first.config.identity.worker.settings.note, 'operator metadata');
     assert.equal(first.config.identity.worker.settings.sandbox, 'test-runtime');
+    assert.equal(first.config.identity.worker.settings.endpointFingerprint, 'http://127.0.0.1:9/v1');
     assert.equal(first.config.identity.worker.settings.effectiveMaxTokens, 256);
     const second = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'second'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(first.invocation.configDigest, second.invocation.configDigest);
@@ -296,6 +329,68 @@ test('binds effective model settings and checker limits into the config digest',
     await writeFile(join(root, 'verifier', 'slow-slice-visible.test.mjs'), 'changed verifier bytes\n');
     const fourth = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'fourth'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
     assert.notEqual(third.invocation.configDigest, fourth.invocation.configDigest);
+    await writeJson(join(root, 'agent', 'models.json'), {
+      providers: {
+        fake: {
+          api: 'openai-completions',
+          baseUrl: 'http://127.0.0.1:10/v1',
+          apiKey: '$FAKE_TOKEN',
+          models: [{ id: 'fake/model', contextWindow: 4096, maxTokens: 128, input: ['text'], reasoning: false }],
+        },
+      },
+    });
+    const fifth = await runBenchmark({ suiteRoot: root, outputRoot: join(root, 'fifth'), worker, runtime, repeat: 1, checkRunnerOptions: { limits: { storedOutputBytes: 12346 } }, workerSettings: supplemental, verifier });
+    assert.equal(fifth.config.identity.worker.settings.endpointFingerprint, 'http://127.0.0.1:10/v1');
+    assert.notEqual(fourth.invocation.configDigest, fifth.invocation.configDigest);
+  } finally {
+    if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('refuses a runtime endpoint change between repeated attempts', async () => {
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-endpoint-mutation-')));
+  const previousWorkerTest = process.env.TINYSDD_WORKER_TEST;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  try {
+    await makeSuite(root);
+    const runtime = await makeRuntime(root);
+    const worker = { type: 'pi', name: 'fake', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 4000, maxToolCalls: 10 } };
+    let mutated = false;
+    let verifierCalls = 0;
+    const result = await runBenchmark({
+      suiteRoot: root,
+      outputRoot: join(root, 'results'),
+      worker,
+      runtime,
+      repeat: 2,
+      verifier: async () => {
+        verifierCalls += 1;
+        if (!mutated) {
+          mutated = true;
+          await writeJson(join(root, 'agent', 'models.json'), {
+            providers: {
+              fake: {
+                api: 'openai-completions',
+                baseUrl: 'http://127.0.0.1:10/changed-path',
+                apiKey: '$FAKE_TOKEN',
+                models: [{ id: 'fake/model', contextWindow: 4096, maxTokens: 256, input: ['text'], reasoning: false }],
+              },
+            },
+          });
+        }
+        return { status: 'passed', sandbox: { runner: 'test-only', network: 'none' } };
+      },
+    });
+    const invocation = parseBenchmarkInvocation(await readFile(join(root, 'results', 'invocation.json'), 'utf8'));
+    const cases = await Promise.all(invocation.caseResults.map(async ({ path }) => JSON.parse(await readFile(join(root, 'results', path), 'utf8'))));
+    assert.equal(cases[0].outcome, 'completed');
+    assert.equal(cases[1].outcome, 'setup_error');
+    assert.equal(cases[1].failure.category, 'setup_error');
+    assert.match(cases[1].failure.missing.find(({ field }) => field === 'attempt')?.reason ?? '', /endpointFingerprint/u);
+    assert.equal(verifierCalls, 2);
+    assert.equal(result.invocation.configIdentity.worker.settings.endpointFingerprint, 'http://127.0.0.1:9/v1');
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;

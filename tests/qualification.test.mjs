@@ -11,6 +11,7 @@ import {
   aggregateBenchmarkObservations,
   buildQualificationRecord,
   isSuccessfulBenchmarkCase,
+  mergeQualificationRecords,
   parseQualificationRecord,
   rescoreQualificationRecord,
   scoreRoleCounts,
@@ -63,6 +64,42 @@ function recordInput(overrides = {}) {
     source: source(),
     roles: { 'implement-slice': roleInput(), ...overrides },
   };
+}
+
+function rosteredRecord(heldOutDefinitionSha256) {
+  const identity = config();
+  const value = caseResult();
+  value.verifier.heldOut[0].definitionSha256 = heldOutDefinitionSha256;
+  const casePath = '.tinysdd/bench/invocation-a/cases/case-result.json';
+  const caseSha256 = digest('1');
+  return buildQualificationRecord({
+    observations: [{ caseResult: value, invocationId: 'invocation-a', source: { path: casePath, sha256: caseSha256 } }],
+    source: {
+      invocations: [{ path: '.tinysdd/bench/invocation-a/invocation.json', sha256: digest('3') }],
+      cases: [{ path: casePath, sha256: caseSha256 }],
+    },
+    roster: {
+      suite: value.suite,
+      challenges: [{
+        id: 'challenge-a',
+        version: '1',
+        sha256: digest('4'),
+        role: 'implement-slice',
+        visible: [{ id: 'visible', definitionSha256: digest('1') }],
+        heldOut: [{ id: 'held-out', definitionSha256: heldOutDefinitionSha256 }],
+      }],
+      invocations: [{
+        invocationId: 'invocation-a',
+        path: '.tinysdd/bench/invocation-a/invocation.json',
+        sha256: digest('3'),
+        repeat: 1,
+        expected: [{ challengeId: 'challenge-a', repetitions: [1] }],
+      }],
+    },
+    configIdentity: identity.identity,
+    configDigest: identity.configDigest,
+    suite: value.suite,
+  });
 }
 
 function verifier(checkId, status = 'passed') {
@@ -302,4 +339,46 @@ test('pools repeated attempt IDs only when invocation provenance is distinct', (
     { caseResult: first, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case.json', sha256: digest('1') } },
     { caseResult: second, invocationId: 'invocation-a', source: { path: '.tinysdd/bench/a/case-2.json', sha256: digest('2') } },
   ]), { code: 'QUALIFICATION_INVALID' });
+});
+
+test('merges cumulative records by invocation and attempt without dropping failures', () => {
+  const first = caseResult({ attemptId: 'attempt-1' });
+  const second = caseResult({ attemptId: 'attempt-1', status: 'failed' });
+  const identity = config();
+  const makeRecord = (value, invocationId, sourcePath, sourceDigest) => buildQualificationRecord({
+    observations: [{ caseResult: value, invocationId, source: { path: sourcePath, sha256: sourceDigest } }],
+    source: { invocations: [], cases: [{ path: sourcePath, sha256: sourceDigest }] },
+    configIdentity: identity.identity,
+    configDigest: identity.configDigest,
+    suite: value.suite,
+  });
+  const merged = mergeQualificationRecords(
+    makeRecord(first, 'invocation-a', '.tinysdd/bench/a/case.json', digest('1')),
+    makeRecord(second, 'invocation-b', '.tinysdd/bench/b/case.json', digest('2')),
+  );
+  const score = merged.roles['implement-slice'];
+  assert.equal(score.n, 2);
+  assert.equal(score.passes, 1);
+  assert.deepEqual(score.perChallenge[0].results.map(({ invocationId, attemptId }) => `${invocationId}/${attemptId}`), [
+    'invocation-a/attempt-1',
+    'invocation-b/attempt-1',
+  ]);
+  assert.throws(() => mergeQualificationRecords(
+    merged,
+    makeRecord(caseResult({ attemptId: 'attempt-1', status: 'failed' }), 'invocation-a', '.tinysdd/bench/a/other.json', digest('3')),
+  ), { code: 'QUALIFICATION_INVALID' });
+});
+
+test('applies an explicit target override when merging one retained record', () => {
+  const record = buildQualificationRecord(recordInput());
+  const merged = mergeQualificationRecords([record], undefined, { targets: { 'implement-slice': 0.7 } });
+  assert.equal(merged.roles['implement-slice'].target, 0.7);
+  assert.deepEqual(merged.source, record.source);
+  assert.deepEqual(merged.roles['implement-slice'].perChallenge, record.roles['implement-slice'].perChallenge);
+});
+
+test('refuses roster merges when verifier challenge definitions differ', () => {
+  const first = rosteredRecord(digest('2'));
+  const second = rosteredRecord(digest('6'));
+  assert.throws(() => mergeQualificationRecords(first, second), { code: 'QUALIFICATION_INVALID' });
 });

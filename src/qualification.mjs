@@ -2,6 +2,7 @@ import {
   assertExactKeys,
   assertPlainObject,
   normalizeProjectRelative,
+  stableStringify,
   tinyError,
 } from './fs-utils.mjs';
 import {
@@ -803,6 +804,152 @@ export function rescoreQualificationRecord(record, targets = {}) {
 }
 
 export const rescoreQualification = rescoreQualificationRecord;
+
+function mergeReferences(left, right, label) {
+  const byPath = new Map();
+  for (const ref of [...left, ...right]) {
+    const previous = byPath.get(ref.path);
+    if (previous !== undefined && previous.sha256 !== ref.sha256) {
+      invalid(`${label} contains conflicting hashes for ${ref.path}`);
+    }
+    byPath.set(ref.path, ref);
+  }
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function sameChallenge(left, right) {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function mergeRosters(left, right) {
+  if (left === undefined && right === undefined) return undefined;
+  if (left === undefined || right === undefined) invalid('qualification records cannot merge rostered and legacy evidence');
+  if (!suiteEqual(left.suite, right.suite)) invalid('qualification records contain mixed rosters');
+  const challenges = new Map();
+  for (const challenge of [...left.challenges, ...right.challenges]) {
+    const previous = challenges.get(challenge.id);
+    if (previous !== undefined && !sameChallenge(previous, challenge)) {
+      invalid(`qualification rosters contain conflicting challenge: ${challenge.id}`);
+    }
+    challenges.set(challenge.id, challenge);
+  }
+  const invocations = new Map();
+  const paths = new Map();
+  for (const invocation of [...left.invocations, ...right.invocations]) {
+    const previous = invocations.get(invocation.invocationId);
+    if (previous !== undefined && stableStringify(previous) !== stableStringify(invocation)) {
+      invalid(`qualification rosters contain conflicting invocation: ${invocation.invocationId}`);
+    }
+    const pathOwner = paths.get(invocation.path);
+    if (pathOwner !== undefined && pathOwner !== invocation.invocationId) {
+      invalid(`qualification rosters contain conflicting invocation path: ${invocation.path}`);
+    }
+    invocations.set(invocation.invocationId, invocation);
+    paths.set(invocation.path, invocation.invocationId);
+  }
+  return {
+    suite: left.suite,
+    challenges: [...challenges.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    invocations: [...invocations.values()].sort((a, b) => a.invocationId.localeCompare(b.invocationId)),
+  };
+}
+
+function observationKey(result) {
+  return result.invocationId === undefined
+    ? result.attemptId
+    : `${result.invocationId}\0${result.attemptId}`;
+}
+
+function mergeRoleEntries(role, left, right, targetOverrides, preferIncomingTargets) {
+  const challenges = new Map();
+  const challengeIds = new Map();
+  for (const challenge of [...(left?.perChallenge ?? []), ...(right?.perChallenge ?? [])]) {
+    const previousId = challengeIds.get(challenge.id);
+    if (previousId !== undefined && previousId !== `${challenge.version}\0${challenge.sha256}`) {
+      invalid(`qualification role ${role} contains conflicting challenge: ${challenge.id}`);
+    }
+    challengeIds.set(challenge.id, `${challenge.version}\0${challenge.sha256}`);
+    const key = `${challenge.id}\0${challenge.version}\0${challenge.sha256}`;
+    const previous = challenges.get(key) ?? {
+      id: challenge.id,
+      version: challenge.version,
+      sha256: challenge.sha256,
+      results: new Map(),
+    };
+    for (const result of challenge.results) {
+      const resultKey = observationKey(result);
+      const existing = previous.results.get(resultKey);
+      if (existing !== undefined && stableStringify(existing) !== stableStringify(result)) {
+        invalid(`qualification role ${role} contains conflicting observation: ${resultKey.replaceAll('\0', '/')}`);
+      }
+      previous.results.set(resultKey, result);
+    }
+    challenges.set(key, previous);
+  }
+  const perChallenge = [...challenges.values()]
+    .map((challenge) => {
+      const results = [...challenge.results.values()].sort((a, b) => observationKey(a).localeCompare(observationKey(b)));
+      return {
+        id: challenge.id,
+        version: challenge.version,
+        sha256: challenge.sha256,
+        n: results.length,
+        passes: results.reduce((sum, result) => sum + (result.passed ? 1 : 0), 0),
+        results,
+      };
+    })
+    .sort((a, b) => `${a.id}\0${a.version}\0${a.sha256}`.localeCompare(`${b.id}\0${b.version}\0${b.sha256}`));
+  const n = perChallenge.reduce((sum, challenge) => sum + challenge.n, 0);
+  const passes = perChallenge.reduce((sum, challenge) => sum + challenge.passes, 0);
+  const targetValue = targetOverrides[role]
+    ?? (preferIncomingTargets ? right?.target : left?.target)
+    ?? left?.target
+    ?? right?.target
+    ?? DEFAULT_QUALIFICATION_TARGET;
+  return { n, passes, target: targetValue, perChallenge };
+}
+
+function mergeQualificationRecordPair(left, right, targetOverrides, preferIncomingTargets) {
+  if (left.configDigest !== right.configDigest) invalid('qualification records contain mixed config identities');
+  if (!suiteEqual(left.suite, right.suite)) invalid('qualification records contain mixed suites');
+  const roles = {};
+  for (const role of [...new Set([...Object.keys(left.roles), ...Object.keys(right.roles)])].sort()) {
+    roles[role] = mergeRoleEntries(role, left.roles[role], right.roles[role], targetOverrides, preferIncomingTargets);
+  }
+  return makeRecord({
+    configIdentity: left.configIdentity,
+    configDigest: left.configDigest,
+    suite: left.suite,
+    source: {
+      invocations: mergeReferences(left.source.invocations, right.source.invocations, 'qualification source.invocations'),
+      cases: mergeReferences(left.source.cases, right.source.cases, 'qualification source.cases'),
+    },
+    roles,
+    roster: mergeRosters(left.roster, right.roster),
+  });
+}
+
+/** Merge retained observations without dropping earlier evidence. */
+export function mergeQualificationRecords(recordsOrLeft, maybeRight, options = {}) {
+  const records = Array.isArray(recordsOrLeft) ? recordsOrLeft : [recordsOrLeft, maybeRight];
+  if (records.length === 0 || records.some((record) => record === undefined)) invalid('qualification record merge requires records');
+  const targetOverrides = validateTargets(options.targets ?? options.target, 'qualification merge targets');
+  let merged = validateQualificationRecord(records[0]);
+  if (records.length === 1 && Object.keys(targetOverrides).length > 0) {
+    merged = rescoreQualificationRecord(merged, targetOverrides);
+  }
+  for (const record of records.slice(1)) {
+    merged = mergeQualificationRecordPair(
+      merged,
+      validateQualificationRecord(record),
+      targetOverrides,
+      options.preferIncomingTargets === true,
+    );
+  }
+  return merged;
+}
+
+export const mergeQualificationEvidence = mergeQualificationRecords;
 
 export function aggregateBenchmarkCases(cases, options = {}) {
   if (!Array.isArray(cases)) invalid('qualification cases must be an array');

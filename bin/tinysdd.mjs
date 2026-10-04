@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { basename, dirname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import { lstat, readFile, unlink } from 'node:fs/promises';
 
 import {
@@ -32,14 +32,14 @@ import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
+import { assessQualification, resolveBenchmarkSuite as resolveCurrentBenchmarkSuite } from '../src/qualification-dispatch.mjs';
 import { BENCHMARK_ROLES } from '../src/benchmark-schema.mjs';
-import { readQualificationEvidence } from '../src/qualification-reader.mjs';
+import { readQualificationEvidence, readQualificationEvidencePool } from '../src/qualification-reader.mjs';
 import {
   compareQualificationApplicability,
-  persistQualificationRecord,
+  accumulateQualificationRecord,
   readQualificationRecord,
   replaceQualificationRecord,
-  writeQualificationRecord,
 } from '../src/qualification-store.mjs';
 import { buildQualificationRecord, rescoreQualificationRecord } from '../src/qualification.mjs';
 
@@ -64,7 +64,7 @@ Usage:
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
   tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K]
-  tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] --suite PATH [--worker NAME] [--target ROLE=NUMBER,...]
+  tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
   tinysdd [--json] [--project PATH] bench rescore --record PATH [--target ROLE=NUMBER,...]
   tinysdd [--json] [--project PATH] bench qualification show --record PATH [--suite PATH] [--worker NAME]
   tinysdd [--json] [--project PATH] usage record --phase PHASE --model MODEL --input N --output N [--reasoning N] [--cache-read N] [--cache-write N] [--total N] [--task ID] [--feature NAME]
@@ -295,7 +295,17 @@ async function startWorker(project, options) {
   if (preflight.errors.length > 0) {
     throw tinyError('WORKER_PREFLIGHT_FAILED', `worker preflight failed: ${preflight.errors.join('; ')}`, { errors: preflight.errors, warnings: preflight.warnings });
   }
-  const warnings = await declaredRunCheckWarnings(project, options);
+  const packet = options['baseline-run']
+    ? await resolveBenchmarkPacket(project, options.task)
+    : await resolveTaskPacket(project, options.task);
+  const warnings = declaredRunCheckWarningsForPacket(packet);
+  const qualification = await assessQualification({
+    projectRoot: resolved.projectRoot,
+    resolved,
+    workerName: resolved.workerName,
+    checksDeclared: packet.checks !== undefined && packet.checks !== null,
+  });
+  const qualificationWarnings = qualification.warnings ?? [];
   const id = `launch-${randomUUID()}`;
   const location = await launchDirectory(project, id);
   await ensureDirectory(location.directory);
@@ -333,8 +343,9 @@ async function startWorker(project, options) {
     status: 'running',
     pid: child.pid,
     statusCommand: `tinysdd worker status --id ${id}`,
-    preflight: { thinking: preflight.thinking, maxTokens: preflight.maxTokens, warnings: preflight.warnings },
-    ...(warnings.length > 0 ? { warnings } : {}),
+    qualification,
+    preflight: { thinking: preflight.thinking, maxTokens: preflight.maxTokens, warnings: [...preflight.warnings, ...qualificationWarnings] },
+    ...((warnings.length > 0 || qualificationWarnings.length > 0) ? { warnings: [...warnings, ...qualificationWarnings] } : {}),
   };
 }
 
@@ -342,7 +353,11 @@ async function declaredRunCheckWarnings(project, options) {
   const packet = options['baseline-run']
     ? await resolveBenchmarkPacket(project, options.task)
     : await resolveTaskPacket(project, options.task);
-  if (packet.checks === undefined) return [];
+  return declaredRunCheckWarningsForPacket(packet);
+}
+
+function declaredRunCheckWarningsForPacket(packet) {
+  if (packet.checks === undefined || packet.checks === null) return [];
   const runner = checkRunnerAvailable();
   return runner.available ? [] : [`run_checks unavailable: ${runner.reason}`];
 }
@@ -391,16 +406,12 @@ function parseQualificationTargets(values) {
 }
 
 async function resolveBenchmarkSuite(project, requested) {
-  const relativeSuite = normalizeProjectRelative(requested ?? 'bench', '--suite');
-  const target = await assertInternalPath(project, relativeSuite.split('/'), { allowMissing: false });
-  const info = await lstat(target);
-  if (info.isDirectory()) {
-    return { relative: relativeSuite, root: target, path: 'suite.json' };
+  try {
+    return await resolveCurrentBenchmarkSuite(project, requested);
+  } catch (error) {
+    if (error?.code === 'QUALIFICATION_UNAVAILABLE') throw cliError(error.message, 'QUALIFICATION_SUITE_UNAVAILABLE');
+    throw error;
   }
-  if (info.isFile() && basename(target) === 'suite.json') {
-    return { relative: relativeSuite, root: dirname(target), path: 'suite.json' };
-  }
-  throw cliError('--suite must name a suite directory or suite.json');
 }
 
 async function runBenchmarkCommand(project, options) {
@@ -408,7 +419,7 @@ async function runBenchmarkCommand(project, options) {
   const repeat = parseBenchmarkRepeat(options.repeat);
   const resolved = await configShow(project, { worker: options.worker });
   if (!resolved.workerName || !resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
-  const suite = await resolveBenchmarkSuite(resolved.projectRoot, options.suite);
+  const suite = await resolveBenchmarkSuite(resolved.projectRoot, options.suite ?? resolved.config?.qualification?.suite ?? 'bench');
   process.stderr.write(`Benchmark ${suite.relative} started with worker ${resolved.workerName}.\n`);
   const result = await runBenchmark({
     projectRoot: resolved.projectRoot,
@@ -416,7 +427,10 @@ async function runBenchmarkCommand(project, options) {
     suitePath: suite.path,
     repeat,
     worker: resolved.worker,
+    workerName: resolved.workerName,
     profile: resolved.profile,
+    model: resolved.worker.modelMetadata,
+    maxCheckRuns: resolved.worker.limits.maxCheckRuns,
   });
   const warnings = result.config.checkRunner.available
     ? []
@@ -434,15 +448,16 @@ function qualificationApplicabilityUnavailable() {
 }
 
 async function currentQualificationIdentity(project, suite, workerName) {
-  if (workerName === undefined) return { resolved: undefined, applicability: qualificationApplicabilityUnavailable() };
   const resolved = await configShow(project, { worker: workerName });
-  if (!resolved.workerName || !resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
+  if (!resolved.workerName || !resolved.worker) return { resolved, applicability: qualificationApplicabilityUnavailable() };
   const current = await inspectBenchmarkIdentity({
     projectRoot: resolved.projectRoot,
     suiteRoot: suite.root,
     suitePath: suite.path,
     worker: resolved.worker,
     profile: resolved.profile,
+    model: resolved.worker.modelMetadata,
+    maxCheckRuns: resolved.worker.limits.maxCheckRuns,
   });
   return { resolved, current };
 }
@@ -450,13 +465,25 @@ async function currentQualificationIdentity(project, suite, workerName) {
 async function qualifyBenchmarkCommand(project, options) {
   const resultPaths = options.results;
   if (!Array.isArray(resultPaths) || resultPaths.length === 0) throw cliError('--results requires a value');
-  const requestedSuite = requiredOption(options, 'suite');
+  let configured = { config: {} };
+  try {
+    configured = await configShow(project, { worker: options.worker });
+  } catch (error) {
+    if (options.worker !== undefined || error?.code !== 'CONFIG_MISSING') throw error;
+  }
+  const requestedSuite = options.suite ?? configured.config?.qualification?.suite ?? 'bench';
   const suite = await resolveBenchmarkSuite(project, requestedSuite);
   const targets = parseQualificationTargets(options.target);
-  const evidence = await readQualificationEvidence({
+  const anchor = await readQualificationEvidence({
+    projectRoot: project,
+    results: [resultPaths[0]],
+    suitePath: suiteFilePath(suite),
+  });
+  const evidence = await readQualificationEvidencePool({
     projectRoot: project,
     results: resultPaths,
     suitePath: suiteFilePath(suite),
+    configDigest: anchor.configDigest,
   });
   const built = buildQualificationRecord({
     observations: evidence.observations,
@@ -467,23 +494,25 @@ async function qualifyBenchmarkCommand(project, options) {
     suite: evidence.suite,
     targets,
   });
-  const current = await currentQualificationIdentity(project, suite, options.worker);
+  const current = options.worker === undefined ? { resolved: undefined, current: undefined } : await currentQualificationIdentity(project, suite, options.worker);
   const applicability = current.current === undefined
     ? qualificationApplicabilityUnavailable()
     : compareQualificationApplicability(built, current.current);
-  const stored = current.resolved === undefined
-    ? await writeQualificationRecord(project, built)
-    : await persistQualificationRecord(project, built, {
+  const stored = await accumulateQualificationRecord(project, built, {
+    ...(current.resolved?.workerName ? {
       profilePath: current.resolved.worker.profile ?? null,
       profile: current.resolved.profile,
       workerName: current.resolved.workerName,
-    });
+    } : {}),
+    targets,
+  });
   return {
     record: stored.record,
     path: stored.path,
     sha256: stored.sha256,
     applicability,
     duplicateInputs: evidence.duplicateInputs,
+    registeredInputs: evidence.registeredInputs,
   };
 }
 
@@ -874,7 +903,8 @@ function writeRunCheckWarnings(result) {
     ...(result.warnings ?? []),
     ...(result.data?.warnings ?? []),
     ...(result.data?.preflight?.warnings ?? []),
-  ].filter((warning) => typeof warning === 'string' && warning.startsWith('run_checks unavailable: '));
+    ...(result.error?.details?.qualification?.warnings ?? []),
+  ].filter((warning) => typeof warning === 'string');
   for (const warning of [...new Set(warnings)]) process.stderr.write(`Warning: ${warning}\n`);
 }
 

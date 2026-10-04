@@ -338,6 +338,22 @@ tinysdd worker start --task first-change --worker qwen --json
 tinysdd worker status --id LAUNCH_ID --json
 ```
 
+Qualification dispatch uses the current worker, the current benchmark suite,
+and the effective verifier and runtime facts. Set an optional project suite and
+mode in `.tinysdd/config.json`:
+
+```json
+"qualification": { "mode": "warn", "suite": "bench/implement-slice-suite" }
+```
+
+The mode defaults to `warn`; `enforce` refuses an unqualified
+`implement-slice` before launch, and `off` skips qualification checks. An
+unavailable current suite or runtime context produces an explicit warning in
+`warn` mode. Optional quantization and server metadata remain explicit
+`UNKNOWN` facts when absent. A changed model endpoint, profile, verifier,
+suite, check declaration, or budget produces a different digest; records for
+the old digest are stale.
+
 To end a launch early, run `tinysdd worker stop --id LAUNCH_ID --json` rather than
 killing the launcher. It signals the launcher, which stops Pi and finalizes the
 run as usual: the result has outcome `stopped` (error code `WORKER_STOPPED`), and
@@ -409,6 +425,14 @@ tinysdd bench qualify \
   --json
 ```
 
+`--suite` is optional: it uses `qualification.suite` when configured and
+otherwise `bench`. The first `--results` path anchors the historical digest;
+all retained invocations for that exact digest and suite are pooled, including
+later failures. A repeated invocation is deduplicated by its immutable ID and
+hash. `bench qualify` may create or refresh a record from this offline evidence;
+worker dispatch only refreshes an existing exact record and never bootstraps one
+from raw benchmark output.
+
 The default target is `0.8` for each role, provisional until #33 calibrates it,
 and can be overridden with repeated `--target ROLE=NUMBER` values. Scores use
 the two-sided 95% Wilson interval
@@ -426,6 +450,11 @@ Qualification scoring is independent of task apply and acceptance: a retained
 timeout may count as a statistical case pass when all visible and held-out
 checks pass with no hard-gate violation; the raw outcome and task rules remain
 unchanged.
+
+Worker `runtime.json` and `result.json` retain the qualification digest and
+record path, status, mode, reason, changed identity fields, and warnings. The
+same warning is returned by `worker start` and written to stderr by the direct
+worker command; JSON mode keeps stdout to one object.
 
 Qualification records are stored under `.tinysdd/qualifications/` with a
 dedicated lock and profile sidecar. A repeated exact invocation input is ignored
