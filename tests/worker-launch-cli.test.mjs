@@ -189,6 +189,34 @@ test('enforced qualification refuses before creating a detached launch', async (
   }
 });
 
+test('worker run reports enforced qualification refusal on stderr without starting a worker', async () => {
+  const { root, agentDir } = await configuredCheckWorker();
+  try {
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'qwen',
+      qualification: { mode: 'enforce', suite: 'missing-suite' },
+      workers: { qwen: { type: 'pi', provider: 'titan', model: 'qwen-bare' } },
+    }));
+    await assert.rejects(
+      exec(process.execPath, [cli.pathname, '--json', '--project', root, 'worker', 'run', '--task', 'one'], {
+        env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+      }),
+      (error) => {
+        const lines = error.stdout.trim().split('\n');
+        assert.equal(lines.length, 1);
+        const result = JSON.parse(lines[0]);
+        assert.equal(result.error.code, 'MODEL_NOT_QUALIFIED');
+        assert.match(error.stderr, /current qualification suite is unavailable/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
 test('worker run reports an unavailable declared runner once on stderr in JSON mode', { skip: checkRunnerAvailable().available ? 'requires an unavailable check runner' : false }, async () => {
   const { root, agentDir } = await configuredCheckWorker();
   try {

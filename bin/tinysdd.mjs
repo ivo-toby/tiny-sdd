@@ -903,6 +903,7 @@ function writeRunCheckWarnings(result) {
     ...(result.warnings ?? []),
     ...(result.data?.warnings ?? []),
     ...(result.data?.preflight?.warnings ?? []),
+    ...(result.error?.details?.qualification?.warnings ?? []),
   ].filter((warning) => typeof warning === 'string');
   for (const warning of [...new Set(warnings)]) process.stderr.write(`Warning: ${warning}\n`);
 }
