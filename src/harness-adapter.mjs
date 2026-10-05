@@ -546,29 +546,51 @@ function newRunId() {
 
 async function retainCandidateTree(sourceRoot, destinationRoot) {
   const counters = { files: 0, bytes: 0, entries: 0 };
-  async function visit(source, destination) {
+  async function directoryState(source, expected, label) {
+    try {
+      await assertNoSymlinkPath(source, { allowMissing: false, requireDirectory: true });
+      const actual = await directoryIdentity(source, label);
+      if (expected && (actual.realpath !== expected.realpath || actual.dev !== expected.dev || actual.ino !== expected.ino)) {
+        captureError('HARNESS_CAPTURE_STALE', `${label} identity changed while being retained`, { path: source, expected, actual });
+      }
+      return actual;
+    } catch (error) {
+      if (error?.code === 'SYMLINK_PATH' || error?.code === 'PATH_NOT_FOUND' || error?.code === 'INVALID_PATH' || error?.code === 'HARNESS_INVALID_PATH') {
+        captureError('HARNESS_CAPTURE_STALE', `${label} changed while being retained`, { path: source });
+      }
+      throw error;
+    }
+  }
+  async function visit(source, destination, expected = null) {
+    const initial = await directoryState(source, expected, 'candidate directory');
     const entries = await readdir(source, { withFileTypes: true });
+    await directoryState(source, initial, 'candidate directory');
     entries.sort((left, right) => left.name.localeCompare(right.name));
     await mkdir(destination, { recursive: true, mode: 0o700 });
     for (const entry of entries) {
       counters.entries += 1;
       if (counters.entries > workerCaptureLimits.MAX_COPY_FILES) captureError('HARNESS_CANDIDATE_LIMIT', 'candidate exceeds the bounded entry limit');
+      await directoryState(source, initial, 'candidate directory');
       const sourcePath = join(source, entry.name);
       const destinationPath = join(destination, entry.name);
       const info = await lstat(sourcePath);
+      await directoryState(source, initial, 'candidate directory');
       if (info.isSymbolicLink()) {
         await symlink(await readlink(sourcePath), destinationPath);
       } else if (info.isDirectory()) {
-        await visit(sourcePath, destinationPath);
+        const child = await directoryState(sourcePath, null, 'candidate directory');
+        await visit(sourcePath, destinationPath, child);
       } else if (info.isFile()) {
         if (info.size > workerCaptureLimits.MAX_COPY_BYTES || counters.bytes > workerCaptureLimits.MAX_COPY_BYTES - info.size) {
           captureError('HARNESS_CANDIDATE_LIMIT', 'candidate exceeds the bounded byte limit');
         }
+        await directoryState(source, initial, 'candidate directory');
         const bytes = await boundedBytes(sourcePath, {
           maxBytes: workerCaptureLimits.MAX_COPY_BYTES - counters.bytes,
           label: `candidate/${entry.name}`,
           expectedInfo: info,
         });
+        await directoryState(source, initial, 'candidate directory');
         if (bytes.byteLength !== info.size) captureError('HARNESS_CAPTURE_STALE', `candidate file changed while being retained: ${entry.name}`);
         await writeFile(destinationPath, bytes, { flag: 'wx', mode: info.mode & 0o777 });
         counters.files += 1;
@@ -690,14 +712,20 @@ async function commitStagedJson(stagedPath, finalPath, expectedValue, label) {
   await rename(stagedPath, finalPath);
 }
 
-async function writeJsonOrVerify(path, value, label) {
+async function writeFinalizationOrVerify(path, value) {
   const existing = await lstatIfPresent(path);
-  if (existing) {
-    const actual = await boundedJson(path, label);
-    if (stableStringify(actual.value) !== stableStringify(value)) captureError('HARNESS_CAPTURE_STALE', `${label} already exists with different contents`);
-    return;
+  if (!existing) {
+    await writeJsonExclusive(path, value);
+    return value;
   }
-  await writeJsonExclusive(path, value);
+  const actual = await boundedJson(path, 'finalization.json');
+  const stableFields = ['schemaVersion', 'runId', 'completion', 'resultSha256', 'candidate', 'afterSnapshotSha256'];
+  for (const field of stableFields) {
+    if (stableStringify(actual.value?.[field]) !== stableStringify(value[field])) {
+      captureError('HARNESS_CAPTURE_STALE', 'finalization.json already exists with different contents');
+    }
+  }
+  return actual.value;
 }
 
 async function retainBundle(bundle, artifactDir) {
@@ -991,7 +1019,7 @@ export async function finalizeHarnessCapture({ projectRoot, runId, completed, ca
     // Publish the finalization marker first. A result without its marker would
     // be applyable after a later write failure; an existing marker is verified
     // on retry so no evidence is overwritten.
-    await writeJsonOrVerify(join(artifactDir, 'finalization.json'), finalization, 'finalization.json');
+    await writeFinalizationOrVerify(join(artifactDir, 'finalization.json'), finalization);
     await writeJsonExclusive(join(artifactDir, 'result.json'), result);
     return result;
   } finally {

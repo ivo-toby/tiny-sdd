@@ -303,6 +303,52 @@ test('bundle rejects hidden context source identities and exact restoration rema
   }
 });
 
+test('candidate directory swaps are rejected before outside bytes are retained', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const source = join(begin.candidatePath, 'race-dir');
+    const outside = join(external, 'outside-dir');
+    await mkdir(source);
+    await writeFile(join(source, 'marker'), 'candidate original');
+    await mkdir(outside);
+    await writeFile(join(outside, 'marker'), 'OUTSIDE_DIRECTORY_SYNTHETIC_MARKER');
+    const originalReaddir = fs.readdir;
+    let calls = 0;
+    let injected = false;
+    fs.readdir = async function patchedReaddir(path, ...args) {
+      if (String(path) === source && ++calls === 2) {
+        injected = true;
+        await fs.rename(source, `${source}.prior`);
+        await fs.symlink(outside, source);
+      }
+      return originalReaddir.call(this, path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }),
+        { code: 'HARNESS_CAPTURE_STALE' },
+      );
+    } finally {
+      fs.readdir = originalReaddir;
+      syncBuiltinESMExports();
+      await fs.unlink(source);
+      await fs.rename(`${source}.prior`, source);
+    }
+    assert.equal(injected, true);
+    const stages = (await originalReaddir.call(fs, begin.artifactDir)).filter((entry) => entry.startsWith('.finalize-'));
+    for (const stage of stages) {
+      await assert.rejects(readFile(join(begin.artifactDir, stage, 'workspace-after', 'race-dir', 'marker')));
+    }
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
 test('finalization marker failure leaves no result and a retry publishes both artifacts', async () => {
   const fixture = await fixtureProject();
   const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
@@ -330,6 +376,44 @@ test('finalization marker failure leaves no result and a retry publishes both ar
     const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true });
     assert.equal(result.outcome, 'completed');
     assert.equal((await lstat(join(begin.artifactDir, 'finalization.json'))).isFile(), true);
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('result publication failure keeps a stable marker for retry', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const originalWriteFile = fs.writeFile;
+    let injected = false;
+    fs.writeFile = async function patchedWriteFile(path, ...args) {
+      if (!injected && String(path) === join(begin.artifactDir, 'result.json')) {
+        injected = true;
+        throw Object.assign(new Error('synthetic injected result failure'), { code: 'EIO' });
+      }
+      return originalWriteFile.call(this, path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }),
+        { code: 'EIO' },
+      );
+    } finally {
+      fs.writeFile = originalWriteFile;
+      syncBuiltinESMExports();
+    }
+    assert.equal(injected, true);
+    const markerPath = join(begin.artifactDir, 'finalization.json');
+    const markerBytes = await readFile(markerPath);
+    await assert.rejects(readFile(join(begin.artifactDir, 'result.json')));
+    const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true });
+    assert.equal(result.outcome, 'completed');
+    assert.deepEqual(await readFile(markerPath), markerBytes);
   } finally {
     await cleanup(fixture.root);
     await cleanup(external);
