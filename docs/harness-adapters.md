@@ -102,7 +102,7 @@ const agents = JSON.stringify({
 spawn('claude', [
   '--agents', agents,
   '--model', 'operator-selected-frontier-model',
-  '--tools', 'Read,Agent',
+  '--tools', 'Read,Write,Edit,Agent',
   [
     `Read the exact approved packet at ${artifactDir}/packet.json.`,
     `Read ${artifactDir}/bundle/brief.md, ${artifactDir}/bundle/compiled-context.md when present, and ${artifactDir}/bundle/checks.json.`,

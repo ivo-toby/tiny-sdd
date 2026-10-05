@@ -203,9 +203,10 @@ retains the exact packet and bundle under `.tinysdd/runs/worker-*` evidence
 without changing source code, controller state or approvals. Finalize returns a
 completed result through the normal `task apply` and explicit `task review`
 commands. Ordinary extra files are retained for review; this API leaves model
-identity, usage, sandbox and checks caller-declared or `UNKNOWN`. Offline
-adapter fixtures pass through apply and synthetic review, while live
-harness/model/operator acceptance remains pending (`Refs #31`).
+identity caller-declared with observed identity `UNKNOWN`, usage and sandbox
+`UNKNOWN`, and checks `unrun`. Offline adapter fixtures pass through apply and
+synthetic review, while live harness/model/operator acceptance remains pending
+(`Refs #31`).
 
 Create the brief first; the [template](../skills/tinysdd/assets/task-brief.md)
 identifies its useful contents. Use actual approval attribution, not copied
