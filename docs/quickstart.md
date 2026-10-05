@@ -136,7 +136,7 @@ tinysdd task packet --id first-change --json
 ```
 
 For a portable change descriptor, validate the preparation artifacts and print
-the topological legacy registration plan without changing controller state:
+the topological registration plan without changing controller state:
 
 ```sh
 node /absolute/path/to/tiny-sdd/scripts/validate-change.mjs \
@@ -158,19 +158,25 @@ tinysdd task add --id s1 --feature example \
   --brief .tinysdd/tasks/s1.md \
   --context .tinysdd/tasks/s1.context.json \
   --checks .tinysdd/tasks/s1.checks.json \
+  --preparation specs/example.md \
   --allow src/example.mjs,tests/example.test.mjs \
   --protect tests/contract.test.mjs
 ```
 
 Repeat this materialization in topological order for dependent slices. The
 explicit copy preserves the approved brief, context and checks bytes; carry every
-`allow`, `protect` and `dependsOn` value from the plan, using `--depends-on` for
-dependencies. Validation does not create these controller inputs.
+`allow`, `protect`, `preparation` and `dependsOn` value from the plan, using
+`--depends-on` for dependencies. Preparation entries are immutable identity
+evidence; an absent entry remains an absence check and is not added to
+`--protect` until it exists. Validation does not create these controller inputs.
 
 The format keeps protected feature tests separate from writable slice tests,
 checks exact interface citations and records advisory file sizing. The plan and
-bundle report `runtimeScope.mode: "legacy-allowlist"`; current workers and
-apply still enforce the existing task allowlist until issue #82 is implemented.
+bundle report the single default `runtimeScope.mode: "ordinary-create-modify"`;
+expected paths and file-count budgets guide the worker but do not limit eligible
+ordinary file creation or modification. Deletions, filesystem type changes,
+internal or secret paths, dependency mounts, protected contracts and immutable
+preparation inputs remain ineligible and are retained as review blockers.
 An export requires a matching, ready, freshly approved task and writes a new
 bundle outside the checkout. It never runs checks, approves, applies or accepts.
 Choose an existing canonical output parent (resolve `/tmp` first on systems
@@ -316,7 +322,8 @@ To revise an open task's shape, use `task update` with `--by` and `--reason`:
 tinysdd task update --id first-change --allow src/example.mjs --protect tests/contract.test.ts --by operator --reason 'keep the contract fixed'
 ```
 
-`--brief`, `--context`, `--checks`, `--allow`, `--protect` and `--depends-on`
+`--brief`, `--context`, `--checks`, `--allow`, `--protect`, `--preparation` and
+`--depends-on`
 validate like `task add`; omitted fields stay unchanged. Use `--context=`,
 `--checks=`, `--protect=` or `--depends-on=` to clear an optional field;
 `--allow` must stay nonempty. Each effective update keeps the previous shape and
@@ -677,12 +684,12 @@ whether it is committed, untracked or ignored. Put needed dependency interfaces 
 selected instruction resources rather than assuming the worker can inspect an
 installed dependency tree.
 
-Have your outer agent inspect scope violations and the diff and verify in an
-appropriate credential-free disposable environment. Then apply the reviewed run
-to the project before recording acceptance: acceptance binds the allowed files'
-content, so accepting first and applying later makes the task `stale` and blocks
-its dependents. Preserve the observed checks and review findings in a project
-file. Then:
+Have your outer agent inspect the complete actual candidate inventory and any
+boundary violations, then verify the diff in an appropriate credential-free
+disposable environment. Apply the reviewed run to the project before recording
+acceptance: acceptance binds the planned and actual candidate files, so accepting
+first and applying later makes the task `stale` and blocks its dependents.
+Preserve the observed checks and review findings in a project file. Then:
 
 ```sh
 tinysdd task apply --id first-change --run WORKER_RUN_ID --by ivo
@@ -691,21 +698,23 @@ tinysdd status
 tinysdd next
 ```
 
-`task apply` copies the run's allowed files by content, not by patch, so it also
-works for a `--base-run` revision, whose `patch.diff` is a delta against the prior
-candidate. It follows the revision lineage back to the first run and applies only
-the paths those runs recorded as changed. It refuses with `APPLY_CONFLICT`,
-writing nothing, when one of those project files no longer matches the state the
-lineage started from. A file that already equals the candidate (for example
-applied by hand) is recorded as `already-applied`. It refuses a run of another
-task, a benchmark replay, a run with scope violations and a run whose outcome is
-not `completed` (a timed-out one included), with no override. It also refuses,
-with `APPLY_CHANGES_TASK_INPUT` and nothing written, a run that would rewrite the
-task's own brief, context manifest or checks manifest when those are in `--allow`:
-the approval they were dispatched under would go stale. The run is recorded
-under `applied` in `status --json`, and an accepting review adds `appliedFromRun`,
-with `identical: false` when any allowed file differs from what apply left, not
-only the files the run changed. Applying is not verification or acceptance.
+`task apply` copies every retained eligible actual file by content, not by patch,
+so it also works for a `--base-run` revision, whose `patch.diff` is a delta against
+the prior candidate. It follows the revision lineage back to the first run and
+applies only the complete paths and before/after identities those runs recorded.
+It refuses with `APPLY_CONFLICT`, writing nothing, when one of those project files
+no longer matches the state the lineage started from. A file that already equals
+the candidate (for example applied by hand) is recorded as `already-applied`. It
+refuses missing or tampered snapshot/inventory proof, protected or otherwise
+ineligible changes, a run of another task, a benchmark replay, a run with scope
+violations and a run whose outcome is not `completed` (a timed-out one included),
+with no override. It also refuses, with `APPLY_CHANGES_TASK_INPUT` and nothing
+written, a run that would rewrite the task's own brief, context manifest, checks
+manifest or preparation input: the approval they were dispatched under would go
+stale. The run is recorded under `applied` in `status --json`, and an accepting
+review adds `appliedFromRun`, with `identical: false` when any planned or actual
+candidate file differs from what apply left. Applying is not verification or
+acceptance.
 It also refuses with `RUN_APPROVAL_MISMATCH` when the final run packet was dispatched under a different approval digest; dispatch a fresh run after re-approval.
 
 After an apply the approval keeps binding the context the worker started from:

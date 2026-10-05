@@ -53,8 +53,9 @@ Everything else can run in parallel. "Notes" means the issue has an
 1. #36 `run_checks` Pi extension: needs notes; #26's runner (`src/check-runner.mjs`)
    is on `main`. Include:
    - writing `checks.jsonl`, which #26 deliberately left to the caller;
-   - refusing a dependency mount that overlaps the task's allowlist, because
-     the read-only mount would hide the worker's edits;
+   - refusing a dependency mount that overlaps an expected task path, because
+     the read-only mount would hide the worker's edits; the mount remains a
+     read-only dependency boundary for all candidate changes;
    - mapping #12's project-relative mounts onto the runner's
      `{ source, target }` shape.
 2. #42 and #43 follow #36. #43 option 2 needs the extension; #42 also needs #23.
