@@ -9,7 +9,9 @@ import {
   readdir,
   realpath,
   symlink,
+  unlink,
   writeFile,
+  rename,
 } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,6 +38,7 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_BUNDLE_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_BUNDLE_FILES = workerCaptureLimits.MAX_COPY_FILES;
 const MAX_CAPTURE_METADATA_BYTES = 8 * 1024 * 1024;
+const MAX_CALLER_CLAIMS_BYTES = 128 * 1024;
 const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const UNKNOWN = 'UNKNOWN';
 
@@ -370,6 +373,35 @@ function completionRecord(value) {
   return { completed: value, source: 'caller-declared' };
 }
 
+function validateCallerClaims(value) {
+  if (value !== undefined && (typeof value !== 'string' || Buffer.byteLength(value) > MAX_CALLER_CLAIMS_BYTES)) {
+    captureError('HARNESS_CLAIM_LIMIT', 'callerClaims must be bounded text');
+  }
+  return value;
+}
+
+function assertBeginBinding(capture, binding, captureBytes) {
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)
+    || binding.schemaVersion !== HARNESS_CAPTURE_SCHEMA_VERSION
+    || binding.kind !== 'tinysdd-harness-binding'
+    || binding.runId !== capture.runId
+    || typeof binding.sessionId !== 'string'
+    || typeof binding.captureSha256 !== 'string') {
+    captureError('HARNESS_CAPTURE_INVALID', `run ${capture.runId} has an invalid begin binding`);
+  }
+  if (sha256(captureBytes) !== binding.captureSha256
+    || binding.sessionId !== capture.sessionId
+    || binding.taskId !== capture.taskId
+    || stableStringify(binding.source) !== stableStringify(capture.project)
+    || stableStringify(binding.candidate) !== stableStringify(capture.candidate)
+    || stableStringify(binding.bundle) !== stableStringify(capture.bundle)
+    || binding.packetSha256 !== capture.packetSha256
+    || binding.beforeSnapshotSha256 !== capture.beforeSnapshotSha256) {
+    captureError('HARNESS_CAPTURE_INVALID', `run ${capture.runId} capture metadata no longer matches its begin binding`);
+  }
+  return binding;
+}
+
 async function loadCapture(projectRoot, runId) {
   const artifactDir = resolve(projectRoot, '.tinysdd', 'runs', safeRunId(runId));
   await assertNoSymlinkPath(artifactDir, { allowMissing: false, requireDirectory: true });
@@ -380,8 +412,27 @@ async function loadCapture(projectRoot, runId) {
   }
   const result = await lstatIfPresent(join(artifactDir, 'result.json'));
   if (result) captureError('HARNESS_ALREADY_FINALIZED', `run ${runId} already has a final result`, { runId });
+  const bindingRead = await boundedJson(join(artifactDir, 'begin-binding.json'), 'begin-binding.json');
+  const binding = assertBeginBinding(capture, bindingRead.value, captureRead.bytes);
   if (!capture.candidate?.path || !capture.bundle?.path || !capture.project?.root) captureError('HARNESS_CAPTURE_INVALID', `run ${runId} lacks immutable path identities`);
-  return { artifactDir, capture };
+  return { artifactDir, capture, binding };
+}
+
+async function acquireFinalizationLock(artifactDir, runId) {
+  const path = join(artifactDir, 'finalization.lock');
+  try {
+    await writeFile(path, jsonBytes({ schemaVersion: HARNESS_CAPTURE_SCHEMA_VERSION, runId, acquiredAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error?.code === 'EEXIST') captureError('HARNESS_FINALIZATION_IN_PROGRESS', `run ${runId} is already being finalized`, { runId });
+    throw error;
+  }
+  return path;
+}
+
+async function releaseFinalizationLock(path) {
+  await unlink(path).catch((error) => {
+    if (error?.code !== 'ENOENT') throw error;
+  });
 }
 
 async function ensureBundleIdentity(bundlePath, expected, label) {
@@ -398,6 +449,31 @@ async function captureSourceCheck(projectRoot, artifactDir) {
   const copy = await copyProjectTree(projectRoot, sourceCheck, { useGit: true });
   const snapshot = await snapshotTree(sourceCheck);
   return { sourceCheck, copy, snapshot };
+}
+
+async function stageFinalizeDirectory(artifactDir) {
+  return mkdtemp(join(artifactDir, '.finalize-'));
+}
+
+async function commitStagedDirectory(stagedPath, finalPath, expectedSnapshot, label) {
+  const existing = await lstatIfPresent(finalPath);
+  if (existing) {
+    if (!existing.isDirectory() || existing.isSymbolicLink()) captureError('HARNESS_CAPTURE_STALE', `${label} already exists with the wrong type`);
+    const actual = await snapshotTree(finalPath);
+    if (stableStringify(actual) !== stableStringify(expectedSnapshot)) captureError('HARNESS_CAPTURE_STALE', `${label} already exists with different contents`);
+    return;
+  }
+  await rename(stagedPath, finalPath);
+}
+
+async function commitStagedJson(stagedPath, finalPath, expectedValue, label) {
+  const existing = await lstatIfPresent(finalPath);
+  if (existing) {
+    const actual = await boundedJson(finalPath, label);
+    if (stableStringify(actual.value) !== stableStringify(expectedValue)) captureError('HARNESS_CAPTURE_STALE', `${label} already exists with different contents`);
+    return;
+  }
+  await rename(stagedPath, finalPath);
 }
 
 async function retainBundle(bundle, artifactDir) {
@@ -480,7 +556,7 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
     usage: UNKNOWN,
     session: { id: sessionId, status: 'open', source: 'host capture' },
   });
-  await writeJsonExclusive(join(artifactDir, 'capture.json'), {
+  const capture = {
     schemaVersion: HARNESS_CAPTURE_SCHEMA_VERSION,
     kind: 'tinysdd-harness-capture',
     runId,
@@ -496,6 +572,21 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
     copy: copySummary,
     packetSha256: bundle.packetSha256,
     beforeSnapshotSha256: sha256(jsonBytes(before)),
+  };
+  const captureBytes = jsonBytes(capture);
+  await writeExclusive(join(artifactDir, 'capture.json'), captureBytes);
+  await writeJsonExclusive(join(artifactDir, 'begin-binding.json'), {
+    schemaVersion: HARNESS_CAPTURE_SCHEMA_VERSION,
+    kind: 'tinysdd-harness-binding',
+    runId,
+    taskId: packet.taskId,
+    sessionId,
+    source: capture.project,
+    candidate: capture.candidate,
+    bundle: capture.bundle,
+    packetSha256: capture.packetSha256,
+    beforeSnapshotSha256: capture.beforeSnapshotSha256,
+    captureSha256: sha256(captureBytes),
   });
   return {
     schemaVersion: HARNESS_CAPTURE_SCHEMA_VERSION,
@@ -507,6 +598,7 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
     artifactDir,
     candidatePath,
     packetPath: join(artifactDir, 'packet.json'),
+    beginBindingPath: join(artifactDir, 'begin-binding.json'),
     workspaceBefore: beforeArtifact,
     beforeSnapshotPath: join(artifactDir, 'before-snapshot.json'),
     runtimePath: join(artifactDir, 'runtime.json'),
@@ -518,140 +610,156 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
  * No checks, model calls, or arbitrary commands are run here.
  */
 export async function finalizeHarnessCapture({ projectRoot, runId, completed, callerClaims = undefined } = {}) {
-  const root = await canonicalProjectRoot(projectRoot);
   const completion = completionRecord(completed);
+  validateCallerClaims(callerClaims);
+  const root = await canonicalProjectRoot(projectRoot);
   const loaded = await loadCapture(root, runId);
-  const { artifactDir, capture } = loaded;
-  const source = await directoryIdentity(root, 'source project');
-  if (source.realpath !== capture.project.root || source.dev !== capture.project.dev || source.ino !== capture.project.ino) {
-    captureError('HARNESS_SOURCE_CHANGED', 'source project identity changed since capture began', { expected: capture.project, actual: source });
-  }
-  const candidate = await assertIdentity(capture.candidate.path, capture.candidate, 'candidate');
-  await ensureBundleIdentity(capture.bundle.path, capture.bundle, 'bundle directory');
-  const bundle = await readBundle(capture.bundle.path);
-  if (bundle.manifestSha256 !== capture.bundle.manifestSha256 || bundle.packetSha256 !== capture.bundle.packetSha256) {
-    captureError('HARNESS_BUNDLE_CHANGED', 'bundle bytes changed since capture began');
-  }
-  await verifyRetainedBundle(capture.bundle.retainedPath, bundle);
-  const packetBytes = await boundedBytes(join(artifactDir, 'packet.json'), { maxBytes: MAX_BUNDLE_FILE_BYTES, label: 'retained packet.json' });
-  if (sha256(packetBytes) !== capture.packetSha256 || !packetBytes.equals(bundle.packetBytes)) captureError('HARNESS_BUNDLE_CHANGED', 'retained approval packet changed');
-  const packet = await currentPacket(root, bundle.packet, capture.packetSha256);
-  await verifyCheckoutSnapshot(root, bundle.manifest.checkoutSnapshot, 'bundle checkoutSnapshot');
-  const beforeRead = await boundedJson(join(artifactDir, 'before-snapshot.json'), 'before-snapshot.json');
-  const before = beforeRead.value;
-  if (sha256(beforeRead.bytes) !== capture.beforeSnapshotSha256) captureError('HARNESS_CAPTURE_INVALID', 'retained baseline snapshot changed');
-  const sourceCurrent = await captureSourceCheck(root, artifactDir);
-  if (stableStringify(sourceCurrent.snapshot) !== stableStringify(before)) {
-    captureError('HARNESS_SOURCE_CHANGED', 'source project files changed since capture began');
-  }
-  const aliases = await detectFilesystemAliases(root);
-  if (stableStringify(aliases) !== stableStringify(capture.filesystemAliases)) {
-    captureError('HARNESS_SOURCE_CHANGED', 'source-derived filesystem alias behavior changed since capture began');
-  }
-  const after = await snapshotTree(capture.candidate.path);
-  const afterArtifact = join(artifactDir, 'workspace-after');
-  await retainCandidateTree(capture.candidate.path, afterArtifact);
-  const retainedAfter = await snapshotTree(afterArtifact);
-  if (stableStringify(after) !== stableStringify(retainedAfter)) captureError('HARNESS_CAPTURE_STALE', 'candidate changed while being retained');
-  await writeJsonExclusive(join(artifactDir, 'after-snapshot.json'), after);
-  let dependencyMounts = [];
-  if (packet.checks?.text !== undefined) {
-    try {
-      dependencyMounts = parseChecksManifest(packet.checks.text).dependencyMounts;
-    } catch (error) {
-      captureError('HARNESS_BUNDLE_INVALID', `approved checks manifest is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  const { artifactDir, capture, binding } = loaded;
+  const lockPath = await acquireFinalizationLock(artifactDir, runId);
+  try {
+    if (await lstatIfPresent(join(artifactDir, 'result.json'))) {
+      captureError('HARNESS_ALREADY_FINALIZED', `run ${runId} already has a final result`, { runId });
     }
+    const source = await directoryIdentity(root, 'source project');
+    if (source.realpath !== binding.source.root || source.dev !== binding.source.dev || source.ino !== binding.source.ino) {
+      captureError('HARNESS_SOURCE_CHANGED', 'source project identity changed since capture began', { expected: binding.source, actual: source });
+    }
+    const candidate = await assertIdentity(binding.candidate.path, binding.candidate, 'candidate');
+    await ensureBundleIdentity(binding.bundle.path, binding.bundle, 'bundle directory');
+    const bundle = await readBundle(binding.bundle.path);
+    if (bundle.manifestSha256 !== binding.bundle.manifestSha256 || bundle.packetSha256 !== binding.bundle.packetSha256) {
+      captureError('HARNESS_BUNDLE_CHANGED', 'bundle bytes changed since capture began');
+    }
+    await verifyRetainedBundle(binding.bundle.retainedPath, bundle);
+    const packetBytes = await boundedBytes(join(artifactDir, 'packet.json'), { maxBytes: MAX_BUNDLE_FILE_BYTES, label: 'retained packet.json' });
+    if (sha256(packetBytes) !== binding.packetSha256 || !packetBytes.equals(bundle.packetBytes)) captureError('HARNESS_BUNDLE_CHANGED', 'retained approval packet changed');
+    const packet = await currentPacket(root, bundle.packet, binding.packetSha256);
+    await verifyCheckoutSnapshot(root, bundle.manifest.checkoutSnapshot, 'bundle checkoutSnapshot');
+    const beforeRead = await boundedJson(join(artifactDir, 'before-snapshot.json'), 'before-snapshot.json');
+    const before = beforeRead.value;
+    if (sha256(beforeRead.bytes) !== binding.beforeSnapshotSha256) captureError('HARNESS_CAPTURE_INVALID', 'retained baseline snapshot changed');
+    const aliases = await detectFilesystemAliases(root);
+    if (stableStringify(aliases) !== stableStringify(capture.filesystemAliases)) {
+      captureError('HARNESS_SOURCE_CHANGED', 'source-derived filesystem alias behavior changed since capture began');
+    }
+
+    const stagingDir = await stageFinalizeDirectory(artifactDir);
+    const sourceCurrent = await captureSourceCheck(root, stagingDir);
+    if (stableStringify(sourceCurrent.snapshot) !== stableStringify(before)) {
+      captureError('HARNESS_SOURCE_CHANGED', 'source project files changed since capture began');
+    }
+    const after = await snapshotTree(binding.candidate.path);
+    const stagedAfter = join(stagingDir, 'workspace-after');
+    await retainCandidateTree(binding.candidate.path, stagedAfter);
+    const retainedAfter = await snapshotTree(stagedAfter);
+    if (stableStringify(after) !== stableStringify(retainedAfter)) captureError('HARNESS_CAPTURE_STALE', 'candidate changed while being retained');
+    const stagedAfterSnapshot = join(stagingDir, 'after-snapshot.json');
+    await writeJsonExclusive(stagedAfterSnapshot, after);
+    let dependencyMounts = [];
+    if (packet.checks?.text !== undefined) {
+      try {
+        dependencyMounts = parseChecksManifest(packet.checks.text).dependencyMounts;
+      } catch (error) {
+        captureError('HARNESS_BUNDLE_INVALID', `approved checks manifest is invalid: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const changes = changedFiles(before, after).map((change) => ({ ...change, path: change.path.replaceAll('\\', '/') }));
+    const violations = changes.map((change) => classifyFileScopeChange(change, {
+      protectedPaths: packet.protectedPaths ?? [],
+      inputPaths: [packet.brief?.path, packet.context?.path, packet.checks?.path].filter(Boolean),
+      preparationPaths: preparationPaths(packet.preparation ?? []),
+      dependencyMounts,
+      caseInsensitive: aliases.caseInsensitive,
+      unicodeInsensitive: aliases.unicodeInsensitive,
+      filesystemAliases: aliases,
+    })).filter(Boolean);
+    const actualPaths = [...new Set(changes.map(({ path }) => path))].sort();
+    const extraPaths = actualPaths.filter((path) => !(packet.allowedPaths ?? []).includes(path));
+    const model = {
+      id: capture.model.id,
+      source: 'caller-declared',
+      observedId: UNKNOWN,
+      observedSource: 'unobserved',
+    };
+    const finalWorkspaceAfter = join(artifactDir, 'workspace-after');
+    const finalAfterSnapshot = join(artifactDir, 'after-snapshot.json');
+    const result = {
+      schemaVersion: 1,
+      runId,
+      taskId: packet.taskId,
+      runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
+      harness: { id: capture.harness.id, source: 'caller-declared' },
+      model,
+      completion,
+      outcome: completion.completed ? 'completed' : 'incomplete',
+      runChecks: { declared: Boolean(packet.checks), available: false, status: 'unrun', source: 'foreign harness' },
+      taskShape: { allowedFiles: packet.allowedPaths.length },
+      fileScope: {
+        mode: 'ordinary-create-modify',
+        plannedPaths: [...packet.allowedPaths],
+        actualPaths,
+        extraPaths,
+        ordinaryCreateModify: true,
+        deletions: false,
+      },
+      workspaceCopy: capture.copy,
+      changedPaths: changes,
+      scopeViolations: violations,
+      observed: {
+        processTermination: { observed: false, status: UNKNOWN, source: 'foreign harness not observed' },
+        assistantTermination: { observed: false, status: UNKNOWN, source: 'foreign harness not observed' },
+        usage: UNKNOWN,
+        usageScope: UNKNOWN,
+        cumulativeUsage: UNKNOWN,
+        checks: 'unrun',
+        sandbox: UNKNOWN,
+        rawOutputBytes: UNKNOWN,
+      },
+      artifactPaths: {
+        directory: artifactDir,
+        capture: join(artifactDir, 'capture.json'),
+        bundle: binding.bundle.retainedPath,
+        bundleSource: binding.bundle.path,
+        packet: join(artifactDir, 'packet.json'),
+        runtime: join(artifactDir, 'runtime.json'),
+        beforeSnapshot: join(artifactDir, 'before-snapshot.json'),
+        afterSnapshot: finalAfterSnapshot,
+        sourceCurrent: join(artifactDir, 'source-current'),
+        workspaceBefore: join(artifactDir, 'workspace-before'),
+        workspaceAfter: finalWorkspaceAfter,
+        candidate: binding.candidate.path,
+      },
+      patch: { available: false, reason: 'foreign harness capture does not execute git' },
+      modelClaims: {
+        observed: false,
+        source: 'caller-declared unverified harness claim',
+        unverified: true,
+        ...(callerClaims === undefined ? { text: null } : { text: String(callerClaims) }),
+      },
+      warnings: [
+        'Foreign harness output is not TinySDD verification or acceptance evidence.',
+        'Model identity is caller-declared; observed model identity is UNKNOWN.',
+        'Usage and sandbox behavior are UNKNOWN; checks were not run by TinySDD.',
+        ...(violations.length > 0 ? ['Candidate contains retained file-scope violations.'] : []),
+        ...(!completion.completed ? ['Caller declared the foreign session incomplete.'] : []),
+      ],
+    };
+    const finalization = {
+      schemaVersion: HARNESS_CAPTURE_SCHEMA_VERSION,
+      runId,
+      finalizedAt: new Date().toISOString(),
+      completion,
+      resultSha256: sha256(jsonBytes(result)),
+      candidate: { ...candidate },
+      afterSnapshotSha256: sha256(jsonBytes(after)),
+    };
+    await commitStagedDirectory(sourceCurrent.sourceCheck, join(artifactDir, 'source-current'), sourceCurrent.snapshot, 'source-current');
+    await commitStagedDirectory(stagedAfter, finalWorkspaceAfter, after, 'workspace-after');
+    await commitStagedJson(stagedAfterSnapshot, finalAfterSnapshot, after, 'after-snapshot.json');
+    await writeJsonExclusive(join(artifactDir, 'result.json'), result);
+    await writeJsonExclusive(join(artifactDir, 'finalization.json'), finalization);
+    return result;
+  } finally {
+    await releaseFinalizationLock(lockPath);
   }
-  const changes = changedFiles(before, after).map((change) => ({ ...change, path: change.path.replaceAll('\\', '/') }));
-  const violations = changes.map((change) => classifyFileScopeChange(change, {
-    protectedPaths: packet.protectedPaths ?? [],
-    inputPaths: [packet.brief?.path, packet.context?.path, packet.checks?.path].filter(Boolean),
-    preparationPaths: preparationPaths(packet.preparation ?? []),
-    dependencyMounts,
-    caseInsensitive: aliases.caseInsensitive,
-    unicodeInsensitive: aliases.unicodeInsensitive,
-    filesystemAliases: aliases,
-  })).filter(Boolean);
-  const actualPaths = [...new Set(changes.map(({ path }) => path))].sort();
-  const extraPaths = actualPaths.filter((path) => !(packet.allowedPaths ?? []).includes(path));
-  if (callerClaims !== undefined && (typeof callerClaims !== 'string' || Buffer.byteLength(callerClaims) > 128 * 1024)) {
-    captureError('HARNESS_CLAIM_LIMIT', 'callerClaims must be bounded text');
-  }
-  const model = {
-    id: capture.model.id,
-    source: 'caller-declared',
-    observedId: UNKNOWN,
-    observedSource: 'unobserved',
-  };
-  const result = {
-    schemaVersion: 1,
-    runId,
-    taskId: packet.taskId,
-    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
-    harness: { id: capture.harness.id, source: 'caller-declared' },
-    model,
-    completion,
-    outcome: completion.completed ? 'completed' : 'incomplete',
-    runChecks: { declared: Boolean(packet.checks), available: false, status: 'unrun', source: 'foreign harness' },
-    taskShape: { allowedFiles: packet.allowedPaths.length },
-    fileScope: {
-      mode: 'ordinary-create-modify',
-      plannedPaths: [...packet.allowedPaths],
-      actualPaths,
-      extraPaths,
-      ordinaryCreateModify: true,
-      deletions: false,
-    },
-    workspaceCopy: capture.copy,
-    changedPaths: changes,
-    scopeViolations: violations,
-    observed: {
-      processTermination: { observed: false, status: UNKNOWN, source: 'foreign harness not observed' },
-      assistantTermination: { observed: false, status: UNKNOWN, source: 'foreign harness not observed' },
-      usage: UNKNOWN,
-      usageScope: UNKNOWN,
-      cumulativeUsage: UNKNOWN,
-      checks: 'unrun',
-      sandbox: UNKNOWN,
-      rawOutputBytes: UNKNOWN,
-    },
-    artifactPaths: {
-      directory: artifactDir,
-      capture: join(artifactDir, 'capture.json'),
-      bundle: capture.bundle.retainedPath,
-      bundleSource: capture.bundle.path,
-      packet: join(artifactDir, 'packet.json'),
-      runtime: join(artifactDir, 'runtime.json'),
-      beforeSnapshot: join(artifactDir, 'before-snapshot.json'),
-      afterSnapshot: join(artifactDir, 'after-snapshot.json'),
-      workspaceBefore: join(artifactDir, 'workspace-before'),
-      workspaceAfter: afterArtifact,
-      candidate: capture.candidate.path,
-    },
-    patch: { available: false, reason: 'foreign harness capture does not execute git' },
-    modelClaims: {
-      observed: false,
-      source: 'caller-declared unverified harness claim',
-      unverified: true,
-      ...(callerClaims === undefined ? { text: null } : { text: String(callerClaims) }),
-    },
-    warnings: [
-      'Foreign harness output is not TinySDD verification or acceptance evidence.',
-      'Model identity is caller-declared; observed model identity is UNKNOWN.',
-      'Usage and sandbox behavior are UNKNOWN; checks were not run by TinySDD.',
-      ...(violations.length > 0 ? ['Candidate contains retained file-scope violations.'] : []),
-      ...(!completion.completed ? ['Caller declared the foreign session incomplete.'] : []),
-    ],
-  };
-  await writeJsonExclusive(join(artifactDir, 'result.json'), result);
-  await writeJsonExclusive(join(artifactDir, 'finalization.json'), {
-    schemaVersion: HARNESS_CAPTURE_SCHEMA_VERSION,
-    runId,
-    finalizedAt: new Date().toISOString(),
-    completion,
-    resultSha256: sha256(jsonBytes(result)),
-    candidate: { ...candidate },
-    afterSnapshotSha256: sha256(jsonBytes(after)),
-  });
-  return result;
 }

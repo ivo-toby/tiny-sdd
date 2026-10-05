@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -106,3 +106,71 @@ test('incomplete foreign sessions retain evidence but cannot apply', async () =>
   }
 });
 
+test('begin binding rejects capture metadata substitution and exact restoration remains usable', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const capturePath = join(begin.artifactDir, 'capture.json');
+    const originalCapture = await readFile(capturePath);
+    const foreign = await mkdtemp(join(external, 'foreign-'));
+    await cp(begin.candidatePath, foreign, { recursive: true });
+    const foreignIdentity = await lstat(foreign);
+    const tampered = JSON.parse(originalCapture);
+    tampered.candidate = { path: foreign, realpath: foreign, dev: foreignIdentity.dev, ino: foreignIdentity.ino };
+    await writeFile(capturePath, JSON.stringify(tampered));
+    await assert.rejects(
+      finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }),
+      { code: 'HARNESS_CAPTURE_INVALID' },
+    );
+    await writeFile(capturePath, originalCapture);
+    await writeFile(join(begin.candidatePath, 'ordinary-extra.mjs'), 'export const restored = 31;\n');
+    const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true });
+    assert.deepEqual(result.scopeViolations, []);
+    assert.deepEqual(result.fileScope.actualPaths, ['ordinary-extra.mjs']);
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('oversized caller claims fail before outputs and a bounded retry finalizes', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    await assert.rejects(
+      finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true, callerClaims: 'x'.repeat(128 * 1024 + 1) }),
+      { code: 'HARNESS_CLAIM_LIMIT' },
+    );
+    await assert.rejects(readFile(join(begin.artifactDir, 'source-current')));
+    await assert.rejects(readFile(join(begin.artifactDir, 'workspace-after')));
+    await assert.rejects(readFile(join(begin.artifactDir, 'after-snapshot.json')));
+    const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true, callerClaims: 'bounded' });
+    assert.equal(result.modelClaims.text, 'bounded');
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('concurrent finalization returns a structured state instead of an output collision', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const attempts = await Promise.allSettled([
+      finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }),
+      finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }),
+    ]);
+    const failures = attempts.filter((attempt) => attempt.status === 'rejected').map((attempt) => attempt.reason.code);
+    assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
+    assert.ok(failures.every((code) => ['HARNESS_FINALIZATION_IN_PROGRESS', 'HARNESS_ALREADY_FINALIZED'].includes(code)));
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
