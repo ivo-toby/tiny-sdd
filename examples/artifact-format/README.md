@@ -47,6 +47,7 @@ Repeat the copy and registration in the topological order printed by the plan;
 the explicit paths preserve byte identity. Carry every `allow`, `protect` and
 `dependsOn` value from the plan; pass dependencies with `--depends-on`.
 
-The exporter additionally requires six currently registered and freshly
-approved controller tasks. It writes a new bundle outside the checkout and
-never runs the feature or slice checks.
+The exporter requires the selected slice task and any accepted dependencies to
+be currently registered and freshly approved. Unrelated draft or missing tasks
+do not block a selected slice export. It writes a new bundle outside the
+checkout and never runs the feature or slice checks.
