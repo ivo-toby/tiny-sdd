@@ -251,6 +251,9 @@ tinysdd phase advance --from research --to plan --feature reservations \
   --by operator --reason 'Research is current and complete'
 ```
 
+Phase status always names one feature; TinySDD does not merge independent
+features into an aggregate approval view.
+
 Only the configured `human` research handler is available in this increment;
 frontier, deterministic and automatic handlers report unavailable. If research
 qualification is configured, its named producer must currently be qualified

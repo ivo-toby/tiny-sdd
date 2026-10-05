@@ -76,7 +76,7 @@ Usage:
   tinysdd [--json] [--project PATH] feature accept --feature NAME --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] feature report --feature NAME
   tinysdd [--json] [--project PATH] phase record|research --phase research --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID]
-  tinysdd [--json] [--project PATH] phase status [--feature NAME]
+  tinysdd [--json] [--project PATH] phase status --feature NAME
   tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID]
 
 Usage phases: specify, research, plan, slice, write-tests, review, rescue.
@@ -859,7 +859,7 @@ async function run(argv) {
     presentation = 'phase-record';
   }
   else if (parsed.command === 'phase' && parsed.subcommand === 'status') {
-    data = await phaseStatus(project, { feature: parsed.values.feature, worker: parsed.values.worker });
+    data = await phaseStatus(project, { feature: requiredOption(parsed.values, 'feature'), worker: parsed.values.worker });
     presentation = 'phase-status';
   }
   else if (parsed.command === 'phase' && parsed.subcommand === 'advance') {

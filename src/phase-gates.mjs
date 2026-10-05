@@ -1046,13 +1046,14 @@ export async function advancePhase(projectRoot, options = {}) {
 
 /** Read phase state without writing a decision or inferring one. */
 export async function phaseStatus(projectRoot, options = {}) {
+  if (options.feature === undefined) throw tinyError('PHASE_FEATURE_REQUIRED', 'phase status requires an explicit feature');
   const root = await canonicalProjectRoot(projectRoot);
-  const feature = options.feature === undefined ? undefined : identifier(options.feature, 'feature', FEATURE_PATTERN);
+  const feature = identifier(options.feature, 'feature', FEATURE_PATTERN);
   const policy = options.policy === undefined ? undefined : validatePhasePolicy(options.policy);
   const { lock } = await checkedLedgerPaths(root);
   return withExclusiveLock(lock, async () => {
     const records = await readVerifiedRecordsUnlocked(root);
-    const selected = feature === undefined ? records : records.filter((record) => record.feature === feature);
+    const selected = records.filter((record) => record.feature === feature);
     const byPhase = Object.fromEntries(PHASES.map((name) => [name, { configured: policy?.[name] !== undefined, status: 'pending', record: null }]));
     for (const record of selected) {
       const current = byPhase[record.phase];
@@ -1089,7 +1090,7 @@ export async function phaseStatus(projectRoot, options = {}) {
     }
     const result = {
       phaseSchemaVersion: PHASE_LEDGER_SCHEMA_VERSION,
-      ...(feature === undefined ? {} : { feature }),
+      feature,
       policy: policy === undefined ? null : structuredClone(policy),
       phases: byPhase,
       records: selected,

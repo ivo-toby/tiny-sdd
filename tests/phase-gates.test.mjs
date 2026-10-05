@@ -134,6 +134,29 @@ test('records research, survives a fresh read, and advances only through an expl
   }
 });
 
+test('phase status requires a feature and keeps independent feature states separate', async () => {
+  const root = await project();
+  try {
+    await research(root, { feature: 'feature-one' });
+    await advancePhase(root, { feature: 'feature-one', by: 'operator', reason: 'enter planning' });
+    await writeFile(join(root, 'docs', 'second-proposal.md'), '# Second research proposal\n');
+    await research(root, { feature: 'feature-two', proposal: 'docs/second-proposal.md' });
+    await advancePhase(root, { feature: 'feature-two', by: 'operator', reason: 'enter planning' });
+    await writeFile(join(root, 'docs', 'proposal.md'), '# Changed first proposal\n');
+    const first = await phaseStatus(root, { feature: 'feature-one' });
+    const second = await phaseStatus(root, { feature: 'feature-two' });
+    assert.equal(first.feature, 'feature-one');
+    assert.equal(first.phases.research.status, 'stale');
+    assert.equal(first.phases.plan.status, 'stale');
+    assert.equal(second.feature, 'feature-two');
+    assert.equal(second.phases.research.status, 'approved');
+    assert.equal(second.phases.plan.status, 'entered');
+    await assert.rejects(phaseStatus(root), { code: 'PHASE_FEATURE_REQUIRED' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('uncited source edits keep research fresh while cited edits stale research and its plan transition', async () => {
   const root = await project();
   try {
@@ -352,6 +375,8 @@ test('CLI phase commands return one JSON object and keep human output short', as
     const status = await exec(process.execPath, [bin, '--project', root, 'phase', 'status', '--feature', 'feature-one']);
     assert.match(status.stdout, /research: approved/u);
     assert.equal(status.stderr, '');
+    const missingFeature = await exec(process.execPath, [bin, '--project', root, 'phase', 'status']).catch((error) => error);
+    assert.match(missingFeature.stderr, /--feature requires a value/u);
   } finally {
     await cleanup(root);
   }

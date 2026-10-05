@@ -162,6 +162,9 @@ tinysdd phase advance --from research --to plan --feature reservations \
   --by operator --reason 'Research is current and complete'
 ```
 
+Phase status requires an explicit feature; independent features are reported
+separately and are never folded into an aggregate approval view.
+
 Research records retain bounded proposal and manifest references plus exact
 compiled cited excerpts. The record becomes stale when cited content, inputs,
 policy, configured predecessor, or named producer qualification changes.
