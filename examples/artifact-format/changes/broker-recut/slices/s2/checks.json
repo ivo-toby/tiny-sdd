@@ -1,0 +1,1 @@
+{"schemaVersion":1,"dependencyMounts":[],"checks":[{"id":"s2-check","argv":["node","examples/artifact-format/tests/s2-paths.test.mjs"],"timeoutMs":120000,"criteria":["C1"]}]}

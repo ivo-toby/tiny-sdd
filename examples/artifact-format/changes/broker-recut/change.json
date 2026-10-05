@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "broker-recut",
+  "proposal": "examples/artifact-format/changes/broker-recut/proposal.md",
+  "design": "examples/artifact-format/changes/broker-recut/design.md",
+  "specDeltas": ["examples/artifact-format/changes/broker-recut/deltas/broker.json"],
+  "slices": [
+    "examples/artifact-format/changes/broker-recut/slices/s1/slice.json",
+    "examples/artifact-format/changes/broker-recut/slices/s2/slice.json",
+    "examples/artifact-format/changes/broker-recut/slices/s3/slice.json",
+    "examples/artifact-format/changes/broker-recut/slices/s4/slice.json",
+    "examples/artifact-format/changes/broker-recut/slices/s5a/slice.json",
+    "examples/artifact-format/changes/broker-recut/slices/s5b/slice.json"
+  ],
+  "budget": {
+    "maxImplementationFiles": 2,
+    "maxSliceTestFiles": 1,
+    "maxCompiledContextBytes": 65536
+  },
+  "featureTests": ["examples/artifact-format/tests/feature-integration.test.mjs"],
+  "featureChecks": "examples/artifact-format/changes/broker-recut/feature-checks.json",
+  "integration": [
+    {
+      "id": "broker-real-entrypoint",
+      "requirementIds": [
+        "broker-s1-errors",
+        "broker-s2-paths",
+        "broker-s3-backend",
+        "broker-s4-allowlist",
+        "broker-s5a-core",
+        "broker-s5b-async"
+      ],
+      "entrypoints": ["examples/artifact-format/src/entrypoint.mjs"],
+      "wiringSlice": "broker-s5a",
+      "testPaths": ["examples/artifact-format/tests/feature-integration.test.mjs"],
+      "checkIds": ["feature-entrypoint"]
+    }
+  ]
+}

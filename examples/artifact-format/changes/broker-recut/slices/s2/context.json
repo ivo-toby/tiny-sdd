@@ -1,0 +1,1 @@
+{"schemaVersion":1,"facts":["Keep path validation at the broker boundary."],"resources":[{"path":"examples/artifact-format/src/entrypoint.mjs","startLine":1,"endLine":16,"purpose":"Real broker entrypoint used by the protected feature check."}]}

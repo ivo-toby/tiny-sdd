@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "broker-s1",
+  "brief": "examples/artifact-format/changes/broker-recut/slices/s1/brief.md",
+  "context": "examples/artifact-format/changes/broker-recut/slices/s1/context.json",
+  "checks": "examples/artifact-format/changes/broker-recut/slices/s1/checks.json",
+  "implementationFiles": ["examples/artifact-format/src/s1-errors.mjs"],
+  "sliceTests": ["examples/artifact-format/tests/s1-errors.test.mjs"],
+  "protect": ["examples/artifact-format/tests/feature-integration.test.mjs"],
+  "interfaces": ["examples/artifact-format/src/entrypoint.mjs"],
+  "dependsOn": [],
+  "budget": {"maxImplementationFiles": null, "maxSliceTestFiles": null, "maxCompiledContextBytes": null},
+  "openDecisions": [],
+  "testReview": {
+    "schemaVersion": 1,
+    "workflow": "slice-tests",
+    "criteria": [{"id": "s1-errors", "requirementIds": ["broker-s1-errors"], "question": "Does the writable test establish the invalid lease error contract at the cited caller boundary?", "interfaces": ["examples/artifact-format/src/entrypoint.mjs"], "testPaths": ["examples/artifact-format/tests/s1-errors.test.mjs"]}]
+  }
+}

@@ -135,6 +135,61 @@ tinysdd next
 tinysdd task packet --id first-change --json
 ```
 
+For a portable change descriptor, validate the preparation artifacts and print
+the topological legacy registration plan without changing controller state:
+
+```sh
+node /absolute/path/to/tiny-sdd/scripts/validate-change.mjs \
+  --project /path/to/project \
+  --change changes/example/change.json \
+  --json
+```
+
+The plan is read-only. Before registering each slice, copy the exact descriptor
+bytes to the fixed task paths shown by the plan, then use those paths for
+`task add` and approval. For example:
+
+```sh
+mkdir -p .tinysdd/tasks
+cp changes/example/slices/s1/brief.md .tinysdd/tasks/s1.md
+cp changes/example/slices/s1/context.json .tinysdd/tasks/s1.context.json
+cp changes/example/slices/s1/checks.json .tinysdd/tasks/s1.checks.json
+tinysdd task add --id s1 --feature example \
+  --brief .tinysdd/tasks/s1.md \
+  --context .tinysdd/tasks/s1.context.json \
+  --checks .tinysdd/tasks/s1.checks.json \
+  --allow src/example.mjs,tests/example.test.mjs \
+  --protect tests/contract.test.mjs
+```
+
+Repeat this materialization in topological order for dependent slices. The
+explicit copy preserves the approved brief, context and checks bytes; carry every
+`allow`, `protect` and `dependsOn` value from the plan, using `--depends-on` for
+dependencies. Validation does not create these controller inputs.
+
+The format keeps protected feature tests separate from writable slice tests,
+checks exact interface citations and records advisory file sizing. The plan and
+bundle report `runtimeScope.mode: "legacy-allowlist"`; current workers and
+apply still enforce the existing task allowlist until issue #82 is implemented.
+An export requires a matching, ready, freshly approved task and writes a new
+bundle outside the checkout. It never runs checks, approves, applies or accepts.
+Choose an existing canonical output parent (resolve `/tmp` first on systems
+where it is an alias); the exporter refuses symlinked output parents.
+
+```sh
+node /absolute/path/to/tiny-sdd/scripts/export-slice.mjs \
+  --project /path/to/project \
+  --change changes/example/change.json \
+  --slice broker-s1 \
+  --out /absolute/canonical/tmp/broker-s1-bundle \
+  --json
+```
+
+The broker fixture under `examples/artifact-format/` is a synthetic S1–S5b
+reconstruction with UNKNOWN historical approval and run evidence. Its protected
+feature check enters through the real fixture entrypoint; it is offline evidence
+for the descriptor tooling, not a Talon, Pi, provider or foreign-harness run.
+
 Create the brief first; the [template](../skills/tinysdd/assets/task-brief.md)
 identifies its useful contents. Use actual approval attribution, not copied
 example text. Allowed paths are exact files, including not-yet-created files;

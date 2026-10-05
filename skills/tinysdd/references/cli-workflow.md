@@ -76,6 +76,44 @@ Attribution and reason must reflect actual authority, not the example text.
 For dependent tasks use `--depends-on validation`. State and review artifacts
 live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
+For a portable change descriptor, validate the bounded preparation and print a
+read-only topological registration plan:
+
+```sh
+node scripts/validate-change.mjs --project /path/to/project \
+  --change changes/example/change.json --json
+```
+
+The validator only prints the plan. For each slice, copy the exact descriptor
+inputs to the fixed paths in that plan before `task add` and approval:
+
+```sh
+mkdir -p .tinysdd/tasks
+cp changes/example/slices/s1/brief.md .tinysdd/tasks/s1.md
+cp changes/example/slices/s1/context.json .tinysdd/tasks/s1.context.json
+cp changes/example/slices/s1/checks.json .tinysdd/tasks/s1.checks.json
+tinysdd task add --id s1 --feature example \
+  --brief .tinysdd/tasks/s1.md --context .tinysdd/tasks/s1.context.json \
+  --checks .tinysdd/tasks/s1.checks.json \
+  --allow src/example.mjs,tests/example.test.mjs --protect tests/contract.test.mjs
+```
+
+Repeat in topological order for dependencies. Copying the bytes explicitly keeps
+the registered packet inputs identical to the approved descriptor files; carry
+every `allow`, `protect` and `dependsOn` value from the plan, using
+`--depends-on` for dependencies. The validator does not create controller files.
+
+The plan reports separate writable slice-test and protected feature-test roles,
+advisory file sizing and the current `runtimeScope`. To export a freshly
+approved slice, use a new directory under an existing canonical parent; the
+exporter checks packet identity and writes no project files or controller state:
+
+```sh
+node scripts/export-slice.mjs --project /path/to/project \
+  --change changes/example/change.json --slice broker-s1 \
+  --out /absolute/canonical/tmp/broker-s1-bundle --json
+```
+
 Use the optional `--feature NAME` label to group slices, then filter the view
 with `status --feature NAME`. Human `status` draws open tasks as a dependency
 tree; `status --json` includes each task's global topological `order` and sorted
