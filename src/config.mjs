@@ -11,6 +11,8 @@ import {
   sha256,
   tinyError,
 } from './fs-utils.mjs';
+import { validatePhasePolicy, validateTestReviewPolicy } from './phase-gates.mjs';
+import { validateFeatureIntegrationConfig } from './feature-integration.mjs';
 
 export const CONFIG_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 300_000;
@@ -194,7 +196,7 @@ function validateQualification(raw, label = 'config.qualification') {
 
 export function validateConfigDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config');
-  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate', 'qualification'], 'CONFIG_INVALID', 'config');
+  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate', 'qualification', 'phaseGates', 'testReview', 'featureIntegration'], 'CONFIG_INVALID', 'config');
   if (raw.schemaVersion !== CONFIG_SCHEMA_VERSION) {
     throw tinyError('CONFIG_INVALID', `config.schemaVersion must be ${CONFIG_SCHEMA_VERSION}`);
   }
@@ -205,25 +207,37 @@ export function validateConfigDocument(raw) {
   }
   const semanticGate = raw.semanticGate === undefined ? undefined : validateSemanticGate(raw.semanticGate);
   const qualification = raw.qualification === undefined ? undefined : validateQualification(raw.qualification);
+  const phaseGates = raw.phaseGates === undefined ? undefined : validatePhasePolicy(raw.phaseGates);
+  const testReview = raw.testReview === undefined ? undefined : validateTestReviewPolicy(raw.testReview);
+  const featureIntegration = raw.featureIntegration === undefined ? undefined : validateFeatureIntegrationConfig(raw.featureIntegration);
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     workers,
     ...(semanticGate === undefined ? {} : { semanticGate }),
     ...(qualification === undefined ? {} : { qualification }),
+    ...(phaseGates === undefined ? {} : { phaseGates }),
+    ...(testReview === undefined ? {} : { testReview }),
+    ...(featureIntegration === undefined ? {} : { featureIntegration }),
   };
 }
 
 export function validateLocalDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config.local');
-  assertExactKeys(raw, ['defaultWorker', 'workers', 'qualification'], 'CONFIG_INVALID', 'config.local');
+  assertExactKeys(raw, ['defaultWorker', 'workers', 'qualification', 'phaseGates', 'testReview', 'featureIntegration'], 'CONFIG_INVALID', 'config.local');
   const workers = raw.workers === undefined ? undefined : validateWorkers(raw.workers, 'config.local.workers');
   const defaultWorker = raw.defaultWorker === undefined ? undefined : assertSafeName(raw.defaultWorker, 'config.local.defaultWorker');
   const qualification = raw.qualification === undefined ? undefined : validateQualification(raw.qualification, 'config.local.qualification');
+  const phaseGates = raw.phaseGates === undefined ? undefined : validatePhasePolicy(raw.phaseGates, 'config.local.phaseGates');
+  const testReview = raw.testReview === undefined ? undefined : validateTestReviewPolicy(raw.testReview, 'config.local.testReview');
+  const featureIntegration = raw.featureIntegration === undefined ? undefined : validateFeatureIntegrationConfig(raw.featureIntegration, 'config.local.featureIntegration');
   return {
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     ...(workers === undefined ? {} : { workers }),
     ...(qualification === undefined ? {} : { qualification }),
+    ...(phaseGates === undefined ? {} : { phaseGates }),
+    ...(testReview === undefined ? {} : { testReview }),
+    ...(featureIntegration === undefined ? {} : { featureIntegration }),
   };
 }
 
@@ -366,6 +380,9 @@ export async function resolveConfig(projectRoot, options = {}) {
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     ...(base.semanticGate === undefined ? {} : { semanticGate: base.semanticGate }),
     ...(local.qualification === undefined && base.qualification === undefined ? {} : { qualification: local.qualification ?? base.qualification }),
+    ...(local.phaseGates === undefined && base.phaseGates === undefined ? {} : { phaseGates: local.phaseGates ?? base.phaseGates }),
+    ...(local.testReview === undefined && base.testReview === undefined ? {} : { testReview: local.testReview ?? base.testReview }),
+    ...(local.featureIntegration === undefined && base.featureIntegration === undefined ? {} : { featureIntegration: local.featureIntegration ?? base.featureIntegration }),
     workers: effectiveWorkers,
   };
   const selectedWorkerName = selectedName ?? defaultWorker;

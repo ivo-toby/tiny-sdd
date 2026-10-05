@@ -142,6 +142,55 @@ tinysdd usage record --phase review --model frontier/model --input 1200 --output
 tinysdd usage report --feature reservations
 ```
 
+The optional phase ledger provides the first end-to-end gate for research. Set
+an explicit policy before recording it:
+
+```json
+{
+  "schemaVersion": 1,
+  "workers": {},
+  "phaseGates": { "research": { "mode": "human" } }
+}
+```
+
+```sh
+tinysdd phase record --phase research --feature reservations \
+  --proposal docs/research-proposal.md --context docs/research.context.json \
+  --by operator --reason 'Reviewed the current research inputs'
+tinysdd phase status --feature reservations
+tinysdd phase advance --from research --to plan --feature reservations \
+  --by operator --reason 'Research is current and complete'
+```
+
+Phase status requires an explicit feature; independent features are reported
+separately and are never folded into an aggregate approval view.
+
+The research-to-plan transition records phase entry only. It does not approve
+a plan artifact or satisfy a later research predecessor requirement.
+
+Research records retain bounded proposal and manifest references plus exact
+compiled cited excerpts. The record becomes stale when cited content, inputs,
+policy, configured predecessor, or named producer qualification changes.
+Only the human handler is implemented; other modes report unavailable and
+cannot masquerade as operator approval. Existing task approval remains the
+implement-phase gate.
+
+A producer-only research entry is normalized to required qualification; a
+named producer paired with `qualification.required: false` is rejected because
+this increment has no identity-only phase handler.
+
+An optional `implement` entry in `phaseGates` names that same human task
+approval gate. Task approval, review, apply and final-run bindings remain the
+authority; non-human modes and added phase requirements are rejected.
+
+The bounded #81 transition interface is also offline. It accepts no inferred
+thresholds or routes: a complete `testReview` policy must be supplied. Negative
+assessments may request revisions up to that policy's cap; positive assessments
+require a separately identified, caller-declared strong review over the same
+input digest and still return operator acceptance rather than automatic
+acceptance. Missing, uncertain, unavailable or non-attested review states never
+approve a change, and this interface does not invoke a provider or model.
+
 For external data, use the normalized import envelope with a `source`, an
 `exportId`, and a stable `externalRecordId` on every record. TinySDD validates
 the complete file before appending it. This import contract is separate from
@@ -182,6 +231,33 @@ through synthetic apply and review; live
 harness/model/operator acceptance remains pending (`Refs #31`).
 
 After reviewing every active labelled task, close a feature window explicitly:
+
+Set `featureIntegration` in `.tinysdd/config.json` first. Its `argv` array is
+passed to the host check runner without a shell, and `testPaths` must identify
+protected feature tests while `entrypoints` identifies real files. For example:
+
+```json
+{
+  "schemaVersion": 1,
+  "workers": {},
+  "featureIntegration": {
+    "argv": ["node", "tests/reservations-integration.mjs"],
+    "testPaths": ["tests/reservations-integration.mjs"],
+    "entrypoints": ["src/reservations.mjs"]
+  }
+}
+```
+
+`feature accept` executes the configured command on retained isolated bytes and
+records its bounded result and identities in the acceptance event. It refuses
+when configuration, the Linux sandbox, the check, the protected test, the
+entrypoint, or any retained project/dependency bytes are unavailable or stale.
+Every active accepted task scope must protect the declared test paths. Retained
+project and dependency trees are regular-file-only: symlinks (including common
+`node_modules/.bin` links) and special files are refused; each tree is bounded
+to 20,000 entries and 512 MiB, and a manifest is bounded to 512 KiB.
+Historical events without this optional proof remain readable but are reported
+as ineligible; their frozen usage report is unchanged.
 
 ```sh
 tinysdd feature accept --feature reservations --by operator --reason 'Reviewed the feature window'

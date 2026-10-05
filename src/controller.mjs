@@ -48,9 +48,20 @@ import {
   createFeatureAcceptanceEvent,
   readFeatureEvents,
 } from './feature-events.mjs';
+import {
+  FEATURE_INTEGRATION_TEST_ENV,
+  featureIntegrationFreshness,
+  runFeatureIntegration,
+} from './feature-integration.mjs';
 import { withUsageLedgerLock } from './usage.mjs';
 import { buildUsageReport } from './usage-report.mjs';
 import { assessQualification } from './qualification-dispatch.mjs';
+import { readQualificationRecord } from './qualification-store.mjs';
+import {
+  advancePhase as advancePhaseGate,
+  phaseStatus as phaseStatusGate,
+  recordResearchDecision,
+} from './phase-gates.mjs';
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, pathsOverlap, preparationPaths, observedPathError } from './file-scope.mjs';
 
 export { resolveConfig } from './config.mjs';
@@ -1619,17 +1630,43 @@ async function inspectFeature(root, state, feature) {
   const activeAcceptanceDigests = {};
   const statuses = {};
   const reportTasks = [];
+  const activeTasks = tasks.filter((task) => !task.closure);
+  const allRetired = activeTasks.length === 0;
+  const acceptedProtectionSets = [];
+  const retiredProtection = new Set();
   for (const task of tasks) {
     const retired = Boolean(task.closure);
     const stateInfo = await inspectTask(root, state, task);
     membership.push({ id: task.id, retired });
     statuses[task.id] = stateInfo.status;
     reportTasks.push({ id: task.id, feature, retired });
+    const taskProtection = new Set([
+      ...(task.protect ?? []),
+      ...preparationPaths(task.preparation ?? []),
+    ]);
+    if (retired) {
+      for (const path of taskProtection) retiredProtection.add(path);
+    } else if (stateInfo.status === 'accepted' && stateInfo.acceptanceDigest) {
+      acceptedProtectionSets.push(taskProtection);
+    }
     if (!retired && stateInfo.status === 'accepted' && stateInfo.acceptanceDigest) {
       activeAcceptanceDigests[task.id] = stateInfo.acceptanceDigest;
     }
   }
-  return { tasks, membership, activeAcceptanceDigests, statuses, reportTasks };
+  // Every active accepted scope must protect the declared integration bytes;
+  // retired scopes remain usable only when the feature has no active tasks.
+  const protectedPaths = allRetired
+    ? retiredProtection
+    : acceptedProtectionSets.length === 0
+      ? new Set()
+      : new Set([...acceptedProtectionSets[0]].filter((path) => acceptedProtectionSets.every((paths) => paths.has(path))));
+  return { tasks, membership, activeAcceptanceDigests, statuses, reportTasks, protectedPaths: [...protectedPaths].sort() };
+}
+
+function featureIntegrationProtectedPaths(current, config) {
+  const paths = current.protectedPaths;
+  if (process.env[FEATURE_INTEGRATION_TEST_ENV] !== '1') return paths;
+  return [...new Set([...paths, ...(config?.testPaths ?? [])])].sort();
 }
 
 function assertFeatureAcceptanceReady(feature, snapshot) {
@@ -1640,6 +1677,14 @@ function assertFeatureAcceptanceReady(feature, snapshot) {
   if (rejected.length > 0) {
     throw tinyError('FEATURE_NOT_ACCEPTED', `feature has non-retired tasks that are not accepted: ${rejected.map((item) => `${item.id} (${item.status})`).join(', ')}`, { tasks: rejected });
   }
+}
+
+function featureCurrentEligible(snapshot) {
+  return snapshot.membership.length > 0
+    && snapshot.membership.every((item) => item.retired || (
+      snapshot.statuses[item.id] === 'accepted'
+      && Boolean(snapshot.activeAcceptanceDigests[item.id])
+    ));
 }
 
 function currentFeatureMetadata(snapshot) {
@@ -1671,6 +1716,19 @@ function latestFeatureEvent(events, feature) {
   return undefined;
 }
 
+async function featureIntegrationState(root, feature, current, event, resolved) {
+  const config = resolved?.config?.featureIntegration;
+  const protectedPaths = featureIntegrationProtectedPaths(current, config);
+  return featureIntegrationFreshness(root, {
+    feature,
+    eventIntegration: event?.integration,
+    membership: current.membership,
+    activeAcceptanceDigests: current.activeAcceptanceDigests,
+    config,
+    protectedPaths,
+  });
+}
+
 export async function reportFeature(projectRoot, options = {}) {
   const feature = validateFeature(options.feature);
   const root = await canonicalProjectRoot(projectRoot);
@@ -1679,21 +1737,29 @@ export async function reportFeature(projectRoot, options = {}) {
     const state = await readState(info);
     const current = await inspectFeature(root, state, feature);
     const event = latestFeatureEvent(await readFeatureEvents(root), feature);
+    const resolved = await resolveConfig(root);
+    const integration = await featureIntegrationState(root, feature, current, event, resolved);
     if (!event) {
       return {
         feature,
         accepted: false,
-        stale: false,
+        stale: integration.fresh === false,
+        ...(integration.fresh === false ? { staleReasons: integration.reasons } : {}),
+        eligible: integration.fresh && featureCurrentEligible(current),
+        integration,
         current: currentFeatureMetadata(current),
         report: await withUsageLedgerLock(root, (usageRecords) => liveFeatureReport(root, feature, current, usageRecords)),
       };
     }
     const stale = featureStaleness(event, current);
+    const staleReasons = [...stale.reasons, ...integration.reasons];
     return {
       feature,
       accepted: true,
-      stale: stale.stale,
-      staleReasons: stale.reasons,
+      stale: staleReasons.length > 0,
+      staleReasons,
+      eligible: !stale.stale && integration.fresh && featureCurrentEligible(current),
+      integration,
       current: currentFeatureMetadata(current),
       acceptance: event,
       report: event.report,
@@ -1709,16 +1775,75 @@ export async function acceptFeature(projectRoot, options = {}) {
   const info = await layout(root, { create: true });
   return withExclusiveLock(info.lock, async () => {
     const state = await readState(info);
-    const current = await inspectFeature(root, state, feature);
+    let current = await inspectFeature(root, state, feature);
     assertFeatureAcceptanceReady(feature, current);
+    const resolved = await resolveConfig(root);
+    const integrationConfig = resolved.config.featureIntegration;
+    if (integrationConfig === undefined) {
+      throw tinyError('FEATURE_INTEGRATION_CONFIG', 'feature acceptance requires a configured integration command');
+    }
+    const testProtectedPaths = process.env[FEATURE_INTEGRATION_TEST_ENV] === '1'
+      ? [...new Set([...current.protectedPaths, ...(options.integrationProtectedPaths ?? integrationConfig.testPaths ?? [])])].sort()
+      : current.protectedPaths;
+    const integration = await runFeatureIntegration(root, {
+      feature,
+      membership: current.membership,
+      activeAcceptanceDigests: current.activeAcceptanceDigests,
+      config: integrationConfig,
+      protectedPaths: testProtectedPaths,
+      ...(options.integrationRunner === undefined ? {} : { runner: options.integrationRunner }),
+    });
+    const afterState = await readState(info);
+    const after = await inspectFeature(root, afterState, feature);
+    if (stableStringify(after.membership) !== stableStringify(current.membership)
+      || stableStringify(after.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) {
+      throw tinyError('FEATURE_INTEGRATION_STALE', 'feature membership or task acceptance changed while the integration check was running');
+    }
+    const afterConfig = await resolveConfig(root);
+    if (afterConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed while the check was running');
+    const afterIntegration = await featureIntegrationFreshness(root, {
+      feature,
+      eventIntegration: integration.reference,
+      membership: after.membership,
+      activeAcceptanceDigests: after.activeAcceptanceDigests,
+      config: afterConfig.config.featureIntegration,
+      protectedPaths: featureIntegrationProtectedPaths(after, afterConfig.config.featureIntegration),
+    });
+    if (!afterIntegration.fresh) {
+      throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration evidence became stale before acceptance', { reasons: afterIntegration.reasons });
+    }
+    current = after;
+    // Keep the same freshness check immediately before the ledger append. A
+    // state/config/source change after the first post-run read must not turn
+    // an old retained proof into a new acceptance event.
     return withUsageLedgerLock(root, async (usageRecords) => {
-      const report = await liveFeatureReport(root, feature, current, usageRecords);
+      const finalState = await readState(info);
+      const final = await inspectFeature(root, finalState, feature);
+      const finalConfig = await resolveConfig(root);
+      if (finalConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed before acceptance');
+      const finalIntegration = await featureIntegrationFreshness(root, {
+        feature,
+        eventIntegration: integration.reference,
+        membership: final.membership,
+        activeAcceptanceDigests: final.activeAcceptanceDigests,
+        config: finalConfig.config.featureIntegration,
+        protectedPaths: featureIntegrationProtectedPaths(final, finalConfig.config.featureIntegration),
+      });
+      if (!finalIntegration.fresh) {
+        throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration evidence became stale before acceptance', { reasons: finalIntegration.reasons });
+      }
+      if (stableStringify(final.membership) !== stableStringify(current.membership)
+        || stableStringify(final.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) {
+        throw tinyError('FEATURE_INTEGRATION_STALE', 'feature membership or task acceptance changed before acceptance');
+      }
+      const report = await liveFeatureReport(root, feature, final, usageRecords);
       const event = createFeatureAcceptanceEvent({
         feature,
         by,
         reason,
-        membership: current.membership,
-        activeAcceptanceDigests: current.activeAcceptanceDigests,
+        membership: final.membership,
+        activeAcceptanceDigests: final.activeAcceptanceDigests,
+        integration: integration.reference,
         report,
       });
       const appended = await appendFeatureEvent(root, event);
@@ -1726,12 +1851,85 @@ export async function acceptFeature(projectRoot, options = {}) {
         feature,
         accepted: true,
         stale: false,
-        current: currentFeatureMetadata(current),
+        current: currentFeatureMetadata(final),
+        integration: integration.reference,
         acceptance: appended,
         report: appended.report,
       };
     });
   });
+}
+
+async function phaseQualification(root, gate) {
+  const qualification = gate?.qualification;
+  if (!qualification || qualification.required === false) return undefined;
+  const resolved = await resolveConfig(root, { worker: qualification.worker });
+  const configured = resolved.config.qualification ?? {};
+  const enforced = {
+    ...resolved,
+    config: {
+      ...resolved.config,
+      qualification: { ...configured, mode: 'enforce' },
+    },
+  };
+  const assessment = await assessQualification({
+    projectRoot: root,
+    resolved: enforced,
+    workerName: qualification.worker,
+    role: qualification.role,
+  });
+  if (assessment.status !== 'qualified' || typeof assessment.path !== 'string' || typeof assessment.recordDigest !== 'string') {
+    throw tinyError('PHASE_QUALIFICATION_REQUIRED', `worker ${qualification.worker} is not currently qualified for ${qualification.role}`, { qualification: assessment });
+  }
+  const retained = await readQualificationRecord(root, assessment.path);
+  return {
+    worker: qualification.worker,
+    role: qualification.role,
+    recordDigest: assessment.recordDigest,
+    recordPath: retained.path,
+    recordSha256: retained.sha256,
+    identityDigest: digestJson(assessment.identity),
+  };
+}
+
+function phaseCallbacks(root, policy) {
+  const resolver = async (producer) => phaseQualification(root, {
+    qualification: { worker: producer.worker, role: producer.role, required: true },
+  });
+  return {
+    policy,
+    qualificationResolver: resolver,
+  };
+}
+
+async function resolvedPhasePolicy(root, options = {}) {
+  const resolved = await resolveConfig(root, { worker: options.worker });
+  return { resolved, policy: resolved.config.phaseGates };
+}
+
+export async function recordResearch(projectRoot, options = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const { policy } = await resolvedPhasePolicy(root, options);
+  return recordResearchDecision(root, { ...options, ...phaseCallbacks(root, policy) });
+}
+
+export async function recordPhase(projectRoot, options = {}) {
+  if (options.phase !== undefined && options.phase !== 'research') {
+    throw tinyError('PHASE_UNSUPPORTED', `phase ${options.phase} cannot be recorded yet`, { phase: options.phase });
+  }
+  return recordResearch(projectRoot, options);
+}
+
+export async function phaseStatus(projectRoot, options = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const { policy } = await resolvedPhasePolicy(root, options);
+  return phaseStatusGate(root, { ...options, ...phaseCallbacks(root, policy) });
+}
+
+export async function advancePhase(projectRoot, options = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const { policy } = await resolvedPhasePolicy(root, options);
+  return advancePhaseGate(root, { ...options, ...phaseCallbacks(root, policy) });
 }
 
 export async function controllerStatus(projectRoot, { feature } = {}) {
@@ -1827,6 +2025,10 @@ export function createController(projectRoot) {
     reviewTask: (options) => reviewTask(projectRoot, options),
     acceptFeature: (options) => acceptFeature(projectRoot, options),
     reportFeature: (options) => reportFeature(projectRoot, options),
+    recordResearch: (options) => recordResearch(projectRoot, options),
+    recordPhase: (options) => recordPhase(projectRoot, options),
+    phaseStatus: (options) => phaseStatus(projectRoot, options),
+    advancePhase: (options) => advancePhase(projectRoot, options),
     status: (options) => controllerStatus(projectRoot, options),
     next: () => controllerNext(projectRoot),
     packet: (taskId) => resolveTaskPacket(projectRoot, taskId),

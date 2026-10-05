@@ -5,32 +5,61 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
-  acceptFeature,
+  acceptFeature as acceptFeatureController,
   addTask,
   approveTask,
   closeTask,
   reportFeature,
   reviewTask,
 } from '../src/controller.mjs';
+import { FEATURE_INTEGRATION_TEST_ENV } from '../src/feature-integration.mjs';
 import { appendUsageRecord } from '../src/usage.mjs';
 import { readFeatureEvents } from '../src/feature-events.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
+const previousIntegrationTestEnv = process.env[FEATURE_INTEGRATION_TEST_ENV];
+process.env[FEATURE_INTEGRATION_TEST_ENV] = '1';
+
+async function acceptFeature(root, options) {
+  return acceptFeatureController(root, {
+    ...options,
+    integrationProtectedPaths: ['tests/feature-integration.mjs'],
+    integrationRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1 }),
+  });
+}
 
 async function project() {
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-feature-acceptance-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
+  await mkdir(join(root, 'src'), { recursive: true });
+  await mkdir(join(root, 'tests'), { recursive: true });
+  await writeFile(join(root, 'src', 'entrypoint.mjs'), 'export const entrypoint = true;\n');
+  await writeFile(join(root, 'tests', 'feature-integration.mjs'), 'export const integration = true;\n');
   await mkdir(join(root, '.tinysdd', 'reviews'), { recursive: true });
   await writeFile(join(root, '.tinysdd', 'reviews', 'evidence.md'), 'accepted evidence\n');
   const { initProject } = await import('../src/controller.mjs');
   await initProject(root);
+  await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+    schemaVersion: 1,
+    workers: {},
+    featureIntegration: {
+      argv: ['node', 'tests/feature-integration.mjs'],
+      testPaths: ['tests/feature-integration.mjs'],
+      entrypoints: ['src/entrypoint.mjs'],
+    },
+  }));
   return root;
 }
 
 async function cleanup(root) {
   await rm(root, { recursive: true, force: true });
 }
+
+test.after(() => {
+  if (previousIntegrationTestEnv === undefined) delete process.env[FEATURE_INTEGRATION_TEST_ENV];
+  else process.env[FEATURE_INTEGRATION_TEST_ENV] = previousIntegrationTestEnv;
+});
 
 async function acceptedTask(root, id, options = {}) {
   const { evidence = '.tinysdd/reviews/evidence.md', ...taskOptions } = options;
@@ -54,6 +83,50 @@ test('feature acceptance enforces labelled active tasks and permits an all-retir
   }
 });
 
+test('new feature acceptance refuses a missing integration configuration', async () => {
+  const root = await project();
+  try {
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({ schemaVersion: 1, workers: {} }));
+    await assert.rejects(acceptFeature(root, { feature: 'broker', by: 'operator', reason: 'missing integration' }), { code: 'FEATURE_INTEGRATION_CONFIG' });
+    assert.equal((await readFeatureEvents(root)).length, 0);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('retired task protection cannot authorize an active task integration test', async () => {
+  const root = await project();
+  const previous = process.env[FEATURE_INTEGRATION_TEST_ENV];
+  delete process.env[FEATURE_INTEGRATION_TEST_ENV];
+  try {
+    await addTask(root, {
+      id: 'retired',
+      feature: 'broker',
+      brief: 'docs/brief.md',
+      allow: ['src/retired.ts'],
+      protect: ['tests/feature-integration.mjs'],
+    });
+    await closeTask(root, { id: 'retired', by: 'operator', reason: 'retired before acceptance' });
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    await assert.rejects(acceptFeatureController(root, {
+      feature: 'broker',
+      by: 'operator',
+      reason: 'retired protection must not qualify active scope',
+    }), { code: 'FEATURE_INTEGRATION_PROOF_REQUIRED' });
+    await acceptedTask(root, 'two', { feature: 'broker', protect: ['tests/feature-integration.mjs'] });
+    await assert.rejects(acceptFeatureController(root, {
+      feature: 'broker',
+      by: 'operator',
+      reason: 'every active scope must protect the integration test',
+    }), { code: 'FEATURE_INTEGRATION_PROOF_REQUIRED' });
+  } finally {
+    if (previous === undefined) delete process.env[FEATURE_INTEGRATION_TEST_ENV];
+    else process.env[FEATURE_INTEGRATION_TEST_ENV] = previous;
+    await cleanup(root);
+  }
+});
+
 test('acceptance appends a frozen snapshot without changing controller state', async () => {
   const root = await project();
   try {
@@ -71,6 +144,28 @@ test('acceptance appends a frozen snapshot without changing controller state', a
     const reported = await reportFeature(root, { feature: 'broker' });
     assert.equal(reported.accepted, true);
     assert.equal(reported.stale, false);
+    assert.deepEqual(reported.report, accepted.report);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('legacy feature events without integration proof remain stale and keep frozen numbers', async () => {
+  const root = await project();
+  try {
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    const accepted = await acceptFeature(root, { feature: 'broker', by: 'operator', reason: 'feature complete' });
+    const ledgerPath = join(root, '.tinysdd', 'runs', 'feature-events.jsonl');
+    const event = JSON.parse((await readFile(ledgerPath, 'utf8')).trim());
+    delete event.integration;
+    await writeFile(ledgerPath, `${JSON.stringify(event)}\n`, 'utf8');
+
+    const reported = await reportFeature(root, { feature: 'broker' });
+    assert.equal(reported.accepted, true);
+    assert.equal(reported.stale, true);
+    assert.equal(reported.eligible, false);
+    assert.equal(reported.integration.fresh, false);
+    assert.ok(reported.staleReasons.includes('integration proof missing'));
     assert.deepEqual(reported.report, accepted.report);
   } finally {
     await cleanup(root);
@@ -123,7 +218,7 @@ test('marks membership-only retirements stale without changing active acceptance
     await closeTask(root, { id: 'retired', by: 'operator', reason: 'removed from feature' });
     const stale = await reportFeature(root, { feature: 'broker' });
     assert.equal(stale.stale, true);
-    assert.deepEqual(stale.staleReasons, ['labelled task membership changed']);
+    assert.ok(stale.staleReasons.includes('labelled task membership changed'));
   } finally {
     await cleanup(root);
   }

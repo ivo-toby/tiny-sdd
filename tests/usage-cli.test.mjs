@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,9 +18,22 @@ async function project() {
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-usage-cli-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
+  await mkdir(join(root, 'src'), { recursive: true });
+  await mkdir(join(root, 'tests'), { recursive: true });
+  await writeFile(join(root, 'src', 'entrypoint.mjs'), 'export const entrypoint = true;\n');
+  await writeFile(join(root, 'tests', 'feature-integration-cli.mjs'), 'if (process.cwd().includes(".tinysdd")) process.exit(1);\n');
   await mkdir(join(root, '.tinysdd', 'reviews'), { recursive: true });
   await writeFile(join(root, '.tinysdd', 'reviews', 'evidence.md'), 'accepted evidence\n');
   await initProject(root);
+  await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+    schemaVersion: 1,
+    workers: {},
+    featureIntegration: {
+      argv: ['node', 'tests/feature-integration-cli.mjs'],
+      testPaths: ['tests/feature-integration-cli.mjs'],
+      entrypoints: ['src/entrypoint.mjs'],
+    },
+  }));
   return root;
 }
 
@@ -53,7 +66,7 @@ function parseSingleJson(result) {
 }
 
 async function acceptedFeature(root) {
-  await addTask(root, { id: 'one', feature: 'broker', brief: 'docs/brief.md', allow: ['src/one.mjs'] });
+  await addTask(root, { id: 'one', feature: 'broker', brief: 'docs/brief.md', allow: ['src/one.mjs'], protect: ['tests/feature-integration-cli.mjs'] });
   await approveTask(root, { id: 'one', by: 'operator', reason: 'approved scope' });
   await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer' });
 }
@@ -87,7 +100,7 @@ test('usage record validates finite safe integers, attribution, and strict flags
   }
 });
 
-test('usage import, report, and feature accept preserve a frozen CLI snapshot', async () => {
+test('usage import and feature accept keep deterministic JSON when integration proof is missing', async () => {
   const root = await project();
   try {
     await acceptedFeature(root);
@@ -109,32 +122,23 @@ test('usage import, report, and feature accept preserve a frozen CLI snapshot', 
     assert.equal(beforeAcceptReport.data.accepted, false);
     assert.equal(beforeAcceptReport.data.report.frontier.byPhase.review.input, 7);
 
-    const stateBefore = await readFile(join(root, '.tinysdd', 'runs', 'controller.json'), 'utf8');
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({ schemaVersion: 1, workers: {} }), 'utf8');
     const acceptedResult = parseSingleJson(await invoke(root, 'feature', 'accept', '--feature', 'broker', '--by', 'operator', '--reason', 'feature complete'));
-    assert.equal(acceptedResult.ok, true);
-    assert.equal(acceptedResult.data.accepted, true);
-    assert.equal(acceptedResult.data.acceptance.by, 'operator');
-    assert.equal(acceptedResult.data.report.frontier.byPhase.review.input, 7);
-    const stateAfter = await readFile(join(root, '.tinysdd', 'runs', 'controller.json'), 'utf8');
-    assert.equal(stateAfter, stateBefore);
+    assert.equal(acceptedResult.ok, false);
+    assert.equal(acceptedResult.error.code, 'FEATURE_INTEGRATION_CONFIG');
 
     const late = await appendUsageRecord(root, { phase: 'review', model: 'frontier/model', feature: 'broker', input: 5, output: 2 });
     const frozen = parseSingleJson(await invoke(root, 'usage', 'report', '--feature', 'broker'));
     assert.equal(frozen.ok, true);
-    assert.equal(frozen.data.stale, false);
-    assert.deepEqual(frozen.data.report, acceptedResult.data.report);
-
-    const reaccepted = parseSingleJson(await invoke(root, 'feature', 'accept', '--feature', 'broker', '--by', 'operator', '--reason', 'close second window'));
-    assert.equal(reaccepted.ok, true);
-    assert.notEqual(reaccepted.data.acceptance.id, acceptedResult.data.acceptance.id);
-    assert.equal(reaccepted.data.report.frontier.byPhase.review.input, 12);
-    assert.equal(reaccepted.data.report.frontier.ledgerRecordIds.includes(late.id), true);
+    assert.equal(frozen.data.accepted, false);
+    assert.equal(frozen.data.report.frontier.byPhase.review.input, 12);
+    assert.equal(frozen.data.report.frontier.ledgerRecordIds.includes(late.id), true);
 
     const human = await exec(process.execPath, [cli, '--project', root, 'feature', 'report', '--feature', 'broker'], {
       env: { ...process.env, TYPESAFE_API_KEY: 'stub' },
     });
     assert.equal(human.stdout.split('\n').filter(Boolean).length, 3);
-    assert.match(human.stdout, /^Feature broker: accepted snapshot, current/mu);
+    assert.match(human.stdout, /^Feature broker: live report, not accepted/mu);
     assert.match(human.stdout, /Frontier input UNKNOWN \(known subtotal 12\); output UNKNOWN \(known subtotal 5\)/u);
   } finally {
     await rm(root, { recursive: true, force: true });

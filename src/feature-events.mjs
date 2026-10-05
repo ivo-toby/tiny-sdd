@@ -32,7 +32,7 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/iu;
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const USAGE_COMPONENTS = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite', 'totalTokens'];
-const EVENT_KEYS = ['schemaVersion', 'type', 'id', 'timestamp', 'feature', 'by', 'reason', 'membership', 'activeAcceptanceDigests', 'report'];
+const EVENT_KEYS = ['schemaVersion', 'type', 'id', 'timestamp', 'feature', 'by', 'reason', 'membership', 'activeAcceptanceDigests', 'integration', 'report'];
 const MEMBERSHIP_KEYS = ['id', 'retired'];
 const REPORT_KEYS = ['schemaVersion', 'type', 'feature', 'generatedAt', 'tasks', 'frontier', 'local', 'provenance', 'snapshot'];
 const METRIC_KEYS = [...USAGE_COMPONENTS, 'knownSubtotals', 'coverage', 'missing'];
@@ -44,6 +44,8 @@ const PROVENANCE_KEYS = ['ledgerRecordIds', 'runReferences', 'missing'];
 const SNAPSHOT_KEYS = ['ledgerRecordIds', 'runReferences', 'missing'];
 const RUN_REFERENCE_KEYS = ['runId', 'taskId', 'result', 'stdout', 'outcome', 'baseRunId', 'baselineRunId'];
 const FILE_REFERENCE_KEYS = ['runId', 'path', 'sha256'];
+const INTEGRATION_KEYS = ['schemaVersion', 'status', 'proofPath', 'proofSha256', 'resultPath', 'resultSha256', 'commandSha256', 'configSha256', 'candidateSha256', 'dependenciesSha256'];
+const INTEGRATION_PATH_PATTERN = /^\.tinysdd\/runs\/feature-integration\/[0-9a-f-]{20,64}\/(proof|result)\.json$/u;
 
 function eventError(message, details = undefined) {
   throw tinyError('FEATURE_EVENT_INVALID', message, details);
@@ -297,6 +299,35 @@ function normalizeActiveAcceptanceDigests(value, membership) {
   return Object.fromEntries(keys.map((key) => [identifier(key, `activeAcceptanceDigests.${key}`), identifier(object[key], `activeAcceptanceDigests.${key}`, DIGEST_PATTERN, 64)]));
 }
 
+function normalizeIntegration(value) {
+  if (value === undefined) return undefined;
+  const integration = exactObject(value, INTEGRATION_KEYS, 'integration');
+  if (integration.schemaVersion !== 1 || integration.status !== 'passed') eventError('integration has an unsupported schema or status');
+  for (const field of ['proofSha256', 'resultSha256', 'commandSha256', 'configSha256', 'candidateSha256', 'dependenciesSha256']) {
+    if (typeof integration[field] !== 'string' || !DIGEST_PATTERN.test(integration[field])) eventError(`integration.${field} must be a digest`);
+  }
+  for (const [field, suffix] of [['proofPath', '/proof.json'], ['resultPath', '/result.json']]) {
+    if (!text(integration[field], `integration.${field}`, 512).match(INTEGRATION_PATH_PATTERN) || !integration[field].endsWith(suffix)) {
+      eventError(`integration.${field} must point inside its retained artifact`);
+    }
+  }
+  const proofPrefix = integration.proofPath.slice(0, integration.proofPath.lastIndexOf('/'));
+  const resultPrefix = integration.resultPath.slice(0, integration.resultPath.lastIndexOf('/'));
+  if (proofPrefix !== resultPrefix) eventError('integration proof and result must belong to the same retained artifact');
+  return {
+    schemaVersion: integration.schemaVersion,
+    status: integration.status,
+    proofPath: integration.proofPath,
+    proofSha256: integration.proofSha256,
+    resultPath: integration.resultPath,
+    resultSha256: integration.resultSha256,
+    commandSha256: integration.commandSha256,
+    configSha256: integration.configSha256,
+    candidateSha256: integration.candidateSha256,
+    dependenciesSha256: integration.dependenciesSha256,
+  };
+}
+
 function normalizeReport(value, feature) {
   const report = plainObject(value, 'report');
   validateReport(report, feature);
@@ -334,6 +365,7 @@ export function normalizeFeatureEvent(value) {
     reason: text(raw.reason, 'reason'),
     membership,
     activeAcceptanceDigests,
+    ...(raw.integration === undefined ? {} : { integration: normalizeIntegration(raw.integration) }),
     report: normalizeReport(raw.report, feature),
   };
   const reportMembership = event.report.tasks.map((task) => ({ id: task.taskId, retired: task.retired }));
@@ -343,7 +375,7 @@ export function normalizeFeatureEvent(value) {
   return deepFreeze(event);
 }
 
-export function createFeatureAcceptanceEvent({ feature, by, reason, membership, activeAcceptanceDigests, report, timestamp: at = new Date().toISOString(), id = `feature-${randomUUID()}` } = {}) {
+export function createFeatureAcceptanceEvent({ feature, by, reason, membership, activeAcceptanceDigests, integration, report, timestamp: at = new Date().toISOString(), id = `feature-${randomUUID()}` } = {}) {
   return normalizeFeatureEvent({
     schemaVersion: FEATURE_EVENT_SCHEMA_VERSION,
     type: FEATURE_ACCEPTANCE_EVENT_TYPE,
@@ -354,6 +386,7 @@ export function createFeatureAcceptanceEvent({ feature, by, reason, membership, 
     reason,
     membership,
     activeAcceptanceDigests,
+    ...(integration === undefined ? {} : { integration }),
     report,
   });
 }
