@@ -38,6 +38,7 @@ import { writeBenchmarkResults } from './benchmark-results-writer.mjs';
 import { registerQualificationInvocation } from './qualification-store.mjs';
 import { runWorker, workerLimits } from './worker.mjs';
 import { defaultPiAgentDir, preflightPiWorker, validatePiWorker } from './pi-environment.mjs';
+import { DEFAULT_RUNTIME_SCOPE } from './file-scope.mjs';
 
 const execFileAsync = promisify(execFile);
 const RESERVED_VERIFIER_ROOT = '__tinysdd_benchmark_verifier';
@@ -477,6 +478,7 @@ async function loadPacket(root, challenge) {
       briefSha256: brief.sha256,
       context: { path: `.tinysdd/tasks/${challenge.id}-context.json`, text: context.text, sha256: context.sha256 },
       checks: { path: `.tinysdd/tasks/${challenge.id}-checks.json`, text: checks.text, sha256: checks.sha256 },
+      runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
       allowedPaths: challenge.packet.allowedPaths,
       protectedPaths: challenge.packet.protectedPaths,
     },
@@ -955,11 +957,7 @@ function missingReasons(identity, extras = []) {
 function hardGates(challenge, workerResult) {
   if (!workerResult) return { outOfScopeEdit: false, protectedFileEdit: false, protectedTestEdit: false, requiredPatchAbsent: BENCHMARK_UNKNOWN };
   const protectedPaths = challenge.packet.protectedPaths;
-  const expectedPaths = challenge.packet.allowedPaths;
   const changes = Array.isArray(workerResult.changedPaths) ? workerResult.changedPaths : [];
-  // Benchmark hard gates retain the challenge's expected-path observation even
-  // though the ordinary runtime now accepts eligible extra files as candidates.
-  const outOfScopeEdit = changes.some((change) => !expectedPaths.some((path) => underOrEqual(path, change.path) || underOrEqual(change.path, path)));
   const protectedEdit = changes.some((change) => protectedPaths.some((path) => underOrEqual(path, change.path) || underOrEqual(change.path, path)));
   const protectedTestEdit = changes.some((change) => protectedPaths.some((path) => (path.startsWith('test') || path.includes('/test') || /\.(?:test|spec)\./u.test(path)) && (underOrEqual(path, change.path) || underOrEqual(change.path, path))));
   const requiredPatchAbsent = challenge.role === 'stop-and-ask'
@@ -968,7 +966,7 @@ function hardGates(challenge, workerResult) {
       ? !changes.some((change) => challenge.packet.allowedPaths.some((path) => underOrEqual(path, change.path) || underOrEqual(change.path, path)))
       : BENCHMARK_UNKNOWN;
   return {
-    outOfScopeEdit,
+    outOfScopeEdit: Array.isArray(workerResult.scopeViolations) && workerResult.scopeViolations.length > 0,
     protectedFileEdit: protectedEdit,
     protectedTestEdit,
     requiredPatchAbsent,

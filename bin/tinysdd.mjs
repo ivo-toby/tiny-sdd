@@ -51,12 +51,12 @@ Usage:
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
   tinysdd [--json] [--project PATH] status [--feature NAME]
   tinysdd [--json] [--project PATH] next
-  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME]
-  tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--depends-on ID[,ID]]
+  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME]
+  tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
   tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
-  tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL
+  tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL [--candidate-paths FILE[,FILE]]
   tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
@@ -81,7 +81,7 @@ dispatched, and are refused while open tasks depend on them.
 inputs change. Accepted tasks cannot be updated; \`task supersede\` still refuses
 a current acceptance and open dependents.
 Workers return isolated candidates and patches; they never apply or accept them.
-\`task apply\` copies a reviewed run's allowed files into the project and records the
+\`task apply\` copies a reviewed run's retained eligible actual files into the project and records the
 run; apply before \`task review\`, because acceptance binds the project's files.
 Use \`worker start\` for real model calls from an agent: it detaches the controller
 from short-lived interactive shells. Poll it with \`worker status\`.
@@ -758,7 +758,6 @@ async function run(argv) {
   else if (parsed.command === 'task' && parsed.subcommand === 'approve') data = await approveTask(project, {
     id: parsed.values.id,
     by: parsed.values.by,
-    candidatePaths: parsed.values['candidate-paths'],
     reason: parsed.values.reason,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'packet') data = await resolveTaskPacket(project, parsed.values.id);

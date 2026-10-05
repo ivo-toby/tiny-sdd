@@ -36,11 +36,15 @@ function touchesPath(path, boundary, caseInsensitive, unicodeInsensitive) {
   return candidate === reserved || candidate.startsWith(`${reserved}/`) || reserved.startsWith(`${candidate}/`);
 }
 
+export function pathsOverlap(path, boundary, { caseInsensitive = false, unicodeInsensitive = false } = {}) {
+  return touchesPath(path, boundary, caseInsensitive, unicodeInsensitive);
+}
+
 function kindOf(value) {
   return value?.kind ?? null;
 }
 
-export function classifyFileScopeChange(change, { protectedPaths = [], preparationPaths = [], dependencyMounts = [], caseInsensitive = false, unicodeInsensitive = false } = {}) {
+export function classifyFileScopeChange(change, { protectedPaths = [], inputPaths = [], preparationPaths = [], dependencyMounts = [], caseInsensitive = false, unicodeInsensitive = false } = {}) {
   const path = change?.path;
   if (typeof path !== 'string' || path.length === 0) return { path: path ?? null, change: change?.change ?? null, reason: 'invalid candidate path' };
   const pathError = observedPathError(path);
@@ -51,6 +55,7 @@ export function classifyFileScopeChange(change, { protectedPaths = [], preparati
   if (isSecretPath(path)) return { path, change: change.change, reason: 'credential or secret path' };
   if (isDependencyPath(path, dependencyMounts, caseInsensitive, unicodeInsensitive)) return { path, change: change.change, reason: 'dependency mount path' };
   if (protectedPaths.some((boundary) => touchesPath(path, boundary, caseInsensitive, unicodeInsensitive))) return { path, change: change.change, reason: 'protected contract file' };
+  if (inputPaths.some((boundary) => touchesPath(path, boundary, caseInsensitive, unicodeInsensitive))) return { path, change: change.change, reason: 'task packet input' };
   if (preparationPaths.some((boundary) => touchesPath(path, boundary, caseInsensitive, unicodeInsensitive))) return { path, change: change.change, reason: 'immutable preparation input' };
   if (change.change === 'deleted' || !change.after) return { path, change: change.change, reason: 'file deletion is not authorized' };
   if (change.change === 'created' && beforeKind !== null || change.change === 'modified' && beforeKind === null) {

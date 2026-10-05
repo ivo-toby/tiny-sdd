@@ -128,6 +128,7 @@ async function runCheckTool(toolCallId, params) {
 }
 if (action === "allowed") writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
 if (action === "protected") writeFileSync(join(process.cwd(), "src", "contract.txt"), "changed\\n");
+if (action === "input") writeFileSync(join(process.cwd(), "docs", "brief.md"), "rewritten brief\\n");
 if (action === "outside") writeFileSync(join(process.cwd(), "outside.txt"), "outside\\n");
 if (action === "dependency") writeFileSync(join(process.cwd(), "vendor", "dependency", "extra.mjs"), "extra\\n");
 if (action === "type-change") { rmSync(join(process.cwd(), "empty"), { recursive: true, force: true }); writeFileSync(join(process.cwd(), "empty"), "file\\n"); }
@@ -710,6 +711,30 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("retains selected task input edits as a boundary violation", async () => {
+    const project = await makeProject();
+    try {
+      await mkdir(join(project, "docs"), { recursive: true });
+      const briefText = "approved brief\n";
+      await writeFile(join(project, "docs", "brief.md"), briefText);
+      const result = await runWorker({
+        projectRoot: project,
+        packet: {
+          ...packet(),
+          briefText: undefined,
+          brief: { path: "docs/brief.md", text: briefText, sha256: createHash("sha256").update(briefText).digest("hex") },
+        },
+        worker: worker(),
+        runtime: runtime(undefined, "input"),
+      });
+      assert.deepEqual(result.scopeViolations, [{ path: "docs/brief.md", change: "modified", reason: "task packet input" }]);
+      assert.deepEqual(result.fileScope.actualPaths, ["docs/brief.md"]);
+      await assert.equal(await readFile(join(project, "docs", "brief.md"), "utf8"), briefText);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("retains an empty-directory replacement as a type violation", async () => {
     const project = await makeProject();
     await mkdir(join(project, "empty"));
@@ -782,6 +807,27 @@ describe("Pi worker capture and scope", () => {
       assert.deepEqual(result.baseRun, { id: baseRunId, paths: ["src/allowed.txt"] });
       assert.equal(await readFile(join(result.artifactPaths.candidate, "src", "allowed.txt"), "utf8"), "base candidate\n");
       assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), "before\n");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a revision base without an exact task identity", async () => {
+    const project = await makeProject();
+    const baseRunId = "worker-2026-09-06T00-00-00-000Z-missingid1";
+    try {
+      await writeRetainedRun(project, baseRunId, {
+        before: { "src/allowed.txt": "before\n" },
+        after: { "src/allowed.txt": "foreign candidate\n" },
+      });
+      const resultPath = join(project, ".tinysdd", "runs", baseRunId, "result.json");
+      const result = JSON.parse(await readFile(resultPath, "utf8"));
+      delete result.taskId;
+      await writeFile(resultPath, JSON.stringify(result));
+      await assert.rejects(
+        runWorker({ projectRoot: project, packet: packet(), worker: worker(), baseRunId, runtime: runtime(undefined, "complete") }),
+        /base run lineage belongs to a different task/u,
+      );
     } finally {
       await rm(project, { recursive: true, force: true });
     }
@@ -1035,6 +1081,7 @@ describe("Pi worker capture and scope", () => {
       });
       const saved = JSON.parse(await readFile(result.artifactPaths.packet, "utf8"));
       assert.deepEqual(saved.checks, { path: ".tinysdd/tasks/checks.json", text, sha256: digest });
+      assert.deepEqual(saved.runtimeScope, { mode: "ordinary-create-modify", ordinaryCreateModify: true, deletions: false });
     } finally {
       await rm(project, { recursive: true, force: true });
     }
@@ -1052,6 +1099,7 @@ describe("Pi worker capture and scope", () => {
         runtime: runtime(undefined, "complete"),
       });
       const runtimeMetadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.deepEqual(runtimeMetadata.runtimeScope, { mode: "ordinary-create-modify", ordinaryCreateModify: true, deletions: false });
       assert.equal(runtimeMetadata.runChecks.declared, true);
       assert.equal(runtimeMetadata.runChecks.available, false);
       assert.equal(runtimeMetadata.capabilities.tools.includes("run_checks"), false);

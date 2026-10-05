@@ -140,7 +140,7 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
               await output.writeFile(data);
             }
             const sha256 = hash.digest('hex');
-            candidateEntries[path] = { kind: 'file', mode: info.mode & 0o7777, bytes: opened.size, sha256 };
+            candidateEntries[path] = { kind: 'file', mode: info.mode & 0o7777, bytes: position, sha256 };
             if (Object.hasOwn(allowedDigests, path)) allowedDigests[path] = sha256;
           } finally { await input.close(); await output.close(); }
         } else throw new Error('check input contains a symlink or special file');

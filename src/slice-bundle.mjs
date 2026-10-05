@@ -164,6 +164,7 @@ function replaceOutput(outputs, relativePath, content, budget) {
 
 function comparePacketShape(packet, plan) {
   const expected = {
+    runtimeScope: { ...RUNTIME_SCOPE },
     brief: plan.brief,
     context: plan.context,
     checks: plan.checks,
@@ -173,6 +174,7 @@ function comparePacketShape(packet, plan) {
     dependsOn: plan.dependsOn,
   };
   const actual = {
+    runtimeScope: packet.runtimeScope,
     brief: packet.brief?.path,
     context: packet.context?.path,
     checks: packet.checks?.path,

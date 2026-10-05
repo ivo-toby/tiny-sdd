@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, open, readFile, readdir } from 'node:fs/promises';
 import {
   assertInternalPath,
   assertPlainObject,
@@ -49,7 +51,7 @@ import {
 import { withUsageLedgerLock } from './usage.mjs';
 import { buildUsageReport } from './usage-report.mjs';
 import { assessQualification } from './qualification-dispatch.mjs';
-import { classifyFileScopeChange, detectFilesystemAliases, preparationPaths } from './file-scope.mjs';
+import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, pathsOverlap, preparationPaths, observedPathError } from './file-scope.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -1025,6 +1027,9 @@ async function loadApplyLineage(root, task, runId) {
     if (!result.fileScope || result.fileScope.mode !== 'ordinary-create-modify' || result.fileScope.ordinaryCreateModify !== true || result.fileScope.deletions !== false || !Array.isArray(result.fileScope.actualPaths)) {
       throw tinyError('RUN_MALFORMED', `run ${currentId} lacks complete file-scope evidence`, { runId: currentId });
     }
+    if (result.fileScope.actualPaths.some((path) => typeof path !== 'string' || observedPathError(path)) || new Set(result.fileScope.actualPaths).size !== result.fileScope.actualPaths.length) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} fileScope actualPaths are not a unique canonical inventory`, { runId: currentId });
+    }
     if (stableStringify([...new Set(result.fileScope.actualPaths)].sort()) !== stableStringify(actualShape.map(({ path }) => path).sort())) {
       throw tinyError('RUN_MALFORMED', `run ${currentId} fileScope actualPaths does not match retained workspace evidence`, { runId: currentId });
     }
@@ -1071,6 +1076,33 @@ async function readRunFile(root, runId, workspace, path) {
   }
 }
 
+async function hashRunWorkspaceFile(absolute, runId, path, expectedInfo, maxBytes) {
+  let handle;
+  try {
+    handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.ino !== expectedInfo.ino || opened.dev !== expectedInfo.dev) {
+      throw tinyError('RUN_MALFORMED', `run ${runId} workspace/${path} changed while being read`, { runId, path });
+    }
+    const hash = createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
+    let bytes = 0;
+    while (true) {
+      const read = await handle.read(buffer, 0, buffer.length, null);
+      if (read.bytesRead === 0) break;
+      bytes += read.bytesRead;
+      if (bytes > maxBytes) throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the byte limit`, { runId });
+      hash.update(buffer.subarray(0, read.bytesRead));
+    }
+    return { sha256: hash.digest('hex'), size: bytes };
+  } catch (error) {
+    if (error?.code === 'ELOOP') throw tinyError('RUN_MALFORMED', `run ${runId} workspace/${path} is not a regular file`, { runId, path });
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 async function snapshotRunWorkspace(root, runId, workspace) {
   const directory = await runArtifactPath(root, runId, [workspace], { requireDirectory: true, code: 'RUN_MALFORMED' });
   const snapshot = Object.create(null);
@@ -1089,10 +1121,13 @@ async function snapshotRunWorkspace(root, runId, workspace) {
         snapshot[path] = { kind: 'directory', sha256: null, size: null };
         await visit(absolute, path);
       } else if (info.isFile()) {
-        const bytes = await readFile(absolute);
-        bytesSeen += bytes.byteLength;
+        if (info.size > MAX_RUN_SNAPSHOT_BYTES || bytesSeen > MAX_RUN_SNAPSHOT_BYTES - info.size) {
+          throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the byte limit`, { runId });
+        }
+        const hashed = await hashRunWorkspaceFile(absolute, runId, path, info, MAX_RUN_SNAPSHOT_BYTES - bytesSeen);
+        bytesSeen += hashed.size;
         if (bytesSeen > MAX_RUN_SNAPSHOT_BYTES) throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the byte limit`, { runId });
-        snapshot[path] = { kind: 'file', sha256: sha256(bytes), size: bytes.byteLength };
+        snapshot[path] = { kind: 'file', sha256: hashed.sha256, size: hashed.size };
       } else snapshot[path] = { kind: 'other', sha256: null, size: null };
     }
   }
@@ -1203,8 +1238,9 @@ export async function applyTask(projectRoot, options = {}) {
     }
 
     // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
-    const inputs = new Set([task.brief, task.context, task.checks, ...preparationPaths(task.preparation ?? [])].filter(Boolean));
-    const rewritten = plan.filter((item) => item.status === 'written' && inputs.has(item.path)).map((item) => item.path);
+    const inputs = [task.brief, task.context, task.checks, ...preparationPaths(task.preparation ?? [])].filter(Boolean);
+    const { caseInsensitive, unicodeInsensitive } = await detectFilesystemAliases(root);
+    const rewritten = plan.filter((item) => item.status === 'written' && inputs.some((input) => pathsOverlap(item.path, input, { caseInsensitive, unicodeInsensitive }))).map((item) => item.path);
     if (rewritten.length > 0) {
       throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
     }
@@ -1305,6 +1341,7 @@ export async function resolveTaskPacket(projectRoot, taskId) {
     schemaVersion: 1,
     taskId: id,
     brief: { path: task.brief, text, sha256: sha256(text) },
+    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
     allowedPaths: [...task.allow],
     ...(task.protect ? { protectedPaths: [...task.protect] } : {}),
     ...(task.preparation ? { preparation: structuredClone(task.preparation) } : {}),
@@ -1360,6 +1397,7 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
     schemaVersion: 1,
     taskId: id,
     brief: { path: task.brief, text, sha256: sha256(text) },
+    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
     allowedPaths: [...task.allow],
     ...(task.protect ? { protectedPaths: [...task.protect] } : {}),
     ...(task.preparation ? { preparation: structuredClone(task.preparation) } : {}),

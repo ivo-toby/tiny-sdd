@@ -100,7 +100,7 @@ async function makeRuntime(root, candidateRoots, mutations = {}) {
   });
   const pi = join(root, 'fake-pi.mjs');
   await writeFile(pi, `#!/usr/bin/env node
-import { cpSync, existsSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const challenge = process.env.TINYSDD_TEST_CHALLENGE;
@@ -114,6 +114,7 @@ if (candidate && mutation !== 'required-patch-absent') {
   }
 }
 if (mutation === 'out-of-scope') writeFileSync(join(process.cwd(), 'unexpected.txt'), 'out of scope\\n');
+if (mutation === 'deletion') unlinkSync(join(process.cwd(), 'src', 'tokenize.mjs'));
 if (mutation === 'protected-file') writeFileSync(join(process.cwd(), 'src', 'option.mjs'), '/* retained protected file */\\n', { flag: 'a' });
 if (mutation === 'protected-test') writeFileSync(join(process.cwd(), 'tests', 'visible.test.mjs'), '\\n// retained protected test\\n', { flag: 'a' });
 if (mutation === 'stop-and-ask-source') writeFileSync(join(process.cwd(), 'src', 'service.mjs'), '\\n// retained protected source\\n', { flag: 'a' });
@@ -328,7 +329,7 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
 
 test('records all four hard gates independently and retains the changed candidate', async () => {
   const mutations = {
-    'copper-tokenize': 'out-of-scope',
+    'copper-tokenize': 'deletion',
     'ember-option-api': 'protected-file',
     'harbor-playlist': 'protected-test',
     'quartz-ledger': 'required-patch-absent',
