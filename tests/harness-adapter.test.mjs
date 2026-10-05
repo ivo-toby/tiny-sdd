@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { cp, lstat, mkdtemp, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 
 import { addTask, approveTask, applyTask, initProject, reviewTask, resolveTaskPacket } from '../src/controller.mjs';
 import { beginHarnessCapture, finalizeHarnessCapture } from '../src/harness-adapter.mjs';
@@ -15,6 +17,8 @@ import { sha256 } from '../src/fs-utils.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const FIXTURE = join(REPO, 'examples', 'artifact-format');
+const SCRIPT = join(REPO, 'scripts', 'harness-adapter.mjs');
+const exec = promisify(execFile);
 const CANONICAL_TMP = await realpath(tmpdir());
 const CHANGE_PATH = 'examples/artifact-format/changes/broker-recut/change.json';
 
@@ -40,6 +44,14 @@ async function fixtureProject() {
 
 async function cleanup(path) {
   await rm(path, { recursive: true, force: true });
+}
+
+async function adapterCli(args) {
+  try {
+    return { result: await exec(process.execPath, [SCRIPT, ...args], { cwd: REPO }) };
+  } catch (error) {
+    return { error };
+  }
 }
 
 for (const harness of ['claude-code', 'pi']) {
@@ -418,4 +430,32 @@ test('result publication failure keeps a stable marker for retry', async () => {
     await cleanup(fixture.root);
     await cleanup(external);
   }
+});
+
+test('standalone adapter --json emits one object for usage and API errors', async () => {
+  const missingValue = await adapterCli(['begin', '--json', '--bundle']);
+  assert.equal(missingValue.error.code, 2);
+  assert.deepEqual(JSON.parse(missingValue.error.stdout), {
+    ok: false,
+    error: { code: 'INVALID_ARGUMENT', message: '--bundle requires a value' },
+  });
+  assert.equal(missingValue.error.stdout.trim().split('\n').length, 1);
+  assert.match(missingValue.error.stderr, /usage: harness-adapter\.mjs begin/u);
+
+  const apiError = await adapterCli([
+    'begin',
+    '--bundle',
+    '/definitely-missing-tinysdd-31-bundle',
+    '--harness',
+    'pi',
+    '--model',
+    'synthetic/pi',
+    '--json',
+  ]);
+  assert.equal(apiError.error.code, 1);
+  assert.equal(apiError.error.stderr, '');
+  const payload = JSON.parse(apiError.error.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'PATH_NOT_FOUND');
+  assert.equal(apiError.error.stdout.trim().split('\n').length, 1);
 });
