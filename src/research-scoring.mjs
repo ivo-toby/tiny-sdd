@@ -183,15 +183,16 @@ function readBudget(options) {
   return value;
 }
 
-async function compileManifest(projectRoot, input, label, defaultPath) {
+async function compileManifest(projectRoot, input, label, defaultPath, readSource) {
   let packet;
   try {
+    if (readSource !== undefined && typeof readSource !== 'function') throw invalidInput('readSource must be a function when supplied');
     packet = packetContext(input, label, defaultPath);
     if (Buffer.byteLength(packet.text) > MAX_RESEARCH_MANIFEST_BYTES) {
       throw invalidInput(`${label} exceeds ${MAX_RESEARCH_MANIFEST_BYTES} bytes`);
     }
     const manifest = parseContextManifest(packet.text);
-    const compiled = await compileContext(projectRoot, packet);
+    const compiled = await compileContext(projectRoot, packet, readSource === undefined ? undefined : { readSource });
     return { ok: true, packet, manifest, compiled };
   } catch (error) {
     return { ok: false, error };
@@ -253,7 +254,7 @@ export async function scoreResearchSelection(first, second, third, fourth) {
     });
   }
 
-  const gold = await compileManifest(projectRoot, options.goldManifest, 'goldManifest', '.tinysdd/research/gold.context.json');
+  const gold = await compileManifest(projectRoot, options.goldManifest, 'goldManifest', '.tinysdd/research/gold.context.json', options.readSource);
   if (!gold.ok) {
     const observation = invalidObservation(gold.error, 'refused');
     return emptyResult({
@@ -273,7 +274,7 @@ export async function scoreResearchSelection(first, second, third, fourth) {
   }
 
   const goldObservation = sourceObservation(gold.compiled, gold.manifest);
-  const candidate = await compileManifest(projectRoot, options.candidateManifest, 'candidateManifest', '.tinysdd/research/candidate.context.json');
+  const candidate = await compileManifest(projectRoot, options.candidateManifest, 'candidateManifest', '.tinysdd/research/candidate.context.json', options.readSource);
   if (!candidate.ok) {
     const observation = invalidObservation(candidate.error);
     return emptyResult({
