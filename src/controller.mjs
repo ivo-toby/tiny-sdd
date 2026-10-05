@@ -1053,6 +1053,33 @@ async function loadApplyLineage(root, task, runId) {
   return newestFirst.reverse();
 }
 
+async function readBoundedRegularBytes(absolute, maxBytes, { expectedInfo = null } = {}) {
+  let handle;
+  try {
+    handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || (expectedInfo && (opened.ino !== expectedInfo.ino || opened.dev !== expectedInfo.dev))) {
+      throw tinyError('RUN_MALFORMED', `regular file changed while being read: ${absolute}`);
+    }
+    const chunks = [];
+    const buffer = Buffer.alloc(64 * 1024);
+    let bytes = 0;
+    while (true) {
+      const read = await handle.read(buffer, 0, buffer.length, null);
+      if (read.bytesRead === 0) break;
+      bytes += read.bytesRead;
+      if (bytes > maxBytes) throw tinyError('RUN_MALFORMED', `regular file exceeds the bounded read limit: ${absolute}`);
+      chunks.push(Buffer.from(buffer.subarray(0, read.bytesRead)));
+    }
+    return { bytes: Buffer.concat(chunks, bytes) };
+  } catch (error) {
+    if (error?.code === 'ELOOP') throw tinyError('SYMLINK_PATH', `symlinked paths are not allowed: ${absolute}`);
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 async function readRegularFile(absolute) {
   let info;
   try {
@@ -1063,7 +1090,8 @@ async function readRegularFile(absolute) {
   }
   if (info.isSymbolicLink()) throw tinyError('SYMLINK_PATH', `symlinked paths are not allowed: ${absolute}`);
   if (!info.isFile()) throw tinyError('INVALID_FILE', `not a regular file: ${absolute}`);
-  return { bytes: await readFile(absolute), mode: info.mode & 0o777 };
+  const read = await readBoundedRegularBytes(absolute, MAX_RUN_SNAPSHOT_BYTES, { expectedInfo: info });
+  return { bytes: read.bytes, mode: info.mode & 0o777 };
 }
 
 async function readRunFile(root, runId, workspace, path) {
@@ -1141,7 +1169,8 @@ async function readRunSnapshot(root, runId, name) {
   if (info.size > MAX_RUN_SNAPSHOT_BYTES) throw tinyError('RUN_MALFORMED', `run ${runId} ${name} exceeds the retained snapshot limit`, { runId });
   let value;
   try {
-    value = JSON.parse(await readFile(path, 'utf8'));
+    const read = await readBoundedRegularBytes(path, MAX_RUN_SNAPSHOT_BYTES, { expectedInfo: info });
+    value = JSON.parse(read.bytes.toString('utf8'));
   } catch {
     throw tinyError('RUN_MALFORMED', `run ${runId} ${name} is malformed`, { runId });
   }
