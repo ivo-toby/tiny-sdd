@@ -34,6 +34,34 @@ and writes a new digest-bound training bundle. The recipe remains unexecuted:
 it does not install Python, download a checkpoint, call a provider, or claim a
 trained-model result.
 
+Issue #40 adds an offline provider observation replay. It requires two or more
+saved provider identities, validates all dataset evidence and #32 bindings
+before any write, and defaults to shadow mode without invoking a model:
+
+```sh
+node scripts/observe-decisions.mjs \
+  --project /path/to/project \
+  --dataset data/decision-dataset.json \
+  --predictions data/provider-predictions.json \
+  --providers data/provider-metadata.json \
+  --output data/provider-observations.json \
+  --log-task failure-triage \
+  --json
+```
+
+Replay records retain case IDs and decision points. Because #32 predictions do
+not bind their original typed question, `questionSha256` stays `UNKNOWN`; an
+optional `--questions` file is validated and recorded only as
+`replayQuestionSha256` mapping metadata.
+
+`--providers` supplies model identity and explicit availability; omitted model,
+calibration and threshold metadata remains `UNKNOWN`. `--output` refuses an
+existing or input/evidence path. `--log-task` is the only way to append the
+validated, digest-only observations to `.tinysdd/runs/decisions/`; omitting it
+leaves the existing ledger and controller state unchanged. `enforce` is
+unsupported until real reviewed comparisons and operator-approved thresholds
+exist.
+
 Controller-only setup needs no model:
 
 ```sh
