@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "facts": ["The operation is attempted at most retries plus one times."],
+  "resources": [
+    {
+      "path": "src/retry.mjs",
+      "startLine": 1,
+      "endLine": 8,
+      "purpose": "Retry boundary, delay callback, and terminal error behavior."
+    }
+  ]
+}

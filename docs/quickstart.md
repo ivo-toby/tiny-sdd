@@ -182,6 +182,13 @@ file, so slices that cite one shared spec by line range stay current when the
 spec is appended to or edited outside their ranges. Inserting lines above a
 cited range shifts it and makes the slice stale: append addenda at the end.
 
+For offline preparation of the future research phase, see the
+[deterministic research selection scorer](research-scoring.md). It compares a
+candidate manifest with a reviewed gold manifest through the same compiler,
+without running checks, models, or services. Its synthetic examples remain
+proposed and human-unreviewed until the research adapter and calibration work
+are complete.
+
 Use `task add --protect src/types.ts,tests/contract.test.ts` for read-only
 contract files. They must exist and cannot overlap `--allow`. The packet lists
 them and the worker prompt forbids changing them; an edit is retained as a scope

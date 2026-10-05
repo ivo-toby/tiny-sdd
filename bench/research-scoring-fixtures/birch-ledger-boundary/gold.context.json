@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "facts": ["Amounts are positive finite numbers."],
+  "resources": [
+    {
+      "path": "src/ledger.mjs",
+      "startLine": 1,
+      "endLine": 8,
+      "purpose": "Ledger validation and append result contract."
+    }
+  ]
+}

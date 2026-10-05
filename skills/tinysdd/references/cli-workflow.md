@@ -220,6 +220,14 @@ Every non-completed worker result includes `candidateState`, which reports the
 allowed paths changed and the sorted allowed paths left untouched. If any
 allowed path changed, review the candidate before discarding it.
 
+The offline [research selection scorer](../../../docs/research-scoring.md) is a
+preparation helper for the research phase. It compiles a candidate and a gold
+context manifest through the ordinary context compiler, reports merged
+line-overlap precision/recall and compiled-byte budget observations, and
+records invalid citations as hard-gate observations. It does not run checks,
+invoke a model, accept a task, or qualify a role; its synthetic examples are
+proposed and human-unreviewed.
+
 Run an operator-selected benchmark suite with the serial CLI lane:
 
 ```sh

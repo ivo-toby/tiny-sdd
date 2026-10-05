@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "facts": ["The parser preserves defaults when mode is omitted."],
+  "resources": [
+    {
+      "path": "src/options.mjs",
+      "startLine": 1,
+      "endLine": 6,
+      "purpose": "Public option defaults and parser return shape."
+    }
+  ]
+}
