@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 
 import {
   prepareResearchPacket,
@@ -11,6 +13,7 @@ import {
 import { sha256 } from '../src/fs-utils.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
+const execute = promisify(execFile);
 const BUDGETS = Object.freeze({
   maxFiles: 20,
   maxSourceBytes: 64 * 1024,
@@ -209,6 +212,119 @@ test('bounds fallback discovery before exceeding the caller file limit', async (
       }),
       { code: 'RESEARCH_BUDGET_EXCEEDED' },
     );
+    await assert.rejects(readFile(join(output, 'packet.json')), { code: 'ENOENT' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('refuses an output directory replaced after a packet write', async () => {
+  const root = await makeProject();
+  const temporary = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-owner-race-'));
+  const output = join(temporary, 'output');
+  const moduleUrl = new URL('../src/research-packet.mjs', import.meta.url).href;
+  const child = `
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { mkdir, rename } from 'node:fs/promises';
+    import { join } from 'node:path';
+    import { prepareResearchPacket } from ${JSON.stringify(moduleUrl)};
+    const root = process.env.TINYSDD_TEST_ROOT;
+    const output = process.env.TINYSDD_TEST_OUTPUT;
+    const archive = process.env.TINYSDD_TEST_ARCHIVE;
+    const original = fs.promises.writeFile;
+    let swapped = false;
+    fs.promises.writeFile = async (path, ...args) => {
+      const result = await original(path, ...args);
+      if (path === join(output, 'packet.json') && !swapped) {
+        swapped = true;
+        await rename(output, archive);
+        await mkdir(output);
+        await original(join(output, 'FOREIGN-MARKER'), 'foreign');
+      }
+      return result;
+    };
+    syncBuiltinESMExports();
+    try {
+      await prepareResearchPacket({
+        projectRoot: root,
+        proposalPath: 'proposal.md',
+        outputDir: output,
+        budgets: ${JSON.stringify(BUDGETS)},
+      });
+      process.stdout.write('ACCEPTED\\n');
+    } catch (error) {
+      process.stdout.write(String(error.code) + '\\n');
+    } finally {
+      fs.promises.writeFile = original;
+      syncBuiltinESMExports();
+    }
+  `;
+  try {
+    const result = await execute(process.execPath, ['--input-type=module', '-e', child], {
+      env: { ...process.env, TINYSDD_TEST_ROOT: root, TINYSDD_TEST_OUTPUT: output, TINYSDD_TEST_ARCHIVE: join(temporary, 'archive') },
+      maxBuffer: 1024 * 1024,
+    });
+    assert.equal(result.stdout.trim(), 'RESEARCH_OUTPUT_CHANGED');
+    assert.equal(await readFile(join(output, 'FOREIGN-MARKER'), 'utf8'), 'foreign');
+    assert.deepEqual(await readdir(output), ['FOREIGN-MARKER']);
+    await assert.rejects(readFile(join(output, 'packet.json')), { code: 'ENOENT' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('refuses a source parent replaced at the open boundary', async () => {
+  const root = await makeProject();
+  const temporary = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-parent-race-'));
+  const output = join(temporary, 'packet');
+  const moduleUrl = new URL('../src/research-packet.mjs', import.meta.url).href;
+  const child = `
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { mkdir, rename, symlink, writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    import { prepareResearchPacket } from ${JSON.stringify(moduleUrl)};
+    const root = process.env.TINYSDD_TEST_ROOT;
+    const source = join(root, 'src', 'module.mjs');
+    const outside = process.env.TINYSDD_TEST_OUTSIDE;
+    const output = process.env.TINYSDD_TEST_OUTPUT;
+    await mkdir(outside);
+    await writeFile(join(outside, 'module.mjs'), 'OUTSIDE_PRIVATE_MARKER=offline\\n');
+    const original = fs.promises.open;
+    let swapped = false;
+    fs.promises.open = async (path, ...args) => {
+      if (path === source && !swapped) {
+        swapped = true;
+        await rename(join(root, 'src'), join(root, 'original-src'));
+        await symlink(outside, join(root, 'src'));
+      }
+      return original(path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await prepareResearchPacket({
+        projectRoot: root,
+        proposalPath: 'proposal.md',
+        outputDir: output,
+        budgets: ${JSON.stringify(BUDGETS)},
+      });
+      process.stdout.write('ACCEPTED\\n');
+    } catch (error) {
+      process.stdout.write(String(error.code) + '\\n');
+    } finally {
+      fs.promises.open = original;
+      syncBuiltinESMExports();
+    }
+  `;
+  try {
+    const result = await execute(process.execPath, ['--input-type=module', '-e', child], {
+      env: { ...process.env, TINYSDD_TEST_ROOT: root, TINYSDD_TEST_OUTPUT: output, TINYSDD_TEST_OUTSIDE: join(temporary, 'outside') },
+      maxBuffer: 1024 * 1024,
+    });
+    assert.equal(result.stdout.trim(), 'RESEARCH_FILE_READ_FAILED');
     await assert.rejects(readFile(join(output, 'packet.json')), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });

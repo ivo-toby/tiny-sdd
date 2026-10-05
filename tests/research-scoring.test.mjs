@@ -323,6 +323,31 @@ test('matches the existing compiler output and remains stable across repeated ca
   }
 });
 
+test('uses the supplied source callback for both gold and candidate compilation', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-score-cache-'));
+  const source = 'export const cached = true;\n';
+  const value = manifest([{ path: 'src/cached.mjs', startLine: 1, endLine: 1, purpose: 'cached source' }]);
+  const calls = [];
+  try {
+    const result = await scoreResearchSelection({
+      projectRoot: root,
+      goldManifest: packet(value, 'gold.context.json'),
+      candidateManifest: packet(value, 'candidate.context.json'),
+      budgetBytes: MAX_COMPILED_CONTEXT_BYTES,
+      readSource: async (path) => {
+        calls.push(path);
+        return source;
+      },
+    });
+    assert.equal(result.status, 'scored');
+    assert.equal(result.metrics.precision, 1);
+    assert.equal(result.metrics.recall, 1);
+    assert.deepEqual(calls, ['src/cached.mjs', 'src/cached.mjs']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('keeps the Cobalt preparation gold range over the declared refresh interface', async () => {
   const fixture = fileURLToPath(new URL('../bench/research-scoring-fixtures/cobalt-cache-refresh/', import.meta.url));
   const projectRoot = join(fixture, 'project');
