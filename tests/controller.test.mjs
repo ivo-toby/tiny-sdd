@@ -113,15 +113,19 @@ test('apply refuses task input aliases before writing on aliasing filesystems', 
     const aliases = await detectFilesystemAliases(root);
     await writeFile(join(root, ...nfc.split('/')), '# Brief\n');
     if (!aliases.unicodeInsensitive) await writeFile(join(root, ...nfd.split('/')), '# Brief\n');
+    const observedAliases = await detectFilesystemAliases(root);
     await addTask(root, { id: 'one', brief: nfc, allow: ['src/a.ts'] });
     await approveTask(root, { id: 'one', by: 'operator', reason: 'checked input identity' });
     await fakeRun(root, RUN_ONE, { before: { [nfd]: '# Brief\n' }, after: { [nfd]: '# Rewritten\n' } });
-    if (aliases.unicodeInsensitive) {
+    if (observedAliases.unicodeInsensitive === true) {
       await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT' });
       assert.equal(await readProject(root, nfc), '# Brief\n');
-    } else {
+    } else if (observedAliases.unicodeInsensitive === false) {
       await apply(root);
       assert.equal(await readProject(root, nfd), '# Rewritten\n');
+      assert.equal(await readProject(root, nfc), '# Brief\n');
+    } else {
+      await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT' });
       assert.equal(await readProject(root, nfc), '# Brief\n');
     }
   } finally {
@@ -2535,12 +2539,15 @@ test('apply follows the observed filesystem Unicode alias for absent preparation
     await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/a.ts'], preparation: [{ path: nfc, exists: false }] });
     await approveTask(root, { id: 'one', by: 'operator', reason: 'reserved future specification' });
     await fakeRun(root, RUN_ONE, { after: { [nfd]: 'candidate\n' } });
-    if (aliases.unicodeInsensitive) {
+    if (aliases.unicodeInsensitive === true) {
       await assert.rejects(apply(root), { code: 'RUN_SCOPE_VIOLATION' });
       await assertNothingApplied(root, { [nfd]: null });
-    } else {
+    } else if (aliases.unicodeInsensitive === false) {
       await apply(root);
       assert.equal(await readProject(root, nfd), 'candidate\n');
+    } else {
+      await assert.rejects(apply(root), { code: 'RUN_SCOPE_VIOLATION' });
+      await assertNothingApplied(root, { [nfd]: null });
     }
   } finally {
     await cleanup(root);

@@ -1172,6 +1172,34 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("keeps an unavailable dependency mount out of the no-tool prompt", async () => {
+    const project = await makeProject();
+    try {
+      const noTool = await runWorker({
+        projectRoot: project,
+        packet: { ...packet() },
+        worker: worker(),
+        runtime: runtime(undefined, "args"),
+      });
+      const checks = checksPacket(["first"]);
+      const manifest = JSON.parse(checks.text);
+      manifest.dependencyMounts = ["vendor/dependency"];
+      checks.text = JSON.stringify(manifest);
+      checks.sha256 = createHash("sha256").update(checks.text).digest("hex");
+      const unavailable = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks },
+        worker: worker(),
+        runtime: runtime(undefined, "args"),
+      });
+      assert.equal(unavailable.runChecks.available, false);
+      assert.equal(await readFile(noTool.artifactPaths.prompt, "utf8"), await readFile(unavailable.artifactPaths.prompt, "utf8"));
+      assert.doesNotMatch(await readFile(unavailable.artifactPaths.prompt, "utf8"), /Dependency mounts \(read-only\)/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("uses live dependency mounts and compares their identity on a replay", async () => {
     const project = await makeProject();
     try {

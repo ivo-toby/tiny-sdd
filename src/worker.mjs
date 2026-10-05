@@ -426,7 +426,7 @@ async function readRetainedSnapshot(runDirectory, name) {
   return value;
 }
 
-async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId, { protectedPaths = [], inputPaths = [], preparation = [], dependencyMounts = [], caseInsensitive = false, unicodeInsensitive = false } = {}) {
+async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId, { protectedPaths = [], inputPaths = [], preparation = [], dependencyMounts = [], caseInsensitive = null, unicodeInsensitive = null, filesystemAliases = null } = {}) {
   if (baseRunId === undefined || baseRunId === null) return null;
   if (typeof baseRunId !== "string" || !SAFE_RUN_ID.test(baseRunId)) fail("baseRunId must name a TinySDD worker run");
   const preparationSet = new Set(preparationPaths(preparation));
@@ -481,7 +481,7 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId,
     const paths = changes.map((change) => {
       if (!change || typeof change.path !== "string" || !["created", "modified"].includes(change.change)) fail("base run contains an unsupported change");
       const path = projectRelative(change.path, "base run changed path");
-      const violation = classifyFileScopeChange({ ...change, path }, { protectedPaths, inputPaths, preparationPaths: [...preparationSet], dependencyMounts, caseInsensitive, unicodeInsensitive });
+      const violation = classifyFileScopeChange({ ...change, path }, { protectedPaths, inputPaths, preparationPaths: [...preparationSet], dependencyMounts, caseInsensitive, unicodeInsensitive, filesystemAliases });
       if (violation) fail(`base run contains an ineligible change: ${path} (${violation.reason})`);
       if (change.after?.kind !== "file") fail(`base run changed path is not a regular file: ${path}`);
       return path;
@@ -886,7 +886,7 @@ function buildPrompt({ packet, profile, review, compiledContext, agents, skills,
   systemSections.push(`\n\n## TinySDD worker contract\n${contract}\n\nRuntime file scope (fixed): ${packet.runtimeScope.mode}; ordinaryCreateModify=${packet.runtimeScope.ordinaryCreateModify}; deletions=${packet.runtimeScope.deletions}.\nExpected paths (advisory context only):\n${packet.allowedPaths.map((path) => `- ${path}`).join("\n")}`);
   if (packet.protectedPaths.length > 0) systemSections.push(`\n\n## Protected contract files (read-only)\nRead these files; never write, edit, create, delete or rename them. A change is reported as a scope violation.\n${packet.protectedPaths.map((path) => `- ${path}`).join("\n")}`);
   if ((packet.preparation ?? []).length > 0) systemSections.push(`\n\n## Immutable preparation inputs (read-only)\nDo not create, write, edit, delete or rename these approved preparation paths. A change is reported as a scope violation.\n${packet.preparation.map((entry) => `- ${entry.path}${entry.exists === false ? " (approved absent)" : ""}`).join("\n")}`);
-  if ((checkManifest?.dependencyMounts ?? []).length > 0) systemSections.push(`\n\n## Dependency mounts (read-only)\nDo not create, write, edit, delete or rename files under these declared dependency mounts. A change is reported as a scope violation.\n${checkManifest.dependencyMounts.map((path) => `- ${path}`).join("\n")}`);
+  if (runChecksAvailable && (checkManifest?.dependencyMounts ?? []).length > 0) systemSections.push(`\n\n## Dependency mounts (read-only)\nDo not create, write, edit, delete or rename files under these declared dependency mounts. A change is reported as a scope violation.\n${checkManifest.dependencyMounts.map((path) => `- ${path}`).join("\n")}`);
   if (profile?.instructions) systemSections.push(`\n\n## Model profile guidance\n${profile.instructions}`);
   if (compiledContext) {
     const planning = runChecksAvailable ? "" : " Start by planning the allowed-file edit.";
@@ -1660,7 +1660,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
   await assertPreparationIdentity(projectRoot, normalizedPacket.preparation ?? []);
-  const { caseInsensitive, unicodeInsensitive } = await detectFilesystemAliases(sourceRoot);
+  const filesystemAliases = await detectFilesystemAliases(sourceRoot);
+  const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
   const inputPaths = taskInputPaths(normalizedPacket);
   const limits = validatePiWorker(worker);
   const selectedAllowed = normalizedPacket.allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
@@ -1680,6 +1681,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     dependencyMounts: checkManifest?.dependencyMounts ?? [],
     caseInsensitive,
     unicodeInsensitive,
+    filesystemAliases,
   });
   if (revisionBase && frozenBaseline) fail("baseRunId and baselineRunId cannot be combined");
   const brief = await resolveBrief(sourceRoot, normalizedPacket);
@@ -1905,6 +1907,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       dependencyMounts: checkManifest?.dependencyMounts ?? [],
       caseInsensitive,
       unicodeInsensitive,
+      filesystemAliases,
     })).filter(Boolean);
     const outcome = classifyOutcome(capture);
     const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);

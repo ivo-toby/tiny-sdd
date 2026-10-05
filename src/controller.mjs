@@ -984,7 +984,8 @@ async function loadApplyLineage(root, task, runId) {
   const newestFirst = [];
   const seen = new Set();
   const dependencyMounts = await taskDependencyMounts(root, task);
-  const { caseInsensitive, unicodeInsensitive } = await detectFilesystemAliases(root);
+  const filesystemAliases = await detectFilesystemAliases(root);
+  const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
   let currentId = runId;
   while (currentId !== undefined) {
     if (seen.has(currentId)) throw tinyError('RUN_MALFORMED', 'base run lineage contains a cycle', { runId: currentId });
@@ -1040,6 +1041,7 @@ async function loadApplyLineage(root, task, runId) {
       dependencyMounts,
       caseInsensitive,
       unicodeInsensitive,
+      filesystemAliases,
     })).filter(Boolean);
     if (violations.length > 0) {
       throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} contains ineligible candidate changes`, { runId: currentId, paths: violations.map((violation) => violation.path), violations });
@@ -1268,8 +1270,9 @@ export async function applyTask(projectRoot, options = {}) {
 
     // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
     const inputs = [task.brief, task.context, task.checks, ...preparationPaths(task.preparation ?? [])].filter(Boolean);
-    const { caseInsensitive, unicodeInsensitive } = await detectFilesystemAliases(root);
-    const rewritten = plan.filter((item) => item.status === 'written' && inputs.some((input) => pathsOverlap(item.path, input, { caseInsensitive, unicodeInsensitive }))).map((item) => item.path);
+    const filesystemAliases = await detectFilesystemAliases(root);
+    const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
+    const rewritten = plan.filter((item) => item.status === 'written' && inputs.some((input) => pathsOverlap(item.path, input, { caseInsensitive, unicodeInsensitive, filesystemAliases }))).map((item) => item.path);
     if (rewritten.length > 0) {
       throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
     }
