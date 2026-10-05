@@ -76,6 +76,25 @@ Attribution and reason must reflect actual authority, not the example text.
 For dependent tasks use `--depends-on validation`. State and review artifacts
 live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
+For a portable change descriptor, validate the bounded preparation and print a
+read-only topological registration plan:
+
+```sh
+node scripts/validate-change.mjs --project /path/to/project \
+  --change changes/example/change.json --json
+```
+
+The plan reports separate writable slice-test and protected feature-test roles,
+advisory file sizing and the current `runtimeScope`. To export a freshly
+approved slice, use a new directory under an existing canonical parent; the
+exporter checks packet identity and writes no project files or controller state:
+
+```sh
+node scripts/export-slice.mjs --project /path/to/project \
+  --change changes/example/change.json --slice broker-s1 \
+  --out /absolute/canonical/tmp/broker-s1-bundle --json
+```
+
 Use the optional `--feature NAME` label to group slices, then filter the view
 with `status --feature NAME`. Human `status` draws open tasks as a dependency
 tree; `status --json` includes each task's global topological `order` and sorted

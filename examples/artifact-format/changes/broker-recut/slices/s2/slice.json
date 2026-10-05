@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "broker-s2",
+  "brief": "examples/artifact-format/changes/broker-recut/slices/s2/brief.md",
+  "context": "examples/artifact-format/changes/broker-recut/slices/s2/context.json",
+  "checks": "examples/artifact-format/changes/broker-recut/slices/s2/checks.json",
+  "implementationFiles": ["examples/artifact-format/src/s2-paths.mjs"],
+  "sliceTests": ["examples/artifact-format/tests/s2-paths.test.mjs"],
+  "protect": ["examples/artifact-format/tests/feature-integration.test.mjs"],
+  "interfaces": ["examples/artifact-format/src/entrypoint.mjs"],
+  "dependsOn": [],
+  "budget": {"maxImplementationFiles": null, "maxSliceTestFiles": null, "maxCompiledContextBytes": null},
+  "openDecisions": [],
+  "testReview": {
+    "schemaVersion": 1,
+    "workflow": "slice-tests",
+    "criteria": [{"id": "s2-paths", "requirementIds": ["broker-s2-paths"], "question": "Does the writable test establish safe path rejection at the cited caller boundary?", "interfaces": ["examples/artifact-format/src/entrypoint.mjs"], "testPaths": ["examples/artifact-format/tests/s2-paths.test.mjs"]}]
+  }
+}

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"dependencyMounts":[],"checks":[{"id":"s5a-check","argv":["node","examples/artifact-format/tests/s5a-core.test.mjs"],"timeoutMs":120000,"criteria":["C1"]}]}

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"facts":["Wire the sequential lifecycle through the existing entrypoint."],"resources":[{"path":"examples/artifact-format/src/entrypoint.mjs","startLine":1,"endLine":16,"purpose":"Real broker entrypoint used by the protected feature check."}]}

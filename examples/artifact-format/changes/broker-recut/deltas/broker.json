@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "spec": "examples/artifact-format/specs/broker.md",
+  "baseSha256": "991675b6ffaafd1d5bba8929512f899217cc222da7973d3b5934862a625e9a23",
+  "changes": [
+    {"operation": "modify", "id": "broker-s1-errors", "text": "S1 reports invalid leases deterministically."},
+    {"operation": "modify", "id": "broker-s2-paths", "text": "S2 rejects unsafe paths before backend access."},
+    {"operation": "modify", "id": "broker-s3-backend", "text": "S3 keeps the in-memory backend isolated per broker."},
+    {"operation": "modify", "id": "broker-s4-allowlist", "text": "S4 applies the declared allowlist at the broker boundary."},
+    {"operation": "modify", "id": "broker-s5a-core", "text": "S5a runs the sequential lifecycle through the real caller."},
+    {"operation": "modify", "id": "broker-s5b-async", "text": "S5b covers the asynchronous lifecycle edge."}
+  ]
+}

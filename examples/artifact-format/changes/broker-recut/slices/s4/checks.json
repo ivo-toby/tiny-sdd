@@ -1,0 +1,1 @@
+{"schemaVersion":1,"dependencyMounts":[],"checks":[{"id":"s4-check","argv":["node","examples/artifact-format/tests/s4-allowlist.test.mjs"],"timeoutMs":120000,"criteria":["C1"]}]}
