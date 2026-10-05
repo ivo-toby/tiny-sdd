@@ -5,6 +5,9 @@ independent review. This document alone does not complete #20.
 Base inspected: main `36a6080ba8afc65b3719f050bec3284e6369d938`.
 This revision follows the 2026-10-05 operator updates to #20, #28, #37 and #81
 and supersedes this draft's earlier fixed two-file/all-strong-side-tests design.
+Ivo's later sandbox-file-freedom decision (#82) also supersedes hard planned-file
+ceilings: expected output lists and file-count budgets are advisory. The current
+worker/apply still enforces its legacy allowlist until #82 is implemented.
 
 A change groups requirements, design, spec deltas, feature checks and a slice
 DAG. Strong preparation writes protected feature acceptance/integration tests;
@@ -104,12 +107,14 @@ spec deltas and archiving belong to #30.
 `interfaces`, `dependsOn`, `budget`, `openDecisions`, `testReview`.
 Slice IDs are globally unique task IDs such as `broker-s1`.
 
-- `implementationFiles`: nonempty exact paths the small worker may create or
-  edit, including caller wiring where assigned. Counted against the resolved
-  implementation-file budget.
-- `sliceTests`: nonempty exact writable test output paths the small worker
+- `implementationFiles`: nonempty expected create/modify paths, including caller
+  wiring where assigned. Counted separately for advisory implementation sizing;
+  these are not the complete set of eligible runtime changes under #82.
+- `sliceTests`: nonempty expected writable test output paths the small worker
   authors or improves. Direct imports into the slice are appropriate here.
-  These are counted separately; they are never independent acceptance evidence.
+  Count separately for advisory test sizing; additional eligible tests need no
+  deviation-specific permission under #82. They are never independent acceptance
+  evidence. Exact actual candidate test bytes must reach ordinary #81 review.
 - `protect`: ordinary existing paths the worker must not edit. It includes all
   change-level `featureTests`, plus shared contracts where applicable. Existing
   regression tests stay protected unless explicitly assigned as writable slice
@@ -123,25 +128,28 @@ Slice IDs are globally unique task IDs such as `broker-s1`.
 - `context`: unchanged schema accepted by `parseContextManifest()` in
   `src/context-compiler.mjs`; existing facts, source-size and resource caps apply.
 - `checks`: unchanged `parseChecksManifest()` schema with exactly one named
-  argv check. That check explicitly names every writable slice test as a literal
+  argv check. That check explicitly names every expected `sliceTests` path as a literal
   argv operand. Commands are never shell strings. Feature checks are separate.
 
-Writable implementation/test lists are disjoint, with no duplicates; their
-union is the task `allow` list. Neither list may overlap `protect`, feature
+Expected implementation/test lists are disjoint within a slice, with no
+duplicates. Their union maps to today's legacy task `allow` list only for
+compatibility; this does not make it the intended new runtime scope. Neither
+list may overlap `protect`, feature
 tests or preparation inputs (including change/delta/descriptors/brief/context/
 checks). No worker may rewrite its specification or independent tests. Existing
 path, dependency-mount overlap, sandbox and task input safeguards remain.
-Writable paths must have exactly one owning slice across the whole DAG,
-including implementation-versus-test collisions. Also reject a writable path
-that appears in any other slice's `protect` set or preparation inputs: editing
-a predecessor's protected contract would stale its approval too. This v1
-preparation constraint is conservative; future relaxations need a separately
-reviewed scheduling/freshness design, not a hidden exception. A dependency edge does not
-permit a later slice to rewrite an accepted predecessor's outputs: today's
-acceptance digest would become stale and block the dependent. Refuse overlap
-rather than redefining acceptance. Preparation must coalesce that work or
-re-cut distinct owned files; any alternative controller semantics need a
-separate operator decision. Feature tests are never any slice's writable output.
+Reject any expected output overlapping another slice's protected contracts or
+preparation inputs too; protected feature tests are never ordinary writable
+outputs. Report planned cross-slice ordinary-file ownership overlaps as freshness
+warnings, not a separate deviation gate. A later slice modifying an accepted
+predecessor's output can stale its existing acceptance digest and block a
+dependent under today's controller. Preparation should re-cut/coalesce that
+work; the format cannot waive freshness or make a dependency edge an exception.
+#82 must preserve applicable integrity checks while implementing eligible extra
+create/modify changes. Actual changed-file inventory and candidate bytes stay
+visible to normal review; neither omitted planning nor an extra file alone is
+permission to bypass protection, freshness or operator acceptance. No deletion
+or unrestricted command authorization is implied.
 Classification as a slice-test output is declarative; review must catch attempts
 to hide implementation files there. A filename convention proves no authorship.
 
@@ -149,7 +157,9 @@ Change `budget` has exact positive safe-integer keys `maxImplementationFiles`,
 `maxSliceTestFiles`, `maxCompiledContextBytes`. Slice `budget` has those same
 keys, each either null (inherit the explicit change value) or a positive safe
 integer override. The resolved budget is retained in validation and bundles.
-The context budget cannot exceed the existing 96 KiB compiler cap. There is no
+Counts above implementation/test budgets produce explicit sizing warnings, not
+readiness/export refusals. The compiled-context budget remains an input-size
+constraint; it cannot exceed the existing 96 KiB compiler cap. There is no
 universal implementation-file ceiling of two and no hidden budget fallback.
 An initial example may explicitly choose two implementation files and one slice
 test file; that is a visible example configuration, not an approved policy
@@ -181,9 +191,17 @@ Until the dependent gates exist, docs must make this enforcement gap explicit.
 `requirementIds`, `question`, `interfaces`, `testPaths`. IDs are unique slugs;
 requirements reference this change's deltas; question is explicit nonempty
 assessment text; interface and test paths are nonempty subsets of this slice's
-`interfaces` and `sliceTests`. Every writable slice test is covered. These are
+`interfaces` and expected `sliceTests`. Every expected slice test is covered. These are
 preparation criteria for assessing adequacy/correctness, not predetermined
-passing answers or permission to approve.
+passing answers or permission to approve. Check operands and criterion path
+coverage validate the expected preparation list only. They are not an exclusive
+runtime test-path set. Under #82/#81, every actual eligible candidate test and
+code change is retained and assessed against the same approved requirements and
+criteria; additional file paths alone require no descriptor/brief reapproval or
+special deviation review. The future runner links actual file inventory to the
+approved questions without treating an unpredicted test as exempt from review.
+New requirements or changed assessment questions still follow normal approval
+freshness; an extra ordinary output is not itself such a change.
 
 For export readiness, the existing brief must contain one
 `## Slice test review contract` section with a JSON code block exactly matching
@@ -234,10 +252,13 @@ not live assessment or training evidence.
 Strict dependency-free validators read ordinary files using existing project
 path checks and reuse `compileContext()` and `parseChecksManifest()`. Reject
 unknown keys/version, unsafe/duplicate paths, invalid cross-references, stale
-spec bases, cycles, output/protection overlap, missing citations or exceeded
-resolved budgets. Structural validation can report open decisions; requesting
-an export-ready descriptor refuses them. For the proposed implementation, use a 512 KiB ordinary-file
-read ceiling (matching the context compiler's source-resource ceiling) for descriptor/brief/check inputs and retained writable baselines.
+spec bases, cycles, expected-output/protection/input overlap, missing citations
+or exceeded compiled-context/resource bounds. Ordinary cross-slice expected
+ownership overlaps and exceeded file-count budgets are reported warnings.
+Structural validation can report open decisions; requesting an export-ready
+descriptor refuses them. For the proposed implementation, use a 512 KiB
+ordinary-file read ceiling (matching the context compiler's source-resource
+ceiling) for descriptor/brief/check inputs and retained writable baselines.
 Bound the descriptor graph to 64 slices, 64 deltas and 256 integration/criterion
 entries each, and total retained output to 32 MiB; refuse before writes on excess.
 These are explicit proposed v1 format resource limits, separate from configurable
@@ -246,11 +267,16 @@ implementation/test sizing. Report the exceeded limit; never silently truncate.
 A pure registration-plan builder returns topological `addTask()` arguments:
 `id`, `feature`, `brief`, `context`, `checks`, `allow` (implementation/test union),
 `protect` and `dependsOn`, plus separate format metrics and preparation identity.
+Return explicit compatibility metadata `runtimeScope: { mode: "legacy-allowlist",
+extraOrdinaryFiles: false, followUpIssue: 82 }` beside the plan, not inside
+existing controller approval fields. Never infer a broader scope for an old
+registered task/approval from the descriptor. #82 supplies separately reviewed
+explicit selection and legacy compatibility before the new mode can be exported.
 The offline validation script prints the plan; it does not register, update,
 approve, run checks, dispatch, apply or accept. Existing `task add`/`update`
 remain the mutation APIs. Dependencies must be registered first, and existing
 accepted-dependency/freshness requirements remain intact. No controller state,
-approval or packet schema changes are proposed for the proposed format mapping.
+approval or packet schema changes are proposed for this format mapping.
 
 ## Portable freshly approved slice bundle
 
@@ -258,9 +284,13 @@ The exporter validates the current descriptor set, readiness and resolved budget
 then calls `resolveTaskPacket()` for the existing registered task. Compare mapped
 brief/context/checks, allow/protect and dependency IDs with the returned shape;
 compare feature membership with existing controller status. Export only a matching,
-currently ready, freshly approved task. An unrelated task ID cannot bypass
-format readiness. Retain descriptor identity and resolved test roles/budgets as
-preparation metadata, without extending existing approval bindings.
+currently ready, freshly approved task under its actual current runtime policy.
+An unrelated task ID cannot bypass format readiness. Retain descriptor identity,
+advisory test roles/file budgets, actual runtimeScope
+compatibility metadata and compiled-context limit as preparation metadata,
+without extending existing approval bindings. The interim current-controller
+bundle still has a hard legacy allowlist; label that limitation plainly. #20
+does not activate #82, and legacy approval is not consent to reinterpret scope.
 
 Legacy context approvals remain compatible. First check packet
 `context.compiledSha256` against current `compiled.sha256`, as the resolved
@@ -290,7 +320,8 @@ in the bundle so later assessed revisions can be audited. Candidate bytes and
 per-revision evidence still belong to #81/run records.
 
 A non-TinySDD harness can read these artifacts without the CLI, work in a
-disposable checkout with the exact inputs/protected-file identities, and return
+disposable checkout with the exact inputs/protected-file identities and declared
+actual runtime policy, and return
 code, tests and evidence for controller review. Consumer instructions require
 checking referenced bytes before work; the bundle is not a self-contained copy
 of the project. #31 supplies end-to-end harness adapters. A bundle never approves
@@ -312,9 +343,11 @@ excerpts and a named real-entrypoint wiring obligation. Add a wiring slice if
 the historical re-cut lacks one, clearly labeling it as proposed new work rather
 than claiming it existed. S5b depends on S5a; other historical edges require
 actual records rather than a guessed graph. If historical slices share writable
-files, mark that reconstruction as not registrable under current accepted-output
-freshness; the runnable synthetic example uses distinct ownership and clearly
-labels its re-cut differences. Do not quietly alter historical evidence.
+files, registration can still succeed, but explain that later edits can stale
+accepted predecessors and block dependencies under current accepted-output
+freshness. Emit a planning warning rather than a registration refusal. The
+runnable synthetic example uses distinct ownership and clearly labels its re-cut
+differences. Do not quietly alter historical evidence.
 
 Missing original broker packets, source excerpts, approvals or run evidence
 are marked UNKNOWN. A reconstruction is labeled as such. A self-contained
@@ -324,12 +357,13 @@ fixture verification, not a historical Talon rerun, human adequacy approval,
 live Jev measurement or observed non-TinySDD harness run.
 
 Implementation tests cover exact schemas/paths/DAG/cross-references, configurable
-implementation versus test budgets, cited interface coverage, protected feature
-tests, writable-test check operands, feature wiring/check references and open
+advisory implementation/test counts versus hard context bounds, current-runtime
+policy labeling with no legacy reinterpretation, cited interface coverage,
+protected feature tests, writable-test check operands, feature wiring/check references and open
 questions; approved-brief/descriptor requirement and review-contract mismatches,
 stale/missing approvals, descriptor/task mismatch, legacy approvals,
-retained-byte and checkout-baseline digests/absence markers, output collisions and old task compatibility. Each new
-behavior needs a meaningful reversal failure and exact source restoration.
+retained-byte and checkout-baseline digests/absence markers, output collisions
+and old task compatibility. Each new behavior needs a meaningful reversal failure and exact source restoration.
 Run the normal, symlink-TMPDIR and emulated-Darwin suites, report actual counts,
 and exercise offline scripts/bundle reads. No lint/build exists in this repo.
 Live providers, Pi, training and foreign-harness execution remain unverified
@@ -342,6 +376,9 @@ implementation is authorized, subject to the existing independent PR review gate
 The example budgets are proposed explicit values, not universal limits.
 #81 threshold, revision cap and uncertain/unavailable routing remain undecided;
 they do not block #20's passive descriptors or authorize an active loop.
+#82 is queued for the serial controller/runtime apply contract after #20; its
+explicit legacy-to-new selection design still requires review. No extra-file
+capability or special deviation gate is implemented by these passive descriptors.
 #28 owns phase gates and enforcing the revised feature-check prerequisite;
 #30 spec merge/archive, #38 engagement levels, #39 plan-level approval. None is
 silently implemented here. Live #40/provider work and #32/#8 evidence contracts
