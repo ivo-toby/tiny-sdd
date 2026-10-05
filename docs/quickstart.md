@@ -13,8 +13,9 @@ Workers create disposable candidate directories under `/tmp` by default. Set
 `TINYSDD_TMPDIR` to an existing real directory on a volume with enough free
 space when `/tmp` is small or shared; the worker removes its candidates after it
 has retained the run artifacts under the project.
-On macOS, the default system temporary directory is resolved through Apple's
-`/var` and `/tmp` aliases; an explicit `TINYSDD_TMPDIR` must still be a real path.
+On Linux and macOS, the ambient `TMPDIR` (or `/tmp` fallback) is resolved through
+host aliases before scratch directories are created. An explicit
+`TINYSDD_TMPDIR` must still resolve through a real path without symlinks.
 
 The macOS adapter uses Seatbelt with read access to system libraries, the Node
 executable and the installed Pi package. The candidate and temporary Pi state

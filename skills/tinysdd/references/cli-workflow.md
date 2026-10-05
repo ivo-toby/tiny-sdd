@@ -218,6 +218,10 @@ check sandbox. An unavailable host records the reason and runs without the
 client. Source files may appear in local raw events and sent
 model context: use only authorized projects and providers. Excluded filenames
 are a precaution, not a general detector for secrets embedded in source.
+Ambient `TMPDIR` (or the `/tmp` fallback) is resolved through host aliases on
+Linux and macOS before disposable scratch directories are created. An explicit
+`TINYSDD_TMPDIR` remains strict: its path and parents must resolve without
+symlinks.
 
 Context compaction is default-off. A selected profile can opt into the
 model-free deterministic hook with `runtime.compaction.enabled: true`:
