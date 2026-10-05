@@ -1,4 +1,4 @@
-import { open, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { open, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -359,9 +359,7 @@ async function writeFreshDirectory(output, files) {
   let suspicious = false;
   let reservedCanonical;
   let ownerIdentity;
-  let stagingMarker;
   try {
-    stagingMarker = await mkdtemp(join(parent, `.tinysdd-research-${process.pid}-`));
     try {
       await mkdir(output, { recursive: false, mode: 0o700 });
       owned = true;
@@ -398,8 +396,6 @@ async function writeFreshDirectory(output, files) {
       if (currentIdentity?.dev === ownerIdentity.dev && currentIdentity?.ino === ownerIdentity.ino) await rm(output, { recursive: true, force: true }).catch(() => {});
     }
     throw error;
-  } finally {
-    if (stagingMarker !== undefined) await rm(stagingMarker, { recursive: true, force: true }).catch(() => {});
   }
   return output;
 }
