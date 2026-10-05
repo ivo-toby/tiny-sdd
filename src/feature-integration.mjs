@@ -596,8 +596,8 @@ async function writeRetainedJson(path, value, maxBytes = FEATURE_INTEGRATION_MAX
 async function retainSnapshot(root, artifact, resolved, dependencies, id, feature, membership, activeAcceptanceDigests, protectedPaths, result) {
   const candidatePath = join(artifact, 'candidate');
   const dependencyPath = join(artifact, 'dependencies');
-  const candidate = await copySourceSnapshot(root, candidatePath, dependencies.map((item) => item.target));
-  const retainedDependencies = await copyDependencySnapshots(root, dependencyPath, dependencies.map((item) => item.target));
+  const candidate = await copySourceSnapshot(root, candidatePath, dependencies);
+  const retainedDependencies = await copyDependencySnapshots(root, dependencyPath, dependencies);
   const configIdentity = await configFilesIdentity(root);
   const command = commandIdentity(resolved);
   const resultPath = join(artifact, 'result.json');

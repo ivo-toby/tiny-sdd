@@ -120,6 +120,44 @@ test('refuses source or retained candidate drift before publishing proof', async
   }
 });
 
+test('retains dependency mounts and marks dependency drift stale', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'deps'), { recursive: true });
+    await writeFile(join(root, 'deps', 'runtime.mjs'), 'export const runtime = true;\n');
+    const config = {
+      argv: ['node', 'tests/integration.mjs'],
+      dependencyMounts: ['deps'],
+      testPaths: ['tests/integration.mjs'],
+      entrypoints: ['src/entry.mjs'],
+    };
+    const result = await runFeatureIntegration(root, {
+      ...args(root, async ({ dependencyMounts }) => {
+        assert.equal(dependencyMounts.length, 1);
+        assert.equal(await readFile(join(dependencyMounts[0].source, 'runtime.mjs'), 'utf8'), 'export const runtime = true;\n');
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+      }),
+      config,
+    });
+    const fresh = await featureIntegrationFreshness(root, {
+      feature: 'broker', eventIntegration: result.reference,
+      membership: [{ id: 'one', retired: false }], activeAcceptanceDigests: { one: 'a'.repeat(64) },
+      config, protectedPaths: ['tests/integration.mjs'],
+    });
+    assert.equal(fresh.fresh, true);
+    await writeFile(join(root, 'deps', 'runtime.mjs'), 'changed dependency\n');
+    const stale = await featureIntegrationFreshness(root, {
+      feature: 'broker', eventIntegration: result.reference,
+      membership: [{ id: 'one', retired: false }], activeAcceptanceDigests: { one: 'a'.repeat(64) },
+      config, protectedPaths: ['tests/integration.mjs'],
+    });
+    assert.equal(stale.fresh, false);
+    assert.ok(stale.reasons.some((reason) => /dependency/u.test(reason)));
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('normal callers cannot inject a passing runner', async () => {
   const root = await project();
   const old = process.env[FEATURE_INTEGRATION_TEST_ENV];
