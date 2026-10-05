@@ -7,7 +7,9 @@ This revision follows the 2026-10-05 operator updates to #20, #28, #37 and #81
 and supersedes this draft's earlier fixed two-file/all-strong-side-tests design.
 Ivo's later sandbox-file-freedom decision (#82) also supersedes hard planned-file
 ceilings: expected output lists and file-count budgets are advisory. The current
-worker/apply still enforces its legacy allowlist until #82 is implemented.
+worker/apply runtime uses the single default `ordinary-create-modify` scope;
+deletions and protected, preparation, internal, secret, dependency or filesystem
+type changes remain ineligible.
 
 A change groups requirements, design, spec deltas, feature checks and a slice
 DAG. Strong preparation writes protected feature acceptance/integration tests;
@@ -132,8 +134,9 @@ Slice IDs are globally unique task IDs such as `broker-s1`.
   argv operand. Commands are never shell strings. Feature checks are separate.
 
 Expected implementation/test lists are disjoint within a slice, with no
-duplicates. Their union maps to today's legacy task `allow` list only for
-compatibility; this does not make it the intended new runtime scope. Neither
+duplicates. Their union maps to the task's expected `allow` list for packet
+context and advisory sizing; it does not limit the default runtime's ordinary
+create/modify candidates. Neither
 list may overlap `protect`, feature
 tests or preparation inputs (including change/delta/descriptors/brief/context/
 checks). No worker may rewrite its specification or independent tests. Existing
@@ -165,7 +168,7 @@ An initial example may explicitly choose two implementation files and one slice
 test file; that is a visible example configuration, not an approved policy
 forced on all work. File counts, context bytes and existing behavior-split/test
 complexity warnings are reported separately. Existing controller sizing warnings
-remain unchanged and may still count the total allowlist.
+remain unchanged and may still count the total expected path list.
 
 ## Protected feature checks and acceptance boundary
 
@@ -266,12 +269,12 @@ implementation/test sizing. Report the exceeded limit; never silently truncate.
 
 A pure registration-plan builder returns topological `addTask()` arguments:
 `id`, `feature`, `brief`, `context`, `checks`, `allow` (implementation/test union),
-`protect` and `dependsOn`, plus separate format metrics and preparation identity.
-Return explicit compatibility metadata `runtimeScope: { mode: "legacy-allowlist",
-extraOrdinaryFiles: false, followUpIssue: 82 }` beside the plan, not inside
-existing controller approval fields. Never infer a broader scope for an old
-registered task/approval from the descriptor. #82 supplies separately reviewed
-explicit selection and legacy compatibility before the new mode can be exported.
+`protect`, complete `preparation` identity and `dependsOn`, plus separate format
+metrics. Return the explicit default metadata
+`runtimeScope: { mode: "ordinary-create-modify", ordinaryCreateModify: true,
+deletions: false }` beside the plan, not inside controller approval fields.
+Preparation entries include truthful presence and byte identity; absent entries
+are carried as absence evidence and are not blindly added to `protect`.
 The offline validation script prints the plan; it does not register, update,
 approve, run checks, dispatch, apply or accept. Existing `task add`/`update`
 remain the mutation APIs. Dependencies must be registered first, and existing
@@ -286,24 +289,24 @@ For example, a slice descriptor that names `changes/example/slices/s1/brief.md`,
 `context.json` and `checks.json` is materialized as `.tinysdd/tasks/s1.md`,
 `.tinysdd/tasks/s1.context.json` and `.tinysdd/tasks/s1.checks.json`. This
 explicit copy keeps the packet inputs byte-identical while leaving validation
-read-only. Carry every `allow`, `protect` and `dependsOn` value from the plan to
-`task add` (using `--depends-on` for dependencies) so the registered shape
-remains exact.
+read-only. Carry every `allow`, `protect`, `preparation` and `dependsOn` value
+from the plan to `task add` (using `--depends-on` for dependencies) so the
+registered shape and immutable preparation evidence remain exact.
 
 ## Portable freshly approved slice bundle
 
 The exporter validates the current descriptor set, readiness and resolved budget,
 reads bounded controller state for the selected dependency closure, and then calls
 `resolveTaskPacket()` for the existing registered task. Compare mapped
-brief/context/checks, allow/protect and dependency IDs with the returned shape;
+brief/context/checks, allow/protect/preparation and dependency IDs with the returned shape;
 compare feature membership with that bounded state. Export only a matching,
 currently ready, freshly approved task under its actual current runtime policy.
 An unrelated task ID cannot bypass format readiness. Retain descriptor identity,
-advisory test roles/file budgets, actual runtimeScope
-compatibility metadata and compiled-context limit as preparation metadata,
-without extending existing approval bindings. The interim current-controller
-bundle still has a hard legacy allowlist; label that limitation plainly. #20
-does not activate #82, and legacy approval is not consent to reinterpret scope.
+advisory test roles/file budgets, actual runtimeScope metadata and
+compiled-context limit as preparation metadata, without extending existing
+approval bindings. The bundle retains the complete preparation identity and
+current checkout references; ordinary actual candidates remain visible to
+normal review and apply.
 
 Legacy context approvals remain compatible. First check packet
 `context.compiledSha256` against current `compiled.sha256`, as the resolved
@@ -389,9 +392,10 @@ implementation is authorized, subject to the existing independent PR review gate
 The example budgets are proposed explicit values, not universal limits.
 #81 threshold, revision cap and uncertain/unavailable routing remain undecided;
 they do not block #20's passive descriptors or authorize an active loop.
-#82 is queued for the serial controller/runtime apply contract after #20; its
-explicit legacy-to-new selection design still requires review. No extra-file
-capability or special deviation gate is implemented by these passive descriptors.
+#82 supplies the current default ordinary create/modify runtime and complete
+actual-candidate evidence. There is no task opt-in, legacy transition or special
+deviation gate; normal review, approval freshness and operator acceptance remain
+the authority for applying and accepting a candidate.
 #28 owns phase gates and enforcing the revised feature-check prerequisite;
 #30 spec merge/archive, #38 engagement levels, #39 plan-level approval. None is
 silently implemented here. Live #40/provider work and #32/#8 evidence contracts

@@ -95,16 +95,20 @@ cp changes/example/slices/s1/checks.json .tinysdd/tasks/s1.checks.json
 tinysdd task add --id s1 --feature example \
   --brief .tinysdd/tasks/s1.md --context .tinysdd/tasks/s1.context.json \
   --checks .tinysdd/tasks/s1.checks.json \
+  --preparation specs/example.md \
   --allow src/example.mjs,tests/example.test.mjs --protect tests/contract.test.mjs
 ```
 
 Repeat in topological order for dependencies. Copying the bytes explicitly keeps
 the registered packet inputs identical to the approved descriptor files; carry
-every `allow`, `protect` and `dependsOn` value from the plan, using
-`--depends-on` for dependencies. The validator does not create controller files.
+every `allow`, `protect`, `preparation` and `dependsOn` value from the plan,
+using `--depends-on` for dependencies. An absent preparation entry remains an
+absence check and is not added to `--protect` until it exists. The validator does
+not create controller files.
 
 The plan reports separate writable slice-test and protected feature-test roles,
-advisory file sizing and the current `runtimeScope`. To export a freshly
+advisory file sizing and the current default `runtimeScope` (ordinary
+create/modify). To export a freshly
 approved slice, use a new directory under an existing canonical parent; the
 exporter checks packet identity and writes no project files or controller state:
 
@@ -430,20 +434,23 @@ Qualification is evidence only; dispatch and enforcement remain separate.
 
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
-TinySDD overlays only that prior run's changed allowed files into the new
-disposable workspace and records the lineage; it never changes the source project.
+TinySDD overlays every retained eligible actual change from that prior run into
+the new disposable workspace and records the lineage; it never changes the
+source project. The run must retain complete before/after identities and full
+snapshot inventories; missing or tampered proof is refused.
 For a benchmark replay, an intervening `task update` that changes the approved
 allow, protect, context, checks, or dependency shape is refused with
 `STALE_BENCHMARK_SHAPE`; re-approve the revised task before starting a new
 benchmark.
 
-Inspect the finished result envelope and patch. Process completion is not passing
-verification, and scope violations are review blockers. Use the outer harness
-to verify the candidate in an appropriate isolated environment, and retain observed
-test results plus review findings in a file. Apply the reviewed run to the project
-with `task apply` before recording acceptance, because acceptance binds the
-project's allowed-file content: accepting first makes the task `stale` and blocks
-its dependents. Then record the decision explicitly:
+Inspect the finished result envelope, complete actual candidate inventory and
+patch. Process completion is not passing verification, and boundary violations
+are review blockers. Use the outer harness to verify the candidate in an
+appropriate isolated environment, and retain observed test results plus review
+findings in a file. Apply the reviewed run to the project with `task apply` before
+recording acceptance, because acceptance binds planned and actual candidate
+content: accepting first makes the task `stale` and blocks its dependents. Then
+record the decision explicitly:
 
 ```sh
 tinysdd task apply --id validation --run WORKER_RUN_ID --by operator
@@ -452,19 +459,33 @@ tinysdd status
 tinysdd next
 ```
 
-`task apply` copies the run's allowed files by content, so it works for a
-`--base-run` revision too (a revision's `patch.diff` is a delta against the prior
-candidate, not the project). It follows the lineage to the first run, applies only
-the paths those runs recorded as changed, and refuses with `APPLY_CONFLICT`,
+When the operator accepts a manually inspected ordinary file outside the
+planned paths, include every such actual path in the review:
+
+```sh
+tinysdd task review --id validation --verdict accepted \
+  --evidence docs/reviews/validation.md --by operator \
+  --candidate-paths src/manual-extra.mjs
+```
+
+Candidate paths are unioned with planned and applied paths, and their content
+identity is retained; editing one later makes the acceptance stale.
+
+`task apply` copies every retained eligible actual file by content, so it works for
+a `--base-run` revision too (a revision's `patch.diff` is a delta against the
+prior candidate, not the project). It follows the lineage to the first run,
+validates complete snapshot and before/after identity evidence, and applies only
+the paths those runs recorded as changed. It refuses with `APPLY_CONFLICT`,
 writing nothing, if one of those project files no longer matches the state the
 lineage started from; files that already equal the candidate are recorded as
-`already-applied`. It refuses another task's run, a benchmark replay, scope
-violations and a run whose outcome is not `completed` (a timed-out run included),
-with no override. It also refuses, with `APPLY_CHANGES_TASK_INPUT` and nothing
-written, a run that would rewrite the task's own brief, context manifest or checks
-manifest (possible when they are in `--allow`), since that would leave the approval
-it was dispatched under stale. The record shows under `applied` in `status --json`; an
-accepting review adds `appliedFromRun` with `identical: false` if any allowed
+`already-applied`. It refuses missing or tampered evidence, protected or other
+ineligible changes, another task's run, a benchmark replay, boundary violations
+and a run whose outcome is not `completed` (a timed-out run included), with no
+override. It also refuses, with `APPLY_CHANGES_TASK_INPUT` and nothing written, a
+run that would rewrite the task's own brief, context manifest, checks manifest or
+preparation input, since that would leave the approval it was dispatched under
+stale. The record shows under `applied` in `status --json`; an accepting review
+adds `appliedFromRun` with `identical: false` if any planned or actual candidate
 file differs from what apply left. Apply is neither verification nor acceptance.
 It also refuses with `RUN_APPROVAL_MISMATCH` when the final run packet was dispatched under a different approval digest; dispatch a fresh run after re-approval.
 
@@ -521,8 +542,8 @@ Inspect `checks.jsonl`, bounded check-output artifacts and
 digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
 independent operator verification remains required. When the client is
 available, the worker contract makes the named host tool explicit and directs
-an edit → `run_checks` → fix loop after each allowed write or edit. Failures are
-fixed only within the approved scope; the worker stops and reports when the
+an edit → `run_checks` → fix loop after each eligible ordinary file write or edit.
+Failures are fixed only within the approved task boundaries; the worker stops and reports when the
 declared budget or required information or permission is exhausted, and names
 observed checks separately from checks still unrun. An unavailable client keeps
 the existing no-check prompt and Pi tool arguments.

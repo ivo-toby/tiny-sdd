@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { constants as fsConstants, createReadStream } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -22,6 +22,7 @@ import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
 import { digestJson, stableStringify as fsStableStringify } from "./fs-utils.mjs";
+import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths, unicodeCaseFold } from "./file-scope.mjs";
 import {
   COMPACTION_ANCHOR_ENV,
   compactionIdentity,
@@ -163,7 +164,7 @@ async function ensureProjectPath(root, relPath, { allowMissing = false, regular 
 }
 
 function excludedName(name, directory) {
-  if (name === ".git" || name === ".tinysdd" || name === "node_modules") return true;
+  if ([".git", ".tinysdd", "node_modules"].includes(unicodeCaseFold(name))) return true;
   if (directory && PROJECT_SECRET_DIR.test(name)) return true;
   return PROJECT_SECRET_NAME.test(name);
 }
@@ -312,12 +313,24 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
   return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
 }
 
-async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths, compiledContext) {
+async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths, preparation, compiledContext) {
   for (const path of protectedPaths) {
     if (!copy.copied.has(path)) fail(`Protected path is not part of the worker copy (missing, gitignored or excluded): ${path}`);
   }
   for (const resource of compiledContext?.resources ?? []) {
     if (!copy.copied.has(resource.path)) fail(`Context resource is not part of the worker copy (gitignored or excluded): ${resource.path}`);
+  }
+  for (const entry of preparation) {
+    if (entry.exists === false) continue;
+    if (copy.copied.has(entry.path)) continue;
+    let info;
+    try {
+      info = await lstat(join(sourceRoot, ...entry.path.split("/")));
+    } catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "ENOTDIR") continue;
+      throw error;
+    }
+    if (info.isFile()) fail(`Preparation path is not part of the worker copy (gitignored or excluded): ${entry.path}`);
   }
   for (const path of allowedPaths) {
     if (copy.copied.has(path)) continue;
@@ -334,6 +347,54 @@ async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths
   }
 }
 
+function normalizePreparation(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) fail("packet.preparation must be an array");
+  const seen = new Set();
+  return value.map((entry) => {
+    if (typeof entry === "string") entry = { path: entry };
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.path !== "string") fail("packet.preparation entries must contain a path");
+    const path = projectRelative(entry.path, "packet preparation path", CONTROLLER_TASKS_PREFIX);
+    if (seen.has(path)) fail("packet.preparation must not contain duplicate paths");
+    seen.add(path);
+    if (entry.exists !== undefined && typeof entry.exists !== "boolean") fail("packet.preparation.exists must be boolean");
+    if (entry.sha256 !== undefined && (typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(entry.sha256))) fail("packet.preparation.sha256 must be a SHA-256 digest");
+    if (entry.bytes !== undefined && (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0)) fail("packet.preparation.bytes must be a nonnegative safe integer");
+    return { path, ...(entry.exists === undefined ? {} : { exists: entry.exists }), ...(entry.bytes === undefined ? {} : { bytes: entry.bytes }), ...(entry.sha256 === undefined ? {} : { sha256: entry.sha256 }) };
+  }).sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function normalizeRuntimeScope(value) {
+  if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) fail("packet.runtimeScope must be an object");
+  const scope = value ?? DEFAULT_RUNTIME_SCOPE;
+  if (scope.mode !== DEFAULT_RUNTIME_SCOPE.mode || scope.ordinaryCreateModify !== true || scope.deletions !== false) {
+    fail("packet.runtimeScope must use the ordinary-create-modify default");
+  }
+  return { ...DEFAULT_RUNTIME_SCOPE };
+}
+
+function taskInputPaths(packet) {
+  return [packet.briefPath, packet.context?.path, packet.checks?.path].filter((path) => typeof path === "string");
+}
+
+async function assertPreparationIdentity(projectRoot, preparation) {
+  for (const entry of preparation) {
+    const resource = await ensureProjectPath(projectRoot, entry.path, {
+      allowMissing: true,
+      controllerArtifactPrefix: entry.path.startsWith('.tinysdd/') ? '.tinysdd/tasks/' : null,
+    });
+    if (!resource.exists) {
+      if (entry.exists === true) fail(`Preparation path is missing: ${entry.path}`);
+      continue;
+    }
+    const info = await lstat(resource.path);
+    if (!info.isFile()) fail(`Preparation path is not a regular file: ${entry.path}`);
+    if (entry.exists === false) fail(`Preparation absence is no longer current: ${entry.path}`);
+    if (entry.sha256 !== undefined && entry.sha256 !== await hashFile(resource.path)) fail(`Preparation path changed since approval: ${entry.path}`);
+    if (entry.bytes !== undefined && entry.bytes !== info.size) fail(`Preparation path size changed since approval: ${entry.path}`);
+  }
+}
+
 async function readOptionalRuntime(runDirectory) {
   try {
     const runtimePath = join(runDirectory, "runtime.json");
@@ -346,10 +407,29 @@ async function readOptionalRuntime(runDirectory) {
   }
 }
 
-async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId) {
+async function readRetainedSnapshot(runDirectory, name) {
+  const path = join(runDirectory, name);
+  let info;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    fail(`base run is missing retained ${name}: ${error?.code === "ENOENT" ? "file not found" : "cannot read file"}`);
+  }
+  if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_COPY_BYTES) fail(`base run ${name} is not a bounded regular file`);
+  let value;
+  try {
+    value = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    fail(`base run ${name} is malformed`);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > MAX_COPY_FILES) fail(`base run ${name} is not a bounded snapshot object`);
+  return value;
+}
+
+async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId, { protectedPaths = [], inputPaths = [], preparation = [], dependencyMounts = [], caseInsensitive = null, unicodeInsensitive = null, filesystemAliases = null } = {}) {
   if (baseRunId === undefined || baseRunId === null) return null;
   if (typeof baseRunId !== "string" || !SAFE_RUN_ID.test(baseRunId)) fail("baseRunId must name a TinySDD worker run");
-  const allowed = new Set(allowedPaths);
+  const preparationSet = new Set(preparationPaths(preparation));
   const seen = new Set();
   const chain = [];
   let immediateRuntime = null;
@@ -375,12 +455,35 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId)
     if (result?.outcome !== "completed" || !Array.isArray(result?.changedPaths) || !Array.isArray(result?.scopeViolations) || result.scopeViolations.length > 0) {
       fail("base run must be a completed, scope-clean TinySDD worker result");
     }
-    if (result.taskId !== undefined && result.taskId !== taskId) fail("base run lineage belongs to a different task");
+    if (result.taskId !== taskId) fail("base run lineage belongs to a different task");
     if (currentId === baseRunId) immediateRuntime = await readOptionalRuntime(runDirectory);
-    const paths = result.changedPaths.map((change) => {
+    const beforeWorkspace = join(runDirectory, "workspace-before");
+    const afterWorkspace = join(runDirectory, "workspace-after");
+    const beforeInfo = await lstat(beforeWorkspace).catch((error) => error?.code === "ENOENT" ? null : (() => { throw error; })());
+    const afterInfo = await lstat(afterWorkspace).catch((error) => error?.code === "ENOENT" ? null : (() => { throw error; })());
+    if (!beforeInfo?.isDirectory() || beforeInfo.isSymbolicLink() || !afterInfo?.isDirectory() || afterInfo.isSymbolicLink()) fail("base run lacks retained before/after workspace evidence");
+    const beforeSnapshot = await snapshotTree(beforeWorkspace);
+    const afterSnapshot = await snapshotTree(afterWorkspace);
+    if (fsStableStringify(await readRetainedSnapshot(runDirectory, "before-snapshot.json")) !== fsStableStringify(beforeSnapshot)
+      || fsStableStringify(await readRetainedSnapshot(runDirectory, "after-snapshot.json")) !== fsStableStringify(afterSnapshot)) {
+      fail("base run retained snapshots do not match its workspace evidence");
+    }
+    const changes = changedFiles(beforeSnapshot, afterSnapshot);
+    const retainedShape = changes.map(({ path, change }) => ({ path, change })).sort((left, right) => left.path.localeCompare(right.path));
+    const claimedShape = result.changedPaths.map(({ path, change }) => ({ path, change })).sort((left, right) => left.path.localeCompare(right.path));
+    if (fsStableStringify(retainedShape) !== fsStableStringify(claimedShape)) fail("base run changedPaths do not match retained workspace evidence");
+    const retainedIdentity = [...changes].sort((left, right) => left.path.localeCompare(right.path));
+    const claimedIdentity = [...result.changedPaths].sort((left, right) => left.path.localeCompare(right.path));
+    if (fsStableStringify(retainedIdentity) !== fsStableStringify(claimedIdentity)) fail("base run changed path identities do not match retained workspace evidence");
+    if (!result.fileScope || result.fileScope.mode !== "ordinary-create-modify" || result.fileScope.ordinaryCreateModify !== true || result.fileScope.deletions !== false || !Array.isArray(result.fileScope.actualPaths)) fail("base run lacks complete file-scope evidence");
+    if (result.fileScope.actualPaths.some((path) => typeof path !== "string" || observedPathError(path)) || new Set(result.fileScope.actualPaths).size !== result.fileScope.actualPaths.length) fail("base run file-scope paths are not a unique canonical inventory");
+    if (fsStableStringify(result.fileScope.actualPaths.slice().sort()) !== fsStableStringify(changes.map(({ path }) => path).sort())) fail("base run file-scope paths do not match retained workspace evidence");
+    const paths = changes.map((change) => {
       if (!change || typeof change.path !== "string" || !["created", "modified"].includes(change.change)) fail("base run contains an unsupported change");
       const path = projectRelative(change.path, "base run changed path");
-      if (!allowed.has(path)) fail("base run changed a path outside this task allowlist");
+      const violation = classifyFileScopeChange({ ...change, path }, { protectedPaths, inputPaths, preparationPaths: [...preparationSet], dependencyMounts, caseInsensitive, unicodeInsensitive, filesystemAliases });
+      if (violation) fail(`base run contains an ineligible change: ${path} (${violation.reason})`);
+      if (change.after?.kind !== "file") fail(`base run changed path is not a regular file: ${path}`);
       return path;
     });
     if (paths.length === 0) fail("base run has no reusable source changes");
@@ -472,15 +575,32 @@ async function copySnapshotTree(sourceRoot, destinationRoot) {
   await visit(sourceRoot, destinationRoot);
 }
 
-async function hashFile(path) {
+async function hashFile(path, maxBytes = Number.POSITIVE_INFINITY) {
+  return (await hashFileBounded(path, maxBytes)).sha256;
+}
+
+async function hashFileBounded(path, maxBytes = Number.POSITIVE_INFINITY, expectedInfo = null) {
   const hash = createHash("sha256");
-  await new Promise((resolvePromise, rejectPromise) => {
-    const stream = createReadStream(path);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("error", rejectPromise);
-    stream.on("end", resolvePromise);
-  });
-  return hash.digest("hex");
+  let handle;
+  let bytes = 0;
+  try {
+    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || (expectedInfo && (opened.ino !== expectedInfo.ino || opened.dev !== expectedInfo.dev))) {
+      throw new WorkerError("file changed or is not a regular file");
+    }
+    const buffer = Buffer.alloc(64 * 1024);
+    while (true) {
+      const read = await handle.read(buffer, 0, buffer.length, null);
+      if (read.bytesRead === 0) break;
+      bytes += read.bytesRead;
+      if (bytes > maxBytes) throw new WorkerError("file exceeds the bounded hash size");
+      hash.update(buffer.subarray(0, read.bytesRead));
+    }
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  return { sha256: hash.digest("hex"), bytes };
 }
 
 export async function retainSessionArtifact(sourcePath, destinationPath) {
@@ -512,19 +632,26 @@ export async function retainSessionArtifact(sourcePath, destinationPath) {
 }
 
 async function snapshotTree(root) {
-  const output = {};
+  const output = Object.create(null);
+  let entriesSeen = 0;
+  let bytesSeen = 0;
   async function visit(current, relativePath) {
     const entries = await readdir(current, { withFileTypes: true });
     for (const entry of entries) {
+      if (++entriesSeen > MAX_COPY_FILES) fail("Worker snapshot exceeds the entry limit");
       const rel = relativePath ? `${relativePath}/${entry.name}` : entry.name;
       const path = join(current, entry.name);
       const info = await lstat(path);
       if (info.isSymbolicLink()) {
         output[rel] = { kind: "symlink", sha256: null, size: null };
       } else if (info.isDirectory()) {
+        output[rel] = { kind: "directory", sha256: null, size: null };
         await visit(path, rel);
       } else if (info.isFile()) {
-        output[rel] = { kind: "file", sha256: await hashFile(path), size: info.size };
+        if (info.size > MAX_COPY_BYTES || bytesSeen > MAX_COPY_BYTES - info.size) fail("Worker snapshot exceeds the byte limit");
+        const hashed = await hashFileBounded(path, MAX_COPY_BYTES - bytesSeen, info);
+        bytesSeen += hashed.bytes;
+        output[rel] = { kind: "file", sha256: hashed.sha256, size: hashed.bytes };
       } else {
         output[rel] = { kind: "other", sha256: null, size: null };
       }
@@ -536,10 +663,25 @@ async function snapshotTree(root) {
 
 function changedFiles(before, after) {
   const paths = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  const beforeDescendants = new Set();
+  const afterDescendants = new Set();
+  for (const path of Object.keys(before)) {
+    const parts = path.split("/");
+    for (let index = 1; index < parts.length; index += 1) beforeDescendants.add(parts.slice(0, index).join("/"));
+  }
+  for (const path of Object.keys(after)) {
+    const parts = path.split("/");
+    for (let index = 1; index < parts.length; index += 1) afterDescendants.add(parts.slice(0, index).join("/"));
+  }
   return paths.flatMap((path) => {
     const oldValue = before[path];
     const newValue = after[path];
     if (JSON.stringify(oldValue) === JSON.stringify(newValue)) return [];
+    // Directory entries are retained so replacing an empty directory with a
+    // file is a type change. Directory creation/removal used as scaffolding
+    // for changed files is not itself an applicable file change.
+    if (!oldValue && newValue?.kind === "directory" && afterDescendants.has(path)) return [];
+    if (!newValue && oldValue?.kind === "directory" && beforeDescendants.has(path)) return [];
     let change = "modified";
     if (!oldValue) change = "created";
     else if (!newValue) change = "deleted";
@@ -649,6 +791,8 @@ function normalizePacket(packet) {
   if (!Array.isArray(allowedPaths) || allowedPaths.length === 0) fail("packet.allowedPaths must list at least one exact path");
   if (allowedPaths.some((path) => typeof path !== "string")) fail("packet.allowedPaths must contain strings");
   const normalizedAllowed = allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
+  const preparation = normalizePreparation(packet.preparation);
+  const runtimeScope = normalizeRuntimeScope(packet.runtimeScope);
   const protectedPaths = packet.protectedPaths === undefined ? [] : packet.protectedPaths;
   if (!Array.isArray(protectedPaths) || protectedPaths.some((path) => typeof path !== "string")) fail("packet.protectedPaths must be an array of strings");
   const normalizedProtected = protectedPaths.map((path) => projectRelative(path, "packet protected path"));
@@ -697,8 +841,10 @@ function normalizePacket(packet) {
     briefText,
     briefPath: briefPath === undefined ? undefined : projectRelative(briefPath, "packet brief path", CONTROLLER_TASKS_PREFIX),
     briefSha256,
+    runtimeScope,
     allowedPaths: normalizedAllowed,
     protectedPaths: normalizedProtected,
+    ...(preparation.length > 0 ? { preparation } : {}),
     dependencies,
     approval: packet.approval ?? null,
     review,
@@ -735,10 +881,12 @@ function buildPrompt({ packet, profile, review, compiledContext, agents, skills,
   const systemSections = [builtInPrompt?.text || DEFAULT_WORKER_GUIDANCE];
   const runChecksAvailable = checkAvailability?.available === true && checkManifest !== null && checkManifest !== undefined;
   const contract = runChecksAvailable
-    ? "You are operating in a disposable candidate workspace. Read, write and edit only, plus the named `run_checks` host tool for the declared checks. Do not run commands, shells, package managers, network clients or services, or use any other execution tool. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. After each written or edited allowed file, call `run_checks`, fix reported failures within the approved scope, and do not simulate checks in reasoning. Stop and report when the declared check budget is exhausted or the next fix needs missing information or permission. Tool output is worker-observed host-check evidence, never operator verification or acceptance. In the final handoff, name observed checks separately from checks still unrun."
-    : "You are operating in a disposable candidate workspace. Read, write and edit only. Do not run commands, tests, shells, package managers, network clients or services. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. The caller performs all verification separately; report checks as unrun unless the packet itself supplies observed evidence.";
-  systemSections.push(`\n\n## TinySDD worker contract\n${contract}\n\nAllowed exact paths (scope is reported by the caller, not permission to edit others):\n${packet.allowedPaths.map((path) => `- ${path}`).join("\n")}`);
+    ? "You are operating in a disposable candidate workspace. Read, write and edit only, plus the named `run_checks` host tool for the declared checks. Do not run commands, shells, package managers, network clients or services, or use any other execution tool. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. Ordinary project file creation and modification is permitted by default when it stays within the protected boundaries below. Do not delete files or replace filesystem types. After each written or edited allowed file, call `run_checks`; do the same after each other ordinary file edit, fix reported failures within the approved scope, and do not simulate checks in reasoning. Stop and report when the declared check budget is exhausted or the next fix needs missing information or permission. Tool output is worker-observed host-check evidence, never operator verification or acceptance. In the final handoff, name observed checks separately from checks still unrun."
+    : "You are operating in a disposable candidate workspace. Read, write and edit only. Do not run commands, tests, shells, package managers, network clients or services. Do not inspect outside the workspace or invent missing requirements. Implement only this approved packet and preserve unrelated files and assertions. Ordinary project file creation and modification is permitted by default when it stays within the protected boundaries below. Do not delete files or replace filesystem types. The caller performs all verification separately; report checks as unrun unless the packet itself supplies observed evidence.";
+  systemSections.push(`\n\n## TinySDD worker contract\n${contract}\n\nRuntime file scope (fixed): ${packet.runtimeScope.mode}; ordinaryCreateModify=${packet.runtimeScope.ordinaryCreateModify}; deletions=${packet.runtimeScope.deletions}.\nExpected paths (advisory context only):\n${packet.allowedPaths.map((path) => `- ${path}`).join("\n")}`);
   if (packet.protectedPaths.length > 0) systemSections.push(`\n\n## Protected contract files (read-only)\nRead these files; never write, edit, create, delete or rename them. A change is reported as a scope violation.\n${packet.protectedPaths.map((path) => `- ${path}`).join("\n")}`);
+  if ((packet.preparation ?? []).length > 0) systemSections.push(`\n\n## Immutable preparation inputs (read-only)\nDo not create, write, edit, delete or rename these approved preparation paths. A change is reported as a scope violation.\n${packet.preparation.map((entry) => `- ${entry.path}${entry.exists === false ? " (approved absent)" : ""}`).join("\n")}`);
+  if (runChecksAvailable && (checkManifest?.dependencyMounts ?? []).length > 0) systemSections.push(`\n\n## Dependency mounts (read-only)\nDo not create, write, edit, delete or rename files under these declared dependency mounts. A change is reported as a scope violation.\n${checkManifest.dependencyMounts.map((path) => `- ${path}`).join("\n")}`);
   if (profile?.instructions) systemSections.push(`\n\n## Model profile guidance\n${profile.instructions}`);
   if (compiledContext) {
     const planning = runChecksAvailable ? "" : " Start by planning the allowed-file edit.";
@@ -749,7 +897,7 @@ function buildPrompt({ packet, profile, review, compiledContext, agents, skills,
   for (const resource of skills) systemSections.push(formatContext(resource));
   for (const resource of instructions) systemSections.push(formatContext(resource));
   const contextSection = compiledContext ? `\n\n${compiledContext.rendered}` : "";
-  const user = `Task ID: ${packet.taskId}\nDependencies: ${JSON.stringify(packet.dependencies)}${contextSection}\n\n## Approved task packet\n${packet.briefText}`;
+  const user = `Task ID: ${packet.taskId}\nDependencies: ${JSON.stringify(packet.dependencies)}\nRuntime file scope: ${JSON.stringify(packet.runtimeScope)}${contextSection}\n\n## Approved task packet\n${packet.briefText}`;
   const system = systemSections.join("\n");
   if (Buffer.byteLength(system) > MAX_PROMPT_BYTES || Buffer.byteLength(user) > MAX_USER_PROMPT_BYTES) fail("Worker prompt exceeds bounded input size");
   return { system, user, rendered: `${system}\n\n## User task\n${user}` };
@@ -1447,6 +1595,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
   return {
     schemaVersion: 1,
     adapter: "pi",
+    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
     sandbox: runtime.test ? "test-runtime" : runtime.sandbox ?? "bubblewrap",
     sandboxRequired: true,
     provider: worker.provider,
@@ -1510,17 +1659,31 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
+  await assertPreparationIdentity(projectRoot, normalizedPacket.preparation ?? []);
+  const filesystemAliases = await detectFilesystemAliases(sourceRoot);
+  const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
+  const inputPaths = taskInputPaths(normalizedPacket);
   const limits = validatePiWorker(worker);
   const selectedAllowed = normalizedPacket.allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
-  const revisionBase = await resolveRevisionBase(sourceRoot, baseRunId, selectedAllowed, normalizedPacket.taskId);
   const frozenBaseline = await resolveFrozenBaseline(sourceRoot, baselineRunId, normalizedPacket.taskId);
-  if (revisionBase && frozenBaseline) fail("baseRunId and baselineRunId cannot be combined");
   const executionSource = frozenBaseline?.root ?? sourceRoot;
   const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
   const runtimeChoice = await chooseRuntime(runtime);
   const checksDeclared = normalizedPacket.checks !== null;
   const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime) : { available: false, reason: null, testInjected: false };
-  const checkManifest = checkAvailability.available ? parseChecksManifest(normalizedPacket.checks.text) : null;
+  // The manifest defines immutable dependency mounts even when this host
+  // cannot execute the declared checker.
+  const checkManifest = checksDeclared ? parseChecksManifest(normalizedPacket.checks.text) : null;
+  const revisionBase = await resolveRevisionBase(sourceRoot, baseRunId, selectedAllowed, normalizedPacket.taskId, {
+    protectedPaths: normalizedPacket.protectedPaths,
+    inputPaths,
+    preparation: normalizedPacket.preparation ?? [],
+    dependencyMounts: checkManifest?.dependencyMounts ?? [],
+    caseInsensitive,
+    unicodeInsensitive,
+    filesystemAliases,
+  });
+  if (revisionBase && frozenBaseline) fail("baseRunId and baselineRunId cannot be combined");
   const brief = await resolveBrief(sourceRoot, normalizedPacket);
   const review = await resolveReview(sourceRoot, normalizedPacket.review);
   let compiledContext;
@@ -1607,7 +1770,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let patchInfo;
   let result;
     const workspaceCopy = await copyProjectTree(executionSource, workspace, { useGit: !frozenBaseline });
-    await assertCopiedInputs(executionSource, workspaceCopy, selectedAllowed, normalizedPacket.protectedPaths, compiledContext);
+    await assertCopiedInputs(executionSource, workspaceCopy, selectedAllowed, normalizedPacket.protectedPaths, normalizedPacket.preparation ?? [], compiledContext);
     await overlayRevisionBase(revisionBase, workspace);
     await copyRegularTree(workspace, baseline);
     before = await snapshotTree(workspace);
@@ -1615,7 +1778,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeJson(join(artifactDir, "packet.json"), normalizedPacket);
     await writeFile(join(artifactDir, "prompt.txt"), prompt.rendered, { mode: 0o600 });
     if (compiledContext) await writeFile(join(artifactDir, "compiled-context.md"), compiledContext.rendered, { mode: 0o600 });
-    if (checkManifest) {
+    if (checkManifest && checkAvailability.available) {
       checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
     }
     const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
@@ -1736,15 +1899,26 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     patchInfo = await runGitDiff(beforeArtifact, afterArtifact, join(artifactDir, "patch.diff"), artifactDir);
     if (patchInfo.available) patchInfo.applyCheck = await runGitApplyCheck(join(artifactDir, "patch.diff"), baseline);
     const allowedSet = new Set(selectedAllowed);
-    const protectedSet = new Set(normalizedPacket.protectedPaths);
-    const scopeViolations = changes.filter((change) => !allowedSet.has(slash(change.path))).map((change) => ({ path: slash(change.path), change: change.change, reason: protectedSet.has(slash(change.path)) ? "protected contract file" : "changed path is outside packet.allowedPaths" }));
+    const actualChanges = changes.map((change) => ({ ...change, path: slash(change.path) }));
+    const scopeViolations = actualChanges.map((change) => classifyFileScopeChange(change, {
+      protectedPaths: normalizedPacket.protectedPaths,
+      inputPaths,
+      preparationPaths: preparationPaths(normalizedPacket.preparation ?? []),
+      dependencyMounts: checkManifest?.dependencyMounts ?? [],
+      caseInsensitive,
+      unicodeInsensitive,
+      filesystemAliases,
+    })).filter(Boolean);
     const outcome = classifyOutcome(capture);
     const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);
-    const touchedAllowedPaths = new Set(changes.filter((change) => allowedSet.has(slash(change.path))).map((change) => slash(change.path)));
+    const touchedAllowedPaths = new Set(actualChanges.filter((change) => allowedSet.has(change.path)).map((change) => change.path));
+    const actualPaths = actualChanges.map((change) => change.path);
+    const extraPaths = actualPaths.filter((path) => !allowedSet.has(path));
     result = {
       schemaVersion: 1,
       runId,
       taskId: normalizedPacket.taskId,
+      runtimeScope: { ...normalizedPacket.runtimeScope },
       runChecks,
       ...(revisionBase ? {
         baseRun: {
@@ -1756,6 +1930,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       ...(frozenBaseline ? { baselineRun: { id: frozenBaseline.id } } : {}),
       ...(checkChannel ? { workerObservedChecks: { source: "worker run_checks", acceptanceEvidence: false, runs: checkChannel.runs } } : {}),
       taskShape: { allowedFiles: selectedAllowed.length, ...contextSizeMetrics(compiledContext) },
+      fileScope: {
+        mode: "ordinary-create-modify",
+        plannedPaths: [...selectedAllowed],
+        actualPaths: [...new Set(actualPaths)].sort(),
+        extraPaths: [...new Set(extraPaths)].sort(),
+        ordinaryCreateModify: true,
+        deletions: false,
+      },
       workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
       outcome,
       ...(outcome !== "completed" ? {
@@ -1789,7 +1971,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         rawOutputBytes: capture.rawBytes,
       },
       ...(limitDetails ? { limitDetails } : {}),
-      changedPaths: changes,
+      changedPaths: actualChanges,
       scopeViolations,
       artifactPaths: {
         directory: artifactDir,

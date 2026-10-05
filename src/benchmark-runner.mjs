@@ -38,6 +38,7 @@ import { writeBenchmarkResults } from './benchmark-results-writer.mjs';
 import { registerQualificationInvocation } from './qualification-store.mjs';
 import { runWorker, workerLimits } from './worker.mjs';
 import { defaultPiAgentDir, preflightPiWorker, validatePiWorker } from './pi-environment.mjs';
+import { DEFAULT_RUNTIME_SCOPE } from './file-scope.mjs';
 
 const execFileAsync = promisify(execFile);
 const RESERVED_VERIFIER_ROOT = '__tinysdd_benchmark_verifier';
@@ -477,6 +478,7 @@ async function loadPacket(root, challenge) {
       briefSha256: brief.sha256,
       context: { path: `.tinysdd/tasks/${challenge.id}-context.json`, text: context.text, sha256: context.sha256 },
       checks: { path: `.tinysdd/tasks/${challenge.id}-checks.json`, text: checks.text, sha256: checks.sha256 },
+      runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
       allowedPaths: challenge.packet.allowedPaths,
       protectedPaths: challenge.packet.protectedPaths,
     },

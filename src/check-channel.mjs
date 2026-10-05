@@ -101,6 +101,7 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
   let bytes = 0;
   let files = 0;
   const allowedDigests = Object.fromEntries(allowedPaths.map((path) => [path, null]));
+  const candidateEntries = Object.create(null);
   async function visit(relative = '', directoryPath = source) {
     const directory = await open(directoryPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try {
@@ -111,10 +112,13 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
         if (signal.aborted || Date.now() >= deadline) throw Object.assign(new Error('check snapshot cancelled'), { code: 'CHECK_DEADLINE' });
         const path = relative ? `${relative}/${entry.name}` : entry.name;
         if (excluded.some((mount) => path === mount || path.startsWith(`${mount}/`))) continue;
-        if (++files > 20000) throw new Error('check input exceeds file limit');
+      if (++files > 20000) throw new Error('check input exceeds file limit');
         const from = join(anchored, entry.name);
         const info = await lstat(from);
-        if (info.isDirectory() && !info.isSymbolicLink()) await visit(path, from);
+        if (info.isDirectory() && !info.isSymbolicLink()) {
+          candidateEntries[path] = { kind: 'directory', mode: info.mode & 0o7777 };
+          await visit(path, from);
+        }
         else if (info.isFile()) {
           const input = await open(from, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
           const output = await open(join(destination, path), 'wx', info.mode & 0o777);
@@ -135,14 +139,24 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
               hash.update(data);
               await output.writeFile(data);
             }
-            if (Object.hasOwn(allowedDigests, path)) allowedDigests[path] = hash.digest('hex');
+            const sha256 = hash.digest('hex');
+            candidateEntries[path] = { kind: 'file', mode: info.mode & 0o7777, bytes: position, sha256 };
+            if (Object.hasOwn(allowedDigests, path)) allowedDigests[path] = sha256;
           } finally { await input.close(); await output.close(); }
         } else throw new Error('check input contains a symlink or special file');
       }
     } finally { await directory.close(); }
   }
   await visit();
-  return allowedDigests;
+  for (const path of allowedPaths) {
+    if (!Object.hasOwn(candidateEntries, path)) candidateEntries[path] = { kind: 'absent' };
+  }
+  const entries = Object.keys(candidateEntries).sort().map((path) => ({ path, ...candidateEntries[path] }));
+  return {
+    allowedDigests,
+    candidateEntries: Object.fromEntries(entries.map(({ path, ...entry }) => [path, entry])),
+    candidateIdentity: { algorithm: 'sha256-candidate-tree-v1', entries, sha256: digest(JSON.stringify(entries)) },
+  };
 }
 
 export async function createCheckChannel({ manifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths, maxCheckRuns, runner = runCheck, nodeRoot }) {
@@ -226,7 +240,10 @@ export async function createCheckChannel({ manifest, sourceRoot, workspace, arti
           if (!availability.available) throw Object.assign(new Error(availability.reason), { code: 'CHECK_RUNNER_UNAVAILABLE' });
         }
         scratch = await mkdtemp(join(tempRoot, 'tinysdd-check-input-'));
-        record.allowedFileDigests = await freezeCandidate(workspace, scratch, manifest.dependencyMounts, allowedPaths, abort.signal, deadline);
+        const candidate = await freezeCandidate(workspace, scratch, manifest.dependencyMounts, allowedPaths, abort.signal, deadline);
+        record.allowedFileDigests = candidate.allowedDigests;
+        record.candidateIdentity = candidate.candidateIdentity;
+        record.candidateEntries = candidate.candidateEntries;
         const timeoutMs = Math.min(declaration.timeoutMs, deadline - Date.now());
         if (timeoutMs < 1000 || abort.signal.aborted) throw Object.assign(new Error('worker deadline prevents execution'), { code: 'CHECK_DEADLINE' });
         const result = await runner({ candidateDir: scratch, check: { id: declaration.id, argv: declaration.argv, timeoutMs }, dependencyMounts: mounts, nodeRoot, tempRoot, signal: abort.signal });

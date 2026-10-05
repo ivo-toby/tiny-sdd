@@ -23,6 +23,7 @@ import {
 import * as controller from '../src/controller.mjs';
 import { compileContext } from '../src/context-compiler.mjs';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
+import { detectFilesystemAliases } from '../src/file-scope.mjs';
 
 const { updateTask, createController } = controller;
 const exec = promisify(execFile);
@@ -52,10 +53,81 @@ test('task approval, packet resolution, review, and acceptance are explicit', as
     await approveTask(root, { id: 'one', by: 'operator', reason: 'checked scope' });
     const packet = await resolveTaskPacket(root, 'one');
     assert.equal(packet.brief.text, '# Brief\n');
+    assert.deepEqual(packet.runtimeScope, { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false });
     assert.deepEqual(packet.allowedPaths, ['src/new-file.ts']);
     await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer' });
     assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
     await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_ALREADY_ACCEPTED' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI review retains explicitly supplied candidate paths', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/planned.ts'] });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked scope' });
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src', 'manual-extra.ts'), 'export const version = 1;\n');
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    await exec(process.execPath, [bin, '--project', root, 'task', 'review', '--id', 'one', '--verdict', 'accepted', '--evidence', '.tinysdd/reviews/evidence.md', '--by', 'reviewer', '--candidate-paths', 'src/manual-extra.ts']);
+    assert.deepEqual((await rawState(root)).tasks.one.review.candidatePaths, ['src/manual-extra.ts', 'src/planned.ts']);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    await writeFile(join(root, 'src', 'manual-extra.ts'), 'export const version = 2;\n');
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('preparation identity preserves an absent spec through approval and explicit reapproval', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'specs'), { recursive: true });
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/new-file.ts'], preparation: [{ path: 'specs/future.md', exists: false }] });
+    assert.deepEqual((await rawState(root)).tasks.one.preparation, [{ path: 'specs/future.md', exists: false }]);
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked absent future spec' });
+    const packet = await resolveTaskPacket(root, 'one');
+    assert.deepEqual(packet.preparation, [{ path: 'specs/future.md', exists: false }]);
+    assert.equal((await rawState(root)).tasks.one.protect, undefined);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+
+    await writeFile(join(root, 'specs', 'future.md'), '# Future\n');
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale_approval');
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'recaptured current future spec' });
+    const refreshed = await resolveTaskPacket(root, 'one');
+    assert.equal(refreshed.preparation[0].exists, true);
+    assert.equal(refreshed.preparation[0].sha256, sha256('# Future\n'));
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses task input aliases before writing on aliasing filesystems', async () => {
+  const root = await project();
+  const nfc = 'docs/caf\u00e9.md';
+  const nfd = nfc.normalize('NFD');
+  try {
+    const aliases = await detectFilesystemAliases(root);
+    await writeFile(join(root, ...nfc.split('/')), '# Brief\n');
+    if (!aliases.unicodeInsensitive) await writeFile(join(root, ...nfd.split('/')), '# Brief\n');
+    const observedAliases = await detectFilesystemAliases(root);
+    await addTask(root, { id: 'one', brief: nfc, allow: ['src/a.ts'] });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked input identity' });
+    await fakeRun(root, RUN_ONE, { before: { [nfd]: '# Brief\n' }, after: { [nfd]: '# Rewritten\n' } });
+    if (observedAliases.unicodeInsensitive === true) {
+      await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT' });
+      assert.equal(await readProject(root, nfc), '# Brief\n');
+    } else if (observedAliases.unicodeInsensitive === false) {
+      await apply(root);
+      assert.equal(await readProject(root, nfd), '# Rewritten\n');
+      assert.equal(await readProject(root, nfc), '# Brief\n');
+    } else {
+      await assert.rejects(apply(root), { code: 'APPLY_CHANGES_TASK_INPUT' });
+      assert.equal(await readProject(root, nfc), '# Brief\n');
+    }
   } finally {
     await cleanup(root);
   }
@@ -297,10 +369,12 @@ test('task checks manifests are validated, approved, and carried in packets', as
     assert.equal(added.task.checks, checksPath);
     await approveTask(root, { id: 'one', by: 'operator', reason: 'checked declared checks' });
     const packet = await resolveTaskPacket(root, 'one');
+    assert.deepEqual(packet.runtimeScope, { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false });
     assert.equal(packet.checks.path, checksPath);
     assert.equal(packet.checks.text, checksText);
     assert.equal(packet.checks.sha256, sha256(checksText));
     const benchmark = await resolveBenchmarkPacket(root, 'one');
+    assert.deepEqual(benchmark.runtimeScope, { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false });
     assert.equal(benchmark.checks.sha256, sha256(checksText));
     assert.equal((await controllerStatus(root)).tasks[0].checks, checksPath);
     await writeFile(join(root, ...checksPath.split('/')), `${checksText}\n`);
@@ -1387,11 +1461,16 @@ async function writeTree(directory, files) {
 }
 
 function changesBetween(before, after) {
+  const fileIdentity = (value) => {
+    if (value === undefined || value === null) return null;
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    return { kind: 'file', sha256: sha256(bytes), size: bytes.byteLength };
+  };
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().flatMap((path) => {
     const was = before[path] ?? null;
     const now = after[path] ?? null;
-    if (was === now) return [];
-    return [{ path, change: now === null ? 'deleted' : was === null ? 'created' : 'modified' }];
+    if (Buffer.isBuffer(was) && Buffer.isBuffer(now) ? was.equals(now) : was === now) return [];
+    return [{ path, change: now === null ? 'deleted' : was === null ? 'created' : 'modified', before: fileIdentity(was), after: fileIdentity(now) }];
   });
 }
 
@@ -1400,13 +1479,39 @@ async function fakeRun(root, runId, { taskId = 'one', before = {}, after = {}, o
   const directory = join(root, '.tinysdd', 'runs', runId);
   await writeTree(join(directory, 'workspace-before'), before);
   await writeTree(join(directory, 'workspace-after'), after);
+  const retainedChanges = changesBetween(before, after);
+  const claimedChanges = changedPaths === undefined
+    ? retainedChanges
+    : changedPaths.map((change) => ({
+      ...change,
+      ...(retainedChanges.find((entry) => entry.path === change.path) ?? {}),
+      ...change,
+    }));
+  const snapshot = (files) => {
+    const result = Object.create(null);
+    for (const [path, value] of Object.entries(files)) {
+      if (value === null) continue;
+      const parts = path.split('/');
+      for (let index = 1; index < parts.length; index += 1) {
+        const directoryPath = parts.slice(0, index).join('/');
+        result[directoryPath] ??= { kind: 'directory', sha256: null, size: null };
+      }
+      const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      result[path] = { kind: 'file', sha256: sha256(bytes), size: bytes.byteLength };
+    }
+    return result;
+  };
+  await writeFile(join(directory, 'before-snapshot.json'), JSON.stringify(snapshot(before)));
+  await writeFile(join(directory, 'after-snapshot.json'), JSON.stringify(snapshot(after)));
   if (packet === 'capture') {
     await writeFile(join(directory, 'packet.json'), JSON.stringify(await resolveTaskPacket(root, taskId)));
   } else if (packet !== false) {
     await writeFile(join(directory, 'packet.json'), JSON.stringify(packet));
   }
   await writeFile(join(directory, 'result.json'), JSON.stringify({
-    schemaVersion: 1, runId, taskId, outcome, changedPaths: changedPaths ?? changesBetween(before, after), scopeViolations, ...extra,
+    schemaVersion: 1, runId, taskId, outcome, changedPaths: claimedChanges, scopeViolations,
+    fileScope: { mode: 'ordinary-create-modify', actualPaths: retainedChanges.map(({ path }) => path).sort(), ordinaryCreateModify: true, deletions: false },
+    ...extra,
   }));
   return directory;
 }
@@ -1440,11 +1545,14 @@ test('apply writes created and modified files, records the run and leaves the ta
     assert.equal(await taskStatus(root, 'one'), 'ready');
     const { appliedAt, allowedDigest, ...record } = (await rawState(root)).tasks.one.applied;
     assert.match(allowedDigest, /^[0-9a-f]{64}$/u);
+    assert.match(record.actualDigest, /^[0-9a-f]{64}$/u);
     assert.match(appliedAt, /^\d{4}-\d{2}-\d{2}T/u);
     assert.deepEqual(record, {
       runId: RUN_ONE,
       rootRunId: RUN_ONE,
       by: 'operator',
+      actualPaths: ['src/a.ts', 'src/b.ts'],
+      actualDigest: record.actualDigest,
       files: [
         { path: 'src/a.ts', change: 'created', sha256: sha256('new a\n'), status: 'written' },
         { path: 'src/b.ts', change: 'modified', sha256: sha256('new b\n'), status: 'written' },
@@ -2041,33 +2149,37 @@ test('a task input the project already holds in its candidate form is already-ap
   }
 });
 
-test('apply removes a deleted file only, and review checks it stays absent', async () => {
+test('apply refuses a deleted file before writing anything', async () => {
   const files = { 'src/a.ts': 'keep\n', 'src/b.ts': 'remove\n' };
   const root = await applyProject(files);
   try {
     await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'keep\n' } });
-    const { applied } = await apply(root);
-    assert.deepEqual(applied.files, [{ path: 'src/b.ts', change: 'deleted', sha256: null, status: 'written' }]);
-    await assert.rejects(readProject(root, 'src/b.ts'), { code: 'ENOENT' });
+    await assert.rejects(apply(root), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_ONE, paths: ['src/b.ts'], violations: [{ path: 'src/b.ts', change: 'deleted', reason: 'file deletion is not authorized' }] } });
+    assert.equal(await readProject(root, 'src/b.ts'), 'remove\n');
     assert.equal(await readProject(root, 'src/a.ts'), 'keep\n');
-    await writeFile(join(root, 'src', 'b.ts'), 'came back\n');
-    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
-    assert.equal((await rawState(root)).tasks.one.review.appliedFromRun.identical, false);
   } finally {
     await cleanup(root);
   }
 });
 
-test('apply never touches a project path outside the allowlist and leaves emptied directories', async () => {
+test('apply includes ordinary extra files and preserves unchanged paths', async () => {
   const files = { 'src/a.ts': 'one\n', 'src/other.ts': 'not allowed\n', 'solo/b.ts': 'solo\n' };
   const root = await applyProject(files, ['solo/b.ts', 'src/a.ts']);
   try {
-    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'two\n', 'src/other.ts': 'not allowed\n' } });
-    await apply(root);
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'two\n', 'src/other.ts': 'ordinary extra\n', 'solo/b.ts': 'solo\n' } });
+    const { applied } = await apply(root);
     assert.equal(await readProject(root, 'src/a.ts'), 'two\n');
-    assert.equal(await readProject(root, 'src/other.ts'), 'not allowed\n');
-    await assert.rejects(readProject(root, 'solo/b.ts'), { code: 'ENOENT' });
+    assert.equal(await readProject(root, 'src/other.ts'), 'ordinary extra\n');
+    assert.equal(await readProject(root, 'solo/b.ts'), 'solo\n');
+    assert.deepEqual(applied.files.map(({ path, change, status }) => [path, change, status]), [
+      ['src/a.ts', 'modified', 'written'],
+      ['src/other.ts', 'modified', 'written'],
+    ]);
     assert.ok((await stat(join(root, 'solo'))).isDirectory());
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer', candidatePaths: ['src/a.ts'] });
+    const review = (await rawState(root)).tasks.one.review;
+    assert.deepEqual(review.candidatePaths, ['solo/b.ts', 'src/a.ts', 'src/other.ts']);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
   } finally {
     await cleanup(root);
   }
@@ -2089,8 +2201,7 @@ test('apply writes bytes unchanged, including content that is not UTF-8', async 
   const root = await applyProject({});
   try {
     const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x0a]);
-    const directory = await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'text\n' } });
-    await writeFile(join(directory, 'workspace-after', 'src', 'a.ts'), bytes);
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': bytes } });
     const { applied } = await apply(root);
     assert.deepEqual(await readFile(join(root, 'src', 'a.ts')), bytes);
     assert.equal(applied.files[0].sha256, sha256(bytes));
@@ -2237,7 +2348,7 @@ test('a project file that drifted from the lineage start refuses the whole apply
 test('drift is detected for absent and unexpectedly present files and lists every conflict', async () => {
   const root = await applyProject({ 'src/b.ts': 'b0\n' });
   try {
-    await fakeRun(root, RUN_ONE, { before: { 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': null } });
+    await fakeRun(root, RUN_ONE, { before: { 'src/b.ts': 'b0\n' }, after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' } });
     await writeFile(join(root, 'src', 'a.ts'), 'someone else created this\n');
     await writeFile(join(root, 'src', 'b.ts'), 'b changed\n');
     await assert.rejects(apply(root), (error) => {
@@ -2258,14 +2369,14 @@ test('drift is detected for absent and unexpectedly present files and lists ever
 
 test('a hand-applied project is recorded with already-applied entries and not rewritten', async () => {
   const before = { 'src/a.ts': 'a0\n', 'src/b.ts': 'b0\n', 'src/c.ts': 'c0\n' };
-  const after = { 'src/a.ts': 'a1\n', 'src/b.ts': null, 'src/c.ts': 'c1\n' };
-  const root = await applyProject({ 'src/a.ts': 'a1\n', 'src/c.ts': 'c0\n' }, ['src/a.ts', 'src/b.ts', 'src/c.ts']);
+  const after = { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n', 'src/c.ts': 'c1\n' };
+  const root = await applyProject({ 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n', 'src/c.ts': 'c0\n' }, ['src/a.ts', 'src/b.ts', 'src/c.ts']);
   try {
     await fakeRun(root, RUN_ONE, { before, after });
     const { applied } = await apply(root);
     assert.deepEqual(applied.files.map(({ path, change, status }) => [path, change, status]), [
       ['src/a.ts', 'modified', 'already-applied'],
-      ['src/b.ts', 'deleted', 'already-applied'],
+      ['src/b.ts', 'modified', 'already-applied'],
       ['src/c.ts', 'modified', 'written'],
     ]);
     assert.equal(await readProject(root, 'src/c.ts'), 'c1\n');
@@ -2340,10 +2451,11 @@ test('apply refuses scope violations even when the run is otherwise allowed', as
   try {
     await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'x\n', 'src/evil.ts': 'y\n' }, scopeViolations: [{ path: 'src/evil.ts', change: 'created', reason: 'outside' }] });
     await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_ONE, paths: ['src/evil.ts'] } });
-    // A recorded change outside the allowlist counts even when scopeViolations was left empty.
-    await fakeRun(root, RUN_TWO, { after: { 'src/a.ts': 'x\n' }, changedPaths: [{ path: 'src/a.ts', change: 'created' }, { path: 'src/evil.ts', change: 'created' }] });
-    await assert.rejects(apply(root, RUN_TWO), { code: 'RUN_SCOPE_VIOLATION', details: { runId: RUN_TWO, paths: ['src/evil.ts'] } });
-    await assertNothingApplied(root, { 'src/a.ts': null, 'src/evil.ts': null });
+    // A recorded ordinary change outside the planned paths is retained and applied.
+    await fakeRun(root, RUN_TWO, { after: { 'src/a.ts': 'x\n', 'src/evil.ts': 'y\n' } });
+    await apply(root, RUN_TWO);
+    assert.equal(await readProject(root, 'src/a.ts'), 'x\n');
+    assert.equal(await readProject(root, 'src/evil.ts'), 'y\n');
   } finally {
     await cleanup(root);
   }
@@ -2359,8 +2471,84 @@ test('apply refuses a malformed result.json without writing', async () => {
     await assert.rejects(apply(root), { code: 'RUN_MALFORMED' });
     await rm(join(directory, 'workspace-after'), { recursive: true });
     await writeFile(join(directory, 'result.json'), JSON.stringify({ taskId: 'one', outcome: 'completed', changedPaths: [], scopeViolations: [] }));
-    await assert.rejects(apply(root), { code: 'RUN_NOT_FOUND' });
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED' });
     await assertNothingApplied(root, { 'src/a.ts': null });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply matches complete retained before and after identities before writing', async () => {
+  const root = await applyProject({});
+  try {
+    const directory = await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'candidate\n' } });
+    const resultPath = join(directory, 'result.json');
+    const result = JSON.parse(await readFile(resultPath, 'utf8'));
+    result.fileScope = { mode: 'ordinary-create-modify', actualPaths: ['src/a.ts'], ordinaryCreateModify: true, deletions: false };
+    result.changedPaths = [{
+      path: 'src/a.ts',
+      change: 'created',
+      before: null,
+      after: { kind: 'file', sha256: '0'.repeat(64), size: Buffer.byteLength('candidate\n') },
+    }];
+    await writeFile(resultPath, JSON.stringify(result));
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED', message: /identities do not match/u });
+    await assert.rejects(readProject(root, 'src/a.ts'), { code: 'ENOENT' });
+    assert.equal((await rawState(root)).tasks.one.applied, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses missing scope or tampered full snapshot proof before writing', async () => {
+  const root = await applyProject({});
+  try {
+    const directory = await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'candidate\n' } });
+    const resultPath = join(directory, 'result.json');
+    const result = JSON.parse(await readFile(resultPath, 'utf8'));
+    delete result.fileScope;
+    await writeFile(resultPath, JSON.stringify(result));
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED', message: /complete file-scope evidence/u });
+    await assertNothingApplied(root, { 'src/a.ts': null });
+
+    result.fileScope = { mode: 'ordinary-create-modify', actualPaths: ['src/a.ts'], ordinaryCreateModify: true, deletions: false };
+    await writeFile(resultPath, JSON.stringify(result));
+    result.fileScope.actualPaths = ['src/a.ts', 'src/a.ts'];
+    await writeFile(resultPath, JSON.stringify(result));
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED', message: /unique canonical inventory/u });
+    result.fileScope.actualPaths = ['src/a.ts'];
+    await writeFile(resultPath, JSON.stringify(result));
+    const snapshotPath = join(directory, 'after-snapshot.json');
+    const snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
+    delete snapshot['src/a.ts'];
+    await writeFile(snapshotPath, JSON.stringify(snapshot));
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED', message: /retained snapshots do not match/u });
+    await assertNothingApplied(root, { 'src/a.ts': null });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply follows the observed filesystem Unicode alias for absent preparation', async () => {
+  const root = await project();
+  try {
+    const aliases = await detectFilesystemAliases(root);
+    const nfc = 'specs/caf\u00e9.md';
+    const nfd = nfc.normalize('NFD');
+    await mkdir(join(root, 'specs'), { recursive: true });
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/a.ts'], preparation: [{ path: nfc, exists: false }] });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'reserved future specification' });
+    await fakeRun(root, RUN_ONE, { after: { [nfd]: 'candidate\n' } });
+    if (aliases.unicodeInsensitive === true) {
+      await assert.rejects(apply(root), { code: 'RUN_SCOPE_VIOLATION' });
+      await assertNothingApplied(root, { [nfd]: null });
+    } else if (aliases.unicodeInsensitive === false) {
+      await apply(root);
+      assert.equal(await readProject(root, nfd), 'candidate\n');
+    } else {
+      await assert.rejects(apply(root), { code: 'RUN_SCOPE_VIOLATION' });
+      await assertNothingApplied(root, { [nfd]: null });
+    }
   } finally {
     await cleanup(root);
   }

@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { lstat, readFile, rm } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, open, readFile, readdir } from 'node:fs/promises';
 import {
   assertInternalPath,
   assertPlainObject,
@@ -49,6 +51,7 @@ import {
 import { withUsageLedgerLock } from './usage.mjs';
 import { buildUsageReport } from './usage-report.mjs';
 import { assessQualification } from './qualification-dispatch.mjs';
+import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, pathsOverlap, preparationPaths, observedPathError } from './file-scope.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -58,6 +61,8 @@ const TASKS_PREFIX = '.tinysdd/tasks/';
 const REVIEWS_PREFIX = '.tinysdd/reviews/';
 const RUN_ID_PATTERN = /^worker-[0-9A-Za-z-]+$/;
 const MAX_APPLY_LINEAGE = 32;
+const MAX_RUN_SNAPSHOT_ENTRIES = 20_000;
+const MAX_RUN_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const APPLY_CHANGES = ['created', 'modified', 'deleted'];
 const APPLY_STATUSES = ['written', 'already-applied'];
 
@@ -93,6 +98,25 @@ function normalizeTaskPaths(value, label, { required = false } = {}) {
   }))].sort();
 }
 
+function normalizePreparation(value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) && typeof value !== 'string') throw tinyError('INVALID_ARGUMENT', 'preparation must be a string or array of paths');
+  const values = Array.isArray(value) ? value : String(value).split(',').filter(Boolean);
+  const seen = new Set();
+  const result = values.map((entry) => {
+    if (typeof entry === 'string') entry = { path: entry };
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.path !== 'string') throw tinyError('INVALID_ARGUMENT', 'preparation entries must contain a path');
+    const path = normalizeProjectRelative(entry.path.trim(), 'preparation path');
+    if (seen.has(path)) throw tinyError('INVALID_ARGUMENT', `preparation contains duplicate path: ${path}`);
+    seen.add(path);
+    if (entry.exists !== undefined && typeof entry.exists !== 'boolean') throw tinyError('INVALID_ARGUMENT', 'preparation.exists must be boolean');
+    if (entry.bytes !== undefined && (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0)) throw tinyError('INVALID_ARGUMENT', 'preparation.bytes must be a nonnegative safe integer');
+    if (entry.sha256 !== undefined && (typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256))) throw tinyError('INVALID_ARGUMENT', 'preparation.sha256 must be a digest');
+    return { path, ...(entry.exists === undefined ? {} : { exists: entry.exists }), ...(entry.bytes === undefined ? {} : { bytes: entry.bytes }), ...(entry.sha256 === undefined ? {} : { sha256: entry.sha256 }) };
+  });
+  return result.sort((left, right) => left.path.localeCompare(right.path));
+}
+
 function normalizeTaskShape(options) {
   const brief = normalizeTaskBrief(requireText(options.brief, 'brief'), 'brief');
   if (!brief.toLowerCase().endsWith('.md')) throw tinyError('INVALID_BRIEF', 'brief must be a Markdown file');
@@ -101,6 +125,7 @@ function normalizeTaskShape(options) {
   const dependsOn = parseIds(options.dependsOn);
   const allow = normalizeTaskPaths(options.allow, 'allow', { required: true });
   const protect = normalizeTaskPaths(options.protect, 'protect');
+  const preparation = normalizePreparation(options.preparation);
   assertProtectAllowDisjoint(allow, protect);
   return {
     brief,
@@ -109,13 +134,22 @@ function normalizeTaskShape(options) {
     dependsOn,
     allow,
     ...(protect.length > 0 ? { protect } : {}),
+    ...(preparation === undefined || preparation.length === 0 ? {} : { preparation }),
   };
 }
 
-const TASK_SHAPE_FIELDS = ['brief', 'context', 'checks', 'allow', 'protect', 'dependsOn'];
+const TASK_SHAPE_FIELDS = ['brief', 'context', 'checks', 'allow', 'protect', 'preparation', 'dependsOn'];
 
 function taskShape(task) {
   return structuredClone(Object.fromEntries(TASK_SHAPE_FIELDS.filter((field) => task[field] !== undefined).map((field) => [field, task[field]])));
+}
+
+function candidatePathsForTask(task) {
+  return [...new Set([
+    ...task.allow,
+    ...(task.applied?.actualPaths ?? []),
+    ...(task.review?.candidatePaths ?? []),
+  ])].sort();
 }
 
 function assertProtectAllowDisjoint(allow, protect) {
@@ -123,7 +157,7 @@ function assertProtectAllowDisjoint(allow, protect) {
   if (paths.length > 0) throw tinyError('PROTECT_ALLOW_OVERLAP', `protected paths overlap allowed paths: ${paths.join(', ')}`, { paths });
 }
 
-async function validateTaskInputs(root, task) {
+async function validateTaskInputs(root, task, { refreshPreparation = false } = {}) {
   await readProjectFile(root, task.brief, taskBriefOptions());
   // Validate the manifest schema, source ranges and budget before recording it.
   const compiled = task.context === undefined ? null : await compileTaskContext(root, task.context);
@@ -143,7 +177,47 @@ async function validateTaskInputs(root, task) {
       }
     }
   }
-  return compiled;
+  const preparation = [];
+  for (const entry of task.preparation ?? []) {
+    const absolute = (await resolveProjectPath(root, entry.path, { allowMissing: true })).absolutePath;
+    let info;
+    try {
+      info = await lstat(absolute);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    if (!info) {
+      if (entry.exists === true) throw tinyError('PREPARATION_MISSING', `preparation file is missing: ${entry.path}`);
+      preparation.push({ path: entry.path, exists: false });
+      continue;
+    }
+    if (info.isSymbolicLink() || !info.isFile()) throw tinyError('INVALID_FILE', `preparation path must be a regular file: ${entry.path}`);
+    const content = await readFile(absolute);
+    const actual = { path: entry.path, exists: true, bytes: content.byteLength, sha256: sha256(content) };
+    if (!refreshPreparation && (entry.exists === false || entry.sha256 !== undefined && entry.sha256 !== actual.sha256 || entry.bytes !== undefined && entry.bytes !== actual.bytes)) {
+      throw tinyError('PREPARATION_STALE', `preparation identity changed: ${entry.path}`, { path: entry.path, expected: entry, actual });
+    }
+    preparation.push(actual);
+  }
+  return { compiled, preparation };
+}
+
+async function preparationFilesDigest(root, preparation) {
+  if (!preparation || preparation.length === 0) return null;
+  const records = [];
+  for (const entry of preparation) {
+    const absolute = (await resolveProjectPath(root, entry.path, { allowMissing: true })).absolutePath;
+    try {
+      const info = await lstat(absolute);
+      if (info.isSymbolicLink() || !info.isFile()) throw tinyError('INVALID_FILE', `preparation path must be a regular file: ${entry.path}`);
+      const content = await readFile(absolute);
+      records.push({ path: entry.path, exists: true, bytes: content.byteLength, sha256: sha256(content) });
+    } catch (caught) {
+      if (caught?.code === 'ENOENT') records.push({ path: entry.path, exists: false });
+      else throw caught;
+    }
+  }
+  return digestJson(records);
 }
 
 async function protectedFilesDigest(root, protect) {
@@ -322,6 +396,16 @@ function validateApplied(id, applied) {
   if (applied.allowedDigest !== undefined && (typeof applied.allowedDigest !== 'string' || !/^[0-9a-f]{64}$/.test(applied.allowedDigest))) {
     throw tinyError('STATE_MALFORMED', `${label} allowedDigest must be a digest`);
   }
+  if (applied.actualDigest !== undefined && (typeof applied.actualDigest !== 'string' || !/^[0-9a-f]{64}$/.test(applied.actualDigest))) {
+    throw tinyError('STATE_MALFORMED', `${label} actualDigest must be a digest`);
+  }
+  if (applied.actualPaths !== undefined && (!Array.isArray(applied.actualPaths) || applied.actualPaths.some((path) => typeof path !== 'string'))) {
+    throw tinyError('STATE_MALFORMED', `${label} actualPaths must be an array of paths`);
+  }
+  if (applied.actualPaths !== undefined) {
+    const normalized = applied.actualPaths.map((path) => normalizeProjectRelative(path, `${label} actual path`));
+    if (normalized.some((path, index) => path !== applied.actualPaths[index]) || new Set(normalized).size !== normalized.length) throw tinyError('STATE_MALFORMED', `${label} actualPaths must be canonical and unique`);
+  }
   if (!Array.isArray(applied.files)) throw tinyError('STATE_MALFORMED', `${label} files must be an array`);
   for (const file of applied.files) {
     assertPlainObject(file, 'STATE_MALFORMED', `${label} file`);
@@ -368,6 +452,28 @@ function validateTaskShape(id, task) {
     normalizeTaskShape(task);
     for (const dependency of task.dependsOn) validateTaskId(dependency);
     for (const path of [...task.allow, ...(task.protect ?? [])]) normalizeProjectRelative(path, `task ${id} path`);
+    if (task.preparation !== undefined) {
+      if (!Array.isArray(task.preparation)) throw new Error('preparation must be an array');
+      for (const entry of task.preparation) {
+        if (!entry || typeof entry !== 'object' || typeof entry.path !== 'string') throw new Error('preparation entry must contain a path');
+        normalizeProjectRelative(entry.path, `task ${id} preparation path`);
+        if (entry.exists !== undefined && typeof entry.exists !== 'boolean') throw new Error('preparation exists must be boolean');
+        if (entry.bytes !== undefined && (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0)) throw new Error('preparation bytes must be nonnegative');
+        if (entry.sha256 !== undefined && (typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256))) throw new Error('preparation sha256 must be a digest');
+      }
+    }
+    if (task.review?.candidatePaths !== undefined) {
+      if (!Array.isArray(task.review.candidatePaths) || task.review.candidatePaths.some((path) => typeof path !== 'string')) throw new Error('review candidatePaths must be an array');
+      const normalized = task.review.candidatePaths.map((path) => {
+        const clean = normalizeProjectRelative(path, `task ${id} candidate path`);
+        if (clean !== path) throw new Error('review candidate path is not canonical');
+        return clean;
+      });
+      if (new Set(normalized).size !== normalized.length) throw new Error('review candidatePaths must be unique');
+    }
+    for (const field of ['candidateDigest', 'allowedDigest']) {
+      if (task.review?.[field] !== undefined && (typeof task.review[field] !== 'string' || !/^[0-9a-f]{64}$/.test(task.review[field]))) throw new Error(`review ${field} must be a digest`);
+    }
   } catch {
     throw tinyError('STATE_MALFORMED', `task ${id} contains an invalid path or dependency`);
   }
@@ -403,6 +509,10 @@ function validateState(value) {
     if (task.revisions !== undefined) validateRevisions(id, task.revisions);
     if (task.closure !== undefined) validateClosure(id, task.closure);
     if (task.applied !== undefined) validateApplied(id, task.applied);
+    if (task.review?.candidatePaths !== undefined && task.applied?.actualPaths !== undefined) {
+      const missing = task.applied.actualPaths.filter((path) => !task.review.candidatePaths.includes(path));
+      if (missing.length > 0) throw tinyError('STATE_MALFORMED', `task ${id} review candidatePaths omit applied paths: ${missing.join(', ')}`);
+    }
   }
   return value;
 }
@@ -467,7 +577,8 @@ function approvalBindsTaskShape(approval, task) {
       && stableStringify(approval.allow) === stableStringify(task.allow)
       && (approval.context ?? null) === (task.context ?? null)
       && (approval.checks ?? null) === (task.checks ?? null)
-      && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null),
+      && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null)
+      && stableStringify(approval.preparation ?? null) === stableStringify(task.preparation ?? null),
   );
 }
 
@@ -490,6 +601,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   const checksDigest = task.checks
     ? await readProjectFile(projectRoot, task.checks, taskBriefOptions()).then((text) => sha256(text)).catch(() => undefined)
     : null;
+  const preparationDigest = await preparationFilesDigest(projectRoot, task.preparation).catch(() => undefined);
   const protectDigest = await protectedFilesDigest(projectRoot, task.protect).catch(() => undefined);
   const dependencyAcceptances = Object.fromEntries(dependencyStates.filter((item) => item.acceptanceDigest).map((item) => [item.id, item.acceptanceDigest]));
   const approval = task.approval;
@@ -503,6 +615,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
       && contextDigestMatches(approval.contextDigest ?? null, contextDigest, compiledContext?.legacySha256)
       && (approval.checksDigest ?? null) === checksDigest
       && (approval.protectDigest ?? null) === protectDigest
+      && (approval.preparationDigest ?? null) === preparationDigest
       && shapeBindsApproval
       && task.dependsOn.every((dependency) => (
         Object.hasOwn(approval.dependencyAcceptances ?? {}, dependency)
@@ -513,7 +626,8 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   let allowedDigest;
   let allowedSnapshot;
   if (task.review?.verdict === 'accepted' && approvalFresh) {
-    allowedSnapshot = await snapshotProjectFiles(projectRoot, task.allow).catch(() => undefined);
+    const candidatePaths = candidatePathsForTask(task);
+    allowedSnapshot = await snapshotProjectFiles(projectRoot, candidatePaths).catch(() => undefined);
     if (allowedSnapshot) allowedDigest = digestJson(allowedSnapshot);
   }
   const evidenceDigest = task.review?.evidence
@@ -525,7 +639,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
       && task.review.approvalDigest === approval.approvalDigest
       && task.review.briefDigest === briefDigest
       && task.review.evidenceDigest === evidenceDigest
-      && task.review.allowedDigest === allowedDigest,
+      && (task.review.candidateDigest ?? task.review.allowedDigest) === allowedDigest,
   );
   const acceptanceDigest = acceptedCurrent ? task.review.acceptanceDigest : undefined;
   const blockedBy = dependencyStates.filter((item) => !item.acceptanceDigest).map((item) => item.id);
@@ -551,6 +665,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     acceptanceDigest: task.closure ? undefined : acceptanceDigest,
     allowedSnapshot,
     allowedDigest,
+    preparationDigest,
     evidenceDigest,
   };
 }
@@ -584,6 +699,7 @@ function publicTask(task, stateInfo) {
     dependsOn: [...task.dependsOn],
     allow: [...task.allow],
     ...(task.protect ? { protect: [...task.protect] } : {}),
+    ...(task.preparation ? { preparation: structuredClone(task.preparation) } : {}),
     ...(task.revisions?.length > 0 ? { revisions: structuredClone(task.revisions) } : {}),
     status: stateInfo.status,
     blockedBy: [...stateInfo.blockedBy],
@@ -653,9 +769,10 @@ export async function initProject(projectRoot, options = {}) {
 export async function addTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const feature = options.feature === undefined ? undefined : validateFeature(options.feature);
-  const { brief, context, checks, dependsOn, allow, protect } = normalizeTaskShape(options);
+  const { brief, context, checks, dependsOn, allow, protect, preparation: requestedPreparation } = normalizeTaskShape(options);
   const root = await canonicalProjectRoot(projectRoot);
-  const compiled = await validateTaskInputs(root, { brief, context, checks, allow, protect });
+  const validated = await validateTaskInputs(root, { brief, context, checks, allow, protect, preparation: requestedPreparation });
+  const { compiled, preparation } = validated;
   return mutateState(root, async (state) => {
     if (Object.hasOwn(state.tasks, id)) throw tinyError('TASK_EXISTS', `task already exists: ${id}`);
     assertDependenciesExist(state, id, dependsOn);
@@ -669,11 +786,12 @@ export async function addTask(projectRoot, options = {}) {
       dependsOn,
       allow,
       ...(protect ? { protect } : {}),
+      ...(preparation.length > 0 ? { preparation } : {}),
       createdAt: timestamp,
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}) }, sizing: taskSizing(allow, compiled) };
+    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}) }, sizing: taskSizing(allow, compiled) };
   });
 }
 
@@ -696,7 +814,10 @@ export async function updateTask(projectRoot, options = {}) {
     }
     const shape = normalizeTaskShape(updated);
     assertDependenciesExist(state, id, shape.dependsOn);
-    const compiled = await validateTaskInputs(root, shape);
+    const validated = await validateTaskInputs(root, shape, { refreshPreparation: true });
+    const compiled = validated.compiled;
+    if (validated.preparation.length > 0) shape.preparation = validated.preparation;
+    else delete shape.preparation;
     if (stableStringify(previous) === stableStringify(shape)) throw tinyError('TASK_UNCHANGED', `task ${id} shape is unchanged`);
     const revision = { revisedAt: nowIso(), by, reason, previous };
     if (task.applied) {
@@ -748,9 +869,21 @@ export async function approveTask(projectRoot, options = {}) {
       if (!dependencyState.acceptanceDigest) throw tinyError('PREREQUISITES_NOT_ACCEPTED', `dependency is not accepted: ${dependency}`);
       dependencyAcceptances[dependency] = dependencyState.acceptanceDigest;
     }
+    if (task.preparation) {
+      const refreshed = await validateTaskInputs(root, {
+        brief: task.brief,
+        context: task.context,
+        checks: task.checks,
+        allow: task.allow,
+        protect: task.protect,
+        preparation: task.preparation,
+      }, { refreshPreparation: true });
+      task.preparation = refreshed.preparation;
+    }
     const protectDigest = await protectedFilesDigest(root, task.protect);
     const approvedAt = nowIso();
-    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
+    const preparationDigest = await preparationFilesDigest(root, task.preparation);
+    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, preparation: task.preparation ?? null, preparationDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
     return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
   });
@@ -834,6 +967,13 @@ async function assertFinalRunApproval(root, task, finalRun) {
       },
     );
   }
+  if (task.checks) {
+    const checksText = await readProjectFile(root, task.checks, taskBriefOptions());
+    const packetDigest = packet.checks?.sha256;
+    if (packetDigest !== sha256(checksText) || packetDigest !== task.approval.checksDigest) {
+      throw tinyError('RUN_APPROVAL_MISMATCH', `run ${finalRun.id} checks content does not match the approved task checks`, { runId: finalRun.id });
+    }
+  }
 }
 
 // Follows result.baseRun.id parents the way the worker does when it builds a
@@ -841,9 +981,11 @@ async function assertFinalRunApproval(root, task, finalRun) {
 // project state the lineage started from, the last run's workspace-after is the
 // candidate.
 async function loadApplyLineage(root, task, runId) {
-  const allowed = new Set(task.allow);
   const newestFirst = [];
   const seen = new Set();
+  const dependencyMounts = await taskDependencyMounts(root, task);
+  const filesystemAliases = await detectFilesystemAliases(root);
+  const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
   let currentId = runId;
   while (currentId !== undefined) {
     if (seen.has(currentId)) throw tinyError('RUN_MALFORMED', 'base run lineage contains a cycle', { runId: currentId });
@@ -857,12 +999,53 @@ async function loadApplyLineage(root, task, runId) {
     }
     if (!Array.isArray(result.scopeViolations) || !Array.isArray(result.changedPaths)) throw tinyError('RUN_MALFORMED', `run ${currentId} result lacks changedPaths or scopeViolations`, { runId: currentId });
     if (result.scopeViolations.length > 0) {
-      throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} changed paths outside the task allowlist`, { runId: currentId, paths: result.scopeViolations.map((violation) => violation?.path) });
+      throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} contains a retained boundary violation`, { runId: currentId, paths: result.scopeViolations.map((violation) => violation?.path) });
     }
-    // A revision's base can predate unrelated project changes, so the recorded
-    // changes are checked here instead of diffing whole workspaces.
-    const outside = result.changedPaths.map((change) => change?.path).filter((path) => typeof path !== 'string' || !allowed.has(path));
-    if (outside.length > 0) throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} changed paths outside the task allowlist`, { runId: currentId, paths: outside });
+    const before = await snapshotRunWorkspace(root, currentId, 'workspace-before');
+    const after = await snapshotRunWorkspace(root, currentId, 'workspace-after');
+    const recordedBefore = await readRunSnapshot(root, currentId, 'before-snapshot.json');
+    const recordedAfter = await readRunSnapshot(root, currentId, 'after-snapshot.json');
+    if (stableStringify(recordedBefore) !== stableStringify(before) || stableStringify(recordedAfter) !== stableStringify(after)) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} retained snapshots do not match workspace evidence`, { runId: currentId });
+    }
+    const actual = runSnapshotChanges(before, after);
+    const claimedEntries = result.changedPaths.map((change) => {
+      if (!change || typeof change.path !== 'string' || typeof change.change !== 'string') throw tinyError('RUN_MALFORMED', `run ${currentId} has an invalid changed path`, { runId: currentId });
+      return change;
+    });
+    const actualShape = actual.map(({ path, change }) => ({ path, change }));
+    const claimed = claimedEntries.map(({ path, change }) => ({ path, change }));
+    claimed.sort((left, right) => left.path.localeCompare(right.path));
+    actualShape.sort((left, right) => left.path.localeCompare(right.path));
+    const claimedIdentity = [...claimedEntries].sort((left, right) => left.path.localeCompare(right.path));
+    const actualIdentity = [...actual].sort((left, right) => left.path.localeCompare(right.path));
+    if (stableStringify(claimedIdentity) !== stableStringify(actualIdentity)) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} changedPaths identities do not match retained workspace evidence`, { runId: currentId, claimed: claimedIdentity, actual: actualIdentity });
+    }
+    if (stableStringify(claimed) !== stableStringify(actualShape)) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} changedPaths does not match retained workspace evidence`, { runId: currentId, claimed, actual: actualShape });
+    }
+    if (!result.fileScope || result.fileScope.mode !== 'ordinary-create-modify' || result.fileScope.ordinaryCreateModify !== true || result.fileScope.deletions !== false || !Array.isArray(result.fileScope.actualPaths)) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} lacks complete file-scope evidence`, { runId: currentId });
+    }
+    if (result.fileScope.actualPaths.some((path) => typeof path !== 'string' || observedPathError(path)) || new Set(result.fileScope.actualPaths).size !== result.fileScope.actualPaths.length) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} fileScope actualPaths are not a unique canonical inventory`, { runId: currentId });
+    }
+    if (stableStringify([...new Set(result.fileScope.actualPaths)].sort()) !== stableStringify(actualShape.map(({ path }) => path).sort())) {
+      throw tinyError('RUN_MALFORMED', `run ${currentId} fileScope actualPaths does not match retained workspace evidence`, { runId: currentId });
+    }
+    const preparation = task.preparation ?? [];
+    const violations = actual.map((change) => classifyFileScopeChange(change, {
+      protectedPaths: task.protect ?? [],
+      preparationPaths: preparationPaths(preparation),
+      dependencyMounts,
+      caseInsensitive,
+      unicodeInsensitive,
+      filesystemAliases,
+    })).filter(Boolean);
+    if (violations.length > 0) {
+      throw tinyError('RUN_SCOPE_VIOLATION', `run ${currentId} contains ineligible candidate changes`, { runId: currentId, paths: violations.map((violation) => violation.path), violations });
+    }
     newestFirst.push({ id: currentId, result });
     const parentId = result.baseRun?.id;
     if (parentId === undefined || parentId === null) break;
@@ -870,6 +1053,33 @@ async function loadApplyLineage(root, task, runId) {
     currentId = parentId;
   }
   return newestFirst.reverse();
+}
+
+async function readBoundedRegularBytes(absolute, maxBytes, { expectedInfo = null } = {}) {
+  let handle;
+  try {
+    handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || (expectedInfo && (opened.ino !== expectedInfo.ino || opened.dev !== expectedInfo.dev))) {
+      throw tinyError('RUN_MALFORMED', `regular file changed while being read: ${absolute}`);
+    }
+    const chunks = [];
+    const buffer = Buffer.alloc(64 * 1024);
+    let bytes = 0;
+    while (true) {
+      const read = await handle.read(buffer, 0, buffer.length, null);
+      if (read.bytesRead === 0) break;
+      bytes += read.bytesRead;
+      if (bytes > maxBytes) throw tinyError('RUN_MALFORMED', `regular file exceeds the bounded read limit: ${absolute}`);
+      chunks.push(Buffer.from(buffer.subarray(0, read.bytesRead)));
+    }
+    return { bytes: Buffer.concat(chunks, bytes) };
+  } catch (error) {
+    if (error?.code === 'ELOOP') throw tinyError('SYMLINK_PATH', `symlinked paths are not allowed: ${absolute}`);
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 async function readRegularFile(absolute) {
@@ -882,7 +1092,8 @@ async function readRegularFile(absolute) {
   }
   if (info.isSymbolicLink()) throw tinyError('SYMLINK_PATH', `symlinked paths are not allowed: ${absolute}`);
   if (!info.isFile()) throw tinyError('INVALID_FILE', `not a regular file: ${absolute}`);
-  return { bytes: await readFile(absolute), mode: info.mode & 0o777 };
+  const read = await readBoundedRegularBytes(absolute, MAX_RUN_SNAPSHOT_BYTES, { expectedInfo: info });
+  return { bytes: read.bytes, mode: info.mode & 0o777 };
 }
 
 async function readRunFile(root, runId, workspace, path) {
@@ -892,6 +1103,120 @@ async function readRunFile(root, runId, workspace, path) {
   } catch (error) {
     if (['SYMLINK_PATH', 'INVALID_FILE'].includes(error?.code)) throw tinyError('RUN_MALFORMED', `run ${runId} ${workspace}/${path} is not a regular file`, { runId, path });
     throw error;
+  }
+}
+
+async function hashRunWorkspaceFile(absolute, runId, path, expectedInfo, maxBytes) {
+  let handle;
+  try {
+    handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.ino !== expectedInfo.ino || opened.dev !== expectedInfo.dev) {
+      throw tinyError('RUN_MALFORMED', `run ${runId} workspace/${path} changed while being read`, { runId, path });
+    }
+    const hash = createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
+    let bytes = 0;
+    while (true) {
+      const read = await handle.read(buffer, 0, buffer.length, null);
+      if (read.bytesRead === 0) break;
+      bytes += read.bytesRead;
+      if (bytes > maxBytes) throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the byte limit`, { runId });
+      hash.update(buffer.subarray(0, read.bytesRead));
+    }
+    return { sha256: hash.digest('hex'), size: bytes };
+  } catch (error) {
+    if (error?.code === 'ELOOP') throw tinyError('RUN_MALFORMED', `run ${runId} workspace/${path} is not a regular file`, { runId, path });
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function snapshotRunWorkspace(root, runId, workspace) {
+  const directory = await runArtifactPath(root, runId, [workspace], { requireDirectory: true, code: 'RUN_MALFORMED' });
+  const snapshot = Object.create(null);
+  let entriesSeen = 0;
+  let bytesSeen = 0;
+  async function visit(current, prefix = '') {
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (++entriesSeen > MAX_RUN_SNAPSHOT_ENTRIES) throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the entry limit`, { runId });
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = join(current, entry.name);
+      const info = await lstat(absolute);
+      if (info.isSymbolicLink()) snapshot[path] = { kind: 'symlink', sha256: null, size: null };
+      else if (info.isDirectory()) {
+        snapshot[path] = { kind: 'directory', sha256: null, size: null };
+        await visit(absolute, path);
+      } else if (info.isFile()) {
+        if (info.size > MAX_RUN_SNAPSHOT_BYTES || bytesSeen > MAX_RUN_SNAPSHOT_BYTES - info.size) {
+          throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the byte limit`, { runId });
+        }
+        const hashed = await hashRunWorkspaceFile(absolute, runId, path, info, MAX_RUN_SNAPSHOT_BYTES - bytesSeen);
+        bytesSeen += hashed.size;
+        if (bytesSeen > MAX_RUN_SNAPSHOT_BYTES) throw tinyError('RUN_MALFORMED', `run ${runId} workspace snapshot exceeds the byte limit`, { runId });
+        snapshot[path] = { kind: 'file', sha256: hashed.sha256, size: hashed.size };
+      } else snapshot[path] = { kind: 'other', sha256: null, size: null };
+    }
+  }
+  await visit(directory);
+  return snapshot;
+}
+
+async function readRunSnapshot(root, runId, name) {
+  const path = await runArtifactPath(root, runId, [name], { code: 'RUN_MALFORMED' });
+  const info = await lstat(path);
+  if (info.size > MAX_RUN_SNAPSHOT_BYTES) throw tinyError('RUN_MALFORMED', `run ${runId} ${name} exceeds the retained snapshot limit`, { runId });
+  let value;
+  try {
+    const read = await readBoundedRegularBytes(path, MAX_RUN_SNAPSHOT_BYTES, { expectedInfo: info });
+    value = JSON.parse(read.bytes.toString('utf8'));
+  } catch {
+    throw tinyError('RUN_MALFORMED', `run ${runId} ${name} is malformed`, { runId });
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > MAX_RUN_SNAPSHOT_ENTRIES) {
+    throw tinyError('RUN_MALFORMED', `run ${runId} ${name} is not a bounded snapshot object`, { runId });
+  }
+  return value;
+}
+
+function runSnapshotChanges(before, after) {
+  const paths = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  const beforeDescendants = new Set();
+  const afterDescendants = new Set();
+  for (const path of Object.keys(before)) {
+    const parts = path.split('/');
+    for (let index = 1; index < parts.length; index += 1) beforeDescendants.add(parts.slice(0, index).join('/'));
+  }
+  for (const path of Object.keys(after)) {
+    const parts = path.split('/');
+    for (let index = 1; index < parts.length; index += 1) afterDescendants.add(parts.slice(0, index).join('/'));
+  }
+  return paths.flatMap((path) => {
+    const oldValue = before[path];
+    const newValue = after[path];
+    if (stableStringify(oldValue) === stableStringify(newValue)) return [];
+    if (!oldValue && newValue?.kind === 'directory' && afterDescendants.has(path)) return [];
+    if (!newValue && oldValue?.kind === 'directory' && beforeDescendants.has(path)) return [];
+    const change = !oldValue ? 'created' : !newValue ? 'deleted' : oldValue.kind !== newValue.kind ? 'type_changed' : 'modified';
+    return [{ path, change, before: oldValue ?? null, after: newValue ?? null }];
+  });
+}
+
+async function taskDependencyMounts(root, task) {
+  if (!task.checks) return [];
+  let text;
+  try {
+    text = await readProjectFile(root, task.checks, taskBriefOptions());
+  } catch {
+    throw tinyError('STALE_CHECKS', `checks manifest is no longer readable: ${task.checks}`);
+  }
+  try {
+    return parseChecksManifest(text).dependencyMounts;
+  } catch (error) {
+    throw tinyError('RUN_MALFORMED', `approved checks manifest is invalid: ${task.checks}`, { cause: error?.message });
   }
 }
 
@@ -919,13 +1244,13 @@ export async function applyTask(projectRoot, options = {}) {
     await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
     await runArtifactPath(root, finalRun.id, ['workspace-after'], { requireDirectory: true });
 
-    // Plan everything, and refuse on drift, before the first write. Only paths
-    // the lineage recorded as changed are applied: a revision's workspaces also
-    // carry whatever the project held at its dispatch, which is not the run's work.
+    // Plan every validated actual change, and refuse on drift, before the first
+    // write. A revision's workspaces carry the project held at its dispatch;
+    // only the retained lineage union is applicable.
     const recorded = new Set(lineage.flatMap((run) => run.result.changedPaths.map((change) => change.path)));
     const plan = [];
     const conflicts = [];
-    for (const path of task.allow) {
+    for (const path of [...recorded].sort()) {
       if (!recorded.has(path)) continue;
       const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
       const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
@@ -944,10 +1269,16 @@ export async function applyTask(projectRoot, options = {}) {
     }
 
     // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
-    const inputs = new Set([task.brief, task.context, task.checks].filter(Boolean));
-    const rewritten = plan.filter((item) => item.status === 'written' && inputs.has(item.path)).map((item) => item.path);
+    const inputs = [task.brief, task.context, task.checks, ...preparationPaths(task.preparation ?? [])].filter(Boolean);
+    const filesystemAliases = await detectFilesystemAliases(root);
+    const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
+    const rewritten = plan.filter((item) => item.status === 'written' && inputs.some((input) => pathsOverlap(item.path, input, { caseInsensitive, unicodeInsensitive, filesystemAliases }))).map((item) => item.path);
     if (rewritten.length > 0) {
       throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
+    }
+    const deletions = plan.filter((item) => item.change === 'deleted').map((item) => item.path);
+    if (deletions.length > 0) {
+      throw tinyError('APPLY_DELETION_UNAUTHORIZED', `run ${finalRun.id} contains file deletions, which task apply does not authorize: ${deletions.join(', ')}`, { paths: deletions, runId: finalRun.id });
     }
     // Compile the context as inspectTask will read it once this apply is recorded,
     // and refuse now if that would leave the approval stale.
@@ -959,11 +1290,10 @@ export async function applyTask(projectRoot, options = {}) {
     }
     // The digest below reads every allowed file; refuse an unreadable or
     // symlinked one now rather than after the writes.
-    await snapshotProjectFiles(root, task.allow);
+    await snapshotProjectFiles(root, [...new Set([...task.allow, ...(task.protect ?? []), ...recorded])]);
     for (const item of plan) {
       if (item.status !== 'written') continue;
-      if (item.change === 'deleted') await rm(item.absolute, { force: true });
-      else await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
+      await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
     }
     task.applied = {
       runId: finalRun.id,
@@ -971,6 +1301,8 @@ export async function applyTask(projectRoot, options = {}) {
       appliedAt: nowIso(),
       by,
       allowedDigest: await allowedFilesDigest(root, task.allow),
+      actualPaths: [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort(),
+      actualDigest: await allowedFilesDigest(root, [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort()),
       files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
     };
     return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
@@ -1041,8 +1373,10 @@ export async function resolveTaskPacket(projectRoot, taskId) {
     schemaVersion: 1,
     taskId: id,
     brief: { path: task.brief, text, sha256: sha256(text) },
+    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
     allowedPaths: [...task.allow],
     ...(task.protect ? { protectedPaths: [...task.protect] } : {}),
+    ...(task.preparation ? { preparation: structuredClone(task.preparation) } : {}),
     dependencies: task.dependsOn.map((dependency) => ({ id: dependency, acceptanceDigest: status.dependencyAcceptances[dependency] })),
     approval: { ...task.approval },
     ...(context === undefined ? {} : { context }),
@@ -1095,8 +1429,10 @@ export async function resolveBenchmarkPacket(projectRoot, taskId) {
     schemaVersion: 1,
     taskId: id,
     brief: { path: task.brief, text, sha256: sha256(text) },
+    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
     allowedPaths: [...task.allow],
     ...(task.protect ? { protectedPaths: [...task.protect] } : {}),
+    ...(task.preparation ? { preparation: structuredClone(task.preparation) } : {}),
     dependencies: task.dependsOn.map((dependency) => ({ id: dependency, acceptanceDigest: task.approval.dependencyAcceptances?.[dependency] })),
     approval: { ...task.approval },
     ...(context === undefined ? {} : { context }),
@@ -1209,6 +1545,7 @@ async function allowedFilesDigest(root, allow) {
 // review allows but records. A record from before applied.allowedDigest existed
 // can only be checked against the files it wrote.
 async function appliedIdentical(root, applied, allowedDigest) {
+  if (applied.actualDigest !== undefined) return applied.actualDigest === allowedDigest;
   if (applied.allowedDigest !== undefined) return applied.allowedDigest === allowedDigest;
   const snapshot = await snapshotProjectFiles(root, applied.files.map((file) => file.path));
   return applied.files.every((file, index) => (file.change === 'deleted' ? !snapshot[index].exists : snapshot[index].sha256 === file.sha256));
@@ -1240,7 +1577,16 @@ export async function reviewTask(projectRoot, options = {}) {
     if (!task.approval || !status.approvalFresh) throw tinyError('APPROVAL_STALE', `task ${id} does not have a current approval`);
     const evidenceContent = await readProjectFile(root, evidence, reviewEvidenceOptions());
     if (evidenceContent.trim().length === 0) throw tinyError('INVALID_EVIDENCE', 'evidence must be nonempty');
-    const allowedDigest = await allowedFilesDigest(root, task.allow);
+    const requestedCandidatePaths = options.candidatePaths === undefined
+      ? []
+      : normalizeTaskPaths(options.candidatePaths, 'candidate');
+    const candidatePaths = [...new Set([
+      ...task.allow,
+      ...(task.applied?.actualPaths ?? []),
+      ...(task.review?.candidatePaths ?? []),
+      ...requestedCandidatePaths,
+    ])].sort();
+    const allowedDigest = await allowedFilesDigest(root, candidatePaths);
     const reviewedAt = nowIso();
     const review = {
       verdict,
@@ -1251,6 +1597,8 @@ export async function reviewTask(projectRoot, options = {}) {
       briefDigest: status.briefDigest,
       approvalDigest: task.approval.approvalDigest,
       allowedDigest,
+      candidatePaths,
+      candidateDigest: allowedDigest,
     };
     if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
     if ((verdict === 'accepted' || verdict === 'revision') && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedIdentical(root, task.applied, allowedDigest) };
