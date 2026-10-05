@@ -145,6 +145,53 @@ test('preserves supplied choice order while keeping the exact four-label set', (
   assert.throws(() => validateLayaChoiceQuestion({ ...question, criteria: { environment: 'e' } }), { code: 'LAYA_TRAINING_DATA_INVALID' });
 });
 
+test('accepts nonempty structured and finite numeric instructions supported by Laya', () => {
+  for (const instructions of [['one'], { prompt: 'one' }, 0, 1.5]) {
+    assert.doesNotThrow(() => validateLayaChoiceQuestion({ ...question, instructions }));
+  }
+});
+
+test('refuses empty structured instructions before writing and preserves inputs', async () => {
+  const inputPaths = [
+    'data.json',
+    'question.json',
+    'evidence/case-test.log',
+    'evidence/case-train.log',
+    'evidence/case-validation.log',
+  ];
+  for (const instructions of [{}, []]) {
+    const { root } = await fixture({ questionValue: { ...question, instructions } });
+    try {
+      const before = await Promise.all(inputPaths.map((path) => readFile(join(root, path))));
+      assert.throws(() => validateLayaChoiceQuestion({ ...question, instructions }), { code: 'LAYA_TRAINING_DATA_INVALID' });
+      await assert.rejects(
+        exportLayaTrainingData({ projectRoot: root, datasetPath: 'data.json', questionPath: 'question.json', outputPath: 'library-output' }),
+        { code: 'LAYA_TRAINING_DATA_INVALID' },
+      );
+      assert.deepEqual(await Promise.all(inputPaths.map((path) => readFile(join(root, path)))), before);
+      await assert.rejects(lstat(join(root, 'library-output')), { code: 'ENOENT' });
+
+      await assert.rejects(
+        exec(process.execPath, [scriptPath.pathname, '--project', root, '--dataset', 'data.json', '--question', 'question.json', '--output', 'cli-output', '--json'], { cwd: root }),
+        (error) => {
+          assert.equal(error.code, 1);
+          assert.equal(error.stderr, '');
+          const lines = error.stdout.trim().split('\n');
+          assert.equal(lines.length, 1);
+          const result = JSON.parse(lines[0]);
+          assert.equal(result.ok, false);
+          assert.equal(result.error.code, 'LAYA_TRAINING_DATA_INVALID');
+          return true;
+        },
+      );
+      assert.deepEqual(await Promise.all(inputPaths.map((path) => readFile(join(root, path)))), before);
+      await assert.rejects(lstat(join(root, 'cli-output')), { code: 'ENOENT' });
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
 test('rejects duplicate JSON question keys, unsafe keys, and oversized input', () => {
   const duplicate = '{"type":"choice","instructions":"x","criteria":{"environment":"a","environment":"b","missing-context":"m","fixable-from-log":"f","unknown":"u"}}';
   assert.throws(() => parseLayaChoiceQuestion(duplicate), { code: 'LAYA_TRAINING_DATA_INVALID' });

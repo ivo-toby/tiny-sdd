@@ -185,6 +185,10 @@ export function validateLayaChoiceQuestion(value) {
   if (!Object.hasOwn(question, 'instructions')) dataInvalid('Laya question.instructions is required');
   const instructions = boundedQuestionValue(question.instructions, 'Laya question.instructions');
   if (typeof instructions === 'string' && instructions.trim().length === 0) dataInvalid('Laya question.instructions must be nonempty');
+  if (Array.isArray(instructions) && instructions.length === 0) dataInvalid('Laya question.instructions must be nonempty');
+  if (instructions !== null && typeof instructions === 'object' && !Array.isArray(instructions) && Object.keys(instructions).length === 0) {
+    dataInvalid('Laya question.instructions must be nonempty');
+  }
   if (instructions === null || typeof instructions === 'boolean') dataInvalid('Laya question.instructions must be a Laya-supported value');
 
   const criteria = plainObject(question.criteria, 'Laya question.criteria');

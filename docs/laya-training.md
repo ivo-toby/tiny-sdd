@@ -19,7 +19,9 @@ partition must be nonempty.
 The question file is a Laya question object. Its `type` must be `choice`, and
 its `criteria` keys must be exactly the four existing TinySDD labels. The
 question is supplied by the operator so the exporter does not invent a policy
-mapping or question wording:
+mapping or question wording. Laya supports scalar or structured instructions,
+but structured instructions must be nonempty; the exporter refuses `{}` and
+`[]` before creating any output:
 
 ```json
 {
