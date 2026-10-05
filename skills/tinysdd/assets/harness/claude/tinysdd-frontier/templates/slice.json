@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "example-s1",
+  "brief": "changes/example-change/slices/example-s1/brief.md",
+  "context": "changes/example-change/slices/example-s1/context.json",
+  "checks": "changes/example-change/slices/example-s1/checks.json",
+  "implementationFiles": ["src/feature.mjs"],
+  "sliceTests": ["tests/feature-s1.test.mjs"],
+  "protect": ["tests/feature-integration.test.mjs"],
+  "interfaces": ["src/entrypoint.mjs"],
+  "dependsOn": [],
+  "budget": {
+    "maxImplementationFiles": null,
+    "maxSliceTestFiles": null,
+    "maxCompiledContextBytes": null
+  },
+  "openDecisions": ["Replace the example paths and requirement before validation."],
+  "testReview": {
+    "schemaVersion": 1,
+    "workflow": "slice-tests",
+    "criteria": [
+      {
+        "id": "example-slice-test",
+        "requirementIds": ["example-requirement"],
+        "question": "Does the writable slice test establish the requirement at the cited interface?",
+        "interfaces": ["src/entrypoint.mjs"],
+        "testPaths": ["tests/feature-s1.test.mjs"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "example-change",
+  "proposal": "changes/example-change/proposal.md",
+  "design": "changes/example-change/design.md",
+  "specDeltas": ["changes/example-change/deltas/example.json"],
+  "slices": ["changes/example-change/slices/example-s1/slice.json"],
+  "budget": {
+    "maxImplementationFiles": 3,
+    "maxSliceTestFiles": 2,
+    "maxCompiledContextBytes": 65536
+  },
+  "featureTests": ["tests/feature-integration.test.mjs"],
+  "featureChecks": "changes/example-change/feature-checks.json",
+  "integration": [
+    {
+      "id": "example-real-entrypoint",
+      "requirementIds": ["example-requirement"],
+      "entrypoints": ["src/entrypoint.mjs"],
+      "wiringSlice": "example-s1",
+      "testPaths": ["tests/feature-integration.test.mjs"],
+      "checkIds": ["feature-entrypoint"]
+    }
+  ]
+}

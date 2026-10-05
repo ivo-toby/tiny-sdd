@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "dependencyMounts": [],
+  "checks": [
+    {
+      "id": "example-slice",
+      "argv": ["node", "tests/feature-s1.test.mjs"],
+      "timeoutMs": 120000,
+      "criteria": ["C1"]
+    }
+  ]
+}

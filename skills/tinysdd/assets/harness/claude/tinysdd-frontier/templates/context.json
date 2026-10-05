@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    "EXAMPLE PLACEHOLDER: replace with a verified source fact and exact symbol before use."
+  ],
+  "resources": [
+    {
+      "path": "src/example-entrypoint.mjs",
+      "startLine": 1,
+      "endLine": 40,
+      "purpose": "Existing real entrypoint and interface used by the feature integration test."
+    }
+  ]
+}
