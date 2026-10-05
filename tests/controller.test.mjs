@@ -68,9 +68,14 @@ test('CLI review retains explicitly supplied candidate paths', async () => {
   try {
     await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/planned.ts'] });
     await approveTask(root, { id: 'one', by: 'operator', reason: 'checked scope' });
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src', 'manual-extra.ts'), 'export const version = 1;\n');
     const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
     await exec(process.execPath, [bin, '--project', root, 'task', 'review', '--id', 'one', '--verdict', 'accepted', '--evidence', '.tinysdd/reviews/evidence.md', '--by', 'reviewer', '--candidate-paths', 'src/manual-extra.ts']);
     assert.deepEqual((await rawState(root)).tasks.one.review.candidatePaths, ['src/manual-extra.ts', 'src/planned.ts']);
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'accepted');
+    await writeFile(join(root, 'src', 'manual-extra.ts'), 'export const version = 2;\n');
+    assert.equal((await controllerStatus(root)).tasks[0].status, 'stale');
   } finally {
     await cleanup(root);
   }
