@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "spec": "specs/example.md",
+  "baseSha256": null,
+  "changes": [
+    {
+      "operation": "add",
+      "id": "example-requirement",
+      "text": "The feature exposes the approved behavior through the existing entrypoint."
+    }
+  ]
+}

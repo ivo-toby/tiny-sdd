@@ -76,6 +76,55 @@ Attribution and reason must reflect actual authority, not the example text.
 For dependent tasks use `--depends-on validation`. State and review artifacts
 live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
+## Frontier preparation phases
+
+For a full feature, load the [project-local frontier router](../assets/harness/claude/tinysdd-frontier/SKILL.md). It links
+separate specify, research, plan and slice skills and their #20 templates.
+Use the phases in that order:
+
+1. Specify requirements, rejection and preservation behavior. Keep proposed
+   decisions and UNKNOWN facts visible.
+2. Research exact source excerpts, callers, checks, dependency accessors and
+   lint facts in the existing context-manifest shape. Research evidence is
+   retained cited bytes, never a small-model interpretation.
+3. Plan against those excerpts with proposal.md, design.md, deltas and
+   change.json. The plan names real entrypoints, wiring slices, protected
+   feature tests, writable direct-import slice tests and advisory budgets.
+4. Slice the coherent DAG into slice.json, brief.md, context.json and checks.json.
+   Validate with the existing read-only script before registration.
+
+The frontier phase files prepare artifacts only. A successful validator,
+frontmatter value, or phase label does not approve anything. The current phase
+CLI supports only the human research gate:
+
+~~~sh
+tinysdd phase record --phase research --feature reservations \
+  --proposal changes/reservations/proposal.md \
+  --context changes/reservations/research.context.json \
+  --by operator --reason 'Reviewed the cited research inputs'
+tinysdd phase status --feature reservations
+tinysdd phase advance --from research --to plan --feature reservations \
+  --by operator --reason 'Research is current and complete'
+~~~
+
+The research-to-plan advance records phase entry; it is not plan artifact
+approval. Unsupported or unavailable phase handlers stop truthfully. Existing
+task approval remains the implement gate. Each active task protects every
+feature test. Use featureIntegration's typed argv, testPaths and entrypoints
+with the existing safe host runner for final feature acceptance; direct-import
+slice tests cannot substitute for a real-entrypoint integration test. The #82
+ordinary-create-modify scope allows ordinary extra files, while file lists and
+budgets remain advisory and deletion remains ineligible.
+
+The #81 transition contract is offline, not an active provider loop: it does
+not invoke Jev or a provider.
+Negative assessments use only an explicit bounded revision policy; every
+positive assessment requires independent strong review of identical bytes;
+exhaustion escalates. Thresholds and uncertain/unavailable routes have no
+implicit defaults. Do not infer #39 plan approval or #38 engagement semantics.
+Record observed frontier usage only with the existing canonical usage phases;
+missing telemetry is UNKNOWN, never zero.
+
 For a portable change descriptor, validate the bounded preparation and print a
 read-only topological registration plan:
 

@@ -125,6 +125,55 @@ and ask it to prepare one bounded feature. The skill covers either implementatio
 inside that agent or delegation to a named worker. Product decisions and review
 remain with you or the authority you explicitly delegate to the outer agent.
 
+## Frontier preparation skills
+
+For a complete feature, load the [project-local frontier router](../skills/tinysdd/assets/harness/claude/tinysdd-frontier/SKILL.md). It provides
+separate specify, research, plan and slice skills and reusable #20 templates.
+The preparation order is:
+
+1. Specify observable requirements, rejection and preservation behavior.
+2. Research exact cited source excerpts, callers, checks, dependency accessors
+   and lint facts. Mark unavailable facts UNKNOWN.
+3. Plan against those retained excerpts with proposal.md, design.md, deltas and
+   change.json.
+4. Slice a coherent DAG with slice.json, brief.md, context.json and checks.json.
+
+The frontier skills prepare artifacts; they do not approve them. The current
+phase CLI implements only the human research handler. If it is configured, use
+the real commands:
+
+~~~sh
+tinysdd phase record --phase research --feature reservations \
+  --proposal changes/reservations/proposal.md \
+  --context changes/reservations/research.context.json \
+  --by operator --reason 'Reviewed the cited research inputs'
+tinysdd phase status --feature reservations
+tinysdd phase advance --from research --to plan --feature reservations \
+  --by operator --reason 'Research is current and complete'
+~~~
+
+The research-to-plan advance records phase entry only; it does not approve a
+plan artifact. Unsupported or unavailable handlers stop truthfully. Existing
+task approval remains the implement gate, and existing task review, apply and
+feature accept remain authoritative.
+
+Strong preparation writes protected feature integration tests through real
+application entrypoints. Small workers write writable slice tests with direct
+module imports. Protect every feature test in every active task. The
+featureIntegration command uses typed argv and the safe host runner; a passing
+direct-import slice test does not establish wiring. Implementation and
+slice-test file budgets are configurable advisory warnings, and #82 allows
+ordinary extra files in the disposable candidate. Deletion, protected or
+preparation edits and arbitrary inference commands remain ineligible.
+
+The #81 transition is an offline contract, not an active provider loop, and
+does not invoke Jev or a provider. Negative assessments use only explicit
+bounded revision policy; every positive assessment requires independent strong
+review of identical bytes; exhaustion escalates. Do not invent thresholds or
+routes, and do not infer #39 plan approval or #38 engagement semantics. Record
+observed frontier usage through the existing canonical phases and mark missing
+telemetry UNKNOWN, never zero.
+
 The first controller sequence is:
 
 ```sh
