@@ -165,6 +165,9 @@ tinysdd phase advance --from research --to plan --feature reservations \
 Phase status requires an explicit feature; independent features are reported
 separately and are never folded into an aggregate approval view.
 
+The research-to-plan transition records phase entry only. It does not approve
+a plan artifact or satisfy a later research predecessor requirement.
+
 Research records retain bounded proposal and manifest references plus exact
 compiled cited excerpts. The record becomes stale when cited content, inputs,
 policy, configured predecessor, or named producer qualification changes.

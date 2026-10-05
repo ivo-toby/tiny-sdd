@@ -668,6 +668,10 @@ async function removeOwnedArtifactUnlocked(root, written) {
     if (info.size !== written.artifact.bytes) return false;
     const bytes = await readFile(target);
     if (bytes.byteLength !== written.artifact.bytes || sha256(bytes) !== written.artifact.sha256) return false;
+    const current = await lstat(target);
+    if (current.isSymbolicLink() || !current.isFile()) return false;
+    if (current.dev !== written.identity.dev || current.ino !== written.identity.ino) return false;
+    if (current.size !== written.artifact.bytes) return false;
     await unlink(target);
     return true;
   } catch (error) {
@@ -983,12 +987,7 @@ async function predecessorFreshness(root, record, records, policy, qualification
     return researchFreshness(root, record, policy, qualificationResolver, records, nextSeen);
   }
   if (record.type === 'phase-transition') {
-    if (record.predecessor === undefined) return { fresh: false, reasons: ['phase transition has no predecessor'] };
-    const predecessor = records.find((item) => item.id === record.predecessor.id);
-    if (!predecessor || predecessor.recordDigest !== record.predecessor.recordDigest) {
-      return { fresh: false, reasons: ['phase transition predecessor is unavailable'] };
-    }
-    return predecessorFreshness(root, predecessor, records, policy, qualificationResolver, nextSeen);
+    return { fresh: false, code: 'PHASE_PREDECESSOR_UNSUPPORTED', reasons: ['phase transition records enter a phase but do not approve its artifact'] };
   }
   return { fresh: false, code: 'PHASE_PREDECESSOR_UNSUPPORTED', reasons: ['phase predecessor type is unsupported for live freshness validation'] };
 }

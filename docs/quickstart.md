@@ -254,6 +254,9 @@ tinysdd phase advance --from research --to plan --feature reservations \
 Phase status always names one feature; TinySDD does not merge independent
 features into an aggregate approval view.
 
+The research-to-plan transition records entry into plan only. It is not plan
+artifact approval and cannot satisfy a later research predecessor requirement.
+
 Only the configured `human` research handler is available in this increment;
 frontier, deterministic and automatic handlers report unavailable. If research
 qualification is configured, its named producer must currently be qualified

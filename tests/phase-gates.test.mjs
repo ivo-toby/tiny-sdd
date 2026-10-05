@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -273,7 +275,7 @@ test('configured research predecessors require a supported live record', async (
   }
 });
 
-test('research refuses a predecessor whose policy identity is stale', async () => {
+test('research refuses a plan-entry predecessor without plan artifact approval', async () => {
   const oldPolicy = { research: { mode: 'human' }, plan: { mode: 'human' } };
   const root = await project(oldPolicy);
   try {
@@ -285,7 +287,7 @@ test('research refuses a predecessor whose policy identity is stale', async () =
       proposal: 'docs/proposal.md',
       context: 'context.json',
       by: 'operator',
-      reason: 'attempt with stale predecessor',
+      reason: 'attempt with unsupported plan predecessor',
       policy: currentPolicy,
     }), { code: 'PHASE_PREDECESSOR_STALE' });
   } finally {
@@ -303,6 +305,25 @@ test('research refuses a same-phase predecessor before publishing a new record',
       predecessor: first.record.id,
     }), { code: 'PHASE_PREDECESSOR_UNSUPPORTED' });
     assert.equal((await phaseGateStatus(root, { feature: 'feature-one' })).records.length, 1);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('research refuses an indirect plan predecessor whose live chain contains research', async () => {
+  const root = await project();
+  try {
+    await research(root, { proposal: 'docs/proposal.md' });
+    const plan = await advancePhase(root, { feature: 'feature-one', by: 'operator', reason: 'enter planning' });
+    await writeFile(join(root, 'docs', 'second-proposal.md'), '# Second research proposal\n');
+    await assert.rejects(research(root, {
+      proposal: 'docs/second-proposal.md',
+      predecessor: plan.record.id,
+    }), { code: 'PHASE_PREDECESSOR_UNSUPPORTED' });
+    const status = await phaseStatus(root, { feature: 'feature-one' });
+    assert.equal(status.phases.research.status, 'approved');
+    assert.equal(status.phases.plan.status, 'entered');
+    assert.equal(status.records.length, 2);
   } finally {
     await cleanup(root);
   }
@@ -326,6 +347,51 @@ test('append failure removes only the newly written research artifact', async (t
     assert.equal(await readFile(ledger, 'utf8'), '');
   } finally {
     await chmod(ledger, 0o600).catch(() => {});
+    await cleanup(root);
+  }
+});
+
+test('append failure preserves a replacement artifact after rollback reads', async () => {
+  const root = await project();
+  const ledger = join(root, '.tinysdd', 'runs', 'phases.jsonl');
+  const artifact = join(root, '.tinysdd', 'runs', 'phase-artifacts', 'phase-read-swap.json');
+  const originalAppend = fs.promises.appendFile;
+  const originalRead = fs.promises.readFile;
+  let appendFailed = false;
+  let substituted = false;
+  try {
+    await writeFile(ledger, '');
+    fs.promises.appendFile = async function patchedAppend(target, ...args) {
+      if (String(target) !== ledger) return originalAppend(target, ...args);
+      appendFailed = true;
+      throw Object.assign(new Error('controlled append refusal'), { code: 'EACCES' });
+    };
+    fs.promises.readFile = async function patchedRead(target, ...args) {
+      const bytes = await originalRead(target, ...args);
+      if (String(target) === artifact && appendFailed && !substituted) {
+        const replacement = join(root, 'foreign-replacement.txt');
+        await writeFile(replacement, 'foreign replacement');
+        await rename(replacement, artifact);
+        substituted = true;
+      }
+      return bytes;
+    };
+    syncBuiltinESMExports();
+    await assert.rejects(recordResearchDecision(root, {
+      feature: 'feature-one',
+      proposal: 'docs/proposal.md',
+      context: 'context.json',
+      by: 'operator',
+      reason: 'rollback substitution regression',
+      id: 'phase-read-swap',
+      policy: { research: { mode: 'human' } },
+    }), { code: 'EACCES' });
+    assert.equal(substituted, true);
+    assert.equal(await readFile(artifact, 'utf8'), 'foreign replacement');
+  } finally {
+    fs.promises.appendFile = originalAppend;
+    fs.promises.readFile = originalRead;
+    syncBuiltinESMExports();
     await cleanup(root);
   }
 });
