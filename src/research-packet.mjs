@@ -1,4 +1,4 @@
-import { open, lstat, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { open, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -35,11 +35,12 @@ export const MAX_RESEARCH_PROPOSAL_BYTES = 128 * 1024;
 export const MAX_RESEARCH_PROMPT_BYTES = 16 * 1024 * 1024;
 
 const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
+const MAX_FALLBACK_ENTRIES = 100_000;
 const MAX_HINTS_PER_FILE = 256;
 const MAX_HINT_LINES = 160;
 const READ_CHUNK_BYTES = 64 * 1024;
 const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
-const TEXT_DECODER = new TextDecoder('utf-8', { fatal: true });
+const TEXT_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const SYMBOL_PATTERN = /^\s*(?:(?:export|default)\s+)*(?:(?:async)\s+)?(?:function|class|interface|type|enum|def)\s+([A-Za-z_$][\w$]*)/u;
 const DECLARATION_PATTERN = /^\s*(?:(?:export|default)\s+)*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|:)/u;
 const HEADING_PATTERN = /^\s*(#{1,6})\s+(.+?)\s*$/u;
@@ -94,6 +95,12 @@ function normalizeProjectPathForResearch(value, label) {
   } catch (error) {
     throw researchError('RESEARCH_INVALID_PATH', error.message, error.details);
   }
+}
+
+function canonicalResearchPath(value, label) {
+  const normalized = normalizeProjectPathForResearch(value, label);
+  if (normalized !== value) throw researchError('RESEARCH_INVALID_PATH', `${label} must use its canonical project-relative spelling`);
+  return normalized;
 }
 
 function excludedName(name, directory) {
@@ -152,10 +159,13 @@ async function runGitList(projectRoot) {
   return { paths: [...new Set(listed)].sort(), reason: null };
 }
 
-async function fallbackWalk(projectRoot) {
+async function fallbackWalk(projectRoot, maxFiles) {
   const paths = [];
+  let entriesSeen = 0;
   async function visit(current, relativeDirectory) {
     const entries = await readdir(current, { withFileTypes: true });
+    entriesSeen += entries.length;
+    if (entriesSeen > MAX_FALLBACK_ENTRIES) throw researchError('RESEARCH_MAP_LIMIT', `filesystem fallback exceeds ${MAX_FALLBACK_ENTRIES} entries`);
     entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
     for (const entry of entries) {
       if (excludedName(entry.name, entry.isDirectory())) continue;
@@ -168,6 +178,7 @@ async function fallbackWalk(projectRoot) {
         await visit(absolute, path);
       } else if (info.isFile()) {
         paths.push(path);
+        if (paths.length > maxFiles) throw researchError('RESEARCH_BUDGET_EXCEEDED', `repository map exceeds ${maxFiles} files`, { files: paths.length, limit: maxFiles });
       }
     }
   }
@@ -175,7 +186,7 @@ async function fallbackWalk(projectRoot) {
   return paths.sort();
 }
 
-async function discoverPaths(projectRoot) {
+async function discoverPaths(projectRoot, maxFiles) {
   const git = await runGitList(projectRoot);
   if (git.paths !== null) {
     return { mode: 'git-ls-files', fallbackReason: null, paths: git.paths };
@@ -183,7 +194,7 @@ async function discoverPaths(projectRoot) {
   return {
     mode: 'filesystem-fallback',
     fallbackReason: git.reason,
-    paths: await fallbackWalk(projectRoot),
+    paths: await fallbackWalk(projectRoot, maxFiles),
   };
 }
 
@@ -195,9 +206,16 @@ async function readBoundedFile(absolutePath, maxBytes, label) {
   if (pathInfo.size > maxBytes) {
     throw researchError('RESEARCH_BUDGET_EXCEEDED', `${label} exceeds ${maxBytes} bytes`, { bytes: pathInfo.size, limit: maxBytes });
   }
+  let canonicalResolved;
+  try {
+    canonicalResolved = await realpath(resolved);
+  } catch (error) {
+    throw researchError('RESEARCH_FILE_READ_FAILED', `could not resolve ${label}`, { cause: error?.code });
+  }
+  await assertNoSymlinkPath(resolved, { allowMissing: false });
   let handle;
   try {
-    handle = await open(resolved, fsConstants.O_RDONLY | O_NOFOLLOW);
+    handle = await open(canonicalResolved, fsConstants.O_RDONLY | O_NOFOLLOW);
   } catch (error) {
     throw researchError('RESEARCH_FILE_READ_FAILED', `could not open ${label}`, { cause: error?.code });
   }
@@ -219,8 +237,15 @@ async function readBoundedFile(absolutePath, maxBytes, label) {
       chunks.push(chunk.subarray(0, read.bytesRead));
     }
     const closedInfo = await handle.stat();
+    await assertNoSymlinkPath(resolved, { allowMissing: false });
+    let finalCanonical;
+    try {
+      finalCanonical = await realpath(resolved);
+    } catch (error) {
+      throw researchError('RESEARCH_SOURCE_CHANGED', `${label} changed while it was read`, { cause: error?.code });
+    }
     pathInfo = await lstat(resolved);
-    if (!pathInfo.isFile() || openedInfo.dev !== closedInfo.dev || openedInfo.ino !== closedInfo.ino || openedInfo.size !== closedInfo.size || pathInfo.dev !== openedInfo.dev || pathInfo.ino !== openedInfo.ino || pathInfo.size !== openedInfo.size) {
+    if (!pathInfo.isFile() || finalCanonical !== canonicalResolved || openedInfo.dev !== closedInfo.dev || openedInfo.ino !== closedInfo.ino || openedInfo.size !== closedInfo.size || pathInfo.dev !== openedInfo.dev || pathInfo.ino !== openedInfo.ino || pathInfo.size !== openedInfo.size) {
       throw researchError('RESEARCH_SOURCE_CHANGED', `${label} changed while it was read`);
     }
     return Buffer.concat(chunks, total);
@@ -290,9 +315,12 @@ async function outputLocation(outputDir, projectRoot, inputPaths = []) {
   if (typeof outputDir !== 'string' || outputDir.length === 0) throw researchError('RESEARCH_OUTPUT_REQUIRED', 'outputDir is required');
   const output = resolve(outputDir);
   await assertNoSymlinkPath(output, { allowMissing: true });
-  assertOutside(projectRoot, output, 'output directory');
+  const comparableOutput = await canonicalizeExistingAncestor(output);
+  assertOutside(projectRoot, comparableOutput, 'output directory');
   for (const input of inputPaths) {
-    if (input && (isInside(input, output) || isInside(output, input))) throw researchError('RESEARCH_PATH_OVERLAP', 'output directory overlaps an input directory');
+    if (!input) continue;
+    const comparableInput = await canonicalizeExistingAncestor(resolve(input));
+    if (isInside(comparableInput, comparableOutput) || isInside(comparableOutput, comparableInput)) throw researchError('RESEARCH_PATH_OVERLAP', 'output directory overlaps an input directory');
   }
   try {
     const info = await lstat(output);
@@ -304,29 +332,55 @@ async function outputLocation(outputDir, projectRoot, inputPaths = []) {
   return output;
 }
 
+async function canonicalizeExistingAncestor(target) {
+  const resolved = resolve(target);
+  const missing = [];
+  let current = resolved;
+  for (;;) {
+    try {
+      const canonical = await realpath(current);
+      return resolve(canonical, ...missing.reverse());
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'PATH_NOT_FOUND') throw error;
+      const parent = dirname(current);
+      if (parent === current) return resolved;
+      missing.push(current.slice(parent.length + 1));
+      current = parent;
+    }
+  }
+}
+
 async function writeFreshDirectory(output, files) {
   const parent = dirname(output);
   await assertNoSymlinkPath(parent, { allowMissing: true, requireDirectory: false });
   await mkdir(parent, { recursive: true });
   await assertNoSymlinkPath(parent, { allowMissing: false, requireDirectory: true });
-  const stage = await mkdtemp(join(parent, `.tinysdd-research-${process.pid}-`));
+  let owned = false;
+  let suspicious = false;
+  let reservedCanonical;
   try {
+    try {
+      await mkdir(output, { recursive: false, mode: 0o700 });
+      owned = true;
+    } catch (error) {
+      if (error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY') throw researchError('RESEARCH_OUTPUT_EXISTS', `output directory already exists: ${output}`);
+      throw researchError('RESEARCH_OUTPUT_WRITE_FAILED', `could not reserve output directory: ${output}`, { cause: error?.code });
+    }
+    await assertNoSymlinkPath(output, { allowMissing: false, requireDirectory: true });
+    reservedCanonical = await realpath(output);
     for (const [relativePath, content] of files) {
-      const target = resolve(stage, ...relativePath.split('/'));
-      if (!isInside(stage, target)) throw researchError('RESEARCH_INVALID_OUTPUT', `output file escapes staging directory: ${relativePath}`);
+      await assertNoSymlinkPath(output, { allowMissing: false, requireDirectory: true });
+      const currentCanonical = await realpath(output);
+      if (currentCanonical !== reservedCanonical) throw researchError('RESEARCH_OUTPUT_CHANGED', `output directory changed while it was being written: ${output}`);
+      const target = resolve(reservedCanonical, ...relativePath.split('/'));
+      if (!isInside(reservedCanonical, target)) throw researchError('RESEARCH_INVALID_OUTPUT', `output file escapes output directory: ${relativePath}`);
       await assertNoSymlinkPath(target, { allowMissing: true });
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, content, { flag: 'wx', mode: 0o600 });
     }
-    await assertNoSymlinkPath(output, { allowMissing: true });
-    try {
-      await rename(stage, output);
-    } catch (error) {
-      if (error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY') throw researchError('RESEARCH_OUTPUT_EXISTS', `output directory already exists: ${output}`);
-      throw researchError('RESEARCH_OUTPUT_WRITE_FAILED', `could not publish output directory: ${output}`, { cause: error?.code });
-    }
   } catch (error) {
-    await rm(stage, { recursive: true, force: true }).catch(() => {});
+    suspicious = error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY' || error?.code === 'RESEARCH_OUTPUT_EXISTS' || error?.code === 'RESEARCH_OUTPUT_CHANGED';
+    if (owned && !suspicious) await rm(output, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
   return output;
@@ -336,6 +390,7 @@ async function proposalInput(projectRoot, options, budgets) {
   const proposalPath = options.proposalPath ?? options.proposal?.path;
   if (typeof proposalPath !== 'string' || proposalPath.length === 0) throw researchError('RESEARCH_PROPOSAL_REQUIRED', 'proposalPath is required');
   const relativePath = normalizeProjectPathForResearch(proposalPath, 'proposal path');
+  if (excludedPath(relativePath)) throw researchError('RESEARCH_INVALID_PATH', 'proposal path is excluded from research inputs');
   const resolved = await resolveProjectPath(projectRoot, relativePath, { field: 'proposal path', allowMissing: false });
   const bytes = await readBoundedFile(resolved.absolutePath, budgets.maxProposalBytes, `proposal ${relativePath}`);
   if (bytes.length === 0) throw researchError('RESEARCH_PROPOSAL_INVALID', 'proposal must not be empty');
@@ -384,7 +439,8 @@ function validatePacketShape(packet) {
   if (typeof packet.projectRoot !== 'string' || packet.projectRoot.length === 0) throw researchError('RESEARCH_PACKET_INVALID', 'research packet projectRoot is required');
   assertPlainObject(packet.proposal, 'RESEARCH_PACKET_INVALID', 'research packet proposal');
   assertExactKeys(packet.proposal, ['path', 'bytes', 'sha256', 'retainedPath'], 'RESEARCH_PACKET_INVALID', 'research packet proposal');
-  normalizeProjectPathForResearch(packet.proposal.path, 'research packet proposal path');
+  canonicalResearchPath(packet.proposal.path, 'research packet proposal path');
+  if (excludedPath(packet.proposal.path)) throw researchError('RESEARCH_PACKET_INVALID', 'research packet proposal path is excluded');
   requireSafeInteger(packet.proposal.bytes, 'research packet proposal bytes', { maximum: MAX_RESEARCH_PROPOSAL_BYTES });
   if (!/^[a-f0-9]{64}$/u.test(packet.proposal.sha256) || packet.proposal.retainedPath !== 'proposal.txt') throw researchError('RESEARCH_PACKET_INVALID', 'research packet proposal identity is invalid');
   assertPlainObject(packet.budgets, 'RESEARCH_PACKET_INVALID', 'research packet budgets');
@@ -398,11 +454,15 @@ function validatePacketShape(packet) {
   if (!/^[a-f0-9]{64}$/u.test(packet.repositoryMap.sha256) || mapDigest(packet.repositoryMap) !== packet.repositoryMap.sha256) throw researchError('RESEARCH_PACKET_INVALID', 'research packet repository map digest does not match');
   if (!Array.isArray(packet.sources) || packet.sources.length !== packet.repositoryMap.files.length) throw researchError('RESEARCH_PACKET_INVALID', 'research packet source identities do not match its map');
   const mapPaths = new Set();
+  let previousPath = '';
   let sourceBytes = 0;
   for (const [index, file] of packet.repositoryMap.files.entries()) {
     assertPlainObject(file, 'RESEARCH_PACKET_INVALID', `research packet map file ${index + 1}`);
     assertExactKeys(file, ['path', 'kind', 'bytes', 'sha256', 'lineCount', 'hints', 'retainedPath'], 'RESEARCH_PACKET_INVALID', `research packet map file ${index + 1}`);
-    const path = normalizeProjectPathForResearch(file.path, `research packet map file ${index + 1} path`);
+    const path = canonicalResearchPath(file.path, `research packet map file ${index + 1} path`);
+    if (path === packet.proposal.path || excludedPath(path)) throw researchError('RESEARCH_PACKET_INVALID', `research packet map path is excluded: ${path}`);
+    if (index > 0 && path.localeCompare(previousPath, 'en') <= 0) throw researchError('RESEARCH_PACKET_INVALID', 'research packet map paths must be unique and sorted');
+    previousPath = path;
     if (mapPaths.has(path)) throw researchError('RESEARCH_PACKET_INVALID', `research packet map repeats ${path}`);
     mapPaths.add(path);
     if (!['text', 'binary'].includes(file.kind) || !Number.isSafeInteger(file.bytes) || file.bytes < 0 || file.bytes > budgets.maxFileBytes || !/^[a-f0-9]{64}$/u.test(file.sha256) || file.retainedPath !== retainedPath(path)) throw researchError('RESEARCH_PACKET_INVALID', `research packet map identity is invalid: ${path}`);
@@ -446,13 +506,21 @@ async function readPacketDirectory(packetDir) {
   const promptBytes = await readBoundedFile(resolve(directory, packet.selectionPrompt.retainedPath), packet.selectionPrompt.bytes, 'selection prompt');
   if (proposalBytes.length !== packet.proposal.bytes || sha256(proposalBytes) !== packet.proposal.sha256) throw researchError('RESEARCH_PACKET_STALE', 'retained proposal identity does not match packet');
   if (promptBytes.length !== packet.selectionPrompt.bytes || sha256(promptBytes) !== packet.selectionPrompt.sha256) throw researchError('RESEARCH_PACKET_STALE', 'selection prompt identity does not match packet');
+  const proposalText = decodeText(proposalBytes, 'retained proposal');
+  if (proposalText === null) throw researchError('RESEARCH_PACKET_STALE', 'retained proposal is no longer valid UTF-8');
+  const expectedPrompt = Buffer.from(selectionPrompt({ path: packet.proposal.path, sha256: packet.proposal.sha256, text: proposalText }, packet.repositoryMap));
+  if (!expectedPrompt.equals(promptBytes)) throw researchError('RESEARCH_PACKET_STALE', 'retained selection prompt does not match the packet proposal and repository map');
   const sources = new Map();
-  for (const file of packet.sources) {
+  for (const [index, file] of packet.sources.entries()) {
     const bytes = await readBoundedFile(resolve(directory, file.retainedPath), file.bytes, `retained source ${file.path}`);
     if (bytes.length !== file.bytes || sha256(bytes) !== file.sha256) throw researchError('RESEARCH_PACKET_STALE', `retained source identity does not match packet: ${file.path}`);
-    sources.set(file.path, { ...file, bytes, text: file.kind === 'text' ? decodeText(bytes, file.path) : null });
+    const text = decodeText(bytes, file.path);
+    const mapFile = packet.repositoryMap.files[index];
+    const expected = mapFileEntry(mapFile.path, bytes, text);
+    if (stableStringify(expected) !== stableStringify(mapFile)) throw researchError('RESEARCH_PACKET_STALE', `retained source metadata does not match packet: ${file.path}`);
+    sources.set(file.path, { ...file, data: bytes, text: file.kind === 'text' ? text : null });
   }
-  return { directory, packetFile, packet, packetBytes, proposalBytes, promptBytes, sources };
+  return { directory, packetFile, packet, packetBytes, proposalBytes, promptBytes, proposalText, sources };
 }
 
 function selectionInput(options) {
@@ -539,13 +607,13 @@ export async function prepareResearchPacket(options = {}) {
   const projectRoot = await canonicalProjectRoot(options.projectRoot ?? options.project ?? process.cwd());
   const budgets = normalizeBudgets(options, { requireCompiled: true });
   const proposal = await proposalInput(projectRoot, options, budgets);
-  const discovered = await discoverPaths(projectRoot);
+  const discovered = await discoverPaths(projectRoot, budgets.maxFiles);
   const files = [];
   const contents = new Map();
   let sourceBytes = 0;
   for (const rawPath of discovered.paths) {
     let path;
-    try { path = normalizeProjectPathForResearch(rawPath, 'repository map path'); } catch { continue; }
+    path = canonicalResearchPath(rawPath, 'repository map path');
     if (path === proposal.path || excludedPath(path)) continue;
     if (files.length >= budgets.maxFiles) throw researchError('RESEARCH_BUDGET_EXCEEDED', `repository map exceeds ${budgets.maxFiles} files`, { files: files.length + 1, limit: budgets.maxFiles });
     const resolved = await resolveProjectPath(projectRoot, path, { field: 'repository map path', allowMissing: false });
@@ -589,6 +657,7 @@ export async function prepareResearchPacket(options = {}) {
     selectionPrompt: { retainedPath: 'prompt.txt', bytes: promptBytes.length, sha256: sha256(promptBytes) },
   };
   const packetBytes = Buffer.from(packetText(packet));
+  if (packetBytes.length > MAX_RESEARCH_MAP_BYTES) throw researchError('RESEARCH_BUDGET_EXCEEDED', `research packet exceeds ${MAX_RESEARCH_MAP_BYTES} bytes`, { bytes: packetBytes.length, limit: MAX_RESEARCH_MAP_BYTES });
   const output = await outputLocation(options.outputDir ?? options.out, projectRoot);
   const outputFiles = [
     ['packet.json', packetBytes],
@@ -613,6 +682,19 @@ export async function validateResearchSelection(options = {}) {
   const packetData = await readPacketDirectory(options.packetDir ?? options.packet);
   if (packetData.packet.projectRoot !== projectRoot) throw researchError('RESEARCH_PROJECT_MISMATCH', 'packet projectRoot does not match the selected project');
   assertOutside(projectRoot, packetData.directory, 'packet directory');
+  const proposalResolved = await resolveProjectPath(projectRoot, packetData.packet.proposal.path, { field: 'research proposal path', allowMissing: false });
+  let currentProposal;
+  try {
+    currentProposal = await readBoundedFile(proposalResolved.absolutePath, packetData.packet.proposal.bytes, 'current research proposal');
+  } catch (error) {
+    if (error?.code === 'RESEARCH_BUDGET_EXCEEDED' || error?.code === 'RESEARCH_INVALID_FILE' || error?.code === 'RESEARCH_FILE_READ_FAILED') {
+      throw researchError('RESEARCH_PROPOSAL_STALE', 'current research proposal no longer matches the prepared packet', { path: packetData.packet.proposal.path });
+    }
+    throw error;
+  }
+  if (currentProposal.length !== packetData.packet.proposal.bytes || sha256(currentProposal) !== packetData.packet.proposal.sha256) {
+    throw researchError('RESEARCH_PROPOSAL_STALE', 'current research proposal no longer matches the prepared packet', { path: packetData.packet.proposal.path });
+  }
   const callerBudgetBytes = selectionBudget(options);
   const budgets = normalizeBudgets({ ...packetData.packet.budgets, maxCompiledContextBytes: callerBudgetBytes }, { requireCompiled: true });
   const selection = await readSelection(options, budgets);
@@ -681,7 +763,7 @@ export async function validateResearchSelection(options = {}) {
     },
     gold: score === undefined
       ? { status: 'not_supplied', provenance: 'caller-supplied', precision: 'UNKNOWN', recall: 'UNKNOWN' }
-      : { status: 'scored', provenance: 'caller-supplied', humanReviewed: false, calibration: 'unknown', score },
+      : { status: 'scored', provenance: 'caller-supplied', humanReviewed: 'UNKNOWN', calibration: 'UNKNOWN', score },
   };
   const inputPaths = [packetData.directory];
   if (typeof options.selectionPath === 'string') inputPaths.push(resolve(options.selectionPath));
