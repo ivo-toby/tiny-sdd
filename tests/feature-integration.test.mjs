@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, realpath } from 'node:fs/promises';
@@ -160,16 +162,48 @@ test('retains dependency mounts and marks dependency drift stale', async () => {
   }
 });
 
-test('rejects a sparse input beyond the bounded retained-tree budget', async () => {
+test('rejects a growing input before retained writes exceed the tree budget', async () => {
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-feature-integration-limit-'));
   const destination = join(root, 'retained');
   const source = join(root, 'source');
+  const sourceFile = join(source, 'growing.mjs');
+  const destinationFile = join(destination, 'growing.mjs');
+  const originalOpen = fs.promises.open;
+  let reads = 0;
+  let consumed = 0;
+  let written = 0;
+  const chunkBytes = 64 * 1024;
+  const chunks = FEATURE_INTEGRATION_MAX_TREE_BYTES / chunkBytes + 1;
   try {
     await mkdir(source, { recursive: true });
-    await writeFile(join(source, 'oversized.bin'), '');
-    await truncate(join(source, 'oversized.bin'), FEATURE_INTEGRATION_MAX_TREE_BYTES + 1);
-    await assert.rejects(copyIntegrationTree(source, destination), { code: 'FEATURE_INTEGRATION_INPUT_LIMIT' });
+    await writeFile(sourceFile, 'x');
+    await truncate(sourceFile, FEATURE_INTEGRATION_MAX_TREE_BYTES);
+    fs.promises.open = async function patchedOpen(path, ...args) {
+      const handle = await originalOpen(path, ...args);
+      if (String(path) === sourceFile) {
+        handle.read = async (buffer) => {
+          if (reads++ >= chunks) return { bytesRead: 0, buffer };
+          buffer.fill(120);
+          consumed += buffer.length;
+          return { bytesRead: buffer.length, buffer };
+        };
+      } else if (String(path) === destinationFile) {
+        handle.write = async (buffer) => {
+          written += buffer.length;
+          return { bytesWritten: buffer.length, buffer };
+        };
+      }
+      return handle;
+    };
+    syncBuiltinESMExports();
+    const error = await copyIntegrationTree(source, destination).catch((caught) => caught);
+    assert.equal(error.code, 'FEATURE_INTEGRATION_INPUT_CHANGED');
+    assert.equal(consumed, FEATURE_INTEGRATION_MAX_TREE_BYTES + chunkBytes);
+    assert.equal(written, FEATURE_INTEGRATION_MAX_TREE_BYTES);
+    assert.equal(reads, chunks);
   } finally {
+    fs.promises.open = originalOpen;
+    syncBuiltinESMExports();
     await cleanup(root);
   }
 });
