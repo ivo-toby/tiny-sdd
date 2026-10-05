@@ -23,7 +23,7 @@ export function isSecretPath(path) {
 }
 
 export function isInternalPath(path) {
-  return path.split('/').some((part) => ['.git', '.tinysdd', 'node_modules'].includes(part.toLowerCase()));
+  return path.split('/').some((part) => ['.git', '.tinysdd', 'node_modules'].includes(unicodeCaseFold(part)));
 }
 
 export function isDependencyPath(path, dependencyMounts = [], caseInsensitive = null, unicodeInsensitive = null, filesystemAliases = null) {
@@ -58,6 +58,14 @@ function alternateUnicode(value) {
   return null;
 }
 
+export function unicodeCaseFold(value) {
+  return value.normalize('NFC').toUpperCase().toLowerCase();
+}
+
+function rawCaseFold(value) {
+  return value.toUpperCase().toLowerCase();
+}
+
 function summarizeModes(modes) {
   const known = modes.filter((mode) => mode !== null);
   if (known.length === 0) return null;
@@ -86,10 +94,10 @@ function componentsMayAlias(path, boundary, index, options) {
   if (candidate === reserved) return true;
   const candidateUnicode = candidate.normalize('NFC');
   const reservedUnicode = reserved.normalize('NFC');
-  const sameCanonicalFold = candidateUnicode.toLowerCase() === reservedUnicode.toLowerCase();
+  const sameCanonicalFold = unicodeCaseFold(candidateUnicode) === unicodeCaseFold(reservedUnicode);
   if (!sameCanonicalFold) return false;
   const caseDifference = candidateUnicode !== reservedUnicode;
-  const unicodeDifference = candidate !== reserved && (candidateUnicode === reservedUnicode || candidate.toLowerCase() !== reserved.toLowerCase());
+  const unicodeDifference = candidate !== reserved && (candidateUnicode === reservedUnicode || rawCaseFold(candidate) !== rawCaseFold(reserved));
   if (caseDifference
     && modeForDifference(path, boundary, index, 'caseInsensitive', options) === false) return false;
   if (unicodeDifference

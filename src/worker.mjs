@@ -22,7 +22,7 @@ import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
 import { digestJson, stableStringify as fsStableStringify } from "./fs-utils.mjs";
-import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths } from "./file-scope.mjs";
+import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths, unicodeCaseFold } from "./file-scope.mjs";
 import {
   COMPACTION_ANCHOR_ENV,
   compactionIdentity,
@@ -164,7 +164,7 @@ async function ensureProjectPath(root, relPath, { allowMissing = false, regular 
 }
 
 function excludedName(name, directory) {
-  if (name === ".git" || name === ".tinysdd" || name === "node_modules") return true;
+  if ([".git", ".tinysdd", "node_modules"].includes(unicodeCaseFold(name))) return true;
   if (directory && PROJECT_SECRET_DIR.test(name)) return true;
   return PROJECT_SECRET_NAME.test(name);
 }

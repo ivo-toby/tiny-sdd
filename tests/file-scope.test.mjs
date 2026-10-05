@@ -26,7 +26,7 @@ test('protected, preparation and dependency boundaries include ancestor and desc
 });
 
 test('internal, secret, deletion, type and noncanonical candidates are refused', () => {
-  for (const path of ['.git/config', 'src/.git/config', 'node_modules/x.mjs', 'src/node_modules/x.mjs', '.env', 'src/credentials.json', 'src\\.env']) {
+  for (const path of ['.git/config', 'src/.git/config', 'node_modules/x.mjs', 'src/node_modules/x.mjs', 'node_module\u017f/x.mjs', '.env', 'src/credentials.json', 'src\\.env']) {
     assert.ok(classifyFileScopeChange({ path, change: 'created', before: null, after: file }), path);
   }
   assert.ok(classifyFileScopeChange({ path: 'src/a.mjs', change: 'deleted', before: file, after: null }));
@@ -77,6 +77,14 @@ test('requires only the alias modes used by a spelling difference', () => {
   assert.equal(classifyFileScopeChange({ path: nfd, change: 'created', before: null, after: file }, {
     preparationPaths: [nfc], caseInsensitive: true, unicodeInsensitive: false,
   }), null);
+  const mixed = 'CAFE\u0301.md';
+  const mixedBoundary = 'café.md';
+  assert.equal(classifyFileScopeChange({ path: mixed, change: 'created', before: null, after: file }, {
+    preparationPaths: [mixedBoundary], caseInsensitive: true, unicodeInsensitive: false,
+  }), null);
+  assert.ok(classifyFileScopeChange({ path: mixed, change: 'created', before: null, after: file }, {
+    preparationPaths: [mixedBoundary], caseInsensitive: true, unicodeInsensitive: true,
+  }));
 });
 
 test('uses source-directory alias evidence for combined case and Unicode differences', () => {
@@ -99,6 +107,20 @@ test('uses source-directory alias evidence for combined case and Unicode differe
     preparationPaths: ['other/Caf\u00e9.md'],
     filesystemAliases,
   }), null);
+});
+
+test('handles Unicode case folds that lowercase does not combine', () => {
+  const filesystemAliases = {
+    caseInsensitive: false,
+    unicodeInsensitive: false,
+    directoryModes: {
+      specs: { caseInsensitive: true, unicodeInsensitive: false },
+    },
+  };
+  assert.ok(classifyFileScopeChange({ path: 'specs/\u03c2pec.md', change: 'created', before: null, after: file }, {
+    preparationPaths: ['specs/\u03c3pec.md'],
+    filesystemAliases,
+  }));
 });
 
 test('refuses alias classification when source-directory evidence cannot be read', async () => {
