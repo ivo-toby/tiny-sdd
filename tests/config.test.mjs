@@ -62,6 +62,14 @@ test('validates an optional typed feature integration command and keeps legacy c
     testPaths: ['tests/feature-integration.test.mjs'],
     entrypoints: ['src/entrypoint.mjs'],
   });
+  assert.deepEqual(validateFeatureIntegrationConfig(document.featureIntegration), document.featureIntegration);
+  const manifestDocument = validateConfigDocument({
+    schemaVersion: 1,
+    workers: {},
+    featureIntegration: { manifest: 'checks.json', checkId: 'integration', testPaths: ['tests/feature-integration.test.mjs'], entrypoints: ['src/entrypoint.mjs'] },
+  });
+  assert.deepEqual(validateFeatureIntegrationConfig(manifestDocument.featureIntegration), manifestDocument.featureIntegration);
+  assert.throws(() => validateFeatureIntegrationConfig({ manifest: 'checks.json', timeoutMs: 10_000 }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validateFeatureIntegrationConfig({ argv: 'node --test tests/feature.test.mjs' }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validateFeatureIntegrationConfig({ argv: ['node'], command: ['node'] }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validateFeatureIntegrationConfig({ argv: ['sh', '-c', 'true'] }), { code: 'CONFIG_INVALID' });
