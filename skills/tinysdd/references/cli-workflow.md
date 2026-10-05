@@ -26,6 +26,14 @@ verifies source-file digests, rejects split-group leakage, and counts synthetic
 fixtures separately from the 50 real failure-triage labels still required by
 issue #32. Missing measurements remain `UNKNOWN`.
 
+For the separate offline Laya experiment, see
+[docs/laya-training.md](../../../docs/laya-training.md). Its exporter accepts
+an explicit four-label choice question, retains only real reviewed failure
+triage cases with nonempty check logs, preserves the #32 partitions and groups,
+and writes a new digest-bound training bundle. The recipe remains unexecuted:
+it does not install Python, download a checkpoint, call a provider, or claim a
+trained-model result.
+
 Controller-only setup needs no model:
 
 ```sh
