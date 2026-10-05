@@ -460,6 +460,7 @@ function validatePacketShape(packet) {
   assertPlainObject(packet.budgets, 'RESEARCH_PACKET_INVALID', 'research packet budgets');
   assertExactKeys(packet.budgets, ['maxFiles', 'maxSourceBytes', 'maxMapBytes', 'maxProposalBytes', 'maxFileBytes', 'maxPromptBytes', 'maxCompiledContextBytes'], 'RESEARCH_PACKET_INVALID', 'research packet budgets');
   const budgets = normalizeBudgets(packet.budgets);
+  if (packet.proposal.bytes > budgets.maxProposalBytes) throw researchError('RESEARCH_PACKET_INVALID', 'research packet proposal exceeds its declared byte budget', { bytes: packet.proposal.bytes, limit: budgets.maxProposalBytes });
   assertPlainObject(packet.repositoryMap, 'RESEARCH_PACKET_INVALID', 'research packet repositoryMap');
   assertExactKeys(packet.repositoryMap, ['schemaVersion', 'mode', 'fallbackReason', 'files', 'fileCount', 'sourceBytes', 'sha256'], 'RESEARCH_PACKET_INVALID', 'research packet repositoryMap');
   if (packet.repositoryMap.schemaVersion !== RESEARCH_MAP_SCHEMA_VERSION || !['git-ls-files', 'filesystem-fallback'].includes(packet.repositoryMap.mode)) throw researchError('RESEARCH_PACKET_INVALID', 'research packet repository map schema is invalid');
@@ -495,6 +496,8 @@ function validatePacketShape(packet) {
     sourceBytes += file.bytes;
   }
   if (packet.repositoryMap.sourceBytes !== sourceBytes || sourceBytes > budgets.maxSourceBytes) throw researchError('RESEARCH_PACKET_INVALID', 'research packet source byte count exceeds its budget');
+  const serializedMapBytes = Buffer.byteLength(stableStringify(packet.repositoryMap));
+  if (serializedMapBytes > budgets.maxMapBytes) throw researchError('RESEARCH_PACKET_INVALID', 'research packet map exceeds its declared byte budget', { bytes: serializedMapBytes, limit: budgets.maxMapBytes });
   for (const [index, source] of packet.sources.entries()) {
     assertPlainObject(source, 'RESEARCH_PACKET_INVALID', `research packet source ${index + 1}`);
     assertExactKeys(source, ['path', 'kind', 'bytes', 'sha256', 'lineCount', 'retainedPath'], 'RESEARCH_PACKET_INVALID', `research packet source ${index + 1}`);
@@ -596,6 +599,14 @@ function citedSources(manifest, sources) {
     if (!source) throw researchError('RESEARCH_CITATION_UNKNOWN', `selection cites a path absent from the packet: ${path}`);
     return source;
   });
+}
+
+function validateSelectionRanges(manifest, sources) {
+  for (const resource of manifest.resources) {
+    const source = sources.get(resource.path);
+    if (source.kind === 'binary') throw researchError('RESEARCH_CITATION_BINARY', `selection cites a non-text source: ${resource.path}`);
+    if (resource.endLine > source.lineCount) throw researchError('RESEARCH_CITATION_RANGE', `selection range exceeds retained map: ${resource.path}:${resource.startLine}-${resource.endLine}`);
+  }
 }
 
 function goldInput(options) {
@@ -720,6 +731,7 @@ export async function validateResearchSelection(options = {}) {
   const budgets = normalizeBudgets({ ...packetData.packet.budgets, maxCompiledContextBytes: callerBudgetBytes }, { requireCompiled: true });
   const selection = await readSelection(options, budgets);
   const cited = citedSources(selection.manifest, packetData.sources);
+  validateSelectionRanges(selection.manifest, packetData.sources);
   const current = new Map();
   current.projectRoot = projectRoot;
   for (const source of cited) {
@@ -741,6 +753,11 @@ export async function validateResearchSelection(options = {}) {
       readSource,
     });
     if (score.status === 'refused' || score.status === 'invalid') throw researchError('RESEARCH_GOLD_INVALID', 'gold manifest failed deterministic scoring validation', { score });
+    try {
+      validateSelectionRanges(parseContextManifest(gold.text), packetData.sources);
+    } catch (error) {
+      throw researchError('RESEARCH_GOLD_INVALID', 'gold manifest cites a range outside the retained packet map', { cause: error?.code });
+    }
   }
   const report = {
     schemaVersion: RESEARCH_REPORT_SCHEMA_VERSION,

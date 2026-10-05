@@ -70,6 +70,33 @@ test('prepares deterministic bounded packets and excludes internal and secret pa
   }
 });
 
+test('refuses packets whose declared map or proposal budgets are forged smaller', async () => {
+  const root = await makeProject();
+  const temporary = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-packet-budget-'));
+  try {
+    const mapPacket = await prepare(root, join(temporary, 'map-packet'));
+    const mapValue = JSON.parse(await readFile(mapPacket.packetPath, 'utf8'));
+    mapValue.budgets.maxMapBytes = 1;
+    await writeFile(mapPacket.packetPath, `${JSON.stringify(mapValue)}\n`);
+    await assert.rejects(
+      validateResearchSelection({ packetDir: mapPacket.outputDir, projectRoot: root, selection: selection(), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'map-result') }),
+      { code: 'RESEARCH_PACKET_INVALID' },
+    );
+
+    const proposalPacket = await prepare(root, join(temporary, 'proposal-packet'));
+    const proposalValue = JSON.parse(await readFile(proposalPacket.packetPath, 'utf8'));
+    proposalValue.budgets.maxProposalBytes = 1;
+    await writeFile(proposalPacket.packetPath, `${JSON.stringify(proposalValue)}\n`);
+    await assert.rejects(
+      validateResearchSelection({ packetDir: proposalPacket.outputDir, projectRoot: root, selection: selection(), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'proposal-result') }),
+      { code: 'RESEARCH_PACKET_INVALID' },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('does not charge the proposal against the eligible file limit', async () => {
   const root = await makeProject();
   const temporary = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-proposal-limit-'));
@@ -109,6 +136,30 @@ test('validates a selection into a draft with verbatim source digests and UNKNOW
     assert.equal(result.report.gold.recall, 'UNKNOWN');
     assert.equal(result.report.compiled.resources[0].sourceSha256, sha256(source));
     assert.match(await readFile(result.compiledContextPath, 'utf8'), /export const value = 1;/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('refuses selection ranges outside retained map line counts', async () => {
+  const root = await makeProject();
+  const temporary = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-range-'));
+  try {
+    await writeFile(join(root, 'src', 'empty.mjs'), '');
+    const packet = await prepare(root, join(temporary, 'packet'));
+    await assert.rejects(
+      validateResearchSelection({ packetDir: packet.outputDir, projectRoot: root, selection: selection('src/empty.mjs', 1, 1), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'result') }),
+      { code: 'RESEARCH_CITATION_RANGE' },
+    );
+    await assert.rejects(
+      validateResearchSelection({ packetDir: packet.outputDir, projectRoot: root, selection: selection('src/module.mjs', 3, 3), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'terminal-result') }),
+      { code: 'RESEARCH_CITATION_RANGE' },
+    );
+    await assert.rejects(
+      validateResearchSelection({ packetDir: packet.outputDir, projectRoot: root, selection: selection(), goldManifest: selection('src/empty.mjs', 1, 1), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'gold-result') }),
+      { code: 'RESEARCH_GOLD_INVALID' },
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(temporary, { recursive: true, force: true });
