@@ -313,7 +313,7 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
   return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
 }
 
-async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths, preparation, compiledContext) {
+export async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths, preparation, compiledContext) {
   for (const path of protectedPaths) {
     if (!copy.copied.has(path)) fail(`Protected path is not part of the worker copy (missing, gitignored or excluded): ${path}`);
   }
@@ -542,7 +542,7 @@ async function overlayRevisionBase(base, workspace) {
   }
 }
 
-async function copyRegularTree(sourceRoot, destinationRoot) {
+export async function copyRegularTree(sourceRoot, destinationRoot) {
   async function visit(source, destination) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
@@ -559,7 +559,7 @@ async function copyRegularTree(sourceRoot, destinationRoot) {
   await visit(sourceRoot, destinationRoot);
 }
 
-async function copySnapshotTree(sourceRoot, destinationRoot) {
+export async function copySnapshotTree(sourceRoot, destinationRoot) {
   async function visit(source, destination) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
@@ -631,7 +631,7 @@ export async function retainSessionArtifact(sourcePath, destinationPath) {
   }
 }
 
-async function snapshotTree(root) {
+export async function snapshotTree(root) {
   const output = Object.create(null);
   let entriesSeen = 0;
   let bytesSeen = 0;
@@ -661,7 +661,7 @@ async function snapshotTree(root) {
   return output;
 }
 
-function changedFiles(before, after) {
+export function changedFiles(before, after) {
   const paths = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
   const beforeDescendants = new Set();
   const afterDescendants = new Set();
@@ -2024,3 +2024,4 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
 }
 
 export const workerLimits = Object.freeze({ DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, DEFAULT_TOOL_LIMIT, MAX_TOOL_LIMIT, MAX_RAW_OUTPUT_BYTES });
+export const workerCaptureLimits = Object.freeze({ MAX_COPY_FILES, MAX_COPY_BYTES, MAX_SESSION_BYTES });

@@ -196,6 +196,18 @@ reconstruction with UNKNOWN historical approval and run evidence. Its protected
 feature check enters through the real fixture entrypoint; it is offline evidence
 for the descriptor tooling, not a Talon, Pi, provider or foreign-harness run.
 
+For an approved slice consumed by Claude Code or interactive Pi, follow the
+[foreign harness adapter guide](harness-adapters.md). The exported bundle and
+candidate parent stay outside the source project; the host-managed begin step
+retains the exact packet and bundle under `.tinysdd/runs/worker-*` evidence
+without changing source code, controller state or approvals. Finalize returns a
+completed result through the normal `task apply` and explicit `task review`
+commands. Ordinary extra files are retained for review; this API leaves model
+identity caller-declared with observed identity `UNKNOWN`, usage and sandbox
+`UNKNOWN`, and checks `unrun`. Offline adapter fixtures pass through apply and
+synthetic review, while live harness/model/operator acceptance remains pending
+(`Refs #31`).
+
 Create the brief first; the [template](../skills/tinysdd/assets/task-brief.md)
 identifies its useful contents. Use actual approval attribution, not copied
 example text. Allowed paths are exact files, including not-yet-created files;
