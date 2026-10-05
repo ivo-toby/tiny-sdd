@@ -75,10 +75,12 @@ missing facts. Do not route this Claude subagent through the configured Pi
 worker.
 
 For a per-session definition, pass the template body through `--agents` and
-select it with `--agent`; this keeps the definition out of the candidate and
-does not overwrite Claude configuration. The argument array below reads the
-reviewed template, removes only its frontmatter, and passes the resulting
-definition without shell interpolation:
+ask the frontier session to delegate to the named worker. `--agent` selects the
+main session agent, so it is intentionally omitted here. This keeps the
+definition out of the candidate and does not overwrite Claude configuration.
+The argument array below reads the reviewed template, removes only its
+frontmatter, and passes the resulting definition and exact retained inputs
+without shell interpolation:
 
 ```js
 import { readFile } from 'node:fs/promises';
@@ -87,6 +89,8 @@ import { spawn } from 'node:child_process';
 const templatePath = '/absolute/tiny-sdd/skills/tinysdd/assets/harness/claude/tinysdd-slice-worker.md';
 const template = await readFile(templatePath, 'utf8');
 const prompt = template.replace(/^---\n[\s\S]*?\n---\n/u, '');
+const artifactDir = '/absolute/project/.tinysdd/runs/worker-harness-id';
+const candidatePath = '/absolute/canonical/adapter-runs/worker-candidate';
 const agents = JSON.stringify({
   'tinysdd-slice-worker': {
     description: 'Implements one approved TinySDD slice using only file tools.',
@@ -97,17 +101,25 @@ const agents = JSON.stringify({
 });
 spawn('claude', [
   '--agents', agents,
-  '--agent', 'tinysdd-slice-worker',
-  '--tools', 'Read,Write,Edit',
-], { cwd: '/absolute/canonical/adapter-runs/worker-candidate', stdio: 'inherit' });
+  '--model', 'operator-selected-frontier-model',
+  '--tools', 'Read,Agent',
+  [
+    `Read the exact approved packet at ${artifactDir}/packet.json.`,
+    `Read ${artifactDir}/bundle/brief.md, ${artifactDir}/bundle/compiled-context.md when present, and ${artifactDir}/bundle/checks.json.`,
+    `Use the Agent tool to delegate implementation to tinysdd-slice-worker in ${candidatePath}.`,
+    'Do not edit packet, context, checks, preparation, protected, or controller files; report unrun checks.',
+  ].join('\n'),
+], { cwd: candidatePath, stdio: 'inherit' });
 ```
 
-Replace the literal candidate and template paths with the values selected by
-the operator. Start Claude in the returned candidate directory, provide the
-retained packet, compiled context, and checks, and invoke the named subagent
-after inspecting the paths. Keep the requested model and the observed model
-identity separate in the host capture; this implementation records the latter
-as `UNKNOWN`, so the operator must confirm it outside this result. `allowedPaths` are
+Replace the literal paths and parent model with the values selected by the
+operator. The frontier model is the main session choice; the delegated worker
+model remains the explicit `haiku` value in the definition. Start Claude in the
+returned candidate directory, inspect the retained inputs, and invoke the named
+subagent after the operator has approved the paths. Keep the requested worker
+model and the observed model identity separate in the host capture; this
+implementation records the latter as `UNKNOWN`, so the operator must confirm it
+outside this result. `allowedPaths` are
 expected planning paths; ordinary create/modify extras remain eligible and are
 reported for host and reviewer inspection. Deletions, filesystem type changes,
 protected paths, preparation inputs, and task inputs remain blocked.

@@ -171,13 +171,14 @@ tinysdd usage import --file usage-export.json
 ```
 
 The adapter guide covers host-managed begin/finalize for an operator-selected
-Claude Code or interactive Pi session. It retains the exact approved packet and
-source-derived baseline, keeps the candidate outside the source project, and
-returns a completed result through normal `task apply` followed by explicit
-`task review`. Ordinary extra files remain reviewable; model identity, usage,
-sandbox behavior and checks are caller-declared or `UNKNOWN` unless separately
-observed. The offline fixtures exercise both adapters through synthetic apply
-and review; live harness/model/operator acceptance remains pending (`Refs #31`).
+Claude Code or interactive Pi session. It keeps the exported bundle and
+candidate outside the source project, retains the exact packet and source-derived
+baseline under host-managed `.tinysdd/runs/worker-*` evidence, and returns a
+completed result through normal `task apply` followed by explicit `task review`.
+Ordinary extra files remain reviewable; this API leaves model identity, usage,
+sandbox behavior and checks caller-declared or `UNKNOWN`. The offline fixtures
+exercise both adapters through synthetic apply and review; live
+harness/model/operator acceptance remains pending (`Refs #31`).
 
 After reviewing every active labelled task, close a feature window explicitly:
 
