@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -61,6 +61,24 @@ test('prepares deterministic bounded packets and excludes internal and secret pa
     assert.deepEqual(packet.repositoryMap.files.map(({ path }) => path), ['src/module.mjs']);
     assert.equal(packet.proposal.bytes, Buffer.byteLength('Research the source boundary.\n'));
     assert.equal(packet.sources[0].sha256, sha256(await readFile(join(root, 'src', 'module.mjs'))));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('does not charge the proposal against the eligible file limit', async () => {
+  const root = await makeProject();
+  const temporary = await mkdtemp(join(canonicalTmpdir, 'tinysdd-research-proposal-limit-'));
+  try {
+    const packet = await prepareResearchPacket({
+      projectRoot: root,
+      proposalPath: 'proposal.md',
+      outputDir: join(temporary, 'packet'),
+      budgets: { ...BUDGETS, maxFiles: 1 },
+    });
+    assert.equal(packet.map.fileCount, 1);
+    assert.deepEqual(packet.packet.repositoryMap.files.map(({ path }) => path), ['src/module.mjs']);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(temporary, { recursive: true, force: true });
@@ -148,6 +166,24 @@ test('refuses excluded proposal paths and preserves existing or overlapping outp
       validateResearchSelection({ projectRoot: root, packetDir: packet.outputDir, selection: selection(), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(packet.outputDir, 'nested') }),
       { code: 'RESEARCH_PATH_OVERLAP' },
     );
+    const insidePacket = join(root, 'inside-packet');
+    await cp(packet.outputDir, insidePacket, { recursive: true });
+    await assert.rejects(
+      validateResearchSelection({ projectRoot: root, packetDir: insidePacket, selection: selection(), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'inside-result') }),
+      { code: 'RESEARCH_PATH_OVERLAP' },
+    );
+    const rootName = root.split('/').pop();
+    const caseAlias = join(root, '..', rootName[0].toUpperCase() + rootName.slice(1), 'inside-packet');
+    try {
+      if (await realpath(caseAlias) === insidePacket && caseAlias !== insidePacket) {
+        await assert.rejects(
+          validateResearchSelection({ projectRoot: root, packetDir: caseAlias, selection: selection(), budgetBytes: BUDGETS.maxCompiledContextBytes, outputDir: join(temporary, 'case-alias-result') }),
+          { code: 'RESEARCH_PATH_OVERLAP' },
+        );
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
     await assert.rejects(
       prepare(root, join(root, 'new-packet')),
       { code: 'RESEARCH_PATH_OVERLAP' },

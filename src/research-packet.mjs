@@ -159,7 +159,7 @@ async function runGitList(projectRoot) {
   return { paths: [...new Set(listed)].sort(), reason: null };
 }
 
-async function fallbackWalk(projectRoot, maxFiles) {
+async function fallbackWalk(projectRoot, maxFiles, excludedPaths = new Set()) {
   const paths = [];
   let entriesSeen = 0;
   async function visit(current, relativeDirectory) {
@@ -170,7 +170,7 @@ async function fallbackWalk(projectRoot, maxFiles) {
     for (const entry of entries) {
       if (excludedName(entry.name, entry.isDirectory())) continue;
       const path = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      if (excludedPath(path)) continue;
+      if (excludedPath(path) || excludedPaths.has(path)) continue;
       const absolute = join(current, entry.name);
       const info = await lstat(absolute);
       if (info.isSymbolicLink()) continue;
@@ -186,7 +186,7 @@ async function fallbackWalk(projectRoot, maxFiles) {
   return paths.sort();
 }
 
-async function discoverPaths(projectRoot, maxFiles) {
+async function discoverPaths(projectRoot, maxFiles, excludedPaths = new Set()) {
   const git = await runGitList(projectRoot);
   if (git.paths !== null) {
     return { mode: 'git-ls-files', fallbackReason: null, paths: git.paths };
@@ -194,7 +194,7 @@ async function discoverPaths(projectRoot, maxFiles) {
   return {
     mode: 'filesystem-fallback',
     fallbackReason: git.reason,
-    paths: await fallbackWalk(projectRoot, maxFiles),
+    paths: await fallbackWalk(projectRoot, maxFiles, excludedPaths),
   };
 }
 
@@ -509,7 +509,14 @@ function validatePacketShape(packet) {
 
 async function readPacketDirectory(packetDir) {
   if (typeof packetDir !== 'string' || packetDir.length === 0) throw researchError('RESEARCH_PACKET_REQUIRED', 'packetDir is required');
-  const directory = resolve(packetDir);
+  const requestedDirectory = resolve(packetDir);
+  await assertNoSymlinkPath(requestedDirectory, { allowMissing: false, requireDirectory: true });
+  let directory;
+  try {
+    directory = await realpath(requestedDirectory);
+  } catch (error) {
+    throw researchError('RESEARCH_PACKET_READ_FAILED', `could not resolve research packet: ${packetDir}`, { cause: error?.code });
+  }
   await assertNoSymlinkPath(directory, { allowMissing: false, requireDirectory: true });
   const packetFile = resolve(directory, 'packet.json');
   const packetBytes = await readBoundedFile(packetFile, MAX_RESEARCH_MAP_BYTES, 'packet.json');
@@ -621,7 +628,7 @@ export async function prepareResearchPacket(options = {}) {
   const projectRoot = await canonicalProjectRoot(options.projectRoot ?? options.project ?? process.cwd());
   const budgets = normalizeBudgets(options, { requireCompiled: true });
   const proposal = await proposalInput(projectRoot, options, budgets);
-  const discovered = await discoverPaths(projectRoot, budgets.maxFiles);
+  const discovered = await discoverPaths(projectRoot, budgets.maxFiles, new Set([proposal.path]));
   const files = [];
   const contents = new Map();
   let sourceBytes = 0;
