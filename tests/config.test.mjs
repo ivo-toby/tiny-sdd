@@ -8,6 +8,7 @@ import {
   resolveConfig,
   validateConfigDocument,
 } from '../src/config.mjs';
+import { validateFeatureIntegrationConfig } from '../src/feature-integration.mjs';
 import { initProject } from '../src/controller.mjs';
 
 // Project roots may not resolve through a symlink, and tmpdir() does on macOS
@@ -37,6 +38,35 @@ test('resolves an empty initialized config with provenance', async () => {
   } finally {
     await cleanup(root);
   }
+});
+
+test('validates an optional typed feature integration command and keeps legacy config unchanged', () => {
+  assert.deepEqual(validateConfigDocument({ schemaVersion: 1, workers: {} }), { schemaVersion: 1, workers: {} });
+  const document = validateConfigDocument({
+    schemaVersion: 1,
+    workers: {},
+    featureIntegration: {
+      argv: ['node', '--test', 'tests/feature-integration.test.mjs'],
+      timeoutMs: 10_000,
+      dependencyMounts: ['node_modules'],
+      testPaths: ['tests/feature-integration.test.mjs'],
+      entrypoints: ['src/entrypoint.mjs'],
+    },
+  });
+  assert.deepEqual(document.featureIntegration, {
+    schemaVersion: 1,
+    checkId: 'feature-integration',
+    argv: ['node', '--test', 'tests/feature-integration.test.mjs'],
+    timeoutMs: 10_000,
+    dependencyMounts: ['node_modules'],
+    testPaths: ['tests/feature-integration.test.mjs'],
+    entrypoints: ['src/entrypoint.mjs'],
+  });
+  assert.throws(() => validateFeatureIntegrationConfig({ argv: 'node --test tests/feature.test.mjs' }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateFeatureIntegrationConfig({ argv: ['node'], command: ['node'] }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateFeatureIntegrationConfig({ argv: ['sh', '-c', 'true'] }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateFeatureIntegrationConfig({ argv: ['node'], dependencyMounts: ['deps', 'deps/sub'] }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateConfigDocument({ schemaVersion: 1, workers: {}, featureIntegration: { argv: ['node'], extra: true } }), { code: 'CONFIG_INVALID' });
 });
 
 test('explicitly selecting an absent constructor-named worker fails', async () => {
