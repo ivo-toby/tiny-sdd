@@ -260,6 +260,10 @@ predecessor or qualification makes the decision stale. The existing task
 approval remains the implement gate with its existing digest and apply/review
 semantics.
 
+A producer-only research entry is normalized to a required qualification. A
+named producer with `qualification.required: false` is rejected until a phase
+handler can bind that identity without implying qualification.
+
 If `implement` appears in `phaseGates`, it is only the existing human task
 approval alias. Its approval, review, apply and final-run bindings stay in the
 task controller; other modes and added phase requirements are rejected.

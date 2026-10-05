@@ -197,6 +197,9 @@ function normalizedPolicyGate(value, label) {
   if (result.producer !== undefined && result.qualification === undefined) {
     result.qualification = { required: true, worker: result.producer.worker, role: result.producer.role };
   }
+  if (result.qualification?.required === false && result.producer !== undefined) {
+    throw tinyError('CONFIG_INVALID', `${label} cannot declare a producer with qualification.required=false`);
+  }
   if (value.predecessor !== undefined) {
     if (typeof value.predecessor === 'string') {
       result.predecessor = { phase: configPhase(value.predecessor, `${label}.predecessor`), required: true };
@@ -281,6 +284,7 @@ function reviewActor(value, label) {
   assertExactKeys(value, TEST_REVIEW_ACTOR_KEYS, 'TEST_REVIEW_INVALID', label);
   if (typeof value.id !== 'string' || value.id.length === 0 || value.id.length > 128 || /[\u0000-\u001f\u007f]/u.test(value.id)) return null;
   if (typeof value.role !== 'string' || value.role.length === 0 || value.role.length > 128 || /[\u0000-\u001f\u007f]/u.test(value.role)) return null;
+  if (value.id.trim() !== value.id || value.role.trim() !== value.role || value.id.trim().length === 0 || value.role.trim().length === 0) return null;
   return { id: value.id, role: value.role };
 }
 
@@ -347,8 +351,16 @@ export function transitionTestReview({ policy, assessment, independentReview, re
     }
     return { approved: false, route: 'operator-acceptance', requiresOperator: true, inputDigest: assessedDigest, producer: assessed.producer, reviewer, provenance };
   }
-  const route = verdict === 'uncertain' ? configured.uncertainRoute : configured.unavailableRoute;
-  return { approved: false, route, inputDigest: assessedDigest, producer: assessed.producer, provenance: assessed.provenance };
+  const configuredRoute = verdict === 'uncertain' ? configured.uncertainRoute : configured.unavailableRoute;
+  const route = configuredRoute === 'revision' && revision >= configured.revisionLimit ? 'escalation' : configuredRoute;
+  return {
+    approved: false,
+    route,
+    ...(configuredRoute === 'revision' ? { revision, revisionLimit: configured.revisionLimit } : {}),
+    inputDigest: assessedDigest,
+    producer: assessed.producer,
+    provenance: assessed.provenance,
+  };
 }
 
 export const routeTestReview = transitionTestReview;
@@ -585,14 +597,21 @@ async function appendRecordUnlocked(root, record) {
   if (normalized.artifact !== undefined) await verifyArtifact(root, normalized);
   const { ledger } = ledgerPaths(root);
   await ensureDirectory(dirname(ledger));
+  const prepared = await checkLedgerCapacityUnlocked(root, normalized);
+  await appendFile(ledger, prepared.line, { encoding: 'utf8', mode: 0o600 });
+  return prepared.normalized;
+}
+
+async function checkLedgerCapacityUnlocked(root, record) {
+  const normalized = normalizePhaseRecord(record);
+  const { ledger } = ledgerPaths(root);
   const existing = await readRecordsUnlocked(root);
   if (existing.some((item) => item.id === normalized.id)) throw tinyError('PHASE_RECORD_DUPLICATE', `phase record already exists: ${normalized.id}`);
   if (existing.length >= PHASE_LEDGER_MAX_RECORDS) throw tinyError('PHASE_LEDGER_TOO_LARGE', `phase ledger contains more than ${PHASE_LEDGER_MAX_RECORDS} records`);
   const line = `${JSON.stringify(normalized)}\n`;
   const current = await readLedgerText(ledger);
   if (Buffer.byteLength(current) + Buffer.byteLength(line) > PHASE_LEDGER_MAX_BYTES) throw tinyError('PHASE_LEDGER_TOO_LARGE', `phase ledger exceeds ${PHASE_LEDGER_MAX_BYTES} bytes`);
-  await appendFile(ledger, line, { encoding: 'utf8', mode: 0o600 });
-  return normalized;
+  return { normalized, line };
 }
 
 export async function appendPhaseRecord(projectRoot, value) {
@@ -601,8 +620,15 @@ export async function appendPhaseRecord(projectRoot, value) {
   return withExclusiveLock(lock, async () => appendRecordUnlocked(root, value));
 }
 
-async function writeArtifactUnlocked(root, artifact) {
+function artifactDescriptor(artifact) {
   const path = `${PHASE_ARTIFACT_PREFIX}${artifact.id}.json`;
+  const text = `${JSON.stringify(artifact.value, null, 2)}\n`;
+  const bytes = Buffer.byteLength(text);
+  if (bytes > PHASE_ARTIFACT_MAX_BYTES) throw tinyError('PHASE_ARTIFACT_TOO_LARGE', `phase artifact exceeds ${PHASE_ARTIFACT_MAX_BYTES} bytes`);
+  return { path, sha256: sha256(Buffer.from(text)), bytes, text };
+}
+
+async function assertArtifactAvailableUnlocked(root, path) {
   const target = await assertInternalPath(root, path.split('/'), { allowMissing: true });
   try {
     const existing = await lstat(target);
@@ -611,11 +637,20 @@ async function writeArtifactUnlocked(root, artifact) {
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
-  const text = `${JSON.stringify(artifact.value, null, 2)}\n`;
-  const bytes = Buffer.byteLength(text);
-  if (bytes > PHASE_ARTIFACT_MAX_BYTES) throw tinyError('PHASE_ARTIFACT_TOO_LARGE', `phase artifact exceeds ${PHASE_ARTIFACT_MAX_BYTES} bytes`);
-  await atomicWriteFile(target, text);
-  return { path, sha256: sha256(Buffer.from(text)), bytes };
+  return target;
+}
+
+async function writeArtifactUnlocked(root, artifact, descriptor = artifactDescriptor(artifact)) {
+  const target = await assertArtifactAvailableUnlocked(root, descriptor.path);
+  await atomicWriteFile(target, descriptor.text);
+  return { path: descriptor.path, sha256: descriptor.sha256, bytes: descriptor.bytes };
+}
+
+async function preflightArtifactAndLedgerUnlocked(root, artifact, record) {
+  const descriptor = artifactDescriptor(artifact);
+  await assertArtifactAvailableUnlocked(root, descriptor.path);
+  const prepared = await checkLedgerCapacityUnlocked(root, { ...record, artifact: { path: descriptor.path, sha256: descriptor.sha256, bytes: descriptor.bytes } });
+  return { descriptor, record: prepared.normalized };
 }
 
 function researchPolicy(policy) {
@@ -792,7 +827,7 @@ export async function recordResearchDecision(projectRoot, options = {}) {
       const predecessorRecord = records.find((record) => record.id === predecessor.id);
       const predecessorState = await predecessorFreshness(root, predecessorRecord, records, policy, options.qualificationResolver);
       if (!predecessorState.fresh) {
-        throw tinyError('PHASE_PREDECESSOR_STALE', 'research predecessor is stale', { feature, predecessor, reasons: predecessorState.reasons });
+        throw tinyError(predecessorState.code ?? 'PHASE_PREDECESSOR_STALE', 'research predecessor is not current', { feature, predecessor, reasons: predecessorState.reasons });
       }
     }
     let qualification;
@@ -829,7 +864,13 @@ export async function recordResearchDecision(projectRoot, options = {}) {
         },
       },
     };
-    const artifact = await writeArtifactUnlocked(root, { id, value: artifactValue });
+    const artifactInput = { id, value: artifactValue };
+    const artifactDescriptorValue = artifactDescriptor(artifactInput);
+    const artifact = {
+      path: artifactDescriptorValue.path,
+      sha256: artifactDescriptorValue.sha256,
+      bytes: artifactDescriptorValue.bytes,
+    };
     const record = recordForStorage({
       schemaVersion: PHASE_LEDGER_SCHEMA_VERSION,
       type: 'phase-decision',
@@ -851,7 +892,9 @@ export async function recordResearchDecision(projectRoot, options = {}) {
       ...(qualification === undefined ? {} : { qualification }),
       artifact,
     });
-    const appended = await appendRecordUnlocked(root, record);
+    const preflight = await preflightArtifactAndLedgerUnlocked(root, artifactInput, record);
+    await writeArtifactUnlocked(root, artifactInput, preflight.descriptor);
+    const appended = await appendRecordUnlocked(root, preflight.record);
     return {
       phase: 'research',
       feature,
@@ -896,6 +939,7 @@ async function readCurrentResearchInputs(root, record) {
 }
 
 async function predecessorFreshness(root, record, records, policy, qualificationResolver, seen = new Set()) {
+  if (!record || typeof record !== 'object') return { fresh: false, code: 'PHASE_PREDECESSOR_UNSUPPORTED', reasons: ['phase predecessor is unavailable'] };
   if (seen.has(record.id) || seen.size >= 32) return { fresh: false, reasons: ['phase predecessor chain is cyclic or too deep'] };
   const nextSeen = new Set(seen).add(record.id);
   const latest = latestPhaseDecision(records, record.feature, record.phase);
@@ -914,7 +958,7 @@ async function predecessorFreshness(root, record, records, policy, qualification
     }
     return predecessorFreshness(root, predecessor, records, policy, qualificationResolver, nextSeen);
   }
-  return { fresh: true, reasons: [] };
+  return { fresh: false, code: 'PHASE_PREDECESSOR_UNSUPPORTED', reasons: ['phase predecessor type is unsupported for live freshness validation'] };
 }
 
 async function researchFreshness(root, record, policy, qualificationResolver, recordsArgument = undefined, seen = new Set()) {

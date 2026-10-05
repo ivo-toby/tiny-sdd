@@ -13,7 +13,7 @@ import {
   recordResearch,
 } from '../src/controller.mjs';
 import { validateConfigDocument } from '../src/config.mjs';
-import { appendPhaseRecord, phasePolicyDigest, phaseStatus as phaseGateStatus, recordResearchDecision, transitionTestReview, validatePhasePolicy, validateTestReviewPolicy } from '../src/phase-gates.mjs';
+import { appendPhaseRecord, PHASE_LEDGER_MAX_RECORDS, phasePolicyDigest, phaseStatus as phaseGateStatus, recordResearchDecision, transitionTestReview, validatePhasePolicy, validateTestReviewPolicy } from '../src/phase-gates.mjs';
 import { MAX_CONTEXT_SOURCE_BYTES } from '../src/context-compiler.mjs';
 import { digestJson } from '../src/fs-utils.mjs';
 
@@ -76,6 +76,7 @@ test('phase policy is optional and strictly validates canonical gate modes', () 
   assert.deepEqual(validatePhasePolicy({ implement: { mode: 'human' } }), { implement: { mode: 'human' } });
   assert.throws(() => validatePhasePolicy({ research: { mode: 'unknown' } }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validatePhasePolicy({ research: { mode: 'human', producer: 'qwen', qualification: { worker: 'other', role: 'research' } } }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validatePhasePolicy({ research: { mode: 'human', producer: 'qwen', qualification: { required: false } } }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validatePhasePolicy({ implement: { mode: 'frontier' } }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validatePhasePolicy({ implement: { mode: 'human', predecessor: 'research' } }), { code: 'CONFIG_INVALID' });
 });
@@ -100,6 +101,14 @@ test('#81 transition interface requires explicit policy and never grants accepta
   } });
   assert.equal(reviewed.approved, false);
   assert.equal(reviewed.route, 'operator-acceptance');
+  for (const verdict of ['uncertain', 'unavailable']) {
+    const boundedPolicy = { ...policy, uncertainRoute: 'revision', unavailableRoute: 'revision' };
+    assert.equal(transitionTestReview({ policy: boundedPolicy, assessment: { ...assessment, verdict }, revision: 1 }).route, 'revision');
+    assert.equal(transitionTestReview({ policy: boundedPolicy, assessment: { ...assessment, verdict }, revision: 2 }).route, 'escalation');
+  }
+  assert.equal(transitionTestReview({ policy, assessment, independentReview: {
+    verdict: 'accepted', inputDigest, reviewer: { id: '   ', role: ' ' }, strength: 'strong', attested: true, provenance: 'caller-declared',
+  } }).route, 'review-required');
   assert.throws(() => transitionTestReview({ policy, assessment, independentReview: {
     verdict: 'accepted', inputDigest, reviewer: { id: 'small-worker', role: 'test-assessor' }, strength: 'strong', attested: true, provenance: 'caller-declared',
   } }), { code: 'TEST_REVIEW_NOT_INDEPENDENT' });
@@ -228,28 +237,25 @@ test('controller refuses a required producer when qualification is disabled or u
   }
 });
 
-test('configured research predecessors are required and newer rejection invalidates the predecessor', async () => {
+test('configured research predecessors require a supported live record', async () => {
   const policy = { research: { mode: 'human', predecessor: { phase: 'specify', required: true } }, specify: { mode: 'human' } };
   const root = await project(policy);
   try {
     await assert.rejects(research(root), { code: 'PHASE_PREDECESSOR_REQUIRED' });
     const predecessor = decision({ id: 'phase-specify', phase: 'specify', policy });
     await appendPhaseRecord(root, predecessor);
-    await research(root);
-    const rejected = decision({ id: 'phase-specify-rejected', phase: 'specify', decision: 'rejected', policy });
-    await appendPhaseRecord(root, rejected);
-    assert.equal((await phaseStatus(root, { feature: 'feature-one' })).phases.research.status, 'stale');
+    await assert.rejects(research(root), { code: 'PHASE_PREDECESSOR_UNSUPPORTED' });
   } finally {
     await cleanup(root);
   }
 });
 
 test('research refuses a predecessor whose policy identity is stale', async () => {
-  const oldPolicy = { research: { mode: 'human', predecessor: { phase: 'specify', required: true } }, specify: { mode: 'human' } };
+  const oldPolicy = { research: { mode: 'human' } };
   const root = await project(oldPolicy);
   try {
-    await appendPhaseRecord(root, decision({ id: 'phase-specify-old-policy', phase: 'specify', policy: oldPolicy }));
-    const currentPolicy = { ...oldPolicy, plan: { mode: 'human' } };
+    await research(root, { policy: oldPolicy });
+    const currentPolicy = { research: { mode: 'human', predecessor: { phase: 'research', required: true } }, plan: { mode: 'human' } };
     await assert.rejects(recordResearchDecision(root, {
       feature: 'feature-one',
       proposal: 'docs/proposal.md',
@@ -285,6 +291,23 @@ test('duplicate ids do not replace the retained artifact', async () => {
     const before = await readFile(artifactPath);
     await assert.rejects(research(root, { id: 'phase-fixed', reason: 'second attempt' }), { code: 'PHASE_RECORD_DUPLICATE' });
     assert.deepEqual(await readFile(artifactPath), before);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('ledger capacity is checked before retaining a research artifact', async () => {
+  const policy = { research: { mode: 'human' } };
+  const root = await project(policy);
+  try {
+    const lines = Array.from({ length: PHASE_LEDGER_MAX_RECORDS }, (_, index) => JSON.stringify(decision({
+      id: `phase-specify-${index}`,
+      phase: 'specify',
+      policy,
+    })));
+    await writeFile(join(root, '.tinysdd', 'runs', 'phases.jsonl'), `${lines.join('\n')}\n`);
+    await assert.rejects(research(root, { id: 'phase-capacity-refused' }), { code: 'PHASE_LEDGER_TOO_LARGE' });
+    await assert.rejects(readFile(join(root, '.tinysdd', 'runs', 'phase-artifacts', 'phase-capacity-refused.json')), { code: 'ENOENT' });
   } finally {
     await cleanup(root);
   }

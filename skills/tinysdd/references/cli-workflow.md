@@ -169,6 +169,10 @@ Only the human handler is implemented; other modes report unavailable and
 cannot masquerade as operator approval. Existing task approval remains the
 implement-phase gate.
 
+A producer-only research entry is normalized to required qualification; a
+named producer paired with `qualification.required: false` is rejected because
+this increment has no identity-only phase handler.
+
 An optional `implement` entry in `phaseGates` names that same human task
 approval gate. Task approval, review, apply and final-run bindings remain the
 authority; non-human modes and added phase requirements are rejected.
