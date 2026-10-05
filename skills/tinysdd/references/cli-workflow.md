@@ -144,8 +144,8 @@ tinysdd usage report --feature reservations
 
 For external data, use the normalized import envelope with a `source`, an
 `exportId`, and a stable `externalRecordId` on every record. TinySDD validates
-the complete file before appending it; this contract does not claim a native
-Pi or Claude Code adapter:
+the complete file before appending it. This import contract is separate from
+the offline [foreign harness adapter guide](../../../docs/harness-adapters.md):
 
 ```json
 {
@@ -169,6 +169,15 @@ Pi or Claude Code adapter:
 ```sh
 tinysdd usage import --file usage-export.json
 ```
+
+The adapter guide covers host-managed begin/finalize for an operator-selected
+Claude Code or interactive Pi session. It retains the exact approved packet and
+source-derived baseline, keeps the candidate outside the source project, and
+returns a completed result through normal `task apply` followed by explicit
+`task review`. Ordinary extra files remain reviewable; model identity, usage,
+sandbox behavior and checks are caller-declared or `UNKNOWN` unless separately
+observed. The offline fixtures exercise both adapters through synthetic apply
+and review; live harness/model/operator acceptance remains pending (`Refs #31`).
 
 After reviewing every active labelled task, close a feature window explicitly:
 
