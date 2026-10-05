@@ -1,4 +1,4 @@
-import { open, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { open, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -358,7 +358,10 @@ async function writeFreshDirectory(output, files) {
   let owned = false;
   let suspicious = false;
   let reservedCanonical;
+  let ownerIdentity;
+  let stagingMarker;
   try {
+    stagingMarker = await mkdtemp(join(parent, `.tinysdd-research-${process.pid}-`));
     try {
       await mkdir(output, { recursive: false, mode: 0o700 });
       owned = true;
@@ -368,20 +371,35 @@ async function writeFreshDirectory(output, files) {
     }
     await assertNoSymlinkPath(output, { allowMissing: false, requireDirectory: true });
     reservedCanonical = await realpath(output);
+    ownerIdentity = await lstat(output);
     for (const [relativePath, content] of files) {
       await assertNoSymlinkPath(output, { allowMissing: false, requireDirectory: true });
       const currentCanonical = await realpath(output);
-      if (currentCanonical !== reservedCanonical) throw researchError('RESEARCH_OUTPUT_CHANGED', `output directory changed while it was being written: ${output}`);
+      const currentIdentity = await lstat(output);
+      if (currentCanonical !== reservedCanonical || currentIdentity.dev !== ownerIdentity.dev || currentIdentity.ino !== ownerIdentity.ino) throw researchError('RESEARCH_OUTPUT_CHANGED', `output directory changed while it was being written: ${output}`);
       const target = resolve(reservedCanonical, ...relativePath.split('/'));
       if (!isInside(reservedCanonical, target)) throw researchError('RESEARCH_INVALID_OUTPUT', `output file escapes output directory: ${relativePath}`);
       await assertNoSymlinkPath(target, { allowMissing: true });
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, content, { flag: 'wx', mode: 0o600 });
+      await assertNoSymlinkPath(output, { allowMissing: false, requireDirectory: true });
+      const afterCanonical = await realpath(output);
+      const afterIdentity = await lstat(output);
+      if (afterCanonical !== reservedCanonical || afterIdentity.dev !== ownerIdentity.dev || afterIdentity.ino !== ownerIdentity.ino) throw researchError('RESEARCH_OUTPUT_CHANGED', `output directory changed while it was being written: ${output}`);
     }
+    await assertNoSymlinkPath(output, { allowMissing: false, requireDirectory: true });
+    const finalCanonical = await realpath(output);
+    const finalIdentity = await lstat(output);
+    if (finalCanonical !== reservedCanonical || finalIdentity.dev !== ownerIdentity.dev || finalIdentity.ino !== ownerIdentity.ino) throw researchError('RESEARCH_OUTPUT_CHANGED', `output directory changed before publication: ${output}`);
   } catch (error) {
     suspicious = error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY' || error?.code === 'RESEARCH_OUTPUT_EXISTS' || error?.code === 'RESEARCH_OUTPUT_CHANGED';
-    if (owned && !suspicious) await rm(output, { recursive: true, force: true }).catch(() => {});
+    if (owned && !suspicious && ownerIdentity !== undefined) {
+      const currentIdentity = await lstat(output).catch(() => null);
+      if (currentIdentity?.dev === ownerIdentity.dev && currentIdentity?.ino === ownerIdentity.ino) await rm(output, { recursive: true, force: true }).catch(() => {});
+    }
     throw error;
+  } finally {
+    if (stagingMarker !== undefined) await rm(stagingMarker, { recursive: true, force: true }).catch(() => {});
   }
   return output;
 }
