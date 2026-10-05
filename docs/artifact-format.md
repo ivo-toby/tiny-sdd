@@ -278,12 +278,25 @@ remain the mutation APIs. Dependencies must be registered first, and existing
 accepted-dependency/freshness requirements remain intact. No controller state,
 approval or packet schema changes are proposed for this format mapping.
 
+The plan's `brief`, `context` and `checks` values are the fixed controller paths;
+they are not writable copies created by validation. Before calling `task add`,
+copy the exact bytes from the corresponding slice descriptor paths to those
+planned paths, then pass the planned paths to `task add` and approve the task.
+For example, a slice descriptor that names `changes/example/slices/s1/brief.md`,
+`context.json` and `checks.json` is materialized as `.tinysdd/tasks/s1.md`,
+`.tinysdd/tasks/s1.context.json` and `.tinysdd/tasks/s1.checks.json`. This
+explicit copy keeps the packet inputs byte-identical while leaving validation
+read-only. Carry every `allow`, `protect` and `dependsOn` value from the plan to
+`task add` (using `--depends-on` for dependencies) so the registered shape
+remains exact.
+
 ## Portable freshly approved slice bundle
 
 The exporter validates the current descriptor set, readiness and resolved budget,
-then calls `resolveTaskPacket()` for the existing registered task. Compare mapped
+reads bounded controller state for the selected dependency closure, and then calls
+`resolveTaskPacket()` for the existing registered task. Compare mapped
 brief/context/checks, allow/protect and dependency IDs with the returned shape;
-compare feature membership with existing controller status. Export only a matching,
+compare feature membership with that bounded state. Export only a matching,
 currently ready, freshly approved task under its actual current runtime policy.
 An unrelated task ID cannot bypass format readiness. Retain descriptor identity,
 advisory test roles/file budgets, actual runtimeScope

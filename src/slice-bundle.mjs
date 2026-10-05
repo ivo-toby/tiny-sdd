@@ -1,8 +1,8 @@
 import { lstat, mkdir, open, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { compileContext } from './context-compiler.mjs';
-import { controllerStatus, resolveTaskPacket } from './controller.mjs';
+import { compileContext, parseContextManifest } from './context-compiler.mjs';
+import { resolveTaskPacket } from './controller.mjs';
 import {
   assertNoSymlinkPath,
   canonicalProjectRoot,
@@ -48,9 +48,11 @@ function assertUtf8Text(content, projectPath, label) {
 
 async function readBoundedBytes(projectRoot, projectPath, { allowMissing = false, label = projectPath, text = false } = {}) {
   assertArtifactPathAllowed(projectPath, label);
+  const artifactPrefixes = ['.tinysdd/tasks/', '.tinysdd/runs/', '.tinysdd/reviews/'];
+  const tinysddArtifactPrefix = artifactPrefixes.find((prefix) => projectPath.startsWith(prefix));
   const resolved = await resolveProjectPath(projectRoot, projectPath, {
     allowMissing,
-    ...(projectPath.startsWith('.tinysdd/tasks/') ? { tinysddArtifactPrefix: '.tinysdd/tasks/' } : {}),
+    ...(tinysddArtifactPrefix ? { tinysddArtifactPrefix } : {}),
   });
   let info;
   try {
@@ -80,7 +82,9 @@ async function readBoundedBytes(projectRoot, projectPath, { allowMissing = false
   }
   const bounded = content.subarray(0, bytesRead);
   if (text) assertUtf8Text(bounded, projectPath, label);
-  return record(projectPath, bounded);
+  const result = record(projectPath, bounded);
+  if (text) result.text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bounded);
+  return result;
 }
 
 function reserveRetainedBytes(budget, bytes, label) {
@@ -180,15 +184,94 @@ function comparePacketShape(packet, plan) {
   }
 }
 
-async function preflightTaskInputs(projectRoot, plan) {
-  for (const [label, path] of [
-    ['task brief', plan.brief],
-    ['task context', plan.context],
-    ['task checks', plan.checks],
-  ]) {
-    // Missing or aliased paths are reported by the controller/shape check;
-    // existing task inputs must be bounded before controller helpers read them.
-    await readBoundedBytes(projectRoot, path, { allowMissing: true, label, text: true });
+function parseControllerState(file) {
+  if (!file) return { schemaVersion: 1, tasks: {} };
+  let state;
+  try {
+    state = JSON.parse(file.text);
+  } catch (error) {
+    throw tinyError('STATE_MALFORMED', `controller state is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!state || typeof state !== 'object' || Array.isArray(state) || state.schemaVersion !== 1 || !state.tasks || typeof state.tasks !== 'object' || Array.isArray(state.tasks)) {
+    throw tinyError('STATE_MALFORMED', 'controller state has an invalid shape');
+  }
+  return state;
+}
+
+async function readBoundedControllerState(projectRoot) {
+  const file = await readBoundedBytes(projectRoot, '.tinysdd/runs/controller.json', {
+    allowMissing: true,
+    label: 'controller state',
+    text: true,
+  });
+  return parseControllerState(file);
+}
+
+function taskPath(task, field, taskId, { optional = false } = {}) {
+  const value = task[field];
+  if (value === undefined && optional) return undefined;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid ${field} path`);
+  }
+  return value;
+}
+
+async function preflightRegisteredTask(projectRoot, task, tasks, seen = new Set()) {
+  const taskId = task?.id;
+  if (!task || typeof task !== 'object' || typeof taskId !== 'string') {
+    throw tinyError('STATE_MALFORMED', 'registered task has an invalid shape');
+  }
+  if (seen.has(taskId)) throw tinyError('STATE_MALFORMED', `dependency cycle reaches ${taskId}`);
+  const nextSeen = new Set(seen).add(taskId);
+  const brief = taskPath(task, 'brief', taskId);
+  const context = taskPath(task, 'context', taskId, { optional: true });
+  const checks = taskPath(task, 'checks', taskId, { optional: true });
+  await readBoundedBytes(projectRoot, brief, { allowMissing: true, label: 'registered task brief', text: true });
+  const contextFile = context === undefined
+    ? null
+    : await readBoundedBytes(projectRoot, context, { allowMissing: true, label: 'registered task context', text: true });
+  if (checks !== undefined) await readBoundedBytes(projectRoot, checks, { allowMissing: true, label: 'registered task checks', text: true });
+  for (const field of ['allow', 'protect']) {
+    if (task[field] !== undefined && !Array.isArray(task[field])) {
+      throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid ${field} list`);
+    }
+    for (const path of task[field] ?? []) {
+      if (typeof path !== 'string') throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid ${field} path`);
+      await readBoundedBytes(projectRoot, path, { allowMissing: true, label: `registered task ${field} ${path}` });
+    }
+  }
+  let manifest = null;
+  if (contextFile) {
+    try {
+      manifest = parseContextManifest(contextFile.text);
+    } catch {
+      manifest = null;
+    }
+    for (const resource of manifest?.resources ?? []) {
+      await readBoundedBytes(projectRoot, resource.path, { allowMissing: true, label: `registered context resource ${resource.path}` });
+    }
+  }
+  if (task.applied !== undefined) {
+    if (!task.applied || typeof task.applied.rootRunId !== 'string' || !Array.isArray(task.applied.files)) {
+      throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid applied record`);
+    }
+    const pinned = new Set(task.applied.files.filter((file) => file?.status === 'written' && typeof file.path === 'string').map((file) => file.path));
+    for (const resource of manifest?.resources ?? []) {
+      if (!pinned.has(resource.path)) continue;
+      const runPath = `.tinysdd/runs/${task.applied.rootRunId}/workspace-before/${resource.path}`;
+      await readBoundedBytes(projectRoot, runPath, { allowMissing: true, label: `registered pinned context resource ${resource.path}` });
+    }
+  }
+  if (task.review?.evidence !== undefined) {
+    const evidence = taskPath(task.review, 'evidence', `${taskId} review`);
+    await readBoundedBytes(projectRoot, evidence, { allowMissing: true, label: 'registered review evidence', text: true });
+  }
+  if (!Array.isArray(task.dependsOn)) throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid dependency list`);
+  for (const dependency of task.dependsOn) {
+    if (typeof dependency !== 'string' || !Object.hasOwn(tasks, dependency)) {
+      throw tinyError('STATE_MALFORMED', `missing dependency task: ${dependency}`);
+    }
+    await preflightRegisteredTask(projectRoot, tasks[dependency], tasks, nextSeen);
   }
 }
 
@@ -304,16 +387,14 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
   if (!slice) throw tinyError('SLICE_NOT_FOUND', `unknown slice in change: ${sliceId}`);
   assertSelectedSliceReady(result, slice);
   const plan = result.registrationPlan.find((item) => item.id === slice.value.id);
-  await preflightTaskInputs(root, plan);
-  const packet = await resolveTaskPacket(root, slice.value.id);
-  const status = await controllerStatus(root, { feature: result.change.id });
-  const taskStatus = status.tasks.find((task) => task.id === slice.value.id);
-  if (!taskStatus || taskStatus.feature !== result.change.id) {
+  const state = await readBoundedControllerState(root);
+  const registeredTask = Object.hasOwn(state.tasks, slice.value.id) ? state.tasks[slice.value.id] : undefined;
+  if (!registeredTask) throw tinyError('TASK_NOT_FOUND', `unknown task: ${slice.value.id}`);
+  if (registeredTask.feature !== result.change.id) {
     throw tinyError('TASK_FEATURE_MISMATCH', `task ${slice.value.id} is not registered in feature ${result.change.id}`);
   }
-  if (taskStatus.status !== 'ready') {
-    throw tinyError('TASK_NOT_READY', `task ${slice.value.id} is ${taskStatus.status}`);
-  }
+  await preflightRegisteredTask(root, registeredTask, state.tasks);
+  const packet = await resolveTaskPacket(root, slice.value.id);
   comparePacketShape(packet, plan);
   if (packet.brief.text !== slice.brief.text) {
     throw tinyError('TASK_DESCRIPTOR_MISMATCH', `registered task ${slice.value.id} brief bytes differ from the validated slice brief`, { path: packet.brief.path });
@@ -341,6 +422,14 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
         }
       },
     });
+    if (compiled.bytes > slice.resolvedBudget.maxCompiledContextBytes) {
+      throw tinyError('CONTEXT_BUDGET_EXCEEDED', `registered task ${slice.value.id} compiled context exceeds its resolved budget`, {
+        sliceId: slice.value.id,
+        path: packet.context.path,
+        bytes: compiled.bytes,
+        limit: slice.resolvedBudget.maxCompiledContextBytes,
+      });
+    }
     if (packet.context.compiledSha256 !== compiled.sha256) {
       throw tinyError('STALE_CONTEXT', `task packet compiled context is not current: ${packet.context.path}`, { packet: packet.context.compiledSha256, current: compiled.sha256 });
     }

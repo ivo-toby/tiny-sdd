@@ -77,6 +77,9 @@ test('approved brief sections parse as strict JSON blocks', () => {
   assert.equal(parsed.testReview.criteria[0].id, 'c');
   assert.equal(parsed.requirements[0].id, 'req');
   assert.throws(() => parseApprovedBriefSections(text.replace('```json', '```text')), { code: 'ARTIFACT_FORMAT_INVALID' });
+  assert.deepEqual(parseApprovedBriefSections(`~~~text with backticks \`${'`'}\n## Slice test review contract\n~~~\n${text}`), parsed);
+  assert.throws(() => parseApprovedBriefSections(`~~~text\n${text}\n~~~`), { code: 'ARTIFACT_FORMAT_INVALID' });
+  assert.throws(() => parseApprovedBriefSections(`~~~\n## Slice test review contract\n\`\`\`\n${text}\n~~~`), { code: 'ARTIFACT_FORMAT_INVALID' });
   assert.throws(() => parseApprovedBriefSections([
     text,
     '## Slice test review contract',

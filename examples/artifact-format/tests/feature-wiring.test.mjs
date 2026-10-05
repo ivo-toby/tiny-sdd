@@ -15,9 +15,9 @@ delete childEnv.NODE_TEST_CONTEXT;
 
 const DISCONNECTIONS = [
   ['S1', '  const lease = invalidLease();', "  const lease = new Error('disconnected');"],
-  ['S2', '  const path = validateBrokerPath(key);', "  const path = 'disconnected';"],
+  ['S2', '  const path = validateBrokerPath(key);', '  const path = key;'],
   ['S3', '  const backend = createBackend();', "  const backend = { get: () => undefined, set: () => {} };"],
-  ['S4', '  const allowed = allowlisted([path], path);', '  const allowed = false;'],
+  ['S4', '  const allowed = allowlisted(declaredAllowlist, path);', '  const allowed = true;'],
   ['S5a', '  const sequential = runLifecycle(path, value);', "  const sequential = 'disconnected';"],
   ['S5b', '  const asynchronous = await runAsyncLifecycle(path, value);', "  const asynchronous = { key: 'disconnected', value };"],
 ];

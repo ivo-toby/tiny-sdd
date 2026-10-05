@@ -11,4 +11,6 @@ test('real broker entrypoint wires every reconstructed lifecycle slice', async (
     sequential: 'held',
     asynchronous: { key: 'lease', value: 'held' },
   });
+  await assert.rejects(() => brokerEntry('../escape', 'held'), /unsafe broker path/);
+  await assert.rejects(() => brokerEntry('other', 'held', ['lease']), /not allowlisted/);
 });

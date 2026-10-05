@@ -145,6 +145,28 @@ node /absolute/path/to/tiny-sdd/scripts/validate-change.mjs \
   --json
 ```
 
+The plan is read-only. Before registering each slice, copy the exact descriptor
+bytes to the fixed task paths shown by the plan, then use those paths for
+`task add` and approval. For example:
+
+```sh
+mkdir -p .tinysdd/tasks
+cp changes/example/slices/s1/brief.md .tinysdd/tasks/s1.md
+cp changes/example/slices/s1/context.json .tinysdd/tasks/s1.context.json
+cp changes/example/slices/s1/checks.json .tinysdd/tasks/s1.checks.json
+tinysdd task add --id s1 --feature example \
+  --brief .tinysdd/tasks/s1.md \
+  --context .tinysdd/tasks/s1.context.json \
+  --checks .tinysdd/tasks/s1.checks.json \
+  --allow src/example.mjs,tests/example.test.mjs \
+  --protect tests/contract.test.mjs
+```
+
+Repeat this materialization in topological order for dependent slices. The
+explicit copy preserves the approved brief, context and checks bytes; carry every
+`allow`, `protect` and `dependsOn` value from the plan, using `--depends-on` for
+dependencies. Validation does not create these controller inputs.
+
 The format keeps protected feature tests separate from writable slice tests,
 checks exact interface citations and records advisory file sizing. The plan and
 bundle report `runtimeScope.mode: "legacy-allowlist"`; current workers and

@@ -27,6 +27,26 @@ isolated slice tests would not establish integration. This is a synthetic
 fixture demonstration, not a Talon, Pi, provider, foreign-harness, approval or
 historical rerun.
 
+The validator is read-only. To register a slice, materialize the exact
+descriptor bytes at the fixed controller paths before `task add` and approval:
+
+```text
+mkdir -p .tinysdd/tasks
+cp examples/artifact-format/changes/broker-recut/slices/s1/brief.md .tinysdd/tasks/broker-s1.md
+cp examples/artifact-format/changes/broker-recut/slices/s1/context.json .tinysdd/tasks/broker-s1.context.json
+cp examples/artifact-format/changes/broker-recut/slices/s1/checks.json .tinysdd/tasks/broker-s1.checks.json
+tinysdd task add --id broker-s1 --feature broker-recut \
+  --brief .tinysdd/tasks/broker-s1.md \
+  --context .tinysdd/tasks/broker-s1.context.json \
+  --checks .tinysdd/tasks/broker-s1.checks.json \
+  --allow examples/artifact-format/src/s1-errors.mjs,examples/artifact-format/tests/s1-errors.test.mjs \
+  --protect examples/artifact-format/tests/feature-integration.test.mjs
+```
+
+Repeat the copy and registration in the topological order printed by the plan;
+the explicit paths preserve byte identity. Carry every `allow`, `protect` and
+`dependsOn` value from the plan; pass dependencies with `--depends-on`.
+
 The exporter additionally requires six currently registered and freshly
 approved controller tasks. It writes a new bundle outside the checkout and
 never runs the feature or slice checks.

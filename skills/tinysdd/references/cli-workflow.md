@@ -84,6 +84,25 @@ node scripts/validate-change.mjs --project /path/to/project \
   --change changes/example/change.json --json
 ```
 
+The validator only prints the plan. For each slice, copy the exact descriptor
+inputs to the fixed paths in that plan before `task add` and approval:
+
+```sh
+mkdir -p .tinysdd/tasks
+cp changes/example/slices/s1/brief.md .tinysdd/tasks/s1.md
+cp changes/example/slices/s1/context.json .tinysdd/tasks/s1.context.json
+cp changes/example/slices/s1/checks.json .tinysdd/tasks/s1.checks.json
+tinysdd task add --id s1 --feature example \
+  --brief .tinysdd/tasks/s1.md --context .tinysdd/tasks/s1.context.json \
+  --checks .tinysdd/tasks/s1.checks.json \
+  --allow src/example.mjs,tests/example.test.mjs --protect tests/contract.test.mjs
+```
+
+Repeat in topological order for dependencies. Copying the bytes explicitly keeps
+the registered packet inputs identical to the approved descriptor files; carry
+every `allow`, `protect` and `dependsOn` value from the plan, using
+`--depends-on` for dependencies. The validator does not create controller files.
+
 The plan reports separate writable slice-test and protected feature-test roles,
 advisory file sizing and the current `runtimeScope`. To export a freshly
 approved slice, use a new directory under an existing canonical parent; the

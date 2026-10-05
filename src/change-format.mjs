@@ -265,14 +265,20 @@ function sectionBodies(text, heading) {
   const lines = text.split(/\n/u);
   const headings = [];
   let offset = 0;
-  let fenced = false;
+  let fence = null;
   for (const line of lines) {
     const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
-    if (/^\s*```/u.test(trimmed)) {
-      fenced = !fenced;
-    } else if (!fenced) {
-      const match = /^## ([^#].*?)\s*$/u.exec(trimmed);
-      if (match) headings.push({ heading: match[1], start: offset, end: offset + line.length + 1 });
+    if (fence) {
+      const closing = /^ {0,3}(`{3,})\s*$/u.exec(trimmed) ?? /^ {0,3}(~{3,})\s*$/u.exec(trimmed);
+      if (closing && closing[1][0] === fence.character && closing[1].length >= fence.length) fence = null;
+    } else {
+      const opening = /^ {0,3}(`{3,})([^`]*)$/u.exec(trimmed) ?? /^ {0,3}(~{3,})(.*)$/u.exec(trimmed);
+      if (opening) {
+        fence = { character: opening[1][0], length: opening[1].length };
+      } else {
+        const match = /^## ([^#].*?)\s*$/u.exec(trimmed);
+        if (match) headings.push({ heading: match[1], start: offset, end: offset + line.length + 1 });
+      }
     }
     offset += line.length + 1;
   }
@@ -515,10 +521,8 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
   if (change.slices.length > MAX_CHANGE_SLICES) invalid(`change references more than ${MAX_CHANGE_SLICES} slice descriptors`);
   if (change.integration.length > MAX_INTEGRATION_ENTRIES) invalid(`change contains more than ${MAX_INTEGRATION_ENTRIES} integration obligations`);
 
-  const featureTests = [];
   for (const testPath of change.featureTests) {
     const testFile = await sourceExists(root, testPath, `change.featureTests ${testPath}`);
-    featureTests.push(testFile);
     addSnapshot(sourceSnapshots, testFile);
   }
   const featureTestPaths = change.featureTests;

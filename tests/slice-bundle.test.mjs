@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import fsPromises, { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { realpath } from 'node:fs/promises';
@@ -27,13 +28,13 @@ async function cleanup(root) {
   await rm(root, { recursive: true, force: true });
 }
 
-async function registerFirstSlice(root, { suffix = '', omitContext = false, omitChecks = false } = {}) {
+async function registerFirstSlice(root, { suffix = '', omitContext = false, omitChecks = false, briefPathOverride } = {}) {
   const validated = await validateChange(root, CHANGE_PATH);
   const plan = validated.registrationPlan[0];
   const tasks = join(root, '.tinysdd', 'tasks');
   await mkdir(tasks, { recursive: true });
   const slice = validated.slices.find((item) => item.value.id === plan.id);
-  const briefPath = '.tinysdd/tasks/' + plan.id + suffix + '.md';
+  const briefPath = briefPathOverride ?? '.tinysdd/tasks/' + plan.id + suffix + '.md';
   const contextPath = omitContext ? undefined : '.tinysdd/tasks/' + plan.id + suffix + '.context.json';
   const checksPath = omitChecks ? undefined : '.tinysdd/tasks/' + plan.id + suffix + '.checks.json';
   await writeFile(join(root, briefPath), slice.brief.text);
@@ -199,6 +200,60 @@ test('bundle export enforces the retained-byte cap while reading baselines', asy
     await writeFile(slicePath, JSON.stringify(slice));
     const { plan } = await registerFirstSlice(root);
     await assert.rejects(exportSliceBundle({ projectRoot: root, changePath: CHANGE_PATH, sliceId: plan.id, outputDir: join(outputParent, 'too-large') }), { code: 'BUNDLE_SIZE_LIMIT' });
+  } finally {
+    await cleanup(root);
+    await cleanup(outputParent);
+  }
+});
+
+test('bundle export enforces the resolved budget on the registered compiled context', async () => {
+  const root = await project();
+  const outputParent = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-bundle-output-'));
+  try {
+    const slicePath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/slice.json');
+    const descriptor = JSON.parse(await readFile(slicePath, 'utf8'));
+    const original = await validateChange(root, CHANGE_PATH);
+    await writeFile(join(root, 'c.json'), original.slices[0].context.text);
+    descriptor.context = 'c.json';
+    await writeFile(slicePath, JSON.stringify(descriptor));
+    const shortDescriptor = await validateChange(root, CHANGE_PATH);
+    descriptor.budget.maxCompiledContextBytes = shortDescriptor.slices[0].compiled.bytes;
+    await writeFile(slicePath, JSON.stringify(descriptor));
+    const { plan } = await registerFirstSlice(root);
+    await assert.rejects(
+      exportSliceBundle({ projectRoot: root, changePath: CHANGE_PATH, sliceId: plan.id, outputDir: join(outputParent, 'over-budget') }),
+      { code: 'CONTEXT_BUDGET_EXCEEDED' },
+    );
+  } finally {
+    await cleanup(root);
+    await cleanup(outputParent);
+  }
+});
+
+test('bundle export refuses a registered credential path before controller reads it', async () => {
+  const root = await project();
+  const outputParent = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-bundle-output-'));
+  try {
+    const validated = await validateChange(root, CHANGE_PATH);
+    await writeFile(join(root, '.env.md'), validated.slices[0].brief.text);
+    const { plan } = await registerFirstSlice(root, { briefPathOverride: '.env.md' });
+    const previousReadFile = fsPromises.readFile;
+    let credentialReads = 0;
+    fsPromises.readFile = async function hookedReadFile(path, ...args) {
+      if (String(path).endsWith('/.env.md')) credentialReads += 1;
+      return previousReadFile.call(this, path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        exportSliceBundle({ projectRoot: root, changePath: CHANGE_PATH, sliceId: plan.id, outputDir: join(outputParent, 'credential-input') }),
+        { code: 'ARTIFACT_CREDENTIAL_PATH' },
+      );
+    } finally {
+      fsPromises.readFile = previousReadFile;
+      syncBuiltinESMExports();
+    }
+    assert.equal(credentialReads, 0);
   } finally {
     await cleanup(root);
     await cleanup(outputParent);
