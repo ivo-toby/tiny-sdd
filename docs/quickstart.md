@@ -79,6 +79,13 @@ the 50 real failure-triage labels required by issue #32. The current checkout
 does not contain those real labels or measured provider runs; the evaluator
 reports the missing evidence as `UNKNOWN`/warnings.
 
+The offline [Laya training-data exporter](laya-training.md) prepares a
+deterministic, digest-bound bundle from real human-reviewed failure-triage
+cases. It verifies evidence before writing new `train.jsonl`,
+`validation.jsonl`, and `test.jsonl` files, and documents a pinned, unexecuted
+training and calibration recipe; it does not run Python, Laya, inference, or
+training.
+
 Use `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs` wherever the examples below
 say `tinysdd`. `--project /path/to/project` selects the target explicitly;
 otherwise commands use the current directory. No global npm/Pi setup is changed.
