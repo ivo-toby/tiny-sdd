@@ -253,7 +253,7 @@ function excludedProjectPath(path, excluded) {
   return excluded.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
-async function readAndCopyFile(source, target, info, state, label) {
+async function readAndCopyFile(source, target, info, state, label, { mountReadable = false } = {}) {
   let input;
   let output;
   try {
@@ -265,7 +265,7 @@ async function readAndCopyFile(source, target, info, state, label) {
     if (state.bytes > FEATURE_INTEGRATION_MAX_TREE_BYTES || opened.size > FEATURE_INTEGRATION_MAX_TREE_BYTES - state.bytes) {
       throw tinyError('FEATURE_INTEGRATION_INPUT_LIMIT', `integration input exceeds ${FEATURE_INTEGRATION_MAX_TREE_BYTES} bytes`, { limit: FEATURE_INTEGRATION_MAX_TREE_BYTES });
     }
-    const targetMode = (opened.mode & 0o7777) | 0o400;
+    const targetMode = (opened.mode & 0o7777) | 0o400 | (mountReadable ? 0o0444 : 0);
     output = await open(target, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, targetMode);
     await chmod(target, targetMode);
     const hash = createHash('sha256');
@@ -298,12 +298,14 @@ async function readAndCopyFile(source, target, info, state, label) {
  * Copy a bounded, regular-file-only tree into a disposable retained directory.
  * The returned identity describes the bytes actually mounted into runCheck.
  */
-export async function copyIntegrationTree(source, destination, { excluded = [], identityAlgorithm = 'sha256-candidate-tree-v1' } = {}) {
+export async function copyIntegrationTree(source, destination, { excluded = [], identityAlgorithm = 'sha256-candidate-tree-v1', mountReadable = false } = {}) {
   await assertNoSymlinkPath(source, { allowMissing: false, requireDirectory: true });
   const sourceRealpath = await realpath(source);
   if (sourceRealpath !== source) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration source must be canonical: ${source}`, { path: source });
   await assertNoSymlinkPath(destination, { allowMissing: true, requireDirectory: false });
-  await mkdir(destination, { recursive: true, mode: 0o700 });
+  const destinationMode = mountReadable ? 0o755 : 0o700;
+  await mkdir(destination, { recursive: true, mode: destinationMode });
+  if (mountReadable) await chmod(destination, destinationMode);
   const state = { bytes: 0, files: 0, entries: 0 };
   const entries = [];
   async function visit(current, target, prefix = '') {
@@ -325,13 +327,13 @@ export async function copyIntegrationTree(source, destination, { excluded = [], 
       if (info.isSymbolicLink()) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input contains a symlink: ${path}`, { path });
       if (info.isDirectory()) {
         if (await realpath(from) !== from) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input directory is not canonical: ${path}`, { path });
-        const targetMode = (info.mode & 0o7777) | 0o700;
+        const targetMode = (info.mode & 0o7777) | 0o700 | (mountReadable ? 0o0555 : 0);
         await mkdir(to, { recursive: false, mode: targetMode });
         await chmod(to, targetMode);
         entries.push({ path, kind: 'directory', mode: targetMode });
         await visit(from, to, path);
       } else if (info.isFile()) {
-        const copied = await readAndCopyFile(from, to, info, state, path);
+        const copied = await readAndCopyFile(from, to, info, state, path, { mountReadable });
         entries.push({ path, ...copied });
       } else {
         throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input contains a special file: ${path}`, { path });
@@ -493,6 +495,7 @@ async function createArtifact(root, id) {
   if (!/^[0-9a-f-]{20,64}$/u.test(id)) throw tinyError('FEATURE_INTEGRATION_CONFIG', 'feature integration artifact id is invalid');
   const artifact = await assertInternalPath(root, ['.tinysdd', 'runs', 'feature-integration', id], { allowMissing: true });
   await ensureDirectory(artifact);
+  await chmod(artifact, 0o755);
   return artifact;
 }
 
@@ -511,6 +514,7 @@ async function copyDependencySnapshots(root, destination, dependencyMounts) {
     const copied = await copyIntegrationTree(resolved.absolutePath, retainedPath, {
       excluded: ['.git', '.tinysdd'],
       identityAlgorithm: 'sha256-dependency-tree-v1',
+      mountReadable: true,
     });
     dependencies.push({ target, sourcePath: target, retainedPath, identity: copied.identity });
   }
@@ -525,6 +529,7 @@ async function copyDependencySnapshotsFromRetained(sourceRoot, dependencyMounts,
     const copied = await copyIntegrationTree(source, retainedPath, {
       excluded: [],
       identityAlgorithm: 'sha256-dependency-tree-v1',
+      mountReadable: true,
     });
     dependencies.push({ target, retainedPath, identity: copied.identity });
   }
@@ -852,7 +857,7 @@ export async function featureIntegrationFreshness(projectRoot, {
     for (const [index, dependency] of value.dependencies.entries()) {
       const temporary = await makeTemporaryDirectory('tinysdd-feature-dependency-');
       try {
-        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1' });
+        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true });
         retainedDependencies.push({ target: dependency.target, identity: copied.identity });
       } finally {
         await rm(temporary, { recursive: true, force: true }).catch(() => {});

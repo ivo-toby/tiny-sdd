@@ -18,9 +18,22 @@ async function project() {
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-usage-cli-'));
   await mkdir(join(root, 'docs'), { recursive: true });
   await writeFile(join(root, 'docs', 'brief.md'), '# Brief\n');
+  await mkdir(join(root, 'src'), { recursive: true });
+  await mkdir(join(root, 'tests'), { recursive: true });
+  await writeFile(join(root, 'src', 'entrypoint.mjs'), 'export const entrypoint = true;\n');
+  await writeFile(join(root, 'tests', 'feature-integration-cli.mjs'), 'if (process.cwd().includes(".tinysdd")) process.exit(1);\n');
   await mkdir(join(root, '.tinysdd', 'reviews'), { recursive: true });
   await writeFile(join(root, '.tinysdd', 'reviews', 'evidence.md'), 'accepted evidence\n');
   await initProject(root);
+  await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+    schemaVersion: 1,
+    workers: {},
+    featureIntegration: {
+      argv: ['node', 'tests/feature-integration-cli.mjs'],
+      testPaths: ['tests/feature-integration-cli.mjs'],
+      entrypoints: ['src/entrypoint.mjs'],
+    },
+  }));
   return root;
 }
 
@@ -53,7 +66,7 @@ function parseSingleJson(result) {
 }
 
 async function acceptedFeature(root) {
-  await addTask(root, { id: 'one', feature: 'broker', brief: 'docs/brief.md', allow: ['src/one.mjs'] });
+  await addTask(root, { id: 'one', feature: 'broker', brief: 'docs/brief.md', allow: ['src/one.mjs'], protect: ['tests/feature-integration-cli.mjs'] });
   await approveTask(root, { id: 'one', by: 'operator', reason: 'approved scope' });
   await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: '.tinysdd/reviews/evidence.md', by: 'reviewer' });
 }
@@ -87,7 +100,7 @@ test('usage record validates finite safe integers, attribution, and strict flags
   }
 });
 
-test('usage import, report, and feature accept preserve a frozen CLI snapshot', async () => {
+test('usage import, report, and feature accept preserve a frozen CLI snapshot', { skip: process.platform !== 'linux' }, async () => {
   const root = await project();
   try {
     await acceptedFeature(root);

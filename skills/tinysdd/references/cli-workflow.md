@@ -232,6 +232,29 @@ harness/model/operator acceptance remains pending (`Refs #31`).
 
 After reviewing every active labelled task, close a feature window explicitly:
 
+Set `featureIntegration` in `.tinysdd/config.json` first. Its `argv` array is
+passed to the host check runner without a shell, and `testPaths` must identify
+protected feature tests while `entrypoints` identifies real files. For example:
+
+```json
+{
+  "schemaVersion": 1,
+  "workers": {},
+  "featureIntegration": {
+    "argv": ["node", "tests/reservations-integration.mjs"],
+    "testPaths": ["tests/reservations-integration.mjs"],
+    "entrypoints": ["src/reservations.mjs"]
+  }
+}
+```
+
+`feature accept` executes the configured command on retained isolated bytes and
+records its bounded result and identities in the acceptance event. It refuses
+when configuration, the Linux sandbox, the check, the protected test, the
+entrypoint, or any retained project/dependency bytes are unavailable or stale.
+Historical events without this optional proof remain readable but are reported
+as ineligible; their frozen usage report is unchanged.
+
 ```sh
 tinysdd feature accept --feature reservations --by operator --reason 'Reviewed the feature window'
 tinysdd feature report --feature reservations

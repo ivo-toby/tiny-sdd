@@ -315,6 +315,30 @@ known subtotals and their missing-value provenance stay visible. Use the
 explicit feature decision after every currently active labelled task is
 accepted:
 
+Configure the host-run integration check before accepting a feature. The command
+is typed argv, never shell text; the declared test paths must be protected feature
+tests and the entrypoints must exist:
+
+```json
+{
+  "schemaVersion": 1,
+  "workers": {},
+  "featureIntegration": {
+    "argv": ["node", "tests/reservations-integration.mjs"],
+    "testPaths": ["tests/reservations-integration.mjs"],
+    "entrypoints": ["src/reservations.mjs"]
+  }
+}
+```
+
+`feature accept` runs this command through TinySDD's bounded host check runner on
+retained project and dependency bytes. Missing configuration, an unavailable
+Linux sandbox, a failed or timed out check, and project/configuration drift all
+refuse acceptance. A successful run retains its result, command identity,
+tested bytes and dependency identities; `feature report --json` marks the proof
+stale when any of those inputs changes. macOS currently reports the runner as
+unavailable.
+
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'
 tinysdd feature report --feature reservations

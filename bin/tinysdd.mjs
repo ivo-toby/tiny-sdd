@@ -94,6 +94,8 @@ from short-lived interactive shells. Poll it with \`worker status\`.
 Stopping a launch with \`worker stop\` finalizes the run with outcome \`stopped\`,
 keeping its evidence and candidate.
 Use --json for machine-readable results, including failed worker evidence.
+Feature acceptance requires featureIntegration in .tinysdd/config.json; TinySDD
+executes that typed command through the host check runner before recording an event.
 `;
 
 function cliError(message, code = 'INVALID_ARGUMENT') {
