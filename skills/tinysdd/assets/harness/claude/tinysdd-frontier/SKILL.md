@@ -39,7 +39,10 @@ preparation guidance; it does not grant approval or add a controller handler.
 When installing a phase as a standalone skill, copy its parent directory with
 the sibling `references/` and `templates/` directories intact so its relative
 links continue to resolve; register the router or explicit phase route rather
-than assuming nested directories become commands automatically.
+than assuming nested directories become commands automatically. Those assets
+are prompt guidance only: they do not include the TinySDD checkout's CLI,
+scripts, parsers, schemas or docs. Keep a canonical TinySDD checkout root and
+target project root available when running the recipes below.
 
 ## Preparation rules
 
@@ -105,27 +108,55 @@ consumes a slice. Run the read-only validator and use every value from its
 registrationPlan entry. Materialize exact descriptor bytes at the fixed
 controller paths, then register dependencies in topological order:
 
-    node scripts/validate-change.mjs --project /absolute/project \
-      --change changes/feature/change.json --ready --json
+Set these roots once before running the commands, from any working directory:
 
-    mkdir -p .tinysdd/tasks
-    cp /descriptor/SLICE_ID/brief.md .tinysdd/tasks/SLICE_ID.md
-    cp /descriptor/SLICE_ID/context.json .tinysdd/tasks/SLICE_ID.context.json
-    cp /descriptor/SLICE_ID/checks.json .tinysdd/tasks/SLICE_ID.checks.json
+    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+    TARGET_PROJECT=/absolute/path/to/project
+    CHANGE_ROOT_RELATIVE=changes/feature
+    CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
+    TASK_ROOT_RELATIVE=.tinysdd/tasks
+    TASK_ROOT="$TARGET_PROJECT/$TASK_ROOT_RELATIVE"
+    SLICE_ID=SLICE_ID
+    BRIEF_SOURCE_RELATIVE=changes/feature/slices/SLICEDIR/brief.md
+    CONTEXT_SOURCE_RELATIVE=changes/feature/slices/SLICEDIR/context.json
+    CHECKS_SOURCE_RELATIVE=changes/feature/slices/SLICEDIR/checks.json
 
-    tinysdd --project /absolute/project task add --id SLICE_ID --feature FEATURE_ID \
-      --brief .tinysdd/tasks/SLICE_ID.md \
-      --context .tinysdd/tasks/SLICE_ID.context.json \
-      --checks .tinysdd/tasks/SLICE_ID.checks.json \
+`TINYSDD_CHECKOUT` contains the CLI, scripts and schemas. `TARGET_PROJECT` is
+the canonical target checkout that owns the descriptor set and `.tinysdd/`
+state. Keep `CHANGE_RELATIVE` project-relative: the validator rejects an
+absolute `--change` value even when `--project` is absolute. Set the three
+`*_SOURCE_RELATIVE` values from the selected slice descriptor's actual
+`brief`, `context` and `checks` paths; do not derive a folder from `SLICE_ID`.
+
+    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --ready --json
+
+    mkdir -p "$TASK_ROOT"
+    cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
+    cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
+    cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
+
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add \
+      --id "$SLICE_ID" --feature FEATURE_ID \
+      --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
+      --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
+      --checks "$TASK_ROOT_RELATIVE/$SLICE_ID.checks.json" \
       --allow PLAN_ALLOW_PATHS \
       --protect PLAN_PROTECT_PATHS \
       --preparation PLAN_PREPARATION_PATHS \
       --depends-on PLAN_DEPENDENCY_IDS
 
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      task approve --id "$SLICE_ID" --by OPERATOR --reason 'Reviewed the slice packet'
+
 Copy every allow, protect, preparation and dependsOn value from the exact plan;
-do not shorten or invent lists. Omit --depends-on when the plan entry is empty.
-Obtain normal operator approval with task approve. Export only a freshly
-approved task and accepted dependency closure with scripts/export-slice.mjs.
+do not shorten or invent lists. Omit `--depends-on` when the plan entry is
+empty. Export only a freshly approved task and accepted dependency closure:
+
+    BUNDLE_OUT=/absolute/canonical/tmp/SLICE_ID-bundle
+    node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+      --slice "$SLICE_ID" --out "$BUNDLE_OUT" --json
 
 The foreign harness is a consumer of the packet. It does not create a new
 approval, phase gate, plan approval, verification result or acceptance event.

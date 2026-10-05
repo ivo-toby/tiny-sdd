@@ -48,20 +48,43 @@ disconnected from that caller. Direct-import slice tests cannot substitute for
 this integration check. Ensure each wiring obligation names the owning slice and
 cites its entrypoint.
 
-Before registration, run:
+The phase file is prompt guidance; a standalone install does not include the
+TinySDD CLI, validator, exporter, schemas or repository docs. Before
+registration, set these roots from any working directory:
 
-    node scripts/validate-change.mjs --project /absolute/project \
-      --change changes/FEATURE/change.json --ready --json
+    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+    TARGET_PROJECT=/absolute/path/to/project
+    CHANGE_ROOT_RELATIVE=changes/FEATURE
+    CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
+    TASK_ROOT_RELATIVE=.tinysdd/tasks
+    TASK_ROOT="$TARGET_PROJECT/$TASK_ROOT_RELATIVE"
+    SLICE_ID=SLICE_ID
+    BRIEF_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/brief.md
+    CONTEXT_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/context.json
+    CHECKS_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/checks.json
 
-Read the complete registrationPlan. Materialize exact brief, context and checks
-bytes at the printed .tinysdd/tasks paths. Register each dependency first and
-pass every plan allow, protect, preparation and dependsOn value to task add.
-Do not shorten a plan list or add an approval flag:
+Run the validator with the target project selected explicitly. Keep the change
+argument project-relative; the validator rejects an absolute change path:
 
-    tinysdd task add --id SLICE_ID --feature FEATURE \
-      --brief .tinysdd/tasks/SLICE_ID.md \
-      --context .tinysdd/tasks/SLICE_ID.context.json \
-      --checks .tinysdd/tasks/SLICE_ID.checks.json \
+    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --ready --json
+
+Read the complete registrationPlan. Set the three `*_SOURCE_RELATIVE` values
+from the selected slice descriptor's actual `brief`, `context` and `checks`
+paths; a slice folder need not match its `id`. Materialize exact bytes at the
+printed target paths. Register each dependency first and pass every
+plan allow, protect, preparation and dependsOn value to task add. Do not
+shorten a plan list or add an approval flag:
+
+    mkdir -p "$TASK_ROOT"
+    cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
+    cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
+    cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add \
+      --id "$SLICE_ID" --feature FEATURE \
+      --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
+      --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
+      --checks "$TASK_ROOT_RELATIVE/$SLICE_ID.checks.json" \
       --allow PLAN_ALLOW --protect PLAN_PROTECT \
       --preparation PLAN_PREPARATION --depends-on PLAN_DEPENDS
 
@@ -69,8 +92,15 @@ Use the actual operator attribution and reason. Omit --depends-on when the plan
 entry is empty. The validator is read-only. Task approval remains the existing
 implement gate and must be obtained separately.
 
-After normal task approval and accepted prerequisites, export with
-scripts/export-slice.mjs if a foreign harness needs a portable bundle. Export
-does not run checks, apply a candidate or accept a feature. Stop when a
+After normal task approval and accepted prerequisites, export with the checkout
+exporter if a foreign harness needs a portable bundle. Export does not run
+checks, apply a candidate or accept a feature:
+
+    BUNDLE_OUT=/absolute/canonical/tmp/SLICE_ID-bundle
+    node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+      --slice "$SLICE_ID" --out "$BUNDLE_OUT" --json
+
+Stop when a
 required fact is missing, a plan/descriptor mismatch appears, or a requested
 change alters approval, acceptance or verification meaning.

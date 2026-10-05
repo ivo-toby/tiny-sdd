@@ -123,7 +123,8 @@ they are outside this skill.
 Show new product decisions and task boundaries to the operator. Follow actual
 approval or delegated authority; a label in a file is not authorization.
 Delegation can cover routine progression and bounded revisions, but not new
-product meaning or external effects. Without applicable delegation, ask for
+product meaning or external effects. Record its scope and stopping condition.
+Without applicable delegation, ask for
 approval and wait before implementation. If repository policy requires separate
 test approval, obtain that too.
 

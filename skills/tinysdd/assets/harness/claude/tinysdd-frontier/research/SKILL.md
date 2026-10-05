@@ -11,7 +11,10 @@ implementation, approve a plan, or invoke a model or provider.
 
 Use the [context manifest template](../templates/context.json) and the shared
 [phase workflow reference](../references/phase-workflow.md); preserve this
-directory layout when installing the phase skill in another harness.
+directory layout when installing the phase skill in another harness. This file
+is prompt guidance only: a standalone install does not include the TinySDD CLI,
+phase handler, schemas or repository docs. Keep the checkout and target roots
+from the phase workflow reference available for the human gate.
 
 Read the proposal and repository instructions first. Inspect only the source,
 callers, tests, configuration and dependency metadata needed to answer the
@@ -48,14 +51,20 @@ manifest. Retain the compiled excerpts and their digests. Do not cite a
 directory listing, copy an entire file when a range is enough, or replace an
 excerpt with your interpretation.
 
-If the project enables the optional research phase policy, put the reviewed
-proposal and manifest at the paths passed to the human gate and run:
+If the project enables the optional research phase policy, set the TinySDD
+checkout and canonical target project roots from any working directory. Put the
+reviewed proposal and manifest in the target paths passed to the human gate:
 
-    tinysdd phase record --phase research --feature FEATURE \
+    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+    TARGET_PROJECT=/absolute/path/to/project
+
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      phase record --phase research --feature FEATURE \
       --proposal changes/FEATURE/proposal.md \
       --context changes/FEATURE/research.context.json \
       --by OPERATOR --reason 'Reviewed the cited research inputs'
-    tinysdd phase status --feature FEATURE
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      phase status --feature FEATURE
 
 Only the configured human research handler is implemented. A frontier,
 deterministic or automatic mode reports unavailable; stop with that observed

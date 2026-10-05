@@ -39,6 +39,30 @@ Use the templates in templates/README.md as starting points and docs/artifact-fo
 as the schema authority. Do not introduce another requirements file, task
 descriptor, approval flag or feature-test format.
 
+## Command roots
+
+The phase files and templates are prompt assets; they do not bundle the
+TinySDD CLI, scripts, parsers, schemas or repository docs. Run the command
+recipes from any working directory after setting these roots:
+
+    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+    TARGET_PROJECT=/absolute/path/to/project
+    CHANGE_ROOT_RELATIVE=changes/FEATURE
+    CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
+    TASK_ROOT_RELATIVE=.tinysdd/tasks
+    TASK_ROOT="$TARGET_PROJECT/$TASK_ROOT_RELATIVE"
+    SLICE_ID=FEATURE-s1
+    BRIEF_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/brief.md
+    CONTEXT_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/context.json
+    CHECKS_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/checks.json
+
+`TINYSDD_CHECKOUT` supplies `bin/`, `scripts/`, schemas and docs. The canonical
+`TARGET_PROJECT` owns the descriptor set and `.tinysdd/` state. Keep
+`CHANGE_RELATIVE` project-relative because the validator rejects an absolute
+`--change` value; all TinySDD CLI calls select `TARGET_PROJECT` explicitly. Set
+the three `*_SOURCE_RELATIVE` values from the selected slice descriptor's
+actual `brief`, `context` and `checks` paths; a folder need not match `SLICE_ID`.
+
 ## Evidence rules
 
 Read the repository instructions, relevant source, callers and existing checks
@@ -69,12 +93,15 @@ caller, return to research and mark the gap UNKNOWN rather than guessing.
 
 The current phase CLI implements only the human research handler:
 
-    tinysdd phase record --phase research --feature FEATURE \
-      --proposal changes/FEATURE/proposal.md \
-      --context changes/FEATURE/research.context.json \
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      phase record --phase research --feature FEATURE \
+      --proposal "$CHANGE_ROOT_RELATIVE/proposal.md" \
+      --context "$CHANGE_ROOT_RELATIVE/research.context.json" \
       --by OPERATOR --reason 'Reviewed the cited research inputs'
-    tinysdd phase status --feature FEATURE
-    tinysdd phase advance --from research --to plan --feature FEATURE \
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      phase status --feature FEATURE
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      phase advance --from research --to plan --feature FEATURE \
       --by OPERATOR --reason 'Research is current and complete'
 
 Configure it explicitly before recording a decision:
@@ -141,20 +168,37 @@ to the reviewer.
 
 Run the existing validator before registration:
 
-    node scripts/validate-change.mjs --project /absolute/project \
-      --change changes/FEATURE/change.json --ready --json
+    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --ready --json
 
 Treat readiness errors as blockers. Treat expected-file ownership or advisory
 budget warnings as preparation feedback, then resolve them or carry them into
-the operator review. Materialize the exact brief.md, context.json and checks.json
-bytes at the fixed .tinysdd/tasks/ paths printed in the registrationPlan. Copy
-every allow, protect, preparation and dependsOn value from that plan into task
-add, in topological order. Do not shorten the lists by hand. Export only after
-the selected task and its accepted dependencies are freshly approved:
+the operator review. The validator prints destination paths, not source
+descriptor paths; read the selected slice descriptor to set the three source
+variables above. Materialize the exact descriptor bytes at the target paths
+printed in the registrationPlan. Copy every allow, protect, preparation and
+dependsOn value from that plan into task add, in topological order. Do not
+shorten the lists by hand:
 
-    node scripts/export-slice.mjs --project /absolute/project \
-      --change changes/FEATURE/change.json --slice FEATURE-s1 \
-      --out /absolute/canonical/tmp/FEATURE-s1-bundle --json
+    mkdir -p "$TASK_ROOT"
+    cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
+    cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
+    cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add \
+      --id "$SLICE_ID" --feature FEATURE \
+      --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
+      --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
+      --checks "$TASK_ROOT_RELATIVE/$SLICE_ID.checks.json" \
+      --allow PLAN_ALLOW --protect PLAN_PROTECT \
+      --preparation PLAN_PREPARATION --depends-on PLAN_DEPENDS
+
+Export only after the selected task and its accepted dependencies are freshly
+approved:
+
+    BUNDLE_OUT=/absolute/canonical/tmp/FEATURE-s1-bundle
+    node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --slice FEATURE-s1 \
+      --out "$BUNDLE_OUT" --json
 
 The validator and exporter are read-only with respect to source code and
 controller approval. They do not run slice or feature tests.
@@ -212,7 +256,8 @@ specify, research, plan, slice, write-tests, review and rescue. Record an
 observed frontier row only when model identity, attribution and nonnegative
 token counts are known:
 
-    tinysdd usage record --phase plan --model frontier/model \
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      usage record --phase plan --model frontier/model \
       --input INPUT --output OUTPUT --reasoning REASONING --feature FEATURE
 
 Import external records only through the validated usage-import envelope with

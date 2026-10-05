@@ -94,16 +94,27 @@ Use the phases in that order:
    Validate with the existing read-only script before registration.
 
 The frontier phase files prepare artifacts only. A successful validator,
-frontmatter value, or phase label does not approve anything. The current phase
-CLI supports only the human research gate:
+frontmatter value, or phase label does not approve anything. They do not bundle
+the TinySDD CLI, scripts or schemas. Set these roots when working from any
+directory; `TARGET_PROJECT` owns the descriptor set and controller state:
 
 ~~~sh
-tinysdd phase record --phase research --feature reservations \
+TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+TARGET_PROJECT=/absolute/path/to/project
+~~~
+
+The current phase CLI supports only the human research gate:
+
+~~~sh
+node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+  phase record --phase research --feature reservations \
   --proposal changes/reservations/proposal.md \
   --context changes/reservations/research.context.json \
   --by operator --reason 'Reviewed the cited research inputs'
-tinysdd phase status --feature reservations
-tinysdd phase advance --from research --to plan --feature reservations \
+node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+  phase status --feature reservations
+node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+  phase advance --from research --to plan --feature reservations \
   --by operator --reason 'Research is current and complete'
 ~~~
 
@@ -129,21 +140,32 @@ For a portable change descriptor, validate the bounded preparation and print a
 read-only topological registration plan:
 
 ```sh
-node scripts/validate-change.mjs --project /path/to/project \
-  --change changes/example/change.json --json
+CHANGE_ROOT_RELATIVE=changes/example
+CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
+TASK_ROOT_RELATIVE=.tinysdd/tasks
+TASK_ROOT="$TARGET_PROJECT/$TASK_ROOT_RELATIVE"
+SLICE_ID=s1
+BRIEF_SOURCE_RELATIVE=changes/example/slices/s1/brief.md
+CONTEXT_SOURCE_RELATIVE=changes/example/slices/s1/context.json
+CHECKS_SOURCE_RELATIVE=changes/example/slices/s1/checks.json
+
+node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
+  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --json
 ```
 
-The validator only prints the plan. For each slice, copy the exact descriptor
-inputs to the fixed paths in that plan before `task add` and approval:
+The validator only prints destination paths in the plan. Read the selected
+slice descriptor's actual `brief`, `context` and `checks` paths; a source folder
+need not match the slice ID. Copy those exact descriptor inputs to the fixed
+target paths before `task add` and approval:
 
 ```sh
-mkdir -p .tinysdd/tasks
-cp changes/example/slices/s1/brief.md .tinysdd/tasks/s1.md
-cp changes/example/slices/s1/context.json .tinysdd/tasks/s1.context.json
-cp changes/example/slices/s1/checks.json .tinysdd/tasks/s1.checks.json
-tinysdd task add --id s1 --feature example \
-  --brief .tinysdd/tasks/s1.md --context .tinysdd/tasks/s1.context.json \
-  --checks .tinysdd/tasks/s1.checks.json \
+mkdir -p "$TASK_ROOT"
+cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
+cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
+cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
+node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add --id "$SLICE_ID" --feature example \
+  --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
+  --checks "$TASK_ROOT_RELATIVE/$SLICE_ID.checks.json" \
   --preparation specs/example.md \
   --allow src/example.mjs,tests/example.test.mjs --protect tests/contract.test.mjs
 ```
@@ -162,9 +184,10 @@ approved slice, use a new directory under an existing canonical parent; the
 exporter checks packet identity and writes no project files or controller state:
 
 ```sh
-node scripts/export-slice.mjs --project /path/to/project \
-  --change changes/example/change.json --slice broker-s1 \
-  --out /absolute/canonical/tmp/broker-s1-bundle --json
+BUNDLE_OUT=/absolute/canonical/tmp/broker-s1-bundle
+node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
+  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --slice broker-s1 \
+  --out "$BUNDLE_OUT" --json
 ```
 
 Use the optional `--feature NAME` label to group slices, then filter the view

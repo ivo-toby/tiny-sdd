@@ -43,10 +43,21 @@ per the #82 decision. Do not authorize deletion, filesystem type changes,
 preparation or protected-input edits, arbitrary inference commands, or a
 provider fallback. Keep protected feature tests in every active task scope.
 
-Run the read-only validator as soon as the descriptor set is coherent:
+The phase file is prompt guidance; a standalone install does not include the
+TinySDD CLI, validator, schemas or repository docs. From any working directory,
+set the checkout that supplies those tools and the canonical target project
+that owns the descriptor set:
 
-    node scripts/validate-change.mjs --project /absolute/project \
-      --change changes/FEATURE/change.json --json
+    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+    TARGET_PROJECT=/absolute/path/to/project
+    CHANGE_ROOT_RELATIVE=changes/FEATURE
+    CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
+
+Run the read-only validator as soon as the descriptor set is coherent. Keep
+`CHANGE_RELATIVE` project-relative; `--project` selects the target root:
+
+    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --json
 
 Fix structural errors and missing citations. Treat expected ownership and
 advisory budget warnings as explicit preparation feedback, not hidden policy.
@@ -56,7 +67,8 @@ approved-requirements sections and openDecisions are empty.
 A plan entry is not plan artifact approval. The current phase CLI's
 research-to-plan advance records phase entry only:
 
-    tinysdd phase advance --from research --to plan --feature FEATURE \
+    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+      phase advance --from research --to plan --feature FEATURE \
       --by OPERATOR --reason 'Research is current and complete'
 
 Do not use that command, a successful validator, a label or a descriptor field
