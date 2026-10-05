@@ -114,6 +114,7 @@ if (candidate && mutation !== 'required-patch-absent') {
   }
 }
 if (mutation === 'out-of-scope') writeFileSync(join(process.cwd(), 'unexpected.txt'), 'out of scope\\n');
+if (mutation === 'ordinary-extra') writeFileSync(join(process.cwd(), 'ordinary-extra.mjs'), 'export {};');
 if (mutation === 'deletion') unlinkSync(join(process.cwd(), 'src', 'tokenize.mjs'));
 if (mutation === 'protected-file') writeFileSync(join(process.cwd(), 'src', 'option.mjs'), '/* retained protected file */\\n', { flag: 'a' });
 if (mutation === 'protected-test') writeFileSync(join(process.cwd(), 'tests', 'visible.test.mjs'), '\\n// retained protected test\\n', { flag: 'a' });
@@ -351,6 +352,22 @@ test('records all four hard gates independently and retains the changed candidat
       const candidateManifest = JSON.parse(await readFile(join(run.outputRoot, value.artifacts['candidate-files'].path), 'utf8'));
       await lstat(join(run.outputRoot, candidateManifest.root));
     }
+  } finally {
+    await rm(run.root, { recursive: true, force: true });
+  }
+});
+
+test('retains an ordinary extra candidate file without an out-of-scope hard gate', async () => {
+  const run = await runSuite('reference', { repeat: 1, mutations: { 'copper-tokenize': 'ordinary-extra' } });
+  try {
+    const cases = Object.fromEntries((await caseResults(run)).map(({ value }) => [value.challenge.id, value]));
+    const value = cases['copper-tokenize'];
+    assert.equal(value.outcome, 'completed');
+    assert.equal(value.scopeViolations.length, 0);
+    assert.equal(value.hardGates.outOfScopeEdit, false);
+    assert.equal(value.changedPaths.some(({ path, change }) => path === 'ordinary-extra.mjs' && change === 'created'), true);
+    const candidateManifest = JSON.parse(await readFile(join(run.outputRoot, value.artifacts['candidate-files'].path), 'utf8'));
+    await lstat(join(run.outputRoot, candidateManifest.root, 'ordinary-extra.mjs'));
   } finally {
     await rm(run.root, { recursive: true, force: true });
   }
