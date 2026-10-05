@@ -165,11 +165,11 @@ function publicProvider(provider) {
   const result = {
     id: provider.id,
     configSha256: provider.configSha256,
-    model: provider.model,
-    availability: provider.availability,
+    model: clone(provider.model),
+    availability: clone(provider.availability),
   };
-  if (provider.calibration !== DECISION_UNKNOWN) result.calibration = provider.calibration;
-  if (provider.thresholds !== DECISION_UNKNOWN) result.thresholds = provider.thresholds;
+  if (provider.calibration !== DECISION_UNKNOWN) result.calibration = clone(provider.calibration);
+  if (provider.thresholds !== DECISION_UNKNOWN) result.thresholds = clone(provider.thresholds);
   return result;
 }
 
@@ -389,22 +389,27 @@ export function validateDecisionProviderResponse(value, { question, inputSha256,
   if (response.providerId !== undefined && response.providerId !== expectedProvider.id) invalid('response.providerId does not match the supplied provider');
   if (response.providerConfigSha256 !== undefined && response.providerConfigSha256 !== expectedProvider.configSha256) invalid('response.providerConfigSha256 does not match the supplied provider');
 
-  const suppliedValues = ['value', 'choice', 'score', 'noul'].filter((key) => response[key] !== undefined);
-  if (suppliedValues.length > 2 || (suppliedValues.length === 2 && !suppliedValues.includes('value'))) invalid('response contains conflicting value fields');
+  const typedKeys = ['choice', 'score', 'noul'];
+  const answerKey = normalizedQuestion.type;
+  for (const key of typedKeys) {
+    if (key !== answerKey && response[key] !== undefined) invalid(`response.${key} does not apply to a ${answerKey} question`);
+  }
+  const answerAliases = [answerKey, 'value'].filter((key) => response[key] !== undefined);
+  if (answerAliases.length === 0) invalid(`${answerKey} response requires ${answerKey} or value`);
+  if (answerAliases.length === 2 && !Object.is(response[answerAliases[0]], response[answerAliases[1]])) {
+    invalid(`response.${answerAliases[0]} and response.value disagree`);
+  }
   let valueResult;
   if (normalizedQuestion.type === 'choice') {
-    const choice = response.choice ?? response.value;
-    if (choice === undefined) invalid('choice response requires choice');
+    const choice = response[answerAliases[0]];
     valueResult = label(choice, 'response.choice');
     if (!normalizedQuestion.choices.some((entry) => Object.is(entry, valueResult))) invalid('response.choice is not one of the question choices');
   } else if (normalizedQuestion.type === 'score') {
-    const score = response.score ?? response.value;
-    if (score === undefined) invalid('score response requires score');
+    const score = response[answerAliases[0]];
     valueResult = finiteNumber(score, 'response.score');
     if (valueResult < normalizedQuestion.minimum || valueResult > normalizedQuestion.maximum) invalid('response.score is outside the question bounds');
   } else {
-    const noul = response.noul ?? response.value ?? response.probability;
-    if (noul === undefined) invalid('noul response requires noul');
+    const noul = response[answerAliases[0]];
     valueResult = probability(noul, 'response.noul');
   }
   const scalarProbability = response.probability === undefined
@@ -447,6 +452,9 @@ function baseObservation({
   responseType = DECISION_UNKNOWN,
   probabilityValues = DECISION_UNKNOWN,
   measurementValues,
+  caseId = DECISION_UNKNOWN,
+  decisionPoint = DECISION_UNKNOWN,
+  replayQuestionSha256 = DECISION_UNKNOWN,
   reason = undefined,
   replayed = false,
 }) {
@@ -455,8 +463,11 @@ function baseObservation({
     recordType: 'decision-provider-observation',
     replayed,
     timestamp: isoTimestamp(timestamp, 'observation.timestamp'),
+    caseId,
+    decisionPoint,
     inputSha256: digest(inputSha256, 'observation.inputSha256'),
-    questionSha256: digest(questionSha256, 'observation.questionSha256'),
+    questionSha256: digest(questionSha256, 'observation.questionSha256', { allowUnknown: replayed }),
+    replayQuestionSha256,
     datasetSha256: digest(datasetSha256, 'observation.datasetSha256', { allowUnknown: true }),
     predictionsSha256: digest(predictionsSha256, 'observation.predictionsSha256', { allowUnknown: true }),
     provider: publicProvider(provider),
@@ -476,7 +487,7 @@ function baseObservation({
   });
 }
 
-function offObservation({ timestamp, inputSha256, questionSha256, datasetSha256, predictionsSha256, provider, requestedMode, reason, measurementValues, replayed = false }) {
+function offObservation({ timestamp, inputSha256, questionSha256, datasetSha256, predictionsSha256, provider, requestedMode, reason, measurementValues, caseId, decisionPoint, replayQuestionSha256, replayed = false }) {
   return baseObservation({
     timestamp,
     inputSha256,
@@ -487,6 +498,9 @@ function offObservation({ timestamp, inputSha256, questionSha256, datasetSha256,
     requestedMode,
     effectiveMode: 'off',
     measurementValues,
+    caseId,
+    decisionPoint,
+    replayQuestionSha256,
     reason,
     replayed,
   });
@@ -496,6 +510,7 @@ export function validateDecisionObservationRecord(value) {
   const record = plainObject(value, 'decision observation');
   exactKeys(record, [
     'schemaVersion', 'recordType', 'replayed', 'timestamp', 'inputSha256', 'questionSha256',
+    'caseId', 'decisionPoint', 'replayQuestionSha256',
     'datasetSha256', 'predictionsSha256',
     'provider', 'model', 'requestedMode', 'effectiveMode', 'availability', 'value', 'responseType',
     'probabilities', 'calibration', 'thresholds', 'band', 'action', 'measurements', 'reason',
@@ -504,8 +519,20 @@ export function validateDecisionObservationRecord(value) {
   if (record.recordType !== 'decision-provider-observation') invalid('decision observation.recordType is unsupported');
   if (typeof record.replayed !== 'boolean') invalid('decision observation.replayed must be boolean');
   const timestamp = isoTimestamp(record.timestamp, 'decision observation.timestamp');
+  const caseId = record.caseId === undefined || record.caseId === DECISION_UNKNOWN
+    ? DECISION_UNKNOWN
+    : identifier(record.caseId, 'decision observation.caseId');
+  const decisionPoint = record.decisionPoint === undefined || record.decisionPoint === DECISION_UNKNOWN
+    ? DECISION_UNKNOWN
+    : DECISION_POINTS.includes(record.decisionPoint)
+      ? record.decisionPoint
+      : invalid('decision observation.decisionPoint is unsupported');
   const inputSha256 = digest(record.inputSha256, 'decision observation.inputSha256');
-  const questionSha256 = digest(record.questionSha256, 'decision observation.questionSha256');
+  const questionSha256 = digest(record.questionSha256, 'decision observation.questionSha256', { allowUnknown: record.replayed });
+  const replayQuestionSha256 = digest(record.replayQuestionSha256 ?? DECISION_UNKNOWN, 'decision observation.replayQuestionSha256', { allowUnknown: true });
+  if (record.replayed && (caseId === DECISION_UNKNOWN || decisionPoint === DECISION_UNKNOWN)) invalid('replayed observations require case identity');
+  if (!record.replayed && (questionSha256 === DECISION_UNKNOWN || replayQuestionSha256 !== DECISION_UNKNOWN)) invalid('direct observations require original question identity only');
+  if (record.replayed && questionSha256 !== DECISION_UNKNOWN) invalid('replayed observations cannot claim original question identity');
   const datasetSha256 = digest(record.datasetSha256, 'decision observation.datasetSha256', { allowUnknown: true });
   const predictionsSha256 = digest(record.predictionsSha256, 'decision observation.predictionsSha256', { allowUnknown: true });
   if (record.replayed && (datasetSha256 === DECISION_UNKNOWN || predictionsSha256 === DECISION_UNKNOWN)) invalid('replayed observations require dataset and predictions digests');
@@ -531,8 +558,11 @@ export function validateDecisionObservationRecord(value) {
     recordType: 'decision-provider-observation',
     replayed: record.replayed,
     timestamp,
+    caseId,
+    decisionPoint,
     inputSha256,
     questionSha256,
+    replayQuestionSha256,
     datasetSha256,
     predictionsSha256,
     provider: publicProvider(provider),
@@ -607,13 +637,14 @@ export async function observeDecision({
   if (typeof normalizedProvider.decide !== 'function') {
     return offObservation({ timestamp, inputSha256: inputValues.inputSha256, questionSha256, provider: normalizedProvider, requestedMode: mode, reason: 'provider-missing' });
   }
+  const callbackProvider = freeze(clone(publicProvider(normalizedProvider)));
   let response;
   try {
     response = await normalizedProvider.decide({
       state: freeze(clone(inputValues.input)),
       question: freeze(clone(normalizedQuestion)),
       inputSha256: inputValues.inputSha256,
-      provider: publicProvider(normalizedProvider),
+      provider: callbackProvider,
     });
   } catch {
     return offObservation({ timestamp, inputSha256: inputValues.inputSha256, questionSha256, provider: normalizedProvider, requestedMode: mode, reason: 'provider-error' });
@@ -644,10 +675,6 @@ export async function observeDecision({
 
 export const observeDecisionCase = observeDecision;
 export const runDecisionProvider = observeDecision;
-
-function defaultQuestion(decisionPoint) {
-  return validateDecisionQuestion({ id: `decision-point:${decisionPoint}`, type: 'noul' });
-}
 
 export function validateDecisionQuestions(value) {
   const questions = plainObject(value, 'decision questions');
@@ -702,6 +729,17 @@ export function parseSavedProviderMetadata(textValue) {
   return validateSavedProviderMetadata(value);
 }
 
+function replayQuestionDigest(question, prediction, decisionPoint) {
+  if (question === undefined) return DECISION_UNKNOWN;
+  if (prediction !== undefined && prediction.predictedLabel !== DECISION_UNKNOWN) {
+    if (question.type !== 'choice') invalid(`replay question for ${decisionPoint} cannot describe a saved categorical label as ${question.type}`);
+    if (!question.choices.some((choice) => Object.is(choice, prediction.predictedLabel))) {
+      invalid(`replay question for ${decisionPoint} does not contain the saved predicted label`);
+    }
+  }
+  return decisionQuestionDigest(question);
+}
+
 function providerFromPrediction(identity) {
   return validateDecisionProvider({
     ...identity,
@@ -715,9 +753,9 @@ function unknownMeasurementValues() {
   return measurements();
 }
 
-function replayRecord({ timestamp, caseValue, question, provider, prediction, mode, datasetSha256, predictionsSha256 }) {
+function replayRecord({ timestamp, caseValue, provider, prediction, mode, datasetSha256, predictionsSha256, replayQuestionSha256 }) {
   const inputSha256 = decisionCaseInputDigest(caseValue);
-  const questionSha256 = decisionQuestionDigest(question);
+  const questionSha256 = DECISION_UNKNOWN;
   if (prediction === undefined) {
     return offObservation({
       timestamp,
@@ -725,6 +763,9 @@ function replayRecord({ timestamp, caseValue, question, provider, prediction, mo
       questionSha256,
       datasetSha256,
       predictionsSha256,
+      caseId: caseValue.id,
+      decisionPoint: caseValue.decisionPoint,
+      replayQuestionSha256,
       provider,
       requestedMode: mode,
       reason: 'missing-saved-prediction',
@@ -740,6 +781,9 @@ function replayRecord({ timestamp, caseValue, question, provider, prediction, mo
       questionSha256,
       datasetSha256,
       predictionsSha256,
+      caseId: caseValue.id,
+      decisionPoint: caseValue.decisionPoint,
+      replayQuestionSha256,
       provider,
       requestedMode: mode,
       reason: provider.availability.status === 'unavailable' ? 'provider-unavailable' : 'provider-availability-unknown',
@@ -748,7 +792,7 @@ function replayRecord({ timestamp, caseValue, question, provider, prediction, mo
     });
   }
   if (mode === 'off') {
-    return offObservation({ timestamp, inputSha256, questionSha256, datasetSha256, predictionsSha256, provider, requestedMode: mode, reason: 'mode-off', measurementValues: measurementsValue, replayed: true });
+    return offObservation({ timestamp, inputSha256, questionSha256, datasetSha256, predictionsSha256, caseId: caseValue.id, decisionPoint: caseValue.decisionPoint, replayQuestionSha256, provider, requestedMode: mode, reason: 'mode-off', measurementValues: measurementsValue, replayed: true });
   }
   const record = baseObservation({
     timestamp,
@@ -756,6 +800,9 @@ function replayRecord({ timestamp, caseValue, question, provider, prediction, mo
     questionSha256,
     datasetSha256,
     predictionsSha256,
+    caseId: caseValue.id,
+    decisionPoint: caseValue.decisionPoint,
+    replayQuestionSha256,
     provider,
     requestedMode: mode,
     effectiveMode: 'shadow',
@@ -773,6 +820,7 @@ export function replaySavedPredictions({
   predictions,
   providerMetadata = undefined,
   questions = undefined,
+  replayQuestions = undefined,
   mode = 'shadow',
   timestamp = undefined,
   minimumProviders = 1,
@@ -783,7 +831,10 @@ export function replaySavedPredictions({
   const normalizedPredictions = validateDecisionPredictions(predictions);
   evaluateDecisions({ dataset: normalizedDataset, predictions: normalizedPredictions });
   const normalizedMetadata = providerMetadata === undefined ? undefined : validateSavedProviderMetadata(providerMetadata);
-  const normalizedQuestions = questions === undefined ? undefined : validateDecisionQuestions(questions);
+  if (questions !== undefined && replayQuestions !== undefined) invalid('provide questions or replayQuestions, not both');
+  const normalizedQuestions = (replayQuestions ?? questions) === undefined
+    ? undefined
+    : validateDecisionQuestions(replayQuestions ?? questions);
   if (!Number.isSafeInteger(minimumProviders) || minimumProviders < 1 || minimumProviders > 256) invalid('minimumProviders must be a positive safe integer');
   const providerIdentities = new Map();
   for (const prediction of normalizedPredictions.predictions) {
@@ -806,16 +857,17 @@ export function replaySavedPredictions({
   const records = [];
   for (const provider of providers) {
     for (const item of normalizedDataset.cases) {
-      const question = normalizedQuestions?.questions[item.decisionPoint] ?? defaultQuestion(item.decisionPoint);
+      const prediction = predictionByKey.get(`${provider.id}\0${item.id}`);
+      const replayQuestionSha256 = replayQuestionDigest(normalizedQuestions?.questions[item.decisionPoint], prediction, item.decisionPoint);
       records.push(replayRecord({
         timestamp: replayTimestamp,
         caseValue: item,
-        question,
         provider,
-        prediction: predictionByKey.get(`${provider.id}\0${item.id}`),
+        prediction,
         mode,
         datasetSha256,
         predictionsSha256,
+        replayQuestionSha256,
       }));
     }
   }

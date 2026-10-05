@@ -49,6 +49,11 @@ node scripts/observe-decisions.mjs \
   --json
 ```
 
+Replay records retain case IDs and decision points. Because #32 predictions do
+not bind their original typed question, `questionSha256` stays `UNKNOWN`; an
+optional `--questions` file is validated and recorded only as
+`replayQuestionSha256` mapping metadata.
+
 `--providers` supplies model identity and explicit availability; omitted model,
 calibration and threshold metadata remains `UNKNOWN`. `--output` refuses an
 existing or input/evidence path. `--log-task` is the only way to append the

@@ -10,8 +10,10 @@ operator has reviewed real #32 comparisons and chosen a workflow mapping.
 `observeDecision()` accepts a label-blind state projection, one typed question,
 a caller-supplied provider and a requested mode. A case is projected through
 `decisionCaseInput()` before it reaches a provider, so `expected`, reviewer
-metadata and label evidence are not present in the provider input. The state
-and question passed to the implementation are bounded, cloned and frozen.
+metadata and label evidence are not present in the provider input. The state,
+question and provider metadata passed to the implementation are bounded,
+detached and frozen. The observation keeps the validated provider identity even
+if an implementation attempts to mutate its callback metadata.
 
 Questions are versioned and have one of these shapes:
 
@@ -69,8 +71,13 @@ Before producing a report or appending a ledger, the command parses the full
 dataset and predictions, verifies every dataset source and label-evidence
 digest, and runs `evaluateDecisions()` to check dataset, case-input and
 provider bindings. It then creates one replay record per provider and case;
-each record carries the dataset digest, predictions digest, case-input digest
-and question digest.
+each record carries the dataset digest, predictions digest, case ID,
+decision-point identity and case-input digest. Saved #32 predictions do not
+bind their original typed question, so replay records retain
+`questionSha256: "UNKNOWN"`. An optional `--questions` file is replay-only
+mapping metadata: its typed choice must contain each saved predicted label, and
+its digest is retained separately as `replayQuestionSha256`; it never claims to
+be the original question.
 Missing saved predictions and unavailable providers are effective off with
 `probabilities: "UNKNOWN"`, `band: "UNKNOWN"` and
 `action: "no-enforcement"`. No expected labels, question text, observations,

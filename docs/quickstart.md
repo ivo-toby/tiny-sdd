@@ -92,6 +92,11 @@ node scripts/observe-decisions.mjs \
   --json
 ```
 
+Replay records retain case IDs and decision points. The saved #32 artifacts do
+not bind their original typed question, so `questionSha256` remains `UNKNOWN`;
+an optional `--questions` file is replay-only mapping metadata recorded as
+`replayQuestionSha256` after typed value validation.
+
 Missing model, calibration and threshold metadata stays `UNKNOWN`. Replay
 records carry no enforcement action; real provider calls require a separate
 operator-reviewed implementation and are outside this offline foundation.

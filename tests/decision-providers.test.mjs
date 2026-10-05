@@ -164,6 +164,36 @@ test('shadow provider receives only the label-blind projection and retains exact
   assert.deepEqual(JSON.parse(JSON.stringify(record)), record);
 });
 
+test('provider callback metadata is detached and frozen before invocation', async () => {
+  const { dataset } = await fixture();
+  let callbackProvider;
+  const record = await observeDecision({
+    caseValue: dataset.cases[0],
+    question: { id: 'triage-choice', type: 'choice', choices: ['fixable-from-log', 'environment'] },
+    provider: {
+      id: 'provider-a',
+      configSha256: digest('a'),
+      model: { id: 'model-a', version: 'v1' },
+      availability: { status: 'available', available: true },
+      decide: async ({ provider }) => {
+        callbackProvider = provider;
+        assert.equal(Object.isFrozen(provider), true);
+        assert.equal(Object.isFrozen(provider.model), true);
+        assert.equal(Object.isFrozen(provider.availability), true);
+        try { provider.model.id = 'substituted-model'; } catch {}
+        try { provider.availability.reason = 'raw exception payload'; } catch {}
+        return { choice: 'fixable-from-log' };
+      },
+    },
+  });
+  assert.equal(record.effectiveMode, 'shadow');
+  assert.equal(record.model.id, 'model-a');
+  assert.equal(record.model.version, 'v1');
+  assert.deepEqual(record.availability, { status: 'available', available: true });
+  assert.equal(callbackProvider.model.id, 'model-a');
+  assert.equal(Object.hasOwn(record.availability, 'reason'), false);
+});
+
 test('off never calls a provider and unavailable, missing, invalid and enforce paths are explicit', async () => {
   const { dataset } = await fixture();
   const question = { id: 'triage-choice', type: 'choice', choices: ['fixable-from-log', 'environment'] };
@@ -202,6 +232,14 @@ test('off never calls a provider and unavailable, missing, invalid and enforce p
   assert.equal(invalidResponse.reason, 'invalid-response');
   assert.equal(calls, 1);
 
+  const contradictoryResponse = await observeDecision({
+    caseValue: dataset.cases[0],
+    question,
+    provider: { ...common, decide: async () => ({ choice: 'fixable-from-log', value: 'environment' }) },
+  });
+  assert.equal(contradictoryResponse.effectiveMode, 'off');
+  assert.equal(contradictoryResponse.reason, 'invalid-response');
+
   await assert.rejects(observeDecision({ caseValue: dataset.cases[0], question, provider: common, mode: 'enforce' }), { code: 'DECISION_PROVIDER_UNSUPPORTED' });
   assert.equal(calls, 1);
 });
@@ -220,6 +258,21 @@ test('typed questions and responses enforce bounds and identity', async () => {
   assert.equal(valid.probability, 0.8);
   assert.equal(valid.probabilities.score, 0.8);
   assert.equal(valid.questionSha256, decisionQuestionDigest(question));
+  assert.equal(validateDecisionProviderResponse({ score: 3, value: 3, probability: 0.8 }, { question, inputSha256, provider }).value, 3);
+  assert.throws(() => validateDecisionProviderResponse({ score: 3, value: 4 }, { question, inputSha256, provider }), { code: 'DECISION_PROVIDER_INVALID' });
+  assert.throws(() => validateDecisionProviderResponse({ score: 3, choice: 'a' }, { question, inputSha256, provider }), { code: 'DECISION_PROVIDER_INVALID' });
+
+  const choiceQuestion = { id: 'bounded-choice', type: 'choice', choices: ['a', 'b'] };
+  const choice = validateDecisionProviderResponse({ choice: 'a', value: 'a' }, { question: choiceQuestion, inputSha256, provider });
+  assert.equal(choice.value, 'a');
+  assert.throws(() => validateDecisionProviderResponse({ choice: 'a', value: 'b' }, { question: choiceQuestion, inputSha256, provider }), { code: 'DECISION_PROVIDER_INVALID' });
+  assert.throws(() => validateDecisionProviderResponse({ choice: 'a', score: 1 }, { question: choiceQuestion, inputSha256, provider }), { code: 'DECISION_PROVIDER_INVALID' });
+
+  const noulQuestion = { id: 'bounded-noul', type: 'noul' };
+  const noul = validateDecisionProviderResponse({ noul: 0.3, value: 0.3, probability: 0.8 }, { question: noulQuestion, inputSha256, provider });
+  assert.equal(noul.value, 0.3);
+  assert.throws(() => validateDecisionProviderResponse({ noul: 0.3, value: 0.4 }, { question: noulQuestion, inputSha256, provider }), { code: 'DECISION_PROVIDER_INVALID' });
+  assert.throws(() => validateDecisionProviderResponse({ noul: 0.3, score: 0.4 }, { question: noulQuestion, inputSha256, provider }), { code: 'DECISION_PROVIDER_INVALID' });
   assert.throws(() => parseDecisionQuestions(JSON.stringify({ schemaVersion: 1, questions: { 'failure-triage': { id: 'q', type: 'choice', choices: ['__proto__', '__proto__'] } } })), { code: 'DECISION_PROVIDER_INVALID' });
 });
 
@@ -237,6 +290,8 @@ test('replay validates two saved identities, records missing predictions off, an
   assert.equal(report.records.filter((record) => record.effectiveMode === 'shadow').length, 3);
   const missing = report.records.find((record) => record.provider.id === 'provider-b' && record.inputSha256 === decisionCaseInputDigest(dataset.cases[1]));
   assert.equal(missing.reason, 'missing-saved-prediction');
+  assert.equal(missing.caseId, 'case-two');
+  assert.equal(missing.decisionPoint, 'research-relevance');
   assert.equal(missing.probabilities, DECISION_UNKNOWN);
   assert.equal(missing.action, DECISION_OBSERVATION_ACTION);
   const saved = report.records.find((record) => record.provider.id === 'provider-a');
@@ -247,6 +302,8 @@ test('replay validates two saved identities, records missing predictions off, an
   assert.equal(saved.provider.configSha256, digest('a'));
   assert.equal(saved.datasetSha256, report.dataset.sha256);
   assert.equal(saved.predictionsSha256, report.predictionsSha256);
+  assert.equal(saved.questionSha256, DECISION_UNKNOWN);
+  assert.equal(saved.replayQuestionSha256, DECISION_UNKNOWN);
   for (const record of report.records) {
     const serialized = JSON.stringify(record);
     assert.equal(serialized.includes('reviewedBy'), false);
@@ -255,6 +312,56 @@ test('replay validates two saved identities, records missing predictions off, an
     assert.equal(Object.hasOwn(record, 'questionText'), false);
   }
   assert.deepEqual(JSON.parse(JSON.stringify(report.records)), report.records);
+});
+
+test('replay retains case identity and validates replay-only question mappings', async () => {
+  const { dataset } = await fixture();
+  const sameInputCases = validateDecisionDataset({
+    ...dataset,
+    cases: [
+      dataset.cases[0],
+      {
+        ...dataset.cases[0],
+        id: 'case-two-same-input',
+        expected: { ...dataset.cases[0].expected, label: 'environment' },
+        split: { ...dataset.cases[0].split, sourceGroup: 'source-two', featureGroup: 'feature-two', runLineageGroup: 'lineage-two' },
+      },
+    ],
+  });
+  assert.equal(decisionCaseInputDigest(sameInputCases.cases[0]), decisionCaseInputDigest(sameInputCases.cases[1]));
+  const predictions = validateDecisionPredictions({
+    schemaVersion: 1,
+    datasetSha256: decisionDatasetDigest(sameInputCases),
+    predictions: sameInputCases.cases.map((item) => prediction('provider-a', 'a', sameInputCases, item)),
+  });
+  const report = replaySavedPredictions({ dataset: sameInputCases, predictions });
+  assert.equal(report.records.length, 2);
+  assert.equal(report.records[0].inputSha256, report.records[1].inputSha256);
+  assert.notEqual(report.records[0].caseId, report.records[1].caseId);
+  assert.notEqual(JSON.stringify(report.records[0]), JSON.stringify(report.records[1]));
+  assert.equal(report.records.every((record) => record.decisionPoint === 'failure-triage'), true);
+
+  const validQuestions = {
+    schemaVersion: 1,
+    questions: {
+      'failure-triage': { id: 'replay-labels', type: 'choice', choices: ['fixable-from-log', 'environment'] },
+    },
+  };
+  const mapped = replaySavedPredictions({ dataset, predictions: predictionsFor(dataset), questions: validQuestions, minimumProviders: 2 });
+  assert.equal(mapped.records[0].questionSha256, DECISION_UNKNOWN);
+  assert.equal(mapped.records[0].replayQuestionSha256, decisionQuestionDigest(validQuestions.questions['failure-triage']));
+  assert.throws(() => replaySavedPredictions({
+    dataset,
+    predictions: predictionsFor(dataset),
+    questions: { schemaVersion: 1, questions: { 'failure-triage': { id: 'wrong', type: 'choice', choices: ['not-the-predicted-label'] } } },
+    minimumProviders: 2,
+  }), { code: 'DECISION_PROVIDER_INVALID' });
+  assert.throws(() => replaySavedPredictions({
+    dataset,
+    predictions: predictionsFor(dataset),
+    questions: { schemaVersion: 1, questions: { 'failure-triage': { id: 'wrong-type', type: 'score', minimum: 0, maximum: 1 } } },
+    minimumProviders: 2,
+  }), { code: 'DECISION_PROVIDER_INVALID' });
 });
 
 test('replay keeps missing metadata UNKNOWN and refuses changed dataset/input/provider bindings', async () => {
