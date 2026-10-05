@@ -58,12 +58,22 @@ function alternateUnicode(value) {
   return null;
 }
 
+function stableCaseFold(value) {
+  let folded = value;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const next = folded.toUpperCase().toLowerCase();
+    if (next === folded) return folded;
+    folded = next;
+  }
+  return folded;
+}
+
 export function unicodeCaseFold(value) {
-  return value.normalize('NFC').toUpperCase().toLowerCase();
+  return stableCaseFold(value.normalize('NFC'));
 }
 
 function rawCaseFold(value) {
-  return value.toUpperCase().toLowerCase();
+  return stableCaseFold(value);
 }
 
 function summarizeModes(modes) {

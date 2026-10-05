@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyFileScopeChange, detectCaseInsensitive, detectFilesystemAliases } from '../src/file-scope.mjs';
+import { classifyFileScopeChange, detectCaseInsensitive, detectFilesystemAliases, unicodeCaseFold } from '../src/file-scope.mjs';
 
 const file = { kind: 'file', sha256: 'a'.repeat(64), size: 1 };
 
@@ -120,6 +120,18 @@ test('handles Unicode case folds that lowercase does not combine', () => {
   assert.ok(classifyFileScopeChange({ path: 'specs/\u03c2pec.md', change: 'created', before: null, after: file }, {
     preparationPaths: ['specs/\u03c3pec.md'],
     filesystemAliases,
+  }));
+});
+
+test('converges repeated Unicode case folds for sharp S aliases', () => {
+  assert.equal(unicodeCaseFold('\u00dfpec'), unicodeCaseFold('\u1e9epec'));
+  for (const value of ['\u00dfpec', '\u1e9epec', '\u03c2pec', '\u03a3pec']) {
+    assert.equal(unicodeCaseFold(unicodeCaseFold(value)), unicodeCaseFold(value));
+  }
+  assert.ok(classifyFileScopeChange({ path: 'specs/\u1e9epec.md', change: 'created', before: null, after: file }, {
+    preparationPaths: ['specs/\u00dfpec.md'],
+    caseInsensitive: true,
+    unicodeInsensitive: false,
   }));
 });
 
