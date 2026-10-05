@@ -254,10 +254,10 @@ Choose an existing canonical output parent (resolve `/tmp` first on systems
 where it is an alias); the exporter refuses symlinked output parents.
 
 ```sh
-BUNDLE_OUT=/absolute/canonical/tmp/broker-s1-bundle
+BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
 node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
   --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
-  --slice broker-s1 \
+  --slice "$SLICE_ID" \
   --out "$BUNDLE_OUT" \
   --json
 ```

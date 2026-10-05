@@ -153,7 +153,7 @@ Copy every allow, protect, preparation and dependsOn value from the exact plan;
 do not shorten or invent lists. Omit `--depends-on` when the plan entry is
 empty. Export only a freshly approved task and accepted dependency closure:
 
-    BUNDLE_OUT=/absolute/canonical/tmp/SLICE_ID-bundle
+    BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
     node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
       --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
       --slice "$SLICE_ID" --out "$BUNDLE_OUT" --json

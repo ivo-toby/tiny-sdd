@@ -96,7 +96,7 @@ After normal task approval and accepted prerequisites, export with the checkout
 exporter if a foreign harness needs a portable bundle. Export does not run
 checks, apply a candidate or accept a feature:
 
-    BUNDLE_OUT=/absolute/canonical/tmp/SLICE_ID-bundle
+    BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
     node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
       --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
       --slice "$SLICE_ID" --out "$BUNDLE_OUT" --json

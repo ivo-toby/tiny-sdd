@@ -195,9 +195,9 @@ shorten the lists by hand:
 Export only after the selected task and its accepted dependencies are freshly
 approved:
 
-    BUNDLE_OUT=/absolute/canonical/tmp/FEATURE-s1-bundle
+    BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
     node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --slice FEATURE-s1 \
+      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --slice "$SLICE_ID" \
       --out "$BUNDLE_OUT" --json
 
 The validator and exporter are read-only with respect to source code and
