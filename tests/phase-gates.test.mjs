@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -274,11 +274,12 @@ test('configured research predecessors require a supported live record', async (
 });
 
 test('research refuses a predecessor whose policy identity is stale', async () => {
-  const oldPolicy = { research: { mode: 'human' } };
+  const oldPolicy = { research: { mode: 'human' }, plan: { mode: 'human' } };
   const root = await project(oldPolicy);
   try {
     await research(root, { policy: oldPolicy });
-    const currentPolicy = { research: { mode: 'human', predecessor: { phase: 'research', required: true } }, plan: { mode: 'human' } };
+    await advancePhase(root, { feature: 'feature-one', by: 'operator', reason: 'enter planning' });
+    const currentPolicy = { research: { mode: 'human', predecessor: { phase: 'plan', required: true } }, plan: { mode: 'human' } };
     await assert.rejects(recordResearchDecision(root, {
       feature: 'feature-one',
       proposal: 'docs/proposal.md',
@@ -288,6 +289,43 @@ test('research refuses a predecessor whose policy identity is stale', async () =
       policy: currentPolicy,
     }), { code: 'PHASE_PREDECESSOR_STALE' });
   } finally {
+    await cleanup(root);
+  }
+});
+
+test('research refuses a same-phase predecessor before publishing a new record', async () => {
+  const root = await project();
+  try {
+    const first = await research(root);
+    await writeFile(join(root, 'docs', 'second-proposal.md'), '# Second research proposal\n');
+    await assert.rejects(research(root, {
+      proposal: 'docs/second-proposal.md',
+      predecessor: first.record.id,
+    }), { code: 'PHASE_PREDECESSOR_UNSUPPORTED' });
+    assert.equal((await phaseGateStatus(root, { feature: 'feature-one' })).records.length, 1);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('append failure removes only the newly written research artifact', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('requires a non-root filesystem permission boundary');
+    return;
+  }
+  const root = await project();
+  const ledger = join(root, '.tinysdd', 'runs', 'phases.jsonl');
+  const artifactDirectory = join(root, '.tinysdd', 'runs', 'phase-artifacts');
+  try {
+    await writeFile(ledger, '');
+    await chmod(ledger, 0o400);
+    for (const id of ['phase-append-fails-1', 'phase-append-fails-2']) {
+      await assert.rejects(research(root, { id }), { code: 'EACCES' });
+    }
+    assert.deepEqual(await readdir(artifactDirectory), []);
+    assert.equal(await readFile(ledger, 'utf8'), '');
+  } finally {
+    await chmod(ledger, 0o600).catch(() => {});
     await cleanup(root);
   }
 });

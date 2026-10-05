@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, lstat, readFile } from 'node:fs/promises';
+import { appendFile, lstat, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { compileContext, MAX_CONTEXT_SOURCE_BYTES, parseContextManifest } from './context-compiler.mjs';
@@ -643,7 +643,12 @@ async function assertArtifactAvailableUnlocked(root, path) {
 async function writeArtifactUnlocked(root, artifact, descriptor = artifactDescriptor(artifact)) {
   const target = await assertArtifactAvailableUnlocked(root, descriptor.path);
   await atomicWriteFile(target, descriptor.text);
-  return { path: descriptor.path, sha256: descriptor.sha256, bytes: descriptor.bytes };
+  const info = await lstat(target);
+  return {
+    artifact: { path: descriptor.path, sha256: descriptor.sha256, bytes: descriptor.bytes },
+    target,
+    identity: { dev: info.dev, ino: info.ino },
+  };
 }
 
 async function preflightArtifactAndLedgerUnlocked(root, artifact, record) {
@@ -651,6 +656,24 @@ async function preflightArtifactAndLedgerUnlocked(root, artifact, record) {
   await assertArtifactAvailableUnlocked(root, descriptor.path);
   const prepared = await checkLedgerCapacityUnlocked(root, { ...record, artifact: { path: descriptor.path, sha256: descriptor.sha256, bytes: descriptor.bytes } });
   return { descriptor, record: prepared.normalized };
+}
+
+async function removeOwnedArtifactUnlocked(root, written) {
+  let target;
+  try {
+    target = await assertInternalPath(root, written.artifact.path.split('/'), { allowMissing: false });
+    const info = await lstat(target);
+    if (info.isSymbolicLink() || !info.isFile()) return false;
+    if (info.dev !== written.identity.dev || info.ino !== written.identity.ino) return false;
+    if (info.size !== written.artifact.bytes) return false;
+    const bytes = await readFile(target);
+    if (bytes.byteLength !== written.artifact.bytes || sha256(bytes) !== written.artifact.sha256) return false;
+    await unlink(target);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'PATH_NOT_FOUND') return false;
+    return false;
+  }
 }
 
 function researchPolicy(policy) {
@@ -784,6 +807,9 @@ async function resolvePredecessor(records, feature, policyGate, requested) {
     if (requirement === null) throw tinyError('PHASE_PREDECESSOR_NOT_FOUND', 'requested research predecessor was not found');
     throw tinyError('PHASE_PREDECESSOR_REQUIRED', `research requires an approved ${requirement.phase} predecessor`, { feature, phase: requirement.phase });
   }
+  if (predecessor.phase === 'research') {
+    throw tinyError('PHASE_PREDECESSOR_UNSUPPORTED', 'research cannot use another research decision as its predecessor', { feature, phase: predecessor.phase });
+  }
   const latest = latestPhaseDecision(records, feature, predecessor.phase);
   if (predecessor.feature !== feature || predecessor.phase !== (requirement?.phase ?? supplied.phase ?? predecessor.phase)
     || predecessor.decision !== 'approved' || latest?.id !== predecessor.id || latest.recordDigest !== predecessor.recordDigest) {
@@ -893,8 +919,14 @@ export async function recordResearchDecision(projectRoot, options = {}) {
       artifact,
     });
     const preflight = await preflightArtifactAndLedgerUnlocked(root, artifactInput, record);
-    await writeArtifactUnlocked(root, artifactInput, preflight.descriptor);
-    const appended = await appendRecordUnlocked(root, preflight.record);
+    const written = await writeArtifactUnlocked(root, artifactInput, preflight.descriptor);
+    let appended;
+    try {
+      appended = await appendRecordUnlocked(root, preflight.record);
+    } catch (error) {
+      await removeOwnedArtifactUnlocked(root, written);
+      throw error;
+    }
     return {
       phase: 'research',
       feature,
