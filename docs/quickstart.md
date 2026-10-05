@@ -698,6 +698,19 @@ tinysdd status
 tinysdd next
 ```
 
+For a manually inspected ordinary file that was created or changed outside the
+planned paths, include its actual path in the review evidence:
+
+```sh
+tinysdd task review --id first-change --verdict accepted \
+  --evidence docs/reviews/first-change.md --by ivo \
+  --candidate-paths src/manual-extra.mjs
+```
+
+The controller unions these paths with the planned and already applied paths,
+records their current content identity, and marks the acceptance stale if one
+of them changes later.
+
 `task apply` copies every retained eligible actual file by content, not by patch,
 so it also works for a `--base-run` revision, whose `patch.diff` is a delta against
 the prior candidate. It follows the revision lineage back to the first run and

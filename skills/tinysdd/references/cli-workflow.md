@@ -459,6 +459,18 @@ tinysdd status
 tinysdd next
 ```
 
+When the operator accepts a manually inspected ordinary file outside the
+planned paths, include every such actual path in the review:
+
+```sh
+tinysdd task review --id validation --verdict accepted \
+  --evidence docs/reviews/validation.md --by operator \
+  --candidate-paths src/manual-extra.mjs
+```
+
+Candidate paths are unioned with planned and applied paths, and their content
+identity is retained; editing one later makes the acceptance stale.
+
 `task apply` copies every retained eligible actual file by content, so it works for
 a `--base-run` revision too (a revision's `patch.diff` is a delta against the
 prior candidate, not the project). It follows the lineage to the first run,
