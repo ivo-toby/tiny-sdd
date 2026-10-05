@@ -320,6 +320,132 @@ after(async () => {
   delete process.env.TINYSDD_TEST_RUNTIME_ROOT;
 });
 
+async function withWorkerEnvironment({ ambientTmpdir, override, platform }, callback) {
+  const saved = { TMPDIR: process.env.TMPDIR, TINYSDD_TMPDIR: process.env.TINYSDD_TMPDIR };
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  if (ambientTmpdir === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = ambientTmpdir;
+  if (override === undefined) delete process.env.TINYSDD_TMPDIR;
+  else process.env.TINYSDD_TMPDIR = override;
+  if (platform !== undefined) Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    Object.defineProperty(process, "platform", platformDescriptor);
+  }
+}
+
+async function assertNoWorkerRun(project) {
+  await assert.rejects(readdir(join(project, ".tinysdd", "runs")), { code: "ENOENT" });
+}
+
+describe("worker temporary root", () => {
+  test("canonicalizes an ambient Linux TMPDIR final symlink", async () => {
+    const project = await makeProject();
+    const target = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-default-target-"));
+    const link = `${target}-link`;
+    await symlink(target, link);
+    try {
+      const before = await readFile(join(project, "src", "allowed.txt"), "utf8");
+      await withWorkerEnvironment({ ambientTmpdir: link, override: undefined, platform: "linux" }, async () => {
+        const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+        assert.equal(result.outcome, "completed");
+      });
+      assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), before);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(link, { recursive: true, force: true });
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  test("canonicalizes an ambient Linux TMPDIR parent alias", async () => {
+    const project = await makeProject();
+    const targetParent = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-default-parent-"));
+    const target = join(targetParent, "scratch");
+    await mkdir(target);
+    const parentLink = `${targetParent}-link`;
+    await symlink(targetParent, parentLink);
+    try {
+      const before = await readFile(join(project, "src", "allowed.txt"), "utf8");
+      await withWorkerEnvironment({ ambientTmpdir: join(parentLink, "scratch"), override: undefined, platform: "linux" }, async () => {
+        const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+        assert.equal(result.outcome, "completed");
+      });
+      assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), before);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(parentLink, { recursive: true, force: true });
+      await rm(targetParent, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps explicit temp aliases and invalid roots strict before model execution", async () => {
+    const project = await makeProject();
+    const targetParent = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-explicit-parent-"));
+    const target = join(targetParent, "scratch");
+    await mkdir(target);
+    const finalLink = `${target}-link`;
+    const parentLink = `${targetParent}-link`;
+    const file = `${target}-file`;
+    await symlink(target, finalLink);
+    await symlink(targetParent, parentLink);
+    await writeFile(file, "not a directory\n");
+    const missing = `${target}-missing`;
+    const cases = [
+      [finalLink, /must be a real directory, not a symlink/u],
+      [join(parentLink, "scratch"), /resolves through a symlink/u],
+      [missing, /temporary directory is unavailable/u],
+      [file, /must be a real directory, not a symlink/u],
+      ["", /must name an existing directory/u],
+    ];
+    try {
+      const before = await readFile(join(project, "src", "allowed.txt"), "utf8");
+      for (const [override, refusal] of cases) {
+        await withWorkerEnvironment({ ambientTmpdir: canonicalTmpdir, override, platform: "linux" }, async () => {
+          await assert.rejects(
+            runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") }),
+            refusal,
+          );
+        });
+        await assertNoWorkerRun(project);
+      }
+      assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), before);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(finalLink, { recursive: true, force: true });
+      await rm(parentLink, { recursive: true, force: true });
+      await rm(file, { force: true });
+      await rm(targetParent, { recursive: true, force: true });
+    }
+  });
+
+  test("gives a valid explicit temp root precedence over an invalid ambient TMPDIR", async () => {
+    const project = await makeProject();
+    const explicit = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-explicit-valid-"));
+    const ambientTarget = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-ambient-invalid-"));
+    const ambientLink = `${ambientTarget}-link`;
+    await symlink(ambientTarget, ambientLink);
+    try {
+      const before = await readFile(join(project, "src", "allowed.txt"), "utf8");
+      await withWorkerEnvironment({ ambientTmpdir: ambientLink, override: explicit, platform: "linux" }, async () => {
+        const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+        assert.equal(result.outcome, "completed");
+      });
+      assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), before);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(ambientLink, { recursive: true, force: true });
+      await rm(ambientTarget, { recursive: true, force: true });
+      await rm(explicit, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Pi environment filtering", () => {
   test("copies only placeholders and expands selected credential references in child env", async () => {
     const prepared = await preparePiEnvironment({ worker: worker(), profile: { schemaVersion: 1, id: "test-profile", runtime: { reasoning: true, compat: { thinkingFormat: "qwen-chat-template" } } }, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } });

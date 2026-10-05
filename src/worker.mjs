@@ -112,9 +112,19 @@ async function ensureRoot(root) {
 }
 
 async function temporaryRoot() {
-  // macOS's system temp directory normally traverses /var -> /private/var.
-  const requested = process.env.TINYSDD_TMPDIR ?? (process.platform === "darwin" ? await realpath(process.env.TMPDIR ?? "/tmp") : process.env.TMPDIR ?? "/tmp");
-  if (typeof requested !== "string" || requested.length === 0) fail("TINYSDD_TMPDIR must name an existing directory");
+  // macOS and Linux temp roots may traverse host aliases before the worker creates scratch.
+  const override = process.env.TINYSDD_TMPDIR;
+  const ambient = process.env.TMPDIR ?? "/tmp";
+  const requestedValue = override ?? ambient;
+  if (typeof requestedValue !== "string" || requestedValue.length === 0) fail("TINYSDD_TMPDIR must name an existing directory");
+  let requested = requestedValue;
+  if (override === undefined && (process.platform === "darwin" || process.platform === "linux")) {
+    try {
+      requested = await realpath(requestedValue);
+    } catch (error) {
+      fail(`TinySDD temporary directory is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const absolute = resolve(requested);
   let info;
   try {
