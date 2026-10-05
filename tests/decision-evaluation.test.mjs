@@ -134,6 +134,88 @@ test('uses saved probabilities at the explicit threshold and reports both denomi
   }
 });
 
+test('serializes confusion labels with type-preserving safe keys', async () => {
+  const { root, dataset } = await fixture();
+  try {
+    const matrixDataset = JSON.parse(JSON.stringify(dataset));
+    matrixDataset.cases[0].decisionPoint = 'research-relevance';
+    matrixDataset.cases[0].expected.label = 'toString';
+    matrixDataset.cases[1].decisionPoint = 'research-relevance';
+    matrixDataset.cases[1].expected.label = 'true';
+    matrixDataset.cases[2].decisionPoint = 'research-relevance';
+    matrixDataset.cases[2].expected.label = true;
+    const normalized = validateDecisionDataset(matrixDataset);
+    const provider = { id: 'matrix-provider', configSha256: digest('2') };
+    const predictions = validateDecisionPredictions({
+      schemaVersion: 1,
+      datasetSha256: decisionDatasetDigest(normalized),
+      predictions: [
+        { provider, caseId: 'case-one', inputSha256: decisionCaseInputDigest(normalized.cases[0]), predictedLabel: '__proto__', probabilities: DECISION_UNKNOWN, measurements: { latencyMs: DECISION_UNKNOWN, inputTokens: DECISION_UNKNOWN, outputTokens: DECISION_UNKNOWN, totalTokens: DECISION_UNKNOWN, frontierTokensAvoided: DECISION_UNKNOWN } },
+        { provider, caseId: 'case-two', inputSha256: decisionCaseInputDigest(normalized.cases[1]), predictedLabel: true, probabilities: DECISION_UNKNOWN, measurements: { latencyMs: DECISION_UNKNOWN, inputTokens: DECISION_UNKNOWN, outputTokens: DECISION_UNKNOWN, totalTokens: DECISION_UNKNOWN, frontierTokensAvoided: DECISION_UNKNOWN } },
+        { provider, caseId: 'case-three', inputSha256: decisionCaseInputDigest(normalized.cases[2]), predictedLabel: 'true', probabilities: DECISION_UNKNOWN, measurements: { latencyMs: DECISION_UNKNOWN, inputTokens: DECISION_UNKNOWN, outputTokens: DECISION_UNKNOWN, totalTokens: DECISION_UNKNOWN, frontierTokensAvoided: DECISION_UNKNOWN } },
+      ],
+    });
+    const matrix = evaluateDecisions({ dataset: normalized, predictions }).providers[0].decisionPoints['research-relevance'].confusionMatrix;
+    assert.equal(matrix['string:"toString"']['string:"__proto__"'], 1);
+    assert.equal(matrix['string:"true"']['boolean:true'], 1);
+    assert.equal(matrix['boolean:true']['string:"true"'], 1);
+    assert.equal(Object.keys(matrix).length, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('does not combine multiple accept-label probabilities for threshold or calibration', async () => {
+  const { root, dataset } = await fixture();
+  try {
+    const predictions = buildBaselinePredictions(dataset, { id: 'multi-label-provider', configSha256: digest('3') });
+    for (const prediction of predictions.predictions) {
+      prediction.probabilities = { environment: 0.45, 'missing-context': 0.45, 'fixable-from-log': 0.1 };
+    }
+    const multiLabelMetrics = parseDecisionMetricsConfig(JSON.stringify({
+      schemaVersion: 1,
+      decisionPoints: {
+        'failure-triage': {
+          positiveLabels: ['environment'],
+          acceptLabels: ['environment', 'missing-context'],
+          threshold: 0.8,
+        },
+      },
+    }));
+    const point = evaluateDecisions({ dataset, predictions, metrics: multiLabelMetrics }).providers[0].decisionPoints['failure-triage'];
+    assert.equal(point.threshold, DECISION_UNKNOWN);
+    assert.match(point.thresholdReason, /genuine combined-event probability/u);
+    assert.equal(point.calibration, DECISION_UNKNOWN);
+    assert.match(point.calibrationReason, /genuine combined-event probability/u);
+    assert.deepEqual(point.binaryConfusion, {
+      truePositive: 1,
+      trueNegative: 2,
+      falsePositive: 0,
+      falseNegative: 0,
+      unknown: 0,
+    });
+    assert.equal(point.thresholdKnown, 0);
+
+    const booleanMetrics = parseDecisionMetricsConfig(JSON.stringify({
+      schemaVersion: 1,
+      decisionPoints: {
+        'failure-triage': {
+          positiveLabels: [true],
+          acceptLabels: [true],
+          threshold: 0.8,
+        },
+      },
+    }));
+    const booleanPoint = evaluateDecisions({ dataset, predictions, metrics: booleanMetrics }).providers[0].decisionPoints['failure-triage'];
+    assert.equal(booleanPoint.threshold, DECISION_UNKNOWN);
+    assert.match(booleanPoint.thresholdReason, /boolean accept-label probability keys are ambiguous/u);
+    assert.equal(booleanPoint.calibration, DECISION_UNKNOWN);
+    assert.match(booleanPoint.calibrationReason, /boolean accept-label probability keys are ambiguous/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects split leakage, duplicate predictions, changed input, and unknown cases', async () => {
   const { root, dataset } = await fixture();
   try {
@@ -243,6 +325,20 @@ test('offline CLI emits one JSON object and writes only an explicitly requested 
     assert.equal(response.ok, true);
     assert.equal(response.output, 'report.json');
     assert.equal(JSON.parse(await readFile(join(root, 'report.json'), 'utf8')).dataset.counts.syntheticCases, 1);
+
+    const sourcePath = join(root, 'evidence', 'first.txt');
+    const sourceBefore = await readFile(sourcePath);
+    await assert.rejects(
+      exec(process.execPath, [script, '--project', root, '--dataset', 'dataset.json', '--predictions', 'predictions.json', '--output', 'evidence/first.txt', '--json']),
+      (error) => {
+        assert.equal(error.code, 1);
+        const parsed = JSON.parse(error.stdout);
+        assert.equal(parsed.ok, false);
+        assert.equal(parsed.error.code, 'INVALID_ARGUMENT');
+        return true;
+      },
+    );
+    assert.deepEqual(await readFile(sourcePath), sourceBefore);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

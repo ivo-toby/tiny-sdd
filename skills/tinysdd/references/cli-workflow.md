@@ -18,6 +18,9 @@ node scripts/evaluate-decisions.mjs \
   --json
 ```
 
+The report output path must be new and must not overwrite the dataset,
+predictions, metrics, or validated evidence files.
+
 The dataset keeps worker observations separate from human-reviewed labels,
 verifies source-file digests, rejects split-group leakage, and counts synthetic
 fixtures separately from the 50 real failure-triage labels still required by

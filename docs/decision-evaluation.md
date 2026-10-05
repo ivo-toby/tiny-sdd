@@ -143,6 +143,19 @@ known labels, known probabilities, and threshold observations. It does not name
 a winner, change policy, or claim that any positive prediction skips operator
 review.
 
+Confusion-matrix keys preserve label types: string labels use
+`string:<JSON-encoded-label>` and boolean labels use `boolean:true` or
+`boolean:false`. This keeps a boolean `true` distinct from the string `"true"`
+and keeps labels such as `toString` or `__proto__` from becoming object
+properties with inherited behavior.
+
+Threshold and calibration probabilities require one string accept label with a
+genuine probability observation. A list of accept labels has no implicit union
+probability because provider probabilities need not be complementary; its
+threshold and calibration fields remain `UNKNOWN` with a reason while explicit
+discrete label confusion counts remain available. Boolean probability-map keys
+are also treated as ambiguous and remain `UNKNOWN`.
+
 ## Offline command
 
 The standalone command reads explicitly named, project-relative files. It first
@@ -161,8 +174,10 @@ node scripts/evaluate-decisions.mjs \
 
 `--metrics` and `--output` are optional. With `--json`, stdout contains exactly
 one JSON object; warnings, including an incomplete real-label count, go to
-stderr. The command performs no inference, network access, service startup,
-credential lookup, implicit ledger update, or controller/bin integration.
+stderr. An output path must be new and must not name the dataset, predictions,
+metrics, or any validated evidence file. The command performs no inference,
+network access, service startup, credential lookup, implicit ledger update, or
+controller/bin integration.
 
 This checkout contains benchmark fixtures and deterministic tests, but no
 tracked archive of 50 real, human-reviewed failure-triage labels or measured

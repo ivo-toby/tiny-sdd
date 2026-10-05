@@ -71,6 +71,9 @@ node scripts/evaluate-decisions.mjs \
   --json
 ```
 
+The report output path must be new and must not overwrite the dataset,
+predictions, metrics, or validated evidence files.
+
 Synthetic fixtures are useful for checking the tooling but do not count toward
 the 50 real failure-triage labels required by issue #32. The current checkout
 does not contain those real labels or measured provider runs; the evaluator

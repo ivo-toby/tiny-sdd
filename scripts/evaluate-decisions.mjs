@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { lstat } from 'node:fs/promises';
+
 import { atomicWriteJson, canonicalProjectRoot, publicError, readProjectFile, resolveProjectPath } from '../src/fs-utils.mjs';
 import {
   parseDecisionDataset,
@@ -44,7 +46,7 @@ async function run(argv) {
   const projectRoot = await canonicalProjectRoot(options.project);
   const datasetInput = await inputText(projectRoot, options.dataset, 'dataset');
   const dataset = parseDecisionDataset(datasetInput.text);
-  await validateDecisionDatasetEvidence(projectRoot, dataset);
+  const evidence = await validateDecisionDatasetEvidence(projectRoot, dataset);
   const predictionInput = await inputText(projectRoot, options.predictions, 'predictions');
   const predictions = parseDecisionPredictions(predictionInput.text);
   let metrics;
@@ -58,8 +60,19 @@ async function run(argv) {
   let output;
   if (options.output !== undefined) {
     const resolved = await resolveProjectPath(projectRoot, options.output, { field: 'output path', allowMissing: true });
-    const inputPaths = new Set([datasetInput.path, predictionInput.path, metricsPath].filter(Boolean));
+    const inputPaths = new Set([
+      datasetInput.path,
+      predictionInput.path,
+      metricsPath,
+      ...evidence.verified.map((ref) => ref.path),
+    ].filter(Boolean));
     if (inputPaths.has(resolved.relativePath)) throw usageError('output path must differ from an input path');
+    try {
+      await lstat(resolved.absolutePath);
+      throw usageError('output path already exists; refusing to overwrite');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
     await atomicWriteJson(resolved.absolutePath, report);
     output = resolved.relativePath;
   }

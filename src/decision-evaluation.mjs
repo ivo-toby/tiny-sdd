@@ -16,6 +16,8 @@ export const REQUIRED_REAL_FAILURE_TRIAGE_LABELS = 50;
 const MAX_METRIC_CONFIG_BYTES = 128 * 1024;
 const MAX_CALIBRATION_BINS = 50;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const MULTI_LABEL_PROBABILITY_REASON = 'accept-label probabilities do not provide a genuine combined-event probability';
+const BOOLEAN_PROBABILITY_REASON = 'boolean accept-label probability keys are ambiguous in a JSON object';
 
 function invalid(message, details = undefined) {
   throw tinyError('DECISION_EVALUATION_INVALID', message, details);
@@ -119,14 +121,34 @@ function includesLabel(labels, value) {
 
 function labelKey(value) {
   if (value === DECISION_UNKNOWN) return DECISION_UNKNOWN;
-  return typeof value === 'boolean' ? String(value) : value;
+  if (typeof value === 'boolean') return `boolean:${value}`;
+  return `string:${JSON.stringify(value)}`;
 }
 
 function knownProbability(prediction, labels) {
+  if (labels.length !== 1 || typeof labels[0] === 'boolean') return DECISION_UNKNOWN;
   if (prediction.probabilities === DECISION_UNKNOWN) return DECISION_UNKNOWN;
-  const values = labels.map((label) => prediction.probabilities[String(label)]);
-  if (values.some((value) => typeof value !== 'number')) return DECISION_UNKNOWN;
-  return Math.max(...values);
+  const key = String(labels[0]);
+  if (!Object.hasOwn(prediction.probabilities, key)) return DECISION_UNKNOWN;
+  const value = prediction.probabilities[key];
+  return typeof value === 'number' ? value : DECISION_UNKNOWN;
+}
+
+function probabilityReason(metricPoint) {
+  if (!metricPoint) return undefined;
+  if (metricPoint.acceptLabels.length > 1) return MULTI_LABEL_PROBABILITY_REASON;
+  if (typeof metricPoint.acceptLabels[0] === 'boolean') return BOOLEAN_PROBABILITY_REASON;
+  return undefined;
+}
+
+function serializeConfusionMatrix(matrix) {
+  const result = {};
+  for (const actual of Object.keys(matrix).sort()) {
+    const row = {};
+    for (const predicted of Object.keys(matrix[actual]).sort()) row[predicted] = matrix[actual][predicted];
+    result[actual] = row;
+  }
+  return result;
 }
 
 function ratio(count, denominator) {
@@ -212,7 +234,7 @@ function reliability(predictions, metricPoint, caseById) {
 }
 
 function evaluatePoint({ decisionPoint, cases, predictions, metricPoint }) {
-  const matrix = {};
+  const matrix = Object.create(null);
   let knownPredictedLabels = 0;
   let knownProbabilities = 0;
   let thresholdKnown = 0;
@@ -227,8 +249,8 @@ function evaluatePoint({ decisionPoint, cases, predictions, metricPoint }) {
     if (!prediction) continue;
     const actualKey = labelKey(item.expected.label);
     const predictedKey = labelKey(prediction.predictedLabel);
-    matrix[actualKey] ??= {};
-    matrix[actualKey][predictedKey] = (matrix[actualKey][predictedKey] ?? 0) + 1;
+    const row = matrix[actualKey] ?? (matrix[actualKey] = Object.create(null));
+    row[predictedKey] = (row[predictedKey] ?? 0) + 1;
     if (prediction.predictedLabel !== DECISION_UNKNOWN) knownPredictedLabels += 1;
     const probability = metricPoint ? knownProbability(prediction, metricPoint.acceptLabels) : DECISION_UNKNOWN;
     if (probability !== DECISION_UNKNOWN) knownProbabilities += 1;
@@ -268,7 +290,8 @@ function evaluatePoint({ decisionPoint, cases, predictions, metricPoint }) {
   }
   const actualNegatives = thresholdBinary.trueNegative + thresholdBinary.falsePositive;
   const predictedPositives = thresholdBinary.truePositive + thresholdBinary.falsePositive;
-  const thresholdMetrics = metricPoint === undefined ? DECISION_UNKNOWN : {
+  const probabilityReasonText = probabilityReason(metricPoint);
+  const thresholdMetrics = metricPoint === undefined || probabilityReasonText !== undefined ? DECISION_UNKNOWN : {
     threshold: metricPoint.threshold,
     acceptLabels: metricPoint.acceptLabels,
     positiveLabels: metricPoint.positiveLabels,
@@ -279,6 +302,7 @@ function evaluatePoint({ decisionPoint, cases, predictions, metricPoint }) {
     falseDiscoveryRate: metricRate(thresholdBinary.falsePositive, predictedPositives, 'predicted positives'),
   };
   const caseById = new Map(cases.map((item) => [item.id, item]));
+  const calibration = reliability(predictions, metricPoint, caseById);
   const coverage = {
     predictions: cases.length === 0 ? DECISION_UNKNOWN : predictions.length / cases.length,
     predictedLabels: cases.length === 0 ? DECISION_UNKNOWN : knownPredictedLabels / cases.length,
@@ -295,10 +319,12 @@ function evaluatePoint({ decisionPoint, cases, predictions, metricPoint }) {
     coverage,
     labelCoverage: cases.length === 0 ? DECISION_UNKNOWN : knownPredictedLabels / cases.length,
     probabilityCoverage: cases.length === 0 ? DECISION_UNKNOWN : knownProbabilities / cases.length,
-    confusionMatrix: matrix,
+    confusionMatrix: serializeConfusionMatrix(matrix),
     binaryConfusion: metricPoint === undefined ? DECISION_UNKNOWN : binary,
     threshold: thresholdMetrics,
-    calibration: reliability(predictions, metricPoint, caseById),
+    ...(probabilityReasonText === undefined ? {} : { thresholdReason: probabilityReasonText }),
+    calibration,
+    ...(probabilityReasonText === undefined ? {} : { calibrationReason: probabilityReasonText }),
     measurements: summarizeMeasurements(predictions),
   };
 }
