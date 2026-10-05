@@ -183,9 +183,10 @@ node /absolute/tiny-sdd/scripts/harness-adapter.mjs finalize \
 
 Use `--completed false` for an interrupted or failed session. Such a result is
 retained for inspection and cannot be applied. Finalization never runs checks,
-commands, a model, or a service. Usage, sandbox behavior, process termination,
-and observed model identity remain `UNKNOWN` in this implementation; foreign
-output is never verification evidence. `runtime.json`
+arbitrary commands, a model, or a service; existing fixed `git ls-files`
+inventory may run during the bounded source copy. Usage, sandbox behavior,
+process termination, and observed model identity remain `UNKNOWN` in this
+implementation; foreign output is never verification evidence. `runtime.json`
 records the begin-time session as open; finalization records the caller's
 completion declaration separately and does not infer process termination.
 
