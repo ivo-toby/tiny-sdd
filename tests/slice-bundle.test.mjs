@@ -92,6 +92,22 @@ test('bundle export requires a new external directory and retains bounded identi
   }
 });
 
+test('bundle export scopes readiness to the selected slice', async () => {
+  const root = await project();
+  const outputParent = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-bundle-output-'));
+  try {
+    await writeFile(join(root, 'examples/artifact-format/changes/broker-recut/slices/s2/brief.md'), '# draft slice\n');
+    await assert.rejects(validateChange({ projectRoot: root, changePath: CHANGE_PATH, requireReady: true }), { code: 'CHANGE_NOT_READY' });
+    const { plan } = await registerFirstSlice(root);
+    const result = await exportSliceBundle({ projectRoot: root, changePath: CHANGE_PATH, sliceId: plan.id, outputDir: join(outputParent, 'ready-a') });
+    assert.equal(result.manifest.sliceId, 'broker-s1');
+    await assert.rejects(exportSliceBundle({ projectRoot: root, changePath: CHANGE_PATH, sliceId: 'broker-s2', outputDir: join(outputParent, 'draft-b') }), { code: 'CHANGE_NOT_READY' });
+  } finally {
+    await cleanup(root);
+    await cleanup(outputParent);
+  }
+});
+
 test('bundle export rejects an unrelated task and stale approved brief bytes', async () => {
   const root = await project();
   const outputParent = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-bundle-output-'));

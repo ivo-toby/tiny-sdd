@@ -192,6 +192,23 @@ async function preflightTaskInputs(projectRoot, plan) {
   }
 }
 
+const SHARED_READINESS_CODES = new Set([
+  'FEATURE_TEST_NOT_CHECKED',
+  'FEATURE_TEST_NOT_COVERED',
+  'INTEGRATION_TEST_NOT_CHECKED',
+  'ENTRYPOINT_NOT_CITED',
+]);
+
+function assertSelectedSliceReady(result, slice) {
+  const issues = result.readiness.issues.filter((issue) => SHARED_READINESS_CODES.has(issue.code) || issue.details?.sliceId === slice.value.id);
+  if (issues.length > 0) {
+    throw tinyError('CHANGE_NOT_READY', `slice ${slice.value.id} is not export-ready`, { sliceId: slice.value.id, issues });
+  }
+  if (slice.value.openDecisions.length > 0) {
+    throw tinyError('CHANGE_NOT_READY', `slice ${slice.value.id} has open decisions`, { sliceId: slice.value.id, openDecisions: [...slice.value.openDecisions] });
+  }
+}
+
 function baselineRelative(projectPath) {
   return `baselines/${projectPath}`;
 }
@@ -281,10 +298,11 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
     : { projectRoot: projectRootOrOptions, changePath: changePathArgument, sliceId: sliceIdArgument, outputDir: outputDirArgument, ...optionsArgument };
   const root = await canonicalProjectRoot(options.projectRoot);
   const outputDir = await assertNewOutputDirectory(root, options.outputDir ?? options.out);
-  const result = await validateChange({ projectRoot: root, changePath: options.changePath, requireReady: true });
+  const result = await validateChange({ projectRoot: root, changePath: options.changePath });
   const sliceId = options.sliceId ?? options.taskId;
   const slice = result.slices.find((item) => item.value.id === sliceId);
   if (!slice) throw tinyError('SLICE_NOT_FOUND', `unknown slice in change: ${sliceId}`);
+  assertSelectedSliceReady(result, slice);
   const plan = result.registrationPlan.find((item) => item.id === slice.value.id);
   await preflightTaskInputs(root, plan);
   const packet = await resolveTaskPacket(root, slice.value.id);

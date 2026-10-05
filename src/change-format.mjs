@@ -572,7 +572,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     const sliceCheck = parsedChecks.checks[0];
     for (const testPath of value.sliceTests) {
       if (!sliceCheck.argv.includes(testPath)) {
-        readinessIssues.push(makeReadinessIssue('SLICE_TEST_NOT_CHECKED', `slice test is not a literal operand of slice ${value.id}'s check: ${testPath}`));
+        readinessIssues.push(makeReadinessIssue('SLICE_TEST_NOT_CHECKED', `slice test is not a literal operand of slice ${value.id}'s check: ${testPath}`, { sliceId: value.id, path: testPath }));
       }
     }
     const contextManifest = parseContextManifest(context.text);
@@ -601,7 +601,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     for (const requirementId of referencedRequirements) {
       const requirement = requirementMap.get(requirementId);
       if (!requirement) {
-        readinessIssues.push(makeReadinessIssue('REQUIREMENT_NOT_FOUND', `slice ${value.id} references unknown requirement: ${requirementId}`));
+        readinessIssues.push(makeReadinessIssue('REQUIREMENT_NOT_FOUND', `slice ${value.id} references unknown requirement: ${requirementId}`, { sliceId: value.id, requirementId }));
       } else requirements.push(requirement);
     }
     for (const criterion of value.testReview.criteria) {
@@ -610,16 +610,16 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     }
     const coveredTests = new Set(value.testReview.criteria.flatMap((criterion) => criterion.testPaths));
     for (const testPath of value.sliceTests) {
-      if (!coveredTests.has(testPath)) readinessIssues.push(makeReadinessIssue('SLICE_TEST_NOT_REVIEWED', `slice test is not covered by a test-review criterion: ${testPath}`));
+      if (!coveredTests.has(testPath)) readinessIssues.push(makeReadinessIssue('SLICE_TEST_NOT_REVIEWED', `slice test is not covered by a test-review criterion: ${testPath}`, { sliceId: value.id, path: testPath }));
     }
     const sectionCheck = sectionRequirementRecords(brief, value.testReview, requirements, requirementMap, `slice ${value.id} brief`);
-    readinessIssues.push(...sectionCheck.issues.map((message) => makeReadinessIssue('APPROVED_BRIEF_MISMATCH', message)));
+    readinessIssues.push(...sectionCheck.issues.map((message) => makeReadinessIssue('APPROVED_BRIEF_MISMATCH', message, { sliceId: value.id })));
     const contextPaths = new Set(contextManifest.resources.map((resource) => resource.path));
     for (const interfacePath of value.interfaces) {
       const interfaceFile = await sourceExists(root, interfacePath, `slice ${value.id} interface ${interfacePath}`);
       addSnapshot(sourceSnapshots, interfaceFile);
       if (!contextPaths.has(interfacePath)) {
-        readinessIssues.push(makeReadinessIssue('INTERFACE_NOT_CITED', `slice ${value.id} interface is not cited by an exact context excerpt: ${interfacePath}`));
+        readinessIssues.push(makeReadinessIssue('INTERFACE_NOT_CITED', `slice ${value.id} interface is not cited by an exact context excerpt: ${interfacePath}`, { sliceId: value.id, path: interfacePath }));
       }
     }
     slices.push({ descriptor: slicePath, descriptorFile, value, brief, context, checks, parsedChecks, contextManifest, compiled, metrics, resolvedBudget });
@@ -732,7 +732,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     if (slice.value.implementationFiles.length > slice.resolvedBudget.maxImplementationFiles) warnings.push({ code: 'IMPLEMENTATION_SIZING_EXCEEDED', message: `slice ${slice.value.id} expects ${slice.value.implementationFiles.length} implementation files, above advisory budget ${slice.resolvedBudget.maxImplementationFiles}`, details: { sliceId: slice.value.id, count: slice.value.implementationFiles.length, limit: slice.resolvedBudget.maxImplementationFiles } });
     if (slice.value.sliceTests.length > slice.resolvedBudget.maxSliceTestFiles) warnings.push({ code: 'SLICE_TEST_SIZING_EXCEEDED', message: `slice ${slice.value.id} expects ${slice.value.sliceTests.length} slice-test files, above advisory budget ${slice.resolvedBudget.maxSliceTestFiles}`, details: { sliceId: slice.value.id, count: slice.value.sliceTests.length, limit: slice.resolvedBudget.maxSliceTestFiles } });
   }
-  if (readinessIssues.some((issue) => issue.code === 'FEATURE_TEST_NOT_CHECKED' || issue.code === 'SLICE_TEST_NOT_CHECKED')) {
+  if (readinessIssues.some((issue) => issue.code === 'FEATURE_TEST_NOT_CHECKED')) {
     // These are preparation integrity errors, rather than optional review prose.
     notReady('one or more declared tests are not named by the required check argv', { issues: readinessIssues });
   }
