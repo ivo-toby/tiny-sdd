@@ -36,7 +36,7 @@ try {
   let message = `worker ended with outcome ${data?.outcome}`;
   if (scopeViolations) {
     code = 'WORKER_SCOPE_VIOLATION';
-    message = 'worker changed paths outside packet.allowedPaths';
+    message = 'worker retained ineligible candidate changes';
   } else if (stopped) {
     code = 'WORKER_STOPPED';
     message = 'worker was stopped by the operator';

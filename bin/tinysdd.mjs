@@ -170,12 +170,12 @@ function parseCommand(args) {
   if (command === 'task') {
     if (!['add', 'update', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, update, approve, packet, apply, review, close, or supersede');
     const allowedByCommand = {
-      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list'], ['feature', 'value']]),
-      update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['depends-on', 'list']]),
+      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['feature', 'value']]),
+      update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['depends-on', 'list']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
       apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
-      review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value']]),
+      review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value'], ['candidate-paths', 'list']]),
       close: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       supersede: new Map([['id', 'value'], ['with', 'list'], ['by', 'value'], ['reason', 'value']]),
     };
@@ -740,6 +740,7 @@ async function run(argv) {
     dependsOn: parsed.values['depends-on'],
     allow: parsed.values.allow,
     protect: parsed.values.protect,
+    preparation: parsed.values.preparation,
     feature: parsed.values.feature,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'update') data = await updateTask(project, {
@@ -751,11 +752,13 @@ async function run(argv) {
     checks: parsed.values.checks,
     allow: parsed.values.allow,
     protect: parsed.values.protect,
+    preparation: parsed.values.preparation,
     dependsOn: parsed.values['depends-on'],
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'approve') data = await approveTask(project, {
     id: parsed.values.id,
     by: parsed.values.by,
+    candidatePaths: parsed.values['candidate-paths'],
     reason: parsed.values.reason,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'packet') data = await resolveTaskPacket(project, parsed.values.id);

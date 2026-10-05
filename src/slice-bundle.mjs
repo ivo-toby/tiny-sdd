@@ -169,6 +169,7 @@ function comparePacketShape(packet, plan) {
     checks: plan.checks,
     allow: plan.allow,
     protect: plan.protect,
+    preparation: plan.preparation,
     dependsOn: plan.dependsOn,
   };
   const actual = {
@@ -177,6 +178,7 @@ function comparePacketShape(packet, plan) {
     checks: packet.checks?.path,
     allow: packet.allowedPaths,
     protect: packet.protectedPaths ?? [],
+    preparation: packet.preparation ?? [],
     dependsOn: (packet.dependencies ?? []).map((dependency) => dependency.id),
   };
   if (stableStringify(actual) !== stableStringify(expected)) {
@@ -239,6 +241,13 @@ async function preflightRegisteredTask(projectRoot, task, tasks, seen = new Set(
       if (typeof path !== 'string') throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid ${field} path`);
       await readBoundedBytes(projectRoot, path, { allowMissing: true, label: `registered task ${field} ${path}` });
     }
+  }
+  if (task.preparation !== undefined && !Array.isArray(task.preparation)) {
+    throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid preparation list`);
+  }
+  for (const entry of task.preparation ?? []) {
+    if (!entry || typeof entry.path !== 'string' || typeof entry.exists !== 'boolean') throw tinyError('STATE_MALFORMED', `task ${taskId} has an invalid preparation entry`);
+    await readBoundedBytes(projectRoot, entry.path, { allowMissing: true, label: `registered task preparation ${entry.path}` });
   }
   let manifest = null;
   if (contextFile) {
@@ -353,6 +362,7 @@ function buildManifest({ change, slice, packet, plan, result, context, contextBi
       featureTests: [...change.featureTests],
       integration: change.integration.filter((item) => item.wiringSlice === slice.value.id || item.testPaths.some((testPath) => change.featureTests.includes(testPath))),
       descriptors: result.preparationIdentity.descriptorFiles,
+      paths: plan.preparation ?? [],
     },
     packet: {
       path: 'packet.json',
@@ -442,10 +452,12 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
 
   const outputPaths = [...plan.allow];
   const protectedPaths = [...plan.protect];
+  const preparation = plan.preparation ?? [];
   const contextPaths = compiled?.resources.map((resource) => resource.path) ?? [];
-  const references = [...new Set([...outputPaths, ...protectedPaths, ...contextPaths])];
+  const references = [...new Set([...outputPaths, ...protectedPaths, ...contextPaths, ...preparation.map((item) => item.path)])];
   const retention = { bytes: 0 };
-  const { snapshot: checkoutSnapshot, baselines } = await boundedSnapshot(root, references, outputPaths, retention);
+  const missingPreparation = preparation.filter((item) => item.exists === false).map((item) => item.path);
+  const { snapshot: checkoutSnapshot, baselines } = await boundedSnapshot(root, references, [...outputPaths, ...missingPreparation], retention);
 
   const outputs = new Map();
   addOutput(outputs, 'packet.json', jsonBytes(packet), retention);

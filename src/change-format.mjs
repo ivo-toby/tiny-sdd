@@ -12,6 +12,7 @@ import {
   stableStringify,
   tinyError,
 } from './fs-utils.mjs';
+import { DEFAULT_RUNTIME_SCOPE } from './file-scope.mjs';
 
 export const ARTIFACT_SCHEMA_VERSION = 1;
 export const MAX_ARTIFACT_FILE_BYTES = 512 * 1024;
@@ -20,7 +21,7 @@ export const MAX_CHANGE_DELTAS = 64;
 export const MAX_INTEGRATION_ENTRIES = 256;
 export const MAX_CRITERION_ENTRIES = 256;
 export const MAX_RETAINED_OUTPUT_BYTES = 32 * 1024 * 1024;
-export const RUNTIME_SCOPE = Object.freeze({ mode: 'legacy-allowlist', extraOrdinaryFiles: false, followUpIssue: 82 });
+export const RUNTIME_SCOPE = DEFAULT_RUNTIME_SCOPE;
 
 // Keep these exclusions aligned with the worker copy boundary. Artifact
 // validation must reject the names before it opens a referenced file.
@@ -471,7 +472,7 @@ function sectionRequirementRecords(brief, expectedReview, requirements, requirem
   return { issues, parsed };
 }
 
-function createPreparationIdentity(files, descriptorPaths, reviewContracts) {
+function createPreparationIdentity(files, descriptorPaths, reviewContracts, preparationFiles = []) {
   const descriptors = descriptorPaths.map((item) => files.get(item)).filter(Boolean).sort((a, b) => a.path.localeCompare(b.path));
   const descriptorRefs = descriptors.map(({ path: itemPath, bytes, sha256: fileSha256 }) => ({ path: itemPath, bytes, sha256: fileSha256 }));
   const testReviewContractSha256 = digestJson(reviewContracts.map(({ sliceId, contract }) => ({ sliceId, contract })).sort((a, b) => a.sliceId.localeCompare(b.sliceId)));
@@ -479,6 +480,8 @@ function createPreparationIdentity(files, descriptorPaths, reviewContracts) {
     descriptorSetSha256: digestJson(descriptorRefs),
     descriptorFiles: descriptorRefs,
     testReviewContractSha256,
+    preparationSetSha256: digestJson(preparationFiles),
+    preparationFiles,
   };
 }
 
@@ -643,6 +646,12 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     ...deltas.map((item) => item.value.spec),
     ...slices.flatMap((item) => [item.value.brief, item.value.context, item.value.checks, ...item.value.protect]),
   ]);
+  const preparationFiles = [...preparationPaths].sort().map((preparationPath) => {
+    const retained = files.get(preparationPath) ?? sourceSnapshots.get(preparationPath);
+    return retained
+      ? { path: preparationPath, exists: true, bytes: retained.bytes, sha256: retained.sha256 }
+      : { path: preparationPath, exists: false };
+  });
   for (const slice of slices) {
     const outputs = [...slice.value.implementationFiles, ...slice.value.sliceTests];
     const localProtect = [...new Set([...change.featureTests, ...slice.value.protect])];
@@ -715,10 +724,16 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
   }
 
   const descriptorPaths = [changePath, change.proposal, change.design, change.featureChecks, ...change.specDeltas, ...change.slices];
-  const preparationIdentity = createPreparationIdentity(files, descriptorPaths, reviewContracts);
+  const preparationIdentity = createPreparationIdentity(files, descriptorPaths, reviewContracts, preparationFiles);
+  const completePreparationPaths = [...preparationPaths].sort();
   const registrationPlan = slicesInOrder.map((slice) => {
     const allow = [...new Set([...slice.value.implementationFiles, ...slice.value.sliceTests])].sort();
-    const protect = [...new Set([...change.featureTests, ...slice.value.protect])].sort();
+    const preparation = completePreparationPaths.map((preparationPath) => preparationFiles.find((item) => item.path === preparationPath) ?? { path: preparationPath, exists: false });
+    const protect = [...new Set([
+      ...change.featureTests,
+      ...slice.value.protect,
+      ...preparation.filter((item) => item.exists).map((item) => item.path),
+    ])].sort();
     const taskPath = (suffix) => '.tinysdd/tasks/' + slice.value.id + suffix;
     return {
       id: slice.value.id,
@@ -728,6 +743,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
       checks: taskPath('.checks.json'),
       allow,
       protect,
+      preparation,
       dependsOn: [...slice.value.dependsOn].sort(),
     };
   });
@@ -751,6 +767,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     featureChecks: { ...featureChecksFile, parsed: featureChecks },
     featureTestCheckIds: [...featureTestCheckIds].sort(),
     preparationPaths: [...preparationPaths].sort(),
+    preparationFiles,
     preparationIdentity,
     registrationPlan,
     plan: registrationPlan,

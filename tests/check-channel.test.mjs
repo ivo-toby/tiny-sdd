@@ -70,6 +70,13 @@ test('check channel runs a declared request and records checked bytes and live m
     assert.deepEqual(calls[0].dependencyMounts, [{ source: dependencies, target: 'node_modules' }]);
     const expected = createHash('sha256').update('before\n').digest('hex');
     assert.equal(channel.runs[0].allowedFileDigests['src/allowed.txt'], expected);
+    assert.equal(channel.runs[0].candidateEntries['src'].kind, 'directory');
+    assert.equal(channel.runs[0].candidateEntries['src/allowed.txt'].kind, 'file');
+    assert.equal(channel.runs[0].candidateEntries['src/allowed.txt'].bytes, 7);
+    assert.equal(channel.runs[0].candidateEntries['src/allowed.txt'].sha256, expected);
+    assert.equal(Number.isInteger(channel.runs[0].candidateEntries['src/allowed.txt'].mode), true);
+    assert.equal(channel.runs[0].candidateIdentity.algorithm, 'sha256-candidate-tree-v1');
+    assert.equal(channel.runs[0].candidateIdentity.entries.some((entry) => entry.path === 'src/allowed.txt' && entry.sha256 === expected), true);
     const log = (await readFile(channel.logPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(log.length, 1);
     assert.equal(log[0].outcome, 'passed');

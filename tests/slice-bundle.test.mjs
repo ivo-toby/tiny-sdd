@@ -48,6 +48,7 @@ async function registerFirstSlice(root, { suffix = '', omitContext = false, omit
     ...(checksPath ? { checks: checksPath } : {}),
     allow: plan.allow,
     protect: plan.protect,
+    preparation: plan.preparation,
     dependsOn: plan.dependsOn,
   });
   await approveTask(root, { id: plan.id, by: 'fixture-operator', reason: 'offline bundle test approval' });
@@ -66,8 +67,7 @@ test('bundle export requires a new external directory and retains bounded identi
     const manifest = JSON.parse(manifestText);
     assert.equal(result.manifestPath, join(output, 'bundle.json'));
     assert.equal(manifest.schemaVersion, 1);
-    assert.equal(manifest.runtimeScope.mode, 'legacy-allowlist');
-    assert.equal(manifest.runtimeScope.extraOrdinaryFiles, false);
+    assert.deepEqual(manifest.runtimeScope, { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false });
     assert.equal(manifest.identity.descriptorSetSha256, validated.preparationIdentity.descriptorSetSha256);
     assert.equal(manifest.identity.approvalContextBinding, undefined);
     assert.equal(manifest.identity.context.approvalContextBinding, 'current');

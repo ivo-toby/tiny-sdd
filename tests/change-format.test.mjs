@@ -123,13 +123,13 @@ test('known credential paths and UTF-8 BOMs are refused before ordinary reads', 
   }
 });
 
-test('fixture validates with a topological plan and explicit legacy runtime scope', async () => {
+test('fixture validates with a topological plan and ordinary create-modify runtime scope', async () => {
   const root = await fixtureProject();
   try {
     const result = await validateChange(root, 'examples/artifact-format/changes/broker-recut/change.json');
     assert.deepEqual(result.slicesInOrder.map((slice) => slice.value.id), ['broker-s1', 'broker-s2', 'broker-s3', 'broker-s4', 'broker-s5a', 'broker-s5b']);
     assert.equal(result.readiness.ready, true);
-    assert.deepEqual(result.runtimeScope, { mode: 'legacy-allowlist', extraOrdinaryFiles: false, followUpIssue: 82 });
+    assert.deepEqual(result.runtimeScope, { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false });
     assert.deepEqual(result.registrationPlan[0].allow, ['examples/artifact-format/src/s1-errors.mjs', 'examples/artifact-format/tests/s1-errors.test.mjs']);
     assert.equal(result.preparationIdentity.descriptorSetSha256.length, 64);
     await assert.rejects(readFile(join(root, '.tinysdd', 'runs', 'controller.json')), { code: 'ENOENT' });
@@ -262,7 +262,7 @@ test('buildRegistrationPlan is read-only and reports preparation identity', asyn
     const before = await readFile(join(root, 'examples/artifact-format/changes/broker-recut/change.json'), 'utf8');
     const plan = await buildRegistrationPlan(root, 'examples/artifact-format/changes/broker-recut/change.json');
     assert.equal(plan.registrationPlan.length, 6);
-    assert.equal(plan.runtimeScope.extraOrdinaryFiles, false);
+    assert.deepEqual(plan.runtimeScope, { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false });
     assert.equal(await readFile(join(root, 'examples/artifact-format/changes/broker-recut/change.json'), 'utf8'), before);
     await assert.rejects(readFile(join(root, '.tinysdd', 'runs', 'controller.json')), { code: 'ENOENT' });
   } finally {

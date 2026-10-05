@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { compileContext } from "../src/context-compiler.mjs";
 import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
@@ -100,7 +100,7 @@ async function makeRuntime() {
   fakePi = join(root, "fake-pi.mjs");
   await writeFile(fakePi, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const action = process.env.TINYSDD_TEST_ACTION || "complete";
@@ -129,6 +129,8 @@ async function runCheckTool(toolCallId, params) {
 if (action === "allowed") writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
 if (action === "protected") writeFileSync(join(process.cwd(), "src", "contract.txt"), "changed\\n");
 if (action === "outside") writeFileSync(join(process.cwd(), "outside.txt"), "outside\\n");
+if (action === "dependency") writeFileSync(join(process.cwd(), "vendor", "dependency", "extra.mjs"), "extra\\n");
+if (action === "type-change") { rmSync(join(process.cwd(), "empty"), { recursive: true, force: true }); writeFileSync(join(process.cwd(), "empty"), "file\\n"); }
 if (action === "error") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"error",errorMessage:"synthetic provider failure",content:[{type:"text",text:"I could not continue."}]}}));
   process.exit(0);
@@ -276,6 +278,60 @@ function worker(limits = {}) {
 
 function packet(allowedPaths = ["src/allowed.txt"]) {
   return { schemaVersion: 1, taskId: "task-worker-test", briefText: "Implement the exact bounded change. Do not broaden scope.", allowedPaths };
+}
+
+function retainedSnapshot(files) {
+  const snapshot = Object.create(null);
+  for (const [path, value] of Object.entries(files)) {
+    if (value === null) continue;
+    const parts = path.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      const directory = parts.slice(0, index).join("/");
+      snapshot[directory] ??= { kind: "directory", sha256: null, size: null };
+    }
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    snapshot[path] = { kind: "file", sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.byteLength };
+  }
+  return snapshot;
+}
+
+function retainedChanges(before, after) {
+  const identity = (value) => {
+    if (value === undefined || value === null) return null;
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    return { kind: "file", sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.byteLength };
+  };
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().flatMap((path) => {
+    const was = before[path] ?? null;
+    const now = after[path] ?? null;
+    if (Buffer.isBuffer(was) && Buffer.isBuffer(now) ? was.equals(now) : was === now) return [];
+    return [{ path, change: now === null ? "deleted" : was === null ? "created" : "modified", before: identity(was), after: identity(now) }];
+  });
+}
+
+async function writeRetainedRun(root, runId, { taskId = "task-worker-test", before = {}, after = {}, baseRun, changedPaths } = {}) {
+  const directory = join(root, ".tinysdd", "runs", runId);
+  await mkdir(join(directory, "workspace-before"), { recursive: true });
+  await mkdir(join(directory, "workspace-after"), { recursive: true });
+  for (const [workspace, files] of [["workspace-before", before], ["workspace-after", after]]) {
+    for (const [path, content] of Object.entries(files)) {
+      if (content === null) continue;
+      await mkdir(dirname(join(directory, workspace, path)), { recursive: true });
+      await writeFile(join(directory, workspace, path), content);
+    }
+  }
+  await writeFile(join(directory, "before-snapshot.json"), JSON.stringify(retainedSnapshot(before)));
+  await writeFile(join(directory, "after-snapshot.json"), JSON.stringify(retainedSnapshot(after)));
+  const changes = retainedChanges(before, after);
+  const claimed = changedPaths === undefined ? changes : changedPaths.map((change) => ({ ...changes.find((entry) => entry.path === change.path), ...change }));
+  await writeFile(join(directory, "result.json"), JSON.stringify({
+    taskId,
+    outcome: "completed",
+    ...(baseRun ? { baseRun } : {}),
+    changedPaths: claimed,
+    scopeViolations: [],
+    fileScope: { mode: "ordinary-create-modify", actualPaths: changes.map(({ path }) => path).sort(), ordinaryCreateModify: true, deletions: false },
+  }));
 }
 
 function checksPacket(ids = ["first", "second"]) {
@@ -623,13 +679,68 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
-  test("retains an out-of-scope edit as a violation without applying it to source", async () => {
+  test("retains ordinary extra edits as candidates without applying them to source", async () => {
     const project = await makeProject();
     try {
       const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "outside") });
       assert.equal(result.outcome, "completed");
-      assert.deepEqual(result.scopeViolations, [{ path: "outside.txt", change: "created", reason: "changed path is outside packet.allowedPaths" }]);
+      assert.deepEqual(result.scopeViolations, []);
+      assert.deepEqual(result.fileScope.extraPaths, ["outside.txt"]);
+      assert.deepEqual(result.changedPaths.map(({ path, change }) => ({ path, change })), [{ path: "outside.txt", change: "created" }]);
       await assert.rejects(readFile(join(project, "outside.txt")));
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("retains preparation creation as a boundary violation", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), preparation: [{ path: "outside.txt", exists: false }] },
+        worker: worker(),
+        runtime: runtime(undefined, "outside"),
+      });
+      assert.deepEqual(result.scopeViolations, [{ path: "outside.txt", change: "created", reason: "immutable preparation input" }]);
+      assert.deepEqual(result.fileScope.actualPaths, ["outside.txt"]);
+      await assert.rejects(readFile(join(project, "outside.txt")));
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("retains an empty-directory replacement as a type violation", async () => {
+    const project = await makeProject();
+    await mkdir(join(project, "empty"));
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "type-change") });
+      assert.deepEqual(result.changedPaths.map(({ path, change }) => ({ path, change })), [{ path: "empty", change: "type_changed" }]);
+      assert.deepEqual(result.scopeViolations, [{ path: "empty", change: "type_changed", reason: "filesystem type changes are not authorized" }]);
+      await assert.equal((await stat(join(project, "empty"))).isDirectory(), true);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("retains a dependency mount edit when the check runner is unavailable", async () => {
+    const project = await makeProject();
+    await mkdir(join(project, "vendor", "dependency"), { recursive: true });
+    await writeFile(join(project, "vendor", "dependency", "package.json"), "{}\n");
+    try {
+      const checks = checksPacket(["unit"]);
+      const manifest = JSON.parse(checks.text);
+      manifest.dependencyMounts = ["vendor/dependency"];
+      checks.text = JSON.stringify(manifest);
+      checks.sha256 = createHash("sha256").update(checks.text).digest("hex");
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks },
+        worker: worker(),
+        runtime: runtime(undefined, "dependency"),
+      });
+      assert.equal(result.runChecks.available, false);
+      assert.deepEqual(result.scopeViolations, [{ path: "vendor/dependency/extra.mjs", change: "created", reason: "dependency mount path" }]);
     } finally {
       await rm(project, { recursive: true, force: true });
     }
@@ -657,14 +768,10 @@ describe("Pi worker capture and scope", () => {
     const project = await makeProject();
     const baseRunId = "worker-2026-09-06T00-00-00-000Z-abcdef12";
     try {
-      const baseRoot = join(project, ".tinysdd", "runs", baseRunId);
-      await mkdir(join(baseRoot, "workspace-after", "src"), { recursive: true });
-      await writeFile(join(baseRoot, "workspace-after", "src", "allowed.txt"), "base candidate\n");
-      await writeFile(join(baseRoot, "result.json"), JSON.stringify({
-        outcome: "completed",
-        changedPaths: [{ path: "src/allowed.txt", change: "modified" }],
-        scopeViolations: [],
-      }));
+      await writeRetainedRun(project, baseRunId, {
+        before: { "src/allowed.txt": "before\n" },
+        after: { "src/allowed.txt": "base candidate\n" },
+      });
       const result = await runWorker({
         projectRoot: project,
         packet: packet(),
@@ -686,27 +793,17 @@ describe("Pi worker capture and scope", () => {
     const parentId = "worker-2026-09-06T00-00-01-000Z-parent000";
     try {
       await writeFile(join(project, "src", "other.txt"), "source other\n");
-      const ancestorRoot = join(project, ".tinysdd", "runs", ancestorId);
-      await mkdir(join(ancestorRoot, "workspace-after", "src"), { recursive: true });
-      await writeFile(join(ancestorRoot, "workspace-after", "src", "allowed.txt"), "ancestor edit\n");
-      await writeFile(join(ancestorRoot, "result.json"), JSON.stringify({
-        taskId: "task-worker-test",
-        outcome: "completed",
-        changedPaths: [{ path: "src/allowed.txt", change: "modified" }],
-        scopeViolations: [],
-      }));
-      const parentRoot = join(project, ".tinysdd", "runs", parentId);
-      await mkdir(join(parentRoot, "workspace-after", "src"), { recursive: true });
+      await writeRetainedRun(project, ancestorId, {
+        before: { "src/allowed.txt": "before\n" },
+        after: { "src/allowed.txt": "ancestor edit\n" },
+      });
       // A historical direct-parent snapshot may lack the ancestor's edit. The
       // resolver must reconstruct both files from the lineage, not trust it.
-      await writeFile(join(parentRoot, "workspace-after", "src", "other.txt"), "parent edit\n");
-      await writeFile(join(parentRoot, "result.json"), JSON.stringify({
-        taskId: "task-worker-test",
+      await writeRetainedRun(project, parentId, {
+        before: { "src/allowed.txt": "ancestor edit\n", "src/other.txt": "source other\n" },
+        after: { "src/allowed.txt": "ancestor edit\n", "src/other.txt": "parent edit\n" },
         baseRun: { id: ancestorId, paths: ["src/allowed.txt"] },
-        outcome: "completed",
-        changedPaths: [{ path: "src/other.txt", change: "modified" }],
-        scopeViolations: [],
-      }));
+      });
       const result = await runWorker({
         projectRoot: project,
         packet: packet(["src/allowed.txt", "src/other.txt"]),
@@ -928,7 +1025,7 @@ describe("Pi worker capture and scope", () => {
   test("keeps a valid checks declaration in packet.json", async () => {
     const project = await makeProject();
     try {
-      const text = "declared checks\n";
+      const text = JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: [{ id: "declared", argv: ["node", "-e", "0"], timeoutMs: 1000 }] });
       const digest = createHash("sha256").update(text).digest("hex");
       const result = await runWorker({
         projectRoot: await realpath(project),
@@ -946,7 +1043,7 @@ describe("Pi worker capture and scope", () => {
   test("records an unavailable declared runner without exposing a check tool", async () => {
     const project = await makeProject();
     try {
-      const text = "declared checks\n";
+      const text = JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: [{ id: "declared", argv: ["node", "-e", "0"], timeoutMs: 1000 }] });
       const digest = createHash("sha256").update(text).digest("hex");
       const result = await runWorker({
         projectRoot: await realpath(project),
