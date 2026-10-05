@@ -244,6 +244,25 @@ test('configured research predecessors are required and newer rejection invalida
   }
 });
 
+test('research refuses a predecessor whose policy identity is stale', async () => {
+  const oldPolicy = { research: { mode: 'human', predecessor: { phase: 'specify', required: true } }, specify: { mode: 'human' } };
+  const root = await project(oldPolicy);
+  try {
+    await appendPhaseRecord(root, decision({ id: 'phase-specify-old-policy', phase: 'specify', policy: oldPolicy }));
+    const currentPolicy = { ...oldPolicy, plan: { mode: 'human' } };
+    await assert.rejects(recordResearchDecision(root, {
+      feature: 'feature-one',
+      proposal: 'docs/proposal.md',
+      context: 'context.json',
+      by: 'operator',
+      reason: 'attempt with stale predecessor',
+      policy: currentPolicy,
+    }), { code: 'PHASE_PREDECESSOR_STALE' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('changing the phase policy stales an existing research decision', async () => {
   const root = await project();
   try {

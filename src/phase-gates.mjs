@@ -788,6 +788,13 @@ export async function recordResearchDecision(projectRoot, options = {}) {
     const records = await readVerifiedRecordsUnlocked(root);
     const inputs = await researchInputs(root, options);
     const predecessor = await resolvePredecessor(records, feature, gate, options.predecessor ?? options.predecessorId);
+    if (predecessor !== undefined) {
+      const predecessorRecord = records.find((record) => record.id === predecessor.id);
+      const predecessorState = await predecessorFreshness(root, predecessorRecord, records, policy, options.qualificationResolver);
+      if (!predecessorState.fresh) {
+        throw tinyError('PHASE_PREDECESSOR_STALE', 'research predecessor is stale', { feature, predecessor, reasons: predecessorState.reasons });
+      }
+    }
     let qualification;
     const producer = researchProducer(gate);
     if (producer) {
