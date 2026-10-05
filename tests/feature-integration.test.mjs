@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, realpath } from 'node:fs/promises';
 
 import {
+  FEATURE_INTEGRATION_MAX_TREE_BYTES,
   FEATURE_INTEGRATION_TEST_ENV,
+  copyIntegrationTree,
   featureIntegrationFreshness,
   runFeatureIntegration,
 } from '../src/feature-integration.mjs';
@@ -153,6 +155,20 @@ test('retains dependency mounts and marks dependency drift stale', async () => {
     });
     assert.equal(stale.fresh, false);
     assert.ok(stale.reasons.some((reason) => /dependency/u.test(reason)));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('rejects a sparse input beyond the bounded retained-tree budget', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-feature-integration-limit-'));
+  const destination = join(root, 'retained');
+  const source = join(root, 'source');
+  try {
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, 'oversized.bin'), '');
+    await truncate(join(source, 'oversized.bin'), FEATURE_INTEGRATION_MAX_TREE_BYTES + 1);
+    await assert.rejects(copyIntegrationTree(source, destination), { code: 'FEATURE_INTEGRATION_INPUT_LIMIT' });
   } finally {
     await cleanup(root);
   }

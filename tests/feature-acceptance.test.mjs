@@ -95,6 +95,38 @@ test('new feature acceptance refuses a missing integration configuration', async
   }
 });
 
+test('retired task protection cannot authorize an active task integration test', async () => {
+  const root = await project();
+  const previous = process.env[FEATURE_INTEGRATION_TEST_ENV];
+  delete process.env[FEATURE_INTEGRATION_TEST_ENV];
+  try {
+    await addTask(root, {
+      id: 'retired',
+      feature: 'broker',
+      brief: 'docs/brief.md',
+      allow: ['src/retired.ts'],
+      protect: ['tests/feature-integration.mjs'],
+    });
+    await closeTask(root, { id: 'retired', by: 'operator', reason: 'retired before acceptance' });
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    await assert.rejects(acceptFeatureController(root, {
+      feature: 'broker',
+      by: 'operator',
+      reason: 'retired protection must not qualify active scope',
+    }), { code: 'FEATURE_INTEGRATION_PROOF_REQUIRED' });
+    await acceptedTask(root, 'two', { feature: 'broker', protect: ['tests/feature-integration.mjs'] });
+    await assert.rejects(acceptFeatureController(root, {
+      feature: 'broker',
+      by: 'operator',
+      reason: 'every active scope must protect the integration test',
+    }), { code: 'FEATURE_INTEGRATION_PROOF_REQUIRED' });
+  } finally {
+    if (previous === undefined) delete process.env[FEATURE_INTEGRATION_TEST_ENV];
+    else process.env[FEATURE_INTEGRATION_TEST_ENV] = previous;
+    await cleanup(root);
+  }
+});
+
 test('acceptance appends a frozen snapshot without changing controller state', async () => {
   const root = await project();
   try {
@@ -112,6 +144,28 @@ test('acceptance appends a frozen snapshot without changing controller state', a
     const reported = await reportFeature(root, { feature: 'broker' });
     assert.equal(reported.accepted, true);
     assert.equal(reported.stale, false);
+    assert.deepEqual(reported.report, accepted.report);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('legacy feature events without integration proof remain stale and keep frozen numbers', async () => {
+  const root = await project();
+  try {
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    const accepted = await acceptFeature(root, { feature: 'broker', by: 'operator', reason: 'feature complete' });
+    const ledgerPath = join(root, '.tinysdd', 'runs', 'feature-events.jsonl');
+    const event = JSON.parse((await readFile(ledgerPath, 'utf8')).trim());
+    delete event.integration;
+    await writeFile(ledgerPath, `${JSON.stringify(event)}\n`, 'utf8');
+
+    const reported = await reportFeature(root, { feature: 'broker' });
+    assert.equal(reported.accepted, true);
+    assert.equal(reported.stale, true);
+    assert.equal(reported.eligible, false);
+    assert.equal(reported.integration.fresh, false);
+    assert.ok(reported.staleReasons.includes('integration proof missing'));
     assert.deepEqual(reported.report, accepted.report);
   } finally {
     await cleanup(root);

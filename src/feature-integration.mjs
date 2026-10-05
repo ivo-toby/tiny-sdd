@@ -274,6 +274,14 @@ async function readAndCopyFile(source, target, info, state, label, { mountReadab
     while (true) {
       const { bytesRead } = await input.read(buffer, 0, buffer.length, position);
       if (bytesRead === 0) break;
+      if (position > opened.size || bytesRead > opened.size - position) {
+        throw tinyError('FEATURE_INTEGRATION_INPUT_CHANGED', `integration input grew while reading ${label}`, { path: label });
+      }
+      if (state.bytes > FEATURE_INTEGRATION_MAX_TREE_BYTES
+        || position > FEATURE_INTEGRATION_MAX_TREE_BYTES - state.bytes
+        || bytesRead > FEATURE_INTEGRATION_MAX_TREE_BYTES - state.bytes - position) {
+        throw tinyError('FEATURE_INTEGRATION_INPUT_LIMIT', `integration input exceeds ${FEATURE_INTEGRATION_MAX_TREE_BYTES} bytes`, { limit: FEATURE_INTEGRATION_MAX_TREE_BYTES });
+      }
       const chunk = buffer.subarray(0, bytesRead);
       await output.write(chunk);
       hash.update(chunk);

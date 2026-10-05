@@ -336,8 +336,12 @@ retained project and dependency bytes. Missing configuration, an unavailable
 Linux sandbox, a failed or timed out check, and project/configuration drift all
 refuse acceptance. A successful run retains its result, command identity,
 tested bytes and dependency identities; `feature report --json` marks the proof
-stale when any of those inputs changes. macOS currently reports the runner as
-unavailable.
+stale when any of those inputs changes. Every active accepted task scope must
+protect the declared test paths. The retained projection accepts regular files
+and directories only: symlinks (including common `node_modules/.bin` links) and
+special files are refused, and each copied tree is bounded to 20,000 entries
+and 512 MiB (manifest bytes are bounded to 512 KiB). macOS currently reports
+the runner as unavailable.
 
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'

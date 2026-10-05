@@ -1630,20 +1630,43 @@ async function inspectFeature(root, state, feature) {
   const activeAcceptanceDigests = {};
   const statuses = {};
   const reportTasks = [];
-  const protectedPaths = new Set();
+  const activeTasks = tasks.filter((task) => !task.closure);
+  const allRetired = activeTasks.length === 0;
+  const acceptedProtectionSets = [];
+  const retiredProtection = new Set();
   for (const task of tasks) {
     const retired = Boolean(task.closure);
     const stateInfo = await inspectTask(root, state, task);
     membership.push({ id: task.id, retired });
     statuses[task.id] = stateInfo.status;
     reportTasks.push({ id: task.id, feature, retired });
-    for (const path of task.protect ?? []) protectedPaths.add(path);
-    for (const path of preparationPaths(task.preparation ?? [])) protectedPaths.add(path);
+    const taskProtection = new Set([
+      ...(task.protect ?? []),
+      ...preparationPaths(task.preparation ?? []),
+    ]);
+    if (retired) {
+      for (const path of taskProtection) retiredProtection.add(path);
+    } else if (stateInfo.status === 'accepted' && stateInfo.acceptanceDigest) {
+      acceptedProtectionSets.push(taskProtection);
+    }
     if (!retired && stateInfo.status === 'accepted' && stateInfo.acceptanceDigest) {
       activeAcceptanceDigests[task.id] = stateInfo.acceptanceDigest;
     }
   }
+  // Every active accepted scope must protect the declared integration bytes;
+  // retired scopes remain usable only when the feature has no active tasks.
+  const protectedPaths = allRetired
+    ? retiredProtection
+    : acceptedProtectionSets.length === 0
+      ? new Set()
+      : new Set([...acceptedProtectionSets[0]].filter((path) => acceptedProtectionSets.every((paths) => paths.has(path))));
   return { tasks, membership, activeAcceptanceDigests, statuses, reportTasks, protectedPaths: [...protectedPaths].sort() };
+}
+
+function featureIntegrationProtectedPaths(current, config) {
+  const paths = current.protectedPaths;
+  if (process.env[FEATURE_INTEGRATION_TEST_ENV] !== '1') return paths;
+  return [...new Set([...paths, ...(config?.testPaths ?? [])])].sort();
 }
 
 function assertFeatureAcceptanceReady(feature, snapshot) {
@@ -1654,6 +1677,14 @@ function assertFeatureAcceptanceReady(feature, snapshot) {
   if (rejected.length > 0) {
     throw tinyError('FEATURE_NOT_ACCEPTED', `feature has non-retired tasks that are not accepted: ${rejected.map((item) => `${item.id} (${item.status})`).join(', ')}`, { tasks: rejected });
   }
+}
+
+function featureCurrentEligible(snapshot) {
+  return snapshot.membership.length > 0
+    && snapshot.membership.every((item) => item.retired || (
+      snapshot.statuses[item.id] === 'accepted'
+      && Boolean(snapshot.activeAcceptanceDigests[item.id])
+    ));
 }
 
 function currentFeatureMetadata(snapshot) {
@@ -1687,9 +1718,7 @@ function latestFeatureEvent(events, feature) {
 
 async function featureIntegrationState(root, feature, current, event, resolved) {
   const config = resolved?.config?.featureIntegration;
-  const protectedPaths = process.env[FEATURE_INTEGRATION_TEST_ENV] === '1'
-    ? [...new Set([...current.protectedPaths, ...(config?.testPaths ?? [])])].sort()
-    : current.protectedPaths;
+  const protectedPaths = featureIntegrationProtectedPaths(current, config);
   return featureIntegrationFreshness(root, {
     feature,
     eventIntegration: event?.integration,
@@ -1716,7 +1745,7 @@ export async function reportFeature(projectRoot, options = {}) {
         accepted: false,
         stale: integration.fresh === false,
         ...(integration.fresh === false ? { staleReasons: integration.reasons } : {}),
-        eligible: integration.fresh && current.membership.some((item) => !item.retired && current.statuses[item.id] === 'accepted'),
+        eligible: integration.fresh && featureCurrentEligible(current),
         integration,
         current: currentFeatureMetadata(current),
         report: await withUsageLedgerLock(root, (usageRecords) => liveFeatureReport(root, feature, current, usageRecords)),
@@ -1729,7 +1758,7 @@ export async function reportFeature(projectRoot, options = {}) {
       accepted: true,
       stale: staleReasons.length > 0,
       staleReasons,
-      eligible: !stale.stale && integration.fresh,
+      eligible: !stale.stale && integration.fresh && featureCurrentEligible(current),
       integration,
       current: currentFeatureMetadata(current),
       acceptance: event,
@@ -1749,41 +1778,72 @@ export async function acceptFeature(projectRoot, options = {}) {
     let current = await inspectFeature(root, state, feature);
     assertFeatureAcceptanceReady(feature, current);
     const resolved = await resolveConfig(root);
-    if (resolved.config.featureIntegration === undefined) {
+    const integrationConfig = resolved.config.featureIntegration;
+    if (integrationConfig === undefined) {
       throw tinyError('FEATURE_INTEGRATION_CONFIG', 'feature acceptance requires a configured integration command');
     }
-    let integration;
-    if (resolved.config.featureIntegration !== undefined) {
-      const testProtectedPaths = process.env[FEATURE_INTEGRATION_TEST_ENV] === '1'
-        ? [...new Set([...current.protectedPaths, ...(options.integrationProtectedPaths ?? resolved.config.featureIntegration.testPaths ?? [])])].sort()
-        : current.protectedPaths;
-      integration = await runFeatureIntegration(root, {
-        feature,
-        membership: current.membership,
-        activeAcceptanceDigests: current.activeAcceptanceDigests,
-        config: resolved.config.featureIntegration,
-        protectedPaths: testProtectedPaths,
-        ...(options.integrationRunner === undefined ? {} : { runner: options.integrationRunner }),
-      });
-      const afterState = await readState(info);
-      const after = await inspectFeature(root, afterState, feature);
-      if (stableStringify(after.membership) !== stableStringify(current.membership)
-        || stableStringify(after.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) {
-        throw tinyError('FEATURE_INTEGRATION_STALE', 'feature membership or task acceptance changed while the integration check was running');
-      }
-      const afterConfig = await resolveConfig(root);
-      if (afterConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed while the check was running');
-      current = after;
+    const testProtectedPaths = process.env[FEATURE_INTEGRATION_TEST_ENV] === '1'
+      ? [...new Set([...current.protectedPaths, ...(options.integrationProtectedPaths ?? integrationConfig.testPaths ?? [])])].sort()
+      : current.protectedPaths;
+    const integration = await runFeatureIntegration(root, {
+      feature,
+      membership: current.membership,
+      activeAcceptanceDigests: current.activeAcceptanceDigests,
+      config: integrationConfig,
+      protectedPaths: testProtectedPaths,
+      ...(options.integrationRunner === undefined ? {} : { runner: options.integrationRunner }),
+    });
+    const afterState = await readState(info);
+    const after = await inspectFeature(root, afterState, feature);
+    if (stableStringify(after.membership) !== stableStringify(current.membership)
+      || stableStringify(after.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) {
+      throw tinyError('FEATURE_INTEGRATION_STALE', 'feature membership or task acceptance changed while the integration check was running');
     }
+    const afterConfig = await resolveConfig(root);
+    if (afterConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed while the check was running');
+    const afterIntegration = await featureIntegrationFreshness(root, {
+      feature,
+      eventIntegration: integration.reference,
+      membership: after.membership,
+      activeAcceptanceDigests: after.activeAcceptanceDigests,
+      config: afterConfig.config.featureIntegration,
+      protectedPaths: featureIntegrationProtectedPaths(after, afterConfig.config.featureIntegration),
+    });
+    if (!afterIntegration.fresh) {
+      throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration evidence became stale before acceptance', { reasons: afterIntegration.reasons });
+    }
+    current = after;
+    // Keep the same freshness check immediately before the ledger append. A
+    // state/config/source change after the first post-run read must not turn
+    // an old retained proof into a new acceptance event.
     return withUsageLedgerLock(root, async (usageRecords) => {
-      const report = await liveFeatureReport(root, feature, current, usageRecords);
+      const finalState = await readState(info);
+      const final = await inspectFeature(root, finalState, feature);
+      const finalConfig = await resolveConfig(root);
+      if (finalConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed before acceptance');
+      const finalIntegration = await featureIntegrationFreshness(root, {
+        feature,
+        eventIntegration: integration.reference,
+        membership: final.membership,
+        activeAcceptanceDigests: final.activeAcceptanceDigests,
+        config: finalConfig.config.featureIntegration,
+        protectedPaths: featureIntegrationProtectedPaths(final, finalConfig.config.featureIntegration),
+      });
+      if (!finalIntegration.fresh) {
+        throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration evidence became stale before acceptance', { reasons: finalIntegration.reasons });
+      }
+      if (stableStringify(final.membership) !== stableStringify(current.membership)
+        || stableStringify(final.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) {
+        throw tinyError('FEATURE_INTEGRATION_STALE', 'feature membership or task acceptance changed before acceptance');
+      }
+      const report = await liveFeatureReport(root, feature, final, usageRecords);
       const event = createFeatureAcceptanceEvent({
         feature,
         by,
         reason,
-        membership: current.membership,
-        activeAcceptanceDigests: current.activeAcceptanceDigests,
-        ...(integration === undefined ? {} : { integration: integration.reference }),
+        membership: final.membership,
+        activeAcceptanceDigests: final.activeAcceptanceDigests,
+        integration: integration.reference,
         report,
       });
       const appended = await appendFeatureEvent(root, event);
@@ -1791,8 +1851,8 @@ export async function acceptFeature(projectRoot, options = {}) {
         feature,
         accepted: true,
         stale: false,
-        current: currentFeatureMetadata(current),
-        ...(integration === undefined ? {} : { integration: integration.reference }),
+        current: currentFeatureMetadata(final),
+        integration: integration.reference,
         acceptance: appended,
         report: appended.report,
       };

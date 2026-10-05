@@ -252,6 +252,10 @@ protected feature tests while `entrypoints` identifies real files. For example:
 records its bounded result and identities in the acceptance event. It refuses
 when configuration, the Linux sandbox, the check, the protected test, the
 entrypoint, or any retained project/dependency bytes are unavailable or stale.
+Every active accepted task scope must protect the declared test paths. Retained
+project and dependency trees are regular-file-only: symlinks (including common
+`node_modules/.bin` links) and special files are refused; each tree is bounded
+to 20,000 entries and 512 MiB, and a manifest is bounded to 512 KiB.
 Historical events without this optional proof remain readable but are reported
 as ineligible; their frozen usage report is unchanged.
 
