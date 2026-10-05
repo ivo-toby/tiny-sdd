@@ -142,6 +142,45 @@ tinysdd usage record --phase review --model frontier/model --input 1200 --output
 tinysdd usage report --feature reservations
 ```
 
+The optional phase ledger provides the first end-to-end gate for research. Set
+an explicit policy before recording it:
+
+```json
+{
+  "schemaVersion": 1,
+  "workers": {},
+  "phaseGates": { "research": { "mode": "human" } }
+}
+```
+
+```sh
+tinysdd phase record --phase research --feature reservations \
+  --proposal docs/research-proposal.md --context docs/research.context.json \
+  --by operator --reason 'Reviewed the current research inputs'
+tinysdd phase status --feature reservations
+tinysdd phase advance --from research --to plan --feature reservations \
+  --by operator --reason 'Research is current and complete'
+```
+
+Research records retain bounded proposal and manifest references plus exact
+compiled cited excerpts. The record becomes stale when cited content, inputs,
+policy, configured predecessor, or named producer qualification changes.
+Only the human handler is implemented; other modes report unavailable and
+cannot masquerade as operator approval. Existing task approval remains the
+implement-phase gate.
+
+An optional `implement` entry in `phaseGates` names that same human task
+approval gate. Task approval, review, apply and final-run bindings remain the
+authority; non-human modes and added phase requirements are rejected.
+
+The bounded #81 transition interface is also offline. It accepts no inferred
+thresholds or routes: a complete `testReview` policy must be supplied. Negative
+assessments may request revisions up to that policy's cap; positive assessments
+require a separately identified, caller-declared strong review over the same
+input digest and still return operator acceptance rather than automatic
+acceptance. Missing, uncertain, unavailable or non-attested review states never
+approve a change, and this interface does not invoke a provider or model.
+
 For external data, use the normalized import envelope with a `source`, an
 `exportId`, and a stable `externalRecordId` on every record. TinySDD validates
 the complete file before appending it. This import contract is separate from

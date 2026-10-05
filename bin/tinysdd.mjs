@@ -23,6 +23,9 @@ import {
   resolveTaskPacket,
   reviewTask,
   reportFeature,
+  recordPhase,
+  phaseStatus,
+  advancePhase,
   supersedeTask,
   updateTask,
 } from '../src/controller.mjs';
@@ -72,6 +75,9 @@ Usage:
   tinysdd [--json] [--project PATH] usage report --feature NAME
   tinysdd [--json] [--project PATH] feature accept --feature NAME --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] feature report --feature NAME
+  tinysdd [--json] [--project PATH] phase record|research --phase research --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID]
+  tinysdd [--json] [--project PATH] phase status [--feature NAME]
+  tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID]
 
 Usage phases: specify, research, plan, slice, write-tests, review, rescue.
 
@@ -238,6 +244,18 @@ function parseCommand(args) {
       ? new Map([['feature', 'value'], ['by', 'value'], ['reason', 'value']])
       : new Map([['feature', 'value']]);
     const { values, positional } = parseFlags(rest, allowed);
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
+  if (command === 'phase') {
+    if (!['record', 'research', 'status', 'advance'].includes(subcommand)) throw cliError('phase requires record, research, status, or advance');
+    const allowedBySubcommand = {
+      record: new Map([['phase', 'value'], ['feature', 'value'], ['proposal', 'value'], ['context', 'value'], ['by', 'value'], ['reason', 'value'], ['predecessor', 'value'], ['worker', 'value']]),
+      research: new Map([['phase', 'value'], ['feature', 'value'], ['proposal', 'value'], ['context', 'value'], ['by', 'value'], ['reason', 'value'], ['predecessor', 'value'], ['worker', 'value']]),
+      status: new Map([['feature', 'value'], ['worker', 'value']]),
+      advance: new Map([['from', 'value'], ['to', 'value'], ['feature', 'value'], ['record', 'value'], ['by', 'value'], ['reason', 'value'], ['worker', 'value']]),
+    };
+    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -825,6 +843,37 @@ async function run(argv) {
     data = await reportFeature(project, { feature: requiredOption(parsed.values, 'feature') });
     presentation = 'usage-report';
   }
+  else if (parsed.command === 'phase' && (parsed.subcommand === 'record' || parsed.subcommand === 'research')) {
+    const phase = parsed.values.phase ?? 'research';
+    if (phase !== 'research') throw cliError('only the research phase can be recorded', 'PHASE_UNSUPPORTED');
+    data = await recordPhase(project, {
+      phase,
+      feature: requiredOption(parsed.values, 'feature'),
+      proposal: requiredOption(parsed.values, 'proposal'),
+      context: requiredOption(parsed.values, 'context'),
+      by: requiredOption(parsed.values, 'by'),
+      reason: requiredOption(parsed.values, 'reason'),
+      predecessor: parsed.values.predecessor,
+      worker: parsed.values.worker,
+    });
+    presentation = 'phase-record';
+  }
+  else if (parsed.command === 'phase' && parsed.subcommand === 'status') {
+    data = await phaseStatus(project, { feature: parsed.values.feature, worker: parsed.values.worker });
+    presentation = 'phase-status';
+  }
+  else if (parsed.command === 'phase' && parsed.subcommand === 'advance') {
+    data = await advancePhase(project, {
+      from: parsed.values.from,
+      to: parsed.values.to,
+      feature: requiredOption(parsed.values, 'feature'),
+      recordId: parsed.values.record,
+      by: requiredOption(parsed.values, 'by'),
+      reason: requiredOption(parsed.values, 'reason'),
+      worker: parsed.values.worker,
+    });
+    presentation = 'phase-advance';
+  }
   else throw cliError('unsupported command');
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
@@ -946,6 +995,19 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'qualification') {
     renderQualification(result.data);
+    return;
+  }
+  if (result.presentation === 'phase-record') {
+    process.stdout.write(`Phase ${result.data.phase}: approval recorded for ${result.data.feature}.\n`);
+    return;
+  }
+  if (result.presentation === 'phase-advance') {
+    process.stdout.write(`Phase ${result.data.feature}: advanced ${result.data.from} to ${result.data.to}.\n`);
+    return;
+  }
+  if (result.presentation === 'phase-status') {
+    process.stdout.write(`Feature ${result.data.feature ?? 'all'} phases:\n`);
+    for (const [name, value] of Object.entries(result.data.phases ?? {})) process.stdout.write(`${name}: ${value.status}\n`);
     return;
   }
   if (result.ok) {

@@ -229,6 +229,49 @@ tinysdd usage record --phase review --model frontier/model --input 1200 --output
 tinysdd usage report --feature reservations
 ```
 
+When a project enables the optional phase policy in `.tinysdd/config.json`,
+record the reviewed research inputs explicitly. The research gate keeps the
+proposal, manifest and exact compiled cited excerpts in a bounded immutable
+phase ledger; it does not run a model or infer approval for another gate:
+
+```json
+{
+  "schemaVersion": 1,
+  "workers": {},
+  "phaseGates": { "research": { "mode": "human" } }
+}
+```
+
+```sh
+tinysdd phase record --phase research --feature reservations \
+  --proposal docs/research-proposal.md --context docs/research.context.json \
+  --by operator --reason 'Reviewed the current research inputs'
+tinysdd phase status --feature reservations
+tinysdd phase advance --from research --to plan --feature reservations \
+  --by operator --reason 'Research is current and complete'
+```
+
+Only the configured `human` research handler is available in this increment;
+frontier, deterministic and automatic handlers report unavailable. If research
+qualification is configured, its named producer must currently be qualified
+for the `research` role and its current qualification record is bound to the
+phase decision. Changing the proposal, manifest, cited lines, policy,
+predecessor or qualification makes the decision stale. The existing task
+approval remains the implement gate with its existing digest and apply/review
+semantics.
+
+If `implement` appears in `phaseGates`, it is only the existing human task
+approval alias. Its approval, review, apply and final-run bindings stay in the
+task controller; other modes and added phase requirements are rejected.
+
+The bounded #81 transition interface is offline only. It requires an explicit
+complete `testReview` policy; a negative assessment may request revisions only
+within that configured cap, while a positive assessment remains review-required
+until a separately identified, caller-declared strong review covers the same
+input digest. Missing policy, unknown or non-attested review, exhaustion,
+uncertain results and unavailable results never approve or accept a change; no
+provider or model is invoked by this interface.
+
 Normalized imports use a versioned JSON envelope with `source`, `exportId` and
 stable per-record `externalRecordId` values. The entire file is validated before
 anything is appended:

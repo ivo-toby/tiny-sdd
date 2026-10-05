@@ -51,6 +51,12 @@ import {
 import { withUsageLedgerLock } from './usage.mjs';
 import { buildUsageReport } from './usage-report.mjs';
 import { assessQualification } from './qualification-dispatch.mjs';
+import { readQualificationRecord } from './qualification-store.mjs';
+import {
+  advancePhase as advancePhaseGate,
+  phaseStatus as phaseStatusGate,
+  recordResearchDecision,
+} from './phase-gates.mjs';
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, pathsOverlap, preparationPaths, observedPathError } from './file-scope.mjs';
 
 export { resolveConfig } from './config.mjs';
@@ -1734,6 +1740,78 @@ export async function acceptFeature(projectRoot, options = {}) {
   });
 }
 
+async function phaseQualification(root, gate) {
+  const qualification = gate?.qualification;
+  if (!qualification || qualification.required === false) return undefined;
+  const resolved = await resolveConfig(root, { worker: qualification.worker });
+  const configured = resolved.config.qualification ?? {};
+  const enforced = {
+    ...resolved,
+    config: {
+      ...resolved.config,
+      qualification: { ...configured, mode: 'enforce' },
+    },
+  };
+  const assessment = await assessQualification({
+    projectRoot: root,
+    resolved: enforced,
+    workerName: qualification.worker,
+    role: qualification.role,
+  });
+  if (assessment.status !== 'qualified' || typeof assessment.path !== 'string' || typeof assessment.recordDigest !== 'string') {
+    throw tinyError('PHASE_QUALIFICATION_REQUIRED', `worker ${qualification.worker} is not currently qualified for ${qualification.role}`, { qualification: assessment });
+  }
+  const retained = await readQualificationRecord(root, assessment.path);
+  return {
+    worker: qualification.worker,
+    role: qualification.role,
+    recordDigest: assessment.recordDigest,
+    recordPath: retained.path,
+    recordSha256: retained.sha256,
+    identityDigest: digestJson(assessment.identity),
+  };
+}
+
+function phaseCallbacks(root, policy) {
+  const resolver = async (producer) => phaseQualification(root, {
+    qualification: { worker: producer.worker, role: producer.role, required: true },
+  });
+  return {
+    policy,
+    qualificationResolver: resolver,
+  };
+}
+
+async function resolvedPhasePolicy(root, options = {}) {
+  const resolved = await resolveConfig(root, { worker: options.worker });
+  return { resolved, policy: resolved.config.phaseGates };
+}
+
+export async function recordResearch(projectRoot, options = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const { policy } = await resolvedPhasePolicy(root, options);
+  return recordResearchDecision(root, { ...options, ...phaseCallbacks(root, policy) });
+}
+
+export async function recordPhase(projectRoot, options = {}) {
+  if (options.phase !== undefined && options.phase !== 'research') {
+    throw tinyError('PHASE_UNSUPPORTED', `phase ${options.phase} cannot be recorded yet`, { phase: options.phase });
+  }
+  return recordResearch(projectRoot, options);
+}
+
+export async function phaseStatus(projectRoot, options = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const { policy } = await resolvedPhasePolicy(root, options);
+  return phaseStatusGate(root, { ...options, ...phaseCallbacks(root, policy) });
+}
+
+export async function advancePhase(projectRoot, options = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const { policy } = await resolvedPhasePolicy(root, options);
+  return advancePhaseGate(root, { ...options, ...phaseCallbacks(root, policy) });
+}
+
 export async function controllerStatus(projectRoot, { feature } = {}) {
   const selectedFeature = feature === undefined ? undefined : validateFeature(feature);
   const root = await canonicalProjectRoot(projectRoot);
@@ -1827,6 +1905,10 @@ export function createController(projectRoot) {
     reviewTask: (options) => reviewTask(projectRoot, options),
     acceptFeature: (options) => acceptFeature(projectRoot, options),
     reportFeature: (options) => reportFeature(projectRoot, options),
+    recordResearch: (options) => recordResearch(projectRoot, options),
+    recordPhase: (options) => recordPhase(projectRoot, options),
+    phaseStatus: (options) => phaseStatus(projectRoot, options),
+    advancePhase: (options) => advancePhase(projectRoot, options),
     status: (options) => controllerStatus(projectRoot, options),
     next: () => controllerNext(projectRoot),
     packet: (taskId) => resolveTaskPacket(projectRoot, taskId),
