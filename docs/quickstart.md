@@ -472,6 +472,43 @@ without running checks, models, or services. Its synthetic examples remain
 proposed and human-unreviewed until the research adapter and calibration work
 are complete.
 
+Prepare a bounded, digest-bound research packet from any working directory.
+The packet retains the exact proposal and eligible source bytes outside the
+target project; it does not invoke a model or change project/controller state:
+
+```sh
+TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+TARGET_PROJECT=/absolute/path/to/project
+RESEARCH_PACKET_OUT=/absolute/canonical/tmp/research-packet
+node "$TINYSDD_CHECKOUT/scripts/research.mjs" prepare \
+  --project "$TARGET_PROJECT" \
+  --proposal changes/example/proposal.md \
+  --out "$RESEARCH_PACKET_OUT" \
+  --max-files 200 --max-source-bytes 524288 \
+  --max-map-bytes 262144 --budget-bytes 24576 --json
+```
+
+Have the selected research context returned as a strict manifest with an empty
+`facts` array, then validate it against the retained packet. The compiler
+provides verbatim excerpts, while `purpose` remains an untrusted selection hint:
+
+```sh
+RESEARCH_RESULT_OUT=/absolute/canonical/tmp/research-result
+node "$TINYSDD_CHECKOUT/scripts/research.mjs" validate \
+  --project "$TARGET_PROJECT" \
+  --packet "$RESEARCH_PACKET_OUT" \
+  --selection "$TARGET_PROJECT/changes/example/research.selection.json" \
+  --out "$RESEARCH_RESULT_OUT" --budget-bytes 24576 --json
+```
+
+The result is explicitly `draft_unapproved`; it records packet, manifest,
+source, excerpt and compiled-context digests without recording a phase decision.
+Omit `--gold` when no caller-supplied reference exists: precision and recall
+remain `UNKNOWN`. Output directories must be new, canonical and outside the
+target project and packet inputs; warnings go to stderr and `--json` writes one
+JSON object to stdout. See [the bounded research workflow](research-workflow.md)
+for the packet contents and selection contract.
+
 Use `task add --protect src/types.ts,tests/contract.test.ts` for read-only
 contract files. They must exist and cannot overlap `--allow`. The packet lists
 them and the worker prompt forbids changing them; an edit is retained as a scope

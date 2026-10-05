@@ -491,6 +491,44 @@ records invalid citations as hard-gate observations. It does not run checks,
 invoke a model, accept a task, or qualify a role; its synthetic examples are
 proposed and human-unreviewed.
 
+Issue #29 adds a bounded packet and selection handoff around that compiler.
+Run it from any directory with explicit checkout, target and new output paths:
+
+```sh
+TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+TARGET_PROJECT=/absolute/path/to/project
+RESEARCH_PACKET_OUT=/absolute/canonical/tmp/research-packet
+node "$TINYSDD_CHECKOUT/scripts/research.mjs" prepare \
+  --project "$TARGET_PROJECT" --proposal changes/example/proposal.md \
+  --out "$RESEARCH_PACKET_OUT" \
+  --max-files 200 --max-source-bytes 524288 \
+  --max-map-bytes 262144 --budget-bytes 24576 --json
+```
+
+The preparation command retains exact proposal/source bytes and emits a
+selection-only prompt. A caller-selected model or harness may return a strict
+context manifest, but the command itself invokes no provider, model, service or
+source code. The returned manifest must have `facts: []`; each `purpose` is an
+untrusted selection hint.
+
+```sh
+RESEARCH_RESULT_OUT=/absolute/canonical/tmp/research-result
+node "$TINYSDD_CHECKOUT/scripts/research.mjs" validate \
+  --project "$TARGET_PROJECT" --packet "$RESEARCH_PACKET_OUT" \
+  --selection "$TARGET_PROJECT/changes/example/research.selection.json" \
+  --out "$RESEARCH_RESULT_OUT" --budget-bytes 24576 --json
+```
+
+Validation rechecks proposal and cited source identities, compiles verbatim
+excerpts through `compileContext()`, and writes a `draft_unapproved` report
+without changing phase/state/approval artifacts. `--gold PATH` is optional and
+uses the offline scorer; without it, precision and recall are `UNKNOWN`, and a
+caller-supplied gold manifest has no implied human-review or calibration status.
+Output paths must be fresh canonical directories outside the target, packet and
+selection inputs. Warnings go to stderr; `--json` emits exactly one JSON object.
+The complete packet contract is in
+[docs/research-workflow.md](../../../docs/research-workflow.md).
+
 Run an operator-selected benchmark suite with the serial CLI lane:
 
 ```sh
