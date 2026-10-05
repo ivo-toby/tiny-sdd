@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -19,8 +18,10 @@ import { dirname, join, relative, resolve } from 'node:path';
 
 import { resolveTaskPacket } from './controller.mjs';
 import { parseChecksManifest } from './checks-manifest.mjs';
+import { compileContext } from './context-compiler.mjs';
+import { validateChange } from './change-format.mjs';
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths } from './file-scope.mjs';
-import { assertNoSymlinkPath, canonicalProjectRoot, normalizeProjectRelative, sha256, stableStringify, tinyError } from './fs-utils.mjs';
+import { assertNoSymlinkPath, canonicalProjectRoot, digestJson, normalizeProjectRelative, sha256, stableStringify, tinyError } from './fs-utils.mjs';
 import {
   assertCopiedInputs,
   changedFiles,
@@ -116,12 +117,15 @@ function assertOutside(sourceRoot, target, label) {
   if (isInside(sourceRoot, target)) captureError('HARNESS_PATH_OVERLAP', `${label} must be outside the source project`, { path: target });
 }
 
-async function boundedBytes(path, { maxBytes = MAX_BUNDLE_FILE_BYTES, label = path } = {}) {
+async function boundedBytes(path, { maxBytes = MAX_BUNDLE_FILE_BYTES, label = path, expectedInfo = null } = {}) {
   let handle;
   try {
     handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | O_NOFOLLOW);
     const opened = await handle.stat();
     if (!opened.isFile()) captureError('HARNESS_BUNDLE_INVALID', `${label} must be a regular file`, { path });
+    if (expectedInfo && (opened.dev !== expectedInfo.dev || opened.ino !== expectedInfo.ino || opened.size !== expectedInfo.size)) {
+      captureError('HARNESS_CAPTURE_STALE', `${label} changed before it could be retained`, { path });
+    }
     if (opened.size > maxBytes) captureError('HARNESS_BUNDLE_LIMIT', `${label} exceeds the ${maxBytes}-byte limit`, { path, bytes: opened.size, limit: maxBytes });
     const chunks = [];
     let bytesRead = 0;
@@ -307,8 +311,212 @@ async function currentPacket(projectRoot, expectedPacket, expectedDigest) {
   return packet;
 }
 
-function contextResources(manifest) {
-  return (manifest.identity?.context?.sourceDigests ?? []).map((resource) => ({ path: resource.path }));
+function contextResources(compiled) {
+  return (compiled?.resources ?? []).map((resource) => ({ path: resource.path }));
+}
+
+async function readSourceText(projectRoot, projectPath) {
+  const normalized = normalizeProjectRelative(projectPath, 'context resource', sourceReadOptions(projectPath));
+  const absolute = resolve(projectRoot, ...normalized.split('/'));
+  await assertNoSymlinkPath(absolute, { allowMissing: false, requireDirectory: false });
+  const bytes = await boundedBytes(absolute, { maxBytes: MAX_BUNDLE_FILE_BYTES, label: `context resource ${normalized}` });
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    captureError('HARNESS_BUNDLE_INVALID', `context resource has a UTF-8 BOM: ${normalized}`);
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    captureError('HARNESS_BUNDLE_INVALID', `context resource is not valid UTF-8: ${normalized}`);
+  }
+}
+
+function sortedRecords(value) {
+  return [...value].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function assertRecordsEqual(actual, expected, label) {
+  if (!Array.isArray(actual) || stableStringify(sortedRecords(actual)) !== stableStringify(sortedRecords(expected))) {
+    captureError('HARNESS_BUNDLE_INVALID', `${label} does not match the approved packet semantics`);
+  }
+}
+
+function comparePacketShape(packet, plan) {
+  const expected = {
+    runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
+    brief: plan.brief,
+    context: plan.context,
+    checks: plan.checks,
+    allow: plan.allow,
+    protect: plan.protect,
+    preparation: plan.preparation,
+    dependsOn: plan.dependsOn,
+  };
+  const actual = {
+    runtimeScope: packet.runtimeScope,
+    brief: packet.brief?.path,
+    context: packet.context?.path,
+    checks: packet.checks?.path,
+    allow: packet.allowedPaths,
+    protect: packet.protectedPaths ?? [],
+    preparation: packet.preparation ?? [],
+    dependsOn: (packet.dependencies ?? []).map((dependency) => dependency.id),
+  };
+  if (stableStringify(actual) !== stableStringify(expected)) {
+    throw tinyError('TASK_DESCRIPTOR_MISMATCH', `registered task ${packet.taskId} does not match the format plan`, { expected, actual });
+  }
+}
+
+async function validateBundleSemantics(projectRoot, bundle, packet) {
+  const manifest = bundle.manifest;
+  const descriptorFiles = manifest.descriptorSet?.descriptorFiles;
+  if (!Array.isArray(descriptorFiles) || descriptorFiles.length === 0) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle descriptorSet is missing its complete descriptorFiles list');
+  }
+  const changeDescriptors = descriptorFiles.filter((descriptor) => typeof descriptor?.path === 'string' && descriptor.path.endsWith('/change.json'));
+  if (changeDescriptors.length !== 1) captureError('HARNESS_BUNDLE_INVALID', 'bundle descriptorSet must identify exactly one change.json');
+  let validated;
+  try {
+    validated = await validateChange({ projectRoot, changePath: changeDescriptors[0].path });
+  } catch (error) {
+    captureError('HARNESS_BUNDLE_INVALID', `bundle change descriptors are not current: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const slice = validated.slices.find((item) => item.value.id === packet.taskId);
+  const plan = validated.registrationPlan.find((item) => item.id === packet.taskId);
+  if (!slice || !plan) captureError('HARNESS_BUNDLE_INVALID', `bundle task ${packet.taskId} is absent from its change registration plan`);
+  try {
+    comparePacketShape(packet, plan);
+  } catch (error) {
+    captureError('HARNESS_BUNDLE_INVALID', `bundle packet does not match its current registration plan: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (manifest.changeId !== validated.change.id || manifest.sliceId !== packet.taskId || manifest.taskId !== packet.taskId) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle task identity does not match the approved change');
+  }
+  if (stableStringify(manifest.descriptorSet) !== stableStringify(validated.preparationIdentity)) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle descriptorSet is not the current preparation identity');
+  }
+
+  let compiled = null;
+  let contextBinding = 'none';
+  if (packet.context) {
+    try {
+      compiled = await compileContext(projectRoot, packet.context, { readSource: (path) => readSourceText(projectRoot, path) });
+    } catch (error) {
+      captureError('HARNESS_BUNDLE_INVALID', `bundle context cannot be recompiled from the source: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (packet.context.compiledSha256 !== compiled.sha256) captureError('HARNESS_BUNDLE_INVALID', 'bundle packet context is not current');
+    if (packet.approval.contextDigest === compiled.sha256) contextBinding = 'current';
+    else if (packet.approval.contextDigest === compiled.legacySha256) contextBinding = 'legacy';
+    else captureError('HARNESS_BUNDLE_INVALID', 'bundle approval context digest matches neither current nor legacy compiled context');
+    const compiledContext = bundle.files.get('compiled-context.md');
+    if (!compiledContext || !compiledContext.equals(Buffer.from(compiled.rendered))) {
+      captureError('HARNESS_BUNDLE_INVALID', 'bundle compiled-context.md is not derived from the approved packet and source');
+    }
+  } else if ((packet.approval.contextDigest ?? null) !== null || bundle.files.has('compiled-context.md')) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle context references are inconsistent with the approved packet');
+  }
+  if (!packet.checks || typeof packet.checks.text !== 'string') captureError('HARNESS_BUNDLE_INVALID', 'bundle packet checks are required');
+
+  const expectedIdentity = {
+    schemaVersion: 1,
+    changeId: validated.change.id,
+    sliceId: slice.value.id,
+    descriptorSetSha256: validated.preparationIdentity.descriptorSetSha256,
+    testReviewContractSha256: validated.preparationIdentity.testReviewContractSha256,
+    currentApprovalDigest: packet.approval.approvalDigest,
+    approvalDigest: packet.approval.approvalDigest,
+    brief: {
+      path: packet.brief.path,
+      bytes: Buffer.byteLength(packet.brief.text),
+      sha256: sha256(packet.brief.text),
+    },
+    context: compiled === null ? null : {
+      path: packet.context.path,
+      manifestSha256: packet.context.sha256,
+      compiledSha256: compiled.sha256,
+      compiledBytes: compiled.bytes,
+      approvalContextDigest: packet.approval.contextDigest ?? null,
+      approvalContextBinding: contextBinding,
+      approvalComparison: contextBinding === 'legacy' ? 'approval.contextDigest=compiled.legacySha256' : contextBinding === 'current' ? 'approval.contextDigest=compiled.sha256' : 'none',
+      legacySha256: compiled.legacySha256,
+      sourceDigests: compiled.resources.map((resource) => ({ path: resource.path, sha256: resource.sourceSha256, bytes: resource.sourceBytes })),
+    },
+    checks: { path: packet.checks.path, bytes: Buffer.byteLength(packet.checks.text), sha256: sha256(packet.checks.text) },
+  };
+  if (stableStringify(manifest.identity) !== stableStringify(expectedIdentity) || manifest.identityDigest !== digestJson(expectedIdentity)) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle identity is not derived from the approved packet and source');
+  }
+  const expectedPreparation = {
+    brief: { path: packet.brief.path, testReviewContractSha256: validated.preparationIdentity.testReviewContractSha256 },
+    testReview: slice.value.testReview,
+    resolvedBudget: { ...slice.resolvedBudget },
+    advisoryCounts: {
+      implementationFiles: slice.value.implementationFiles.length,
+      sliceTests: slice.value.sliceTests.length,
+    },
+    expectedOutputs: {
+      implementationFiles: [...slice.value.implementationFiles],
+      sliceTests: [...slice.value.sliceTests],
+    },
+    featureTests: [...validated.change.featureTests],
+    integration: validated.change.integration.filter((item) => item.wiringSlice === slice.value.id || item.testPaths.some((testPath) => validated.change.featureTests.includes(testPath))),
+    descriptors: validated.preparationIdentity.descriptorFiles,
+    paths: plan.preparation ?? [],
+  };
+  if (stableStringify(manifest.preparation) !== stableStringify(expectedPreparation)) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle preparation metadata is not derived from the registration plan');
+  }
+  const expectedPacket = {
+    path: 'packet.json',
+    sha256: sha256(bundle.packetBytes),
+    approval: { ...packet.approval },
+    dependencies: packet.dependencies ?? [],
+  };
+  if (stableStringify(manifest.packet) !== stableStringify(expectedPacket)) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle packet reference is not tied to the approved packet');
+  }
+  if (stableStringify(manifest.citedSourceSnapshots) !== stableStringify(validated.sourceSnapshots)) {
+    captureError('HARNESS_BUNDLE_INVALID', 'bundle cited source snapshots are not current');
+  }
+
+  const contextPaths = compiled?.resources.map((resource) => resource.path) ?? [];
+  const preparation = plan.preparation ?? [];
+  const references = [...new Set([...plan.allow, ...plan.protect, ...contextPaths, ...preparation.map((item) => item.path)])];
+  const allowedMissing = new Set([...plan.allow, ...preparation.filter((item) => item.exists === false).map((item) => item.path)]);
+  const sourceSnapshots = new Map();
+  for (const projectPath of references) {
+    const observed = await sourceIdentity(projectRoot, projectPath);
+    if (!observed.exists && !allowedMissing.has(projectPath)) {
+      captureError('HARNESS_BUNDLE_INVALID', `bundle checkoutSnapshot omits a required source file: ${projectPath}`);
+    }
+    sourceSnapshots.set(projectPath, observed);
+  }
+  const expectedCheckout = references.map((projectPath) => sourceSnapshots.get(projectPath));
+  assertRecordsEqual(manifest.checkoutSnapshot, expectedCheckout, 'bundle checkoutSnapshot');
+  const expectedBaselines = plan.allow.flatMap((projectPath) => {
+    const observed = sourceSnapshots.get(projectPath);
+    return observed?.exists ? [{ path: projectPath, bundlePath: `baselines/${projectPath}`, bytes: observed.bytes, sha256: observed.sha256 }] : [];
+  });
+  assertRecordsEqual(manifest.retainedBaselines, expectedBaselines, 'bundle retainedBaselines');
+
+  const expectedFiles = new Map();
+  const addExpected = (path, bytes, sha) => expectedFiles.set(path, { path, bytes, sha256: sha });
+  addExpected('packet.json', bundle.packetBytes.byteLength, sha256(bundle.packetBytes));
+  addExpected('brief.md', Buffer.byteLength(packet.brief.text), sha256(packet.brief.text));
+  if (compiled) addExpected('compiled-context.md', compiled.bytes, compiled.sha256);
+  addExpected('checks.json', Buffer.byteLength(packet.checks.text), sha256(packet.checks.text));
+  for (const baseline of expectedBaselines) addExpected(baseline.bundlePath, baseline.bytes, baseline.sha256);
+  for (const descriptor of validated.preparationIdentity.descriptorFiles) addExpected(`preparation/${descriptor.path}`, descriptor.bytes, descriptor.sha256);
+  const expectedRefs = [...expectedFiles.values()];
+  assertRecordsEqual(manifest.files, expectedRefs, 'bundle files');
+  assertRecordsEqual(manifest.retainedFiles, expectedRefs, 'bundle retainedFiles');
+  for (const expected of expectedRefs) {
+    const bytes = bundle.files.get(expected.path);
+    if (!bytes || bytes.byteLength !== expected.bytes || sha256(bytes) !== expected.sha256) {
+      captureError('HARNESS_BUNDLE_INVALID', `bundle/${expected.path} is not the retained approved content`);
+    }
+  }
+  if (bundle.files.size !== expectedFiles.size) captureError('HARNESS_BUNDLE_INVALID', 'bundle contains unregistered retained files');
+  return { compiled, contextResources: contextResources(compiled) };
 }
 
 async function makeCandidateParent(projectRoot, value) {
@@ -356,7 +564,13 @@ async function retainCandidateTree(sourceRoot, destinationRoot) {
         if (info.size > workerCaptureLimits.MAX_COPY_BYTES || counters.bytes > workerCaptureLimits.MAX_COPY_BYTES - info.size) {
           captureError('HARNESS_CANDIDATE_LIMIT', 'candidate exceeds the bounded byte limit');
         }
-        await copyFile(sourcePath, destinationPath);
+        const bytes = await boundedBytes(sourcePath, {
+          maxBytes: workerCaptureLimits.MAX_COPY_BYTES - counters.bytes,
+          label: `candidate/${entry.name}`,
+          expectedInfo: info,
+        });
+        if (bytes.byteLength !== info.size) captureError('HARNESS_CAPTURE_STALE', `candidate file changed while being retained: ${entry.name}`);
+        await writeFile(destinationPath, bytes, { flag: 'wx', mode: info.mode & 0o777 });
         counters.files += 1;
         counters.bytes += info.size;
       } else {
@@ -476,6 +690,16 @@ async function commitStagedJson(stagedPath, finalPath, expectedValue, label) {
   await rename(stagedPath, finalPath);
 }
 
+async function writeJsonOrVerify(path, value, label) {
+  const existing = await lstatIfPresent(path);
+  if (existing) {
+    const actual = await boundedJson(path, label);
+    if (stableStringify(actual.value) !== stableStringify(value)) captureError('HARNESS_CAPTURE_STALE', `${label} already exists with different contents`);
+    return;
+  }
+  await writeJsonExclusive(path, value);
+}
+
 async function retainBundle(bundle, artifactDir) {
   const retainedPath = join(artifactDir, 'bundle');
   await mkdir(retainedPath, { mode: 0o700 });
@@ -505,6 +729,7 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
   const bundle = await readBundle(bundleDir);
   assertOutside(root, bundle.directory.canonical, 'bundle directory');
   const packet = await currentPacket(root, bundle.packet, bundle.packetSha256);
+  const semantics = await validateBundleSemantics(root, bundle, packet);
   await verifyCheckoutSnapshot(root, bundle.manifest.checkoutSnapshot, 'bundle checkoutSnapshot');
   const source = await directoryIdentity(root, 'source project');
   const aliases = await detectFilesystemAliases(root);
@@ -518,7 +743,7 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
   let copy;
   try {
     copy = await copyProjectTree(root, candidatePath, { useGit: true });
-    await assertCopiedInputs(root, copy, packet.allowedPaths, packet.protectedPaths ?? [], packet.preparation ?? [], { resources: contextResources(bundle.manifest) });
+    await assertCopiedInputs(root, copy, packet.allowedPaths, packet.protectedPaths ?? [], packet.preparation ?? [], { resources: semantics.contextResources });
   } catch (error) {
     captureError('HARNESS_COPY_INVALID', error instanceof Error ? error.message : String(error));
   }
@@ -634,10 +859,17 @@ export async function finalizeHarnessCapture({ projectRoot, runId, completed, ca
     const packetBytes = await boundedBytes(join(artifactDir, 'packet.json'), { maxBytes: MAX_BUNDLE_FILE_BYTES, label: 'retained packet.json' });
     if (sha256(packetBytes) !== binding.packetSha256 || !packetBytes.equals(bundle.packetBytes)) captureError('HARNESS_BUNDLE_CHANGED', 'retained approval packet changed');
     const packet = await currentPacket(root, bundle.packet, binding.packetSha256);
+    await validateBundleSemantics(root, bundle, packet);
     await verifyCheckoutSnapshot(root, bundle.manifest.checkoutSnapshot, 'bundle checkoutSnapshot');
     const beforeRead = await boundedJson(join(artifactDir, 'before-snapshot.json'), 'before-snapshot.json');
     const before = beforeRead.value;
     if (sha256(beforeRead.bytes) !== binding.beforeSnapshotSha256) captureError('HARNESS_CAPTURE_INVALID', 'retained baseline snapshot changed');
+    const retainedBeforePath = join(artifactDir, 'workspace-before');
+    await assertNoSymlinkPath(retainedBeforePath, { allowMissing: false, requireDirectory: true });
+    const retainedBefore = await snapshotTree(retainedBeforePath);
+    if (stableStringify(retainedBefore) !== stableStringify(before)) {
+      captureError('HARNESS_CAPTURE_STALE', 'retained workspace-before changed since capture began');
+    }
     const aliases = await detectFilesystemAliases(root);
     if (stableStringify(aliases) !== stableStringify(capture.filesystemAliases)) {
       captureError('HARNESS_SOURCE_CHANGED', 'source-derived filesystem alias behavior changed since capture began');
@@ -756,8 +988,11 @@ export async function finalizeHarnessCapture({ projectRoot, runId, completed, ca
     await commitStagedDirectory(sourceCurrent.sourceCheck, join(artifactDir, 'source-current'), sourceCurrent.snapshot, 'source-current');
     await commitStagedDirectory(stagedAfter, finalWorkspaceAfter, after, 'workspace-after');
     await commitStagedJson(stagedAfterSnapshot, finalAfterSnapshot, after, 'after-snapshot.json');
+    // Publish the finalization marker first. A result without its marker would
+    // be applyable after a later write failure; an existing marker is verified
+    // on retry so no evidence is overwritten.
+    await writeJsonOrVerify(join(artifactDir, 'finalization.json'), finalization, 'finalization.json');
     await writeJsonExclusive(join(artifactDir, 'result.json'), result);
-    await writeJsonExclusive(join(artifactDir, 'finalization.json'), finalization);
     return result;
   } finally {
     await releaseFinalizationLock(lockPath);

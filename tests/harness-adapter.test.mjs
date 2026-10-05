@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import fs from 'node:fs/promises';
+import { cp, lstat, mkdtemp, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -9,6 +11,7 @@ import { addTask, approveTask, applyTask, initProject, reviewTask, resolveTaskPa
 import { beginHarnessCapture, finalizeHarnessCapture } from '../src/harness-adapter.mjs';
 import { exportSliceBundle } from '../src/slice-bundle.mjs';
 import { validateChange } from '../src/change-format.mjs';
+import { sha256 } from '../src/fs-utils.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const FIXTURE = join(REPO, 'examples', 'artifact-format');
@@ -169,6 +172,164 @@ test('concurrent finalization returns a structured state instead of an output co
     const failures = attempts.filter((attempt) => attempt.status === 'rejected').map((attempt) => attempt.reason.code);
     assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
     assert.ok(failures.every((code) => ['HARNESS_FINALIZATION_IN_PROGRESS', 'HARNESS_ALREADY_FINALIZED'].includes(code)));
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('candidate symlinks are retained as symlinks without copying outside bytes', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const outside = join(external, 'outside-marker');
+    const source = join(begin.candidatePath, 'outside-link.mjs');
+    await writeFile(outside, 'OUTSIDE_SYNTHETIC_MARKER\n');
+    await symlink(outside, source);
+    const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true });
+    assert.ok(result.scopeViolations.some(({ path }) => path === 'outside-link.mjs'));
+    const retained = join(begin.artifactDir, 'workspace-after', 'outside-link.mjs');
+    assert.equal((await lstat(retained)).isSymbolicLink(), true);
+    assert.equal(await readlink(retained), outside);
+    await assert.rejects(applyTask(fixture.root, { id: fixture.plan.id, run: begin.runId, by: 'synthetic-operator' }), { code: 'RUN_SCOPE_VIOLATION' });
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('mutated retained workspace-before is rejected and exact restoration remains usable', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const planned = 'examples/artifact-format/src/s1-errors.mjs';
+    const beforePath = join(begin.artifactDir, 'workspace-before', planned);
+    const original = await readFile(beforePath);
+    await writeFile(beforePath, Buffer.concat([original, Buffer.from('\nMUTATED RETAINED BASELINE\n')]));
+    await assert.rejects(
+      finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }),
+      { code: 'HARNESS_CAPTURE_STALE' },
+    );
+    await writeFile(beforePath, original);
+    const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true });
+    assert.equal(result.outcome, 'completed');
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('bundle rejects a self-consistent compiled-context replacement and exact restoration remains usable', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const manifestPath = join(bundle.outputDir, 'bundle.json');
+    const originalManifest = await readFile(manifestPath);
+    const compiledPath = join(bundle.outputDir, 'compiled-context.md');
+    const originalCompiled = await readFile(compiledPath);
+    const alteredCompiled = Buffer.from('Unapproved substituted compiled context\n');
+    const manifest = JSON.parse(originalManifest);
+    for (const field of ['files', 'retainedFiles']) {
+      const reference = manifest[field].find(({ path }) => path === 'compiled-context.md');
+      reference.bytes = alteredCompiled.byteLength;
+      reference.sha256 = sha256(alteredCompiled);
+    }
+    await writeFile(compiledPath, alteredCompiled);
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(
+      beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external }),
+      { code: 'HARNESS_BUNDLE_INVALID' },
+    );
+    await writeFile(compiledPath, originalCompiled);
+    await writeFile(manifestPath, originalManifest);
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    assert.equal(begin.harness, 'pi');
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('bundle rejects omitted retained files and checkout references, then accepts exact restoration', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const manifestPath = join(bundle.outputDir, 'bundle.json');
+    const originalManifest = await readFile(manifestPath);
+    const manifest = JSON.parse(originalManifest);
+    for (const field of ['files', 'retainedFiles']) manifest[field] = manifest[field].filter(({ path }) => path === 'packet.json');
+    manifest.checkoutSnapshot = [];
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(
+      beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external }),
+      { code: 'HARNESS_BUNDLE_INVALID' },
+    );
+    await writeFile(manifestPath, originalManifest);
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    assert.equal(begin.harness, 'pi');
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('bundle rejects hidden context source identities and exact restoration remains usable', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const manifestPath = join(bundle.outputDir, 'bundle.json');
+    const originalManifest = await readFile(manifestPath);
+    const manifest = JSON.parse(originalManifest);
+    manifest.identity.context.sourceDigests = [];
+    manifest.checkoutSnapshot = [];
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(
+      beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external }),
+      { code: 'HARNESS_BUNDLE_INVALID' },
+    );
+    await writeFile(manifestPath, originalManifest);
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    assert.equal(begin.harness, 'pi');
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
+
+test('finalization marker failure leaves no result and a retry publishes both artifacts', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begin = await beginHarnessCapture({ projectRoot: fixture.root, bundleDir: bundle.outputDir, harness: 'pi', model: 'synthetic/pi', candidateParent: external });
+    const originalWriteFile = fs.writeFile;
+    let injected = false;
+    fs.writeFile = async function patchedWriteFile(path, ...args) {
+      if (!injected && String(path) === join(begin.artifactDir, 'finalization.json')) {
+        injected = true;
+        throw Object.assign(new Error('synthetic injected finalization failure'), { code: 'EIO' });
+      }
+      return originalWriteFile.call(this, path, ...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true }), { code: 'EIO' });
+    } finally {
+      fs.writeFile = originalWriteFile;
+      syncBuiltinESMExports();
+    }
+    assert.equal(injected, true);
+    await assert.rejects(readFile(join(begin.artifactDir, 'result.json')));
+    const result = await finalizeHarnessCapture({ projectRoot: fixture.root, runId: begin.runId, completed: true });
+    assert.equal(result.outcome, 'completed');
+    assert.equal((await lstat(join(begin.artifactDir, 'finalization.json'))).isFile(), true);
   } finally {
     await cleanup(fixture.root);
     await cleanup(external);
