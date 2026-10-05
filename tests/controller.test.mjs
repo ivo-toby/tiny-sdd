@@ -62,6 +62,19 @@ test('task approval, packet resolution, review, and acceptance are explicit', as
   }
 });
 
+test('CLI review retains explicitly supplied candidate paths', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: ['src/planned.ts'] });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'checked scope' });
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    await exec(process.execPath, [bin, '--project', root, 'task', 'review', '--id', 'one', '--verdict', 'accepted', '--evidence', '.tinysdd/reviews/evidence.md', '--by', 'reviewer', '--candidate-paths', 'src/manual-extra.ts']);
+    assert.deepEqual((await rawState(root)).tasks.one.review.candidatePaths, ['src/manual-extra.ts', 'src/planned.ts']);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('preparation identity preserves an absent spec through approval and explicit reapproval', async () => {
   const root = await project();
   try {

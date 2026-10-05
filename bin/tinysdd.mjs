@@ -772,6 +772,7 @@ async function run(argv) {
     verdict: parsed.values.verdict,
     evidence: parsed.values.evidence,
     by: parsed.values.by,
+    candidatePaths: parsed.values['candidate-paths'],
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'close') data = await closeTask(project, {
     id: parsed.values.id,
