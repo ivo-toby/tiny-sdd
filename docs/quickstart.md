@@ -426,6 +426,26 @@ task freshness changes. Re-run `feature accept` to record a new window. A
 deterministic synthetic talon-shaped fixture is covered by the tests; no real
 historical frontier usage is claimed without supplied records.
 
+After the feature is explicitly accepted and its integration proof is still
+fresh, archive its living-spec change with the standalone script:
+
+```sh
+node "$TINYSDD_CHECKOUT/scripts/archive-change.mjs" \
+  --project "$TARGET_PROJECT" \
+  --change changes/reservations/change.json \
+  --draft changes/reservations/merge-draft.json \
+  --json
+```
+
+The merge draft is a local-model handoff with explicit requirement IDs, exact
+UTF-8 base ranges/text and an output digest. The script validates those bytes,
+retains the proposal, delta descriptors, slice DAG, acceptance event, applied
+runs and integration evidence under `changes/archive/<change-id>/`, then
+applies only the recorded before/after spec bytes. It never removes the source
+change or run records. Repeating the command verifies the committed archive
+and recovers missing spec writes; a changed draft, stale base, conflicting
+current spec or stale acceptance fails without replacing unrelated prose.
+
 `status` renders open tasks as a dependency tree. Each task also has a global
 topological `order` and sorted `dependents` in `status --json`; filtering by a
 feature keeps those positions global. Accepted tasks show the applied worker

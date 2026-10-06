@@ -342,6 +342,22 @@ visible only after an explicit re-acceptance; current membership or task
 freshness changes mark the frozen snapshot stale while preserving its numbers.
 Unknown or partial observations remain `UNKNOWN` with their provenance.
 
+Archive a living-spec change only after this explicit acceptance remains fresh:
+
+```sh
+node scripts/archive-change.mjs --project /path/to/project \
+  --change changes/example/change.json \
+  --draft changes/example/merge-draft.json --json
+```
+
+`merge-draft.json` is a local-model handoff. Its mappings bind each stable
+requirement ID to exact UTF-8 base ranges/text and an output digest; the host
+performs the merge mechanically and preserves untouched prose. The committed
+archive retains the source change tree, before/after specs, feature acceptance
+and integration/run evidence. Repeating the command verifies those retained
+bytes and can recover missing spec writes, while a stale acceptance, changed
+draft/base, conflicting current spec or redirected archive record is refused.
+
 A task may cite exact source lines with `--context MANIFEST`, a JSON file under
 `.tinysdd/tasks/` (format in `docs/context-compiler.md` of the TinySDD repository).
 Approval binds the cited lines, not the whole file, so slices that cite one shared
