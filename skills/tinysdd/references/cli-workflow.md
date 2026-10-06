@@ -763,11 +763,16 @@ invoke the strong model. Negative assessments feed bounded `worker run --base-ru
 revisions. Explicit revision after apply uses the applied project as its base.
 Pending/incomplete attempts cannot reset the budget. Use `slice-tests status` to
 inspect the retained route. No automatic task/feature acceptance follows.
+Operator revision publication follows the controller transition and retains a
+retryable intent until its ledger event and immutable record are both present;
+repeat the same revision review after a publication failure. An intent from an
+uncommitted controller transition remains inert.
 
 `task apply` and `task review --verdict accepted` enforce fresh test review when
-`testReview` is configured; `feature accept` additionally runs the configured
-protected integration tests through real entrypoints. Old projects without this
-policy retain their existing approval contract. Review, policy and code changes
+an active `testReview` policy with `negativeThreshold` is configured; `feature
+accept` additionally runs the configured protected integration tests through real
+entrypoints. Old projects without this active policy retain their existing
+approval contract. Review, policy and code changes
 invalidate the new review binding. `slice-tests dataset --partition test` exports
 reviewed #32 cases with immutable evidence and feature/lineage grouping; choose
 train/validation/test explicitly. Synthetic inputs stay labeled, unavailable

@@ -983,7 +983,9 @@ Configure `testReview` explicitly before using this flow: `positiveThreshold`,
 or `unavailable`). There are no numerical defaults. Every criterion at or above
 the positive boundary yields a positive assessment; any criterion below the
 negative boundary yields a negative assessment; other results escalate.
-Projects without `testReview` retain their existing controller behavior.
+Projects without an active `testReview` policy retain their existing controller
+behavior. A legacy policy without `negativeThreshold` remains valid but does not
+activate the slice-test workflow.
 
 1. Run an approved worker candidate, retaining its exact final packet and lineage.
 2. Call `slice-tests assess --id ID --run RUN --change changes/CHANGE/change.json
@@ -1013,6 +1015,10 @@ Projects without `testReview` retain their existing controller behavior.
    Feature acceptance still executes protected tests through the declared real
    entrypoints. A failed feature check requires operator-requested task revision;
    the applied project becomes its revision base, within the same retained cap.
+   Operator revision publication is committed after the controller transition;
+   repeat the same revision review after a publication failure to repair its
+   retained event and immutable record. An uncommitted intent cannot publish a
+   workflow transition.
 
 Changed candidate, approval, policy, retained lineage or strong-review evidence
 invalidates use of the reviewed candidate. Accepted tasks retain a review binding;
