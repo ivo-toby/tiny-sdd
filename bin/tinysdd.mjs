@@ -37,6 +37,7 @@ import { preflightPiWorker } from '../src/pi-environment.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
 import { assessQualification, resolveBenchmarkSuite as resolveCurrentBenchmarkSuite } from '../src/qualification-dispatch.mjs';
 import { BENCHMARK_ROLES } from '../src/benchmark-schema.mjs';
+import { reportSliceTestReviews } from '../src/slice-test-review-report.mjs';
 import { readQualificationEvidence, readQualificationEvidencePool } from '../src/qualification-reader.mjs';
 import {
   compareQualificationApplicability,
@@ -75,6 +76,7 @@ Usage:
   tinysdd [--json] [--project PATH] usage report --feature NAME
   tinysdd [--json] [--project PATH] feature accept --feature NAME --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] feature report --feature NAME
+  tinysdd [--json] [--project PATH] slice-tests report [--feature NAME]
   tinysdd [--json] [--project PATH] phase record|research --phase research --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID]
   tinysdd [--json] [--project PATH] phase status --feature NAME
   tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID]
@@ -258,6 +260,12 @@ function parseCommand(args) {
       advance: new Map([['from', 'value'], ['to', 'value'], ['feature', 'value'], ['record', 'value'], ['by', 'value'], ['reason', 'value'], ['worker', 'value']]),
     };
     const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
+  if (command === 'slice-tests') {
+    if (subcommand !== 'report') throw cliError('slice-tests requires report');
+    const { values, positional } = parseFlags(rest, new Map([['feature', 'value']]));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -876,6 +884,10 @@ async function run(argv) {
     });
     presentation = 'phase-advance';
   }
+  else if (parsed.command === 'slice-tests' && parsed.subcommand === 'report') {
+    data = await reportSliceTestReviews(project, { feature: parsed.values.feature });
+    presentation = 'slice-test-review-report';
+  }
   else throw cliError('unsupported command');
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
@@ -976,6 +988,12 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'help') {
     process.stdout.write(`${HELP}`);
+    return;
+  }
+  if (result.presentation === 'slice-test-review-report') {
+    const report = result.data;
+    process.stdout.write(`Slice-test review: ${report.assessments} assessments, ${report.escalations} escalations.\n`);
+    process.stdout.write(`Positive review disagreement: ${report.positiveReviewDisagreement.numerator}/${report.positiveReviewDisagreement.denominator}; unreviewed negatives: ${report.unreviewedNegatives}.\n`);
     return;
   }
   if (result.presentation === 'status') {

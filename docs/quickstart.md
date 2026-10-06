@@ -962,3 +962,14 @@ to remove. Do not remove a lock while its owning process is still active.
 This version deliberately leaves verification in the outer harness; the CLI
 copies a run into the project only when you call `task apply`.
 It is suitable for controlled testing, not unsupervised production changes.
+
+### Retained slice-test review measurements
+
+`tinysdd --json slice-tests report --feature NAME` reconstructs the retained
+#81 assessment and strong-review records. It reports positive-review coverage
+and disagreement with explicit denominators, unreviewed negatives, revisions,
+escalations and measured Jev usage. Missing measurements remain `UNKNOWN`.
+Replay measurements are retained separately and do not count as live inference.
+Whole-slice reviews do not establish criterion labels or population calibration.
+This report reads evidence; it does not run a provider, approve tests, or accept
+a task or feature. The active controller/revision flow is still follow-up work.

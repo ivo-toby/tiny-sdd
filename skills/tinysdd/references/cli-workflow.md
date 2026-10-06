@@ -744,3 +744,10 @@ Failures are fixed only within the approved task boundaries; the worker stops an
 declared budget or required information or permission is exhausted, and names
 observed checks separately from checks still unrun. An unavailable client keeps
 the existing no-check prompt and Pi tool arguments.
+
+For retained #81 test-review measurements, use `tinysdd --json slice-tests report`
+with optional `--feature NAME`. Keep the reported denominators and `UNKNOWN`s:
+unreviewed negatives are not false-rejection labels, replay latency is not live
+inference, and whole-slice reviews do not label every individual criterion.
+Reporting does not invoke a provider or grant acceptance. The active review and
+revision controller flow is still follow-up work.
