@@ -267,13 +267,27 @@ export function validateDecisionProvider(value, { requireImplementation = false,
 
 export function validateDecisionQuestion(value) {
   const question = plainObject(value, 'decision question');
-  exactKeys(question, ['schemaVersion', 'id', 'type', 'choices', 'minimum', 'maximum'], 'decision question');
+  exactKeys(question, ['schemaVersion', 'id', 'type', 'choices', 'minimum', 'maximum', 'instruction', 'criteria'], 'decision question');
   if ((question.schemaVersion ?? DECISION_PROVIDER_SCHEMA_VERSION) !== DECISION_PROVIDER_SCHEMA_VERSION) {
     invalid(`decision question.schemaVersion must be ${DECISION_PROVIDER_SCHEMA_VERSION}`);
   }
   const type = question.type;
   if (!DECISION_QUESTION_TYPES.includes(type)) invalid('decision question.type is unsupported');
   const result = { schemaVersion: DECISION_PROVIDER_SCHEMA_VERSION, id: identifier(question.id, 'decision question.id'), type };
+  if (question.instruction !== undefined) {
+    result.instruction = text(question.instruction, 'decision question.instruction', { max: MAX_STRING_LENGTH });
+  }
+  if (question.criteria !== undefined) {
+    const criterion = plainObject(question.criteria, 'decision question.criteria');
+    exactKeys(criterion, ['true', 'false'], 'decision question.criteria');
+    if (!Object.hasOwn(criterion, 'true') || !Object.hasOwn(criterion, 'false')) {
+      invalid('decision question.criteria requires true and false text');
+    }
+    result.criteria = {
+      true: text(criterion.true, 'decision question.criteria.true', { max: MAX_STRING_LENGTH }),
+      false: text(criterion.false, 'decision question.criteria.false', { max: MAX_STRING_LENGTH }),
+    };
+  }
   if (type === 'choice') {
     if (!Array.isArray(question.choices) || question.choices.length === 0 || question.choices.length > 64) {
       invalid('decision question.choices must contain between 1 and 64 values');
