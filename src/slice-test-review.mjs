@@ -64,7 +64,14 @@ const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const EVENT_STATUSES = new Set(['observed', 'failed', 'uncertain', 'unavailable', 'missing', 'malformed']);
 const EVENT_VERDICTS = new Set(['UNKNOWN', 'positive', 'negative', 'accepted', 'rejected']);
 const PROVIDER_AVAILABILITY = new Set(['available', 'unavailable', 'unknown']);
-const REVIEW_QUESTION_MAX = 16 * 1024;
+// The observation question is the Jev instruction, which wraps a criterion
+// question of up to 16 KiB in a fixed prefix and suffix.
+const REVIEW_QUESTION_MAX = 32 * 1024;
+
+// Digests must not depend on the host locale, so order by UTF-16 code unit.
+function byCodeUnit(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function reviewError(code, message, details = undefined) {
   return tinyError(code, message, details);
@@ -83,8 +90,11 @@ function exactKeys(value, allowed, label, code = 'SLICE_TEST_REVIEW_INVALID') {
   }
 }
 
-function text(value, label, max = 4096, code = 'SLICE_TEST_REVIEW_INVALID') {
-  if (typeof value !== 'string' || value.length === 0 || value.length > max || /[\u0000-\u001f\u007f]/u.test(value)) throw reviewError(code, `${label} must be bounded text`);
+const CONTROL = /[\u0000-\u001f\u007f]/u;
+const CONTROL_EXCEPT_WHITESPACE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+
+function text(value, label, max = 4096, code = 'SLICE_TEST_REVIEW_INVALID', { multiline = false } = {}) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > max || (multiline ? CONTROL_EXCEPT_WHITESPACE : CONTROL).test(value)) throw reviewError(code, `${label} must be bounded text`);
   return value;
 }
 
@@ -191,7 +201,7 @@ function normalizeArtifactRoles(artifacts) {
     total += item.bytes;
     if (total > JEV_DECISION_MAX_TOTAL_ARTIFACT_BYTES) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'retained artifacts exceed the total byte limit');
   }
-  return result.sort((left, right) => left.path.localeCompare(right.path));
+  return result.sort((left, right) => byCodeUnit(left.path, right.path));
 }
 
 function normalizeQuestions(value, criteria) {
@@ -272,24 +282,12 @@ export function createSliceTestReviewEnvelope(value) {
     schemaVersion: raw.schemaVersion ?? SLICE_TEST_REVIEW_SCHEMA_VERSION,
     type: raw.type ?? SLICE_TEST_REVIEW_TYPE,
     ...raw,
-    inputDigest: raw.inputDigest ?? digestJson(payloadForInput({
-      schemaVersion: raw.schemaVersion ?? SLICE_TEST_REVIEW_SCHEMA_VERSION,
-      type: raw.type ?? SLICE_TEST_REVIEW_TYPE,
-      identity: raw.identity,
-      approval: raw.approval,
-      criteria: raw.criteria,
-      requirements: raw.requirements,
-      interfaces: raw.interfaces,
-      integration: raw.integration,
-      artifacts: raw.artifacts,
-      inputDigest: sha256('slice-test-review-input-seed'),
-      capturedAt,
-      provenance,
-    })),
+    inputDigest: raw.inputDigest ?? sha256('slice-test-review-input-seed'),
     capturedAt,
     provenance,
   });
   const inputDigest = digestJson(payloadForInput(normalizedWithoutDigests));
+  if (raw.inputDigest !== undefined && raw.inputDigest !== inputDigest) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'supplied inputDigest does not match retained criteria and bytes', { expected: inputDigest, actual: raw.inputDigest });
   const withInput = { ...normalizedWithoutDigests, inputDigest };
   const envelopeDigest = digestJson(payloadForEnvelope(withInput));
   return validateSliceTestReviewEnvelope({ ...withInput, envelopeDigest });
@@ -345,7 +343,7 @@ function normalizeObservation(value, index) {
   return {
     criterionId: identifier(item.criterionId, `${label}.criterionId`),
     criterionType: identifier(item.criterionType, `${label}.criterionType`, SLUG),
-    question: text(item.question, `${label}.question`, REVIEW_QUESTION_MAX),
+    question: text(item.question, `${label}.question`, REVIEW_QUESTION_MAX, 'SLICE_TEST_REVIEW_INVALID', { multiline: true }),
     probability: item.probability,
     judgment: SLICE_TEST_REVIEW_UNKNOWN,
   };
@@ -407,7 +405,7 @@ function eventPayload(value) {
 }
 
 function eventIdentityPayload(value) {
-  const { eventDigest: _eventDigest, timestamp: _timestamp, sequence: _sequence, eventId: _eventId, ...payload } = value;
+  const { eventDigest: _eventDigest, timestamp: _timestamp, eventId: _eventId, ...payload } = value;
   return payload;
 }
 
@@ -507,7 +505,8 @@ export async function appendSliceTestReviewEvents(projectRoot, values) {
   const directory = await assertInternalPath(root, ['.tinysdd', 'runs', 'slice-test-review'], { allowMissing: true, requireDirectory: true });
   await ensureDirectory(directory);
   return withExclusiveLock(lock, async () => {
-    const existing = parseLedgerText(await readLedgerText(ledger));
+    const currentText = await readLedgerText(ledger);
+    const existing = parseLedgerText(currentText);
     const firstSequence = existing.length + 1;
     for (let index = 0; index < normalized.length; index += 1) {
       const event = normalized[index];
@@ -525,7 +524,7 @@ export async function appendSliceTestReviewEvents(projectRoot, values) {
       }
     }
     const content = `${serialized.join('\n')}\n`;
-    const currentBytes = Buffer.byteLength(await readLedgerText(ledger));
+    const currentBytes = Buffer.byteLength(currentText);
     if (currentBytes + Buffer.byteLength(content) > SLICE_TEST_REVIEW_MAX_ENVELOPE_BYTES) throw reviewError('SLICE_TEST_REVIEW_LEDGER_TOO_LARGE', 'slice-test review ledger exceeds its byte limit');
     if (existing.length + normalized.length > SLICE_TEST_REVIEW_MAX_EVENTS) throw reviewError('SLICE_TEST_REVIEW_LEDGER_TOO_LARGE', 'slice-test review ledger contains too many events');
     await appendFile(ledger, content, { encoding: 'utf8', mode: 0o600 });
@@ -602,7 +601,7 @@ async function snapshotRunWorkspace(root, runId, workspace) {
   async function visit(current, prefix = '') {
     let entries;
     try { entries = await readdir(current, { withFileTypes: true }); } catch { throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${runId} ${workspace} cannot be read`); }
-    entries.sort((left, right) => left.name.localeCompare(right.name));
+    entries.sort((left, right) => byCodeUnit(left.name, right.name));
     for (const entry of entries) {
       entriesSeen += 1;
       if (entriesSeen > SLICE_TEST_REVIEW_MAX_RUN_SNAPSHOT_ENTRIES) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${runId} ${workspace} exceeds its entry limit`);
@@ -689,7 +688,7 @@ async function loadTrustedLineage(root, packet, runId) {
     const actual = runSnapshotChanges(before, after);
     const claimed = Array.isArray(result.changedPaths) ? result.changedPaths : null;
     if (!claimed) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${currentId} has no changed path inventory`);
-    compareSnapshotRecords([...claimed].sort((left, right) => String(left?.path).localeCompare(String(right?.path))), [...actual].sort((left, right) => left.path.localeCompare(right.path)), `run ${currentId} changed paths`);
+    compareSnapshotRecords([...claimed].sort((left, right) => byCodeUnit(String(left?.path), String(right?.path))), [...actual].sort((left, right) => byCodeUnit(left.path, right.path)), `run ${currentId} changed paths`);
     if (!result.fileScope || result.fileScope.mode !== 'ordinary-create-modify' || result.fileScope.ordinaryCreateModify !== true || result.fileScope.deletions !== false || !Array.isArray(result.fileScope.actualPaths)) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${currentId} lacks complete file-scope evidence`);
     if (result.fileScope.actualPaths.some((value) => observedPathError(value)) || new Set(result.fileScope.actualPaths).size !== result.fileScope.actualPaths.length) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${currentId} file-scope paths are not canonical`);
     compareSnapshotRecords([...result.fileScope.actualPaths].sort(), actual.map((item) => item.path).sort(), `run ${currentId} file-scope paths`);
@@ -712,6 +711,17 @@ async function loadTrustedLineage(root, packet, runId) {
     currentId = parent;
   }
   if (newestFirst.length === 0) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', 'run lineage is empty');
+  // A revision starts from its parent's output, so every file the parent
+  // changed must be byte-identical in the child's workspace-before.
+  for (let index = 0; index < newestFirst.length - 1; index += 1) {
+    const child = newestFirst[index];
+    const parent = newestFirst[index + 1];
+    for (const change of parent.changes) {
+      if (stableStringify(child.before[change.path]) !== stableStringify(parent.after[change.path])) {
+        throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${child.id} does not start from the output of its base run ${parent.id}: ${change.path}`);
+      }
+    }
+  }
   return newestFirst.reverse();
 }
 
@@ -862,7 +872,7 @@ export async function captureSliceTestReviewEnvelope({
   const approvedRequirements = parseApprovedBriefSections(currentPacket.brief.text).requirements;
   if (requirements !== undefined && stableStringify(requirements) !== stableStringify(approvedRequirements)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'requirements do not match the approval-bound brief');
   const approvedInterfaces = descriptorSlice.value.interfaces;
-  const approvedIntegration = validated.change.integration.filter((item) => item.wiringSlice === sliceId || item.testPaths.some((testPath) => validated.change.featureTests.includes(testPath)));
+  const approvedIntegration = validated.change.integration.filter((item) => item.wiringSlice === sliceId);
   if (interfaces !== undefined && stableStringify(interfaces) !== stableStringify(approvedInterfaces)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'interfaces do not match the validated descriptor graph');
   if (integration !== undefined && stableStringify(integration) !== stableStringify(approvedIntegration)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'integration does not match the validated descriptor graph');
   const approvedImplementationFiles = descriptorSlice.value.implementationFiles;
@@ -903,6 +913,12 @@ export async function captureSliceTestReviewEnvelope({
   }
   const declaredCandidatePaths = [...roles.keys()];
   const captured = await captureLineageArtifacts(root, lineage, roles, protectedList, declaredCandidatePaths);
+  // Supplied artifacts are only accepted for approved, existing preparation
+  // paths; the loop below then checks them against the retained snapshots.
+  const verifiablePreparationPaths = new Set(preparationList.filter((entry) => entry?.exists !== false).map((entry) => typeof entry === 'string' ? entry : entry.path));
+  for (const [index, artifact] of (Array.isArray(preparationArtifacts) ? preparationArtifacts : [undefined]).entries()) {
+    if (!verifiablePreparationPaths.has(artifact?.path)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', `preparationArtifacts[${index}] is not an approved preparation path`);
+  }
   const exactArtifacts = [...captured.artifacts, ...preparationArtifacts];
   for (const [index, entry] of preparationList.entries()) {
     const pathValue = projectPath(typeof entry === 'string' ? entry : entry.path, `preparation[${index}]`);

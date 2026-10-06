@@ -50,8 +50,13 @@ function exactKeys(value, allowed, label, code = 'JEV_DECISION_INVALID') {
   }
 }
 
-function text(value, label, max = MAX_TEXT) {
-  if (typeof value !== 'string' || value.length === 0 || value.length > max || /[\u0000-\u001f\u007f]/u.test(value)) {
+// Criterion questions are free text from the approved descriptor, which
+// permits line breaks; every other control character stays rejected.
+const CONTROL = /[\u0000-\u001f\u007f]/u;
+const CONTROL_EXCEPT_WHITESPACE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+
+function text(value, label, max = MAX_TEXT, { multiline = false } = {}) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > max || (multiline ? CONTROL_EXCEPT_WHITESPACE : CONTROL).test(value)) {
     throw providerError('JEV_DECISION_INVALID', `${label} must be bounded text`);
   }
   return value;
@@ -128,7 +133,7 @@ function criterion(value, index) {
   return {
     id: identifier(item.id, `${label}.id`),
     type: criterionType(item.type, `${label}.type`),
-    question: text(item.question, `${label}.question`),
+    question: text(item.question, `${label}.question`, MAX_TEXT, { multiline: true }),
     requirementIds: uniqueStrings(item.requirementIds, `${label}.requirementIds`, identifier),
     interfaces: uniqueStrings(item.interfaces, `${label}.interfaces`, path),
     testPaths: uniqueStrings(item.testPaths, `${label}.testPaths`, path),

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,7 @@ import {
 } from '../src/slice-test-review.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 import { validateChange } from '../src/change-format.mjs';
+import { buildJevQuestion } from '../src/jev-decision-provider.mjs';
 import { addTask, approveTask, initProject, resolveTaskPacket, updateTask } from '../src/controller.mjs';
 import { runWorker } from '../src/worker.mjs';
 
@@ -195,7 +196,7 @@ async function snapshotDirectory(root, directory) {
   return result;
 }
 
-async function runFixture() {
+async function runFixture({ otherSlice = false } = {}) {
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-slice-capture-'));
   const sourceFiles = {
     'changes/change/change.json': JSON.stringify({ schemaVersion: 1, id: 'change-one', proposal: 'changes/change/proposal.md', design: 'changes/change/design.md', specDeltas: ['changes/change/deltas/requirement.json'], slices: ['changes/change/slices/slice-one/slice.json'], budget: { maxImplementationFiles: 2, maxSliceTestFiles: 1, maxCompiledContextBytes: 65536 }, featureTests: ['tests/protected.test.mjs'], featureChecks: 'changes/change/feature-checks.json', integration: [{ id: 'integration-one', requirementIds: ['requirement-one'], entrypoints: ['src/entry.mjs'], wiringSlice: 'slice-one', testPaths: ['tests/protected.test.mjs'], checkIds: ['feature-check'] }] }),
@@ -210,6 +211,19 @@ async function runFixture() {
     'src/entry.mjs': 'export function entry() { return true; }\n',
     'tests/protected.test.mjs': 'test("integration", () => {});\n',
   };
+  if (otherSlice) {
+    const change = JSON.parse(sourceFiles['changes/change/change.json']);
+    change.slices.push('changes/change/slices/slice-two/slice.json');
+    change.integration.push({ id: 'integration-two', requirementIds: ['requirement-one'], entrypoints: ['src/other-entry.mjs'], wiringSlice: 'slice-two', testPaths: ['tests/protected.test.mjs'], checkIds: ['feature-check'] });
+    sourceFiles['changes/change/change.json'] = JSON.stringify(change);
+    const sliceOne = JSON.parse(sourceFiles['changes/change/slices/slice-one/slice.json']);
+    const reviewTwo = { ...sliceOne.testReview, criteria: [{ ...sliceOne.testReview.criteria[0], interfaces: ['src/other-entry.mjs'], testPaths: ['tests/other.test.mjs'] }] };
+    sourceFiles['changes/change/slices/slice-two/slice.json'] = JSON.stringify({ ...sliceOne, id: 'slice-two', brief: 'changes/change/slices/slice-two/brief.md', context: 'changes/change/slices/slice-two/context.json', checks: 'changes/change/slices/slice-two/checks.json', implementationFiles: ['src/other.mjs'], sliceTests: ['tests/other.test.mjs'], interfaces: ['src/other-entry.mjs'], testReview: reviewTwo });
+    sourceFiles['changes/change/slices/slice-two/brief.md'] = briefText().replace('src/entry.mjs', 'src/other-entry.mjs').replace('tests/slice.test.mjs', 'tests/other.test.mjs');
+    sourceFiles['changes/change/slices/slice-two/context.json'] = JSON.stringify({ schemaVersion: 1, facts: ['use entrypoint'], resources: [{ path: 'src/other-entry.mjs', startLine: 1, endLine: 1, purpose: 'entrypoint' }] });
+    sourceFiles['changes/change/slices/slice-two/checks.json'] = JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'slice-check', argv: ['node', 'tests/other.test.mjs'], criteria: ['C1'] }] });
+    sourceFiles['src/other-entry.mjs'] = 'export function otherEntry() { return true; }\n';
+  }
   for (const [path, content] of Object.entries(sourceFiles)) {
     const absolute = join(root, path);
     await mkdir(join(absolute, '..'), { recursive: true });
@@ -399,6 +413,116 @@ test('capture refuses a symlinked retained event ledger', async () => {
     await mkdir(join(root, '.tinysdd', 'runs', 'slice-test-review'), { recursive: true });
     await symlink('/dev/null', join(root, '.tinysdd', 'runs', 'slice-test-review', 'events.jsonl'));
     await assert.rejects(readSliceTestReviewEvents(root), { code: 'SYMLINK_PATH' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('envelope creation verifies a supplied inputDigest instead of discarding it', () => {
+  const item = envelope();
+  const { envelopeDigest: _envelopeDigest, ...raw } = item;
+  assert.equal(createSliceTestReviewEnvelope(raw).envelopeDigest, item.envelopeDigest);
+  assert.throws(() => createSliceTestReviewEnvelope({ ...raw, inputDigest: digest('tampered') }), { code: 'SLICE_TEST_REVIEW_INPUT_MISMATCH' });
+});
+
+test('retained artifact order does not depend on locale collation', () => {
+  const bytes = Buffer.from('x');
+  const artifact = (path) => ({ role: 'candidate', path, bytes: 1, sha256: sha256(bytes), contentBase64: bytes.toString('base64') });
+  const item = envelope({ artifacts: [artifact('src/a.mjs'), artifact('src/B.mjs')] });
+  assert.deepEqual(item.artifacts.map((entry) => entry.path), ['src/B.mjs', 'src/a.mjs']);
+});
+
+test('identical events at different sequences get distinct ids and both append', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-slice-repeat-'));
+  try {
+    const first = event({ eventType: 'provider-failure', reason: 'provider unavailable' });
+    const { eventId: _eventId, eventDigest: _eventDigest, ...rest } = first;
+    const second = createSliceTestReviewEvent({ ...rest, sequence: 2 });
+    const failure = (sequence) => (sequence === 1 ? first : second);
+    assert.notEqual(first.eventId, second.eventId);
+    await appendSliceTestReviewEvents(root, [failure(1)]);
+    await appendSliceTestReviewEvents(root, [failure(2)]);
+    assert.deepEqual((await readSliceTestReviewEvents(root)).map((entry) => entry.sequence), [1, 2]);
+    await assert.rejects(appendSliceTestReviewEvents(root, [failure(2)]), { code: 'SLICE_TEST_REVIEW_DUPLICATE' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('multi-line and near-limit criterion questions survive envelope and observation capture', () => {
+  const multiline = { ...criterion(), question: 'Line one.\n\tLine two.' };
+  const item = envelope({ criteria: [multiline] });
+  assert.equal(item.criteria[0].question, multiline.question);
+  assert.equal(item.questions[multiline.id].instruction.includes('Line one.\n\tLine two.'), true);
+  assert.throws(() => envelope({ criteria: [{ ...criterion(), question: 'bell\u0007' }] }), { code: 'JEV_DECISION_INVALID' });
+
+  const longest = { ...criterion(), question: 'q'.repeat(16 * 1024) };
+  const instruction = buildJevQuestion(longest).instruction;
+  assert.ok(instruction.length > 16 * 1024);
+  const base = event();
+  const observed = event({ assessment: { ...base.assessment, observations: [{ ...base.assessment.observations[0], question: instruction }] } });
+  assert.equal(observed.assessment.observations[0].question, instruction);
+  const withNewline = event({ assessment: { ...base.assessment, observations: [{ ...base.assessment.observations[0], question: buildJevQuestion(multiline).instruction }] } });
+  assert.match(withNewline.assessment.observations[0].question, /\n/u);
+});
+
+test('capture refuses caller-supplied preparation artifacts outside approved preparation paths', async () => {
+  const { root, packet, changePath } = await runFixture();
+  try {
+    const bytes = Buffer.from('fabricated\n');
+    const fabricated = { role: 'approved-preparation', path: 'src/unrelated.mjs', bytes: bytes.byteLength, sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
+    await assert.rejects(
+      captureSliceTestReviewEnvelope({ projectRoot: root, packet, runId: 'worker-one', changePath, featureId: 'change-one', sliceId: 'slice-one', preparationArtifacts: [fabricated] }),
+      { code: 'SLICE_TEST_REVIEW_INPUT_MISMATCH' },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function addChildRun(root, { continuous }) {
+  const parent = join(root, '.tinysdd', 'runs', 'worker-one');
+  const child = join(root, '.tinysdd', 'runs', 'worker-two');
+  await mkdir(child, { recursive: true });
+  await cp(join(parent, continuous ? 'workspace-after' : 'workspace-before'), join(child, 'workspace-before'), { recursive: true });
+  await cp(join(child, 'workspace-before'), join(child, 'workspace-after'), { recursive: true });
+  await writeFile(join(child, 'workspace-after', 'src/feature.mjs'), 'export const feature = 2;\n');
+  await writeFile(join(child, 'workspace-after', 'tests/slice.test.mjs'), 'test("feature", () => {});\n');
+  const before = await snapshotDirectory(root, join(child, 'workspace-before'));
+  const after = await snapshotDirectory(root, join(child, 'workspace-after'));
+  const changedPaths = Object.keys(after).filter((path) => before[path] === undefined || JSON.stringify(before[path]) !== JSON.stringify(after[path])).map((path) => ({ path, change: before[path] === undefined ? 'created' : 'modified', before: before[path] ?? null, after: after[path] }));
+  await writeFile(join(child, 'before-snapshot.json'), JSON.stringify(before));
+  await writeFile(join(child, 'after-snapshot.json'), JSON.stringify(after));
+  await cp(join(parent, 'packet.json'), join(child, 'packet.json'));
+  await writeFile(join(child, 'result.json'), JSON.stringify({ schemaVersion: 1, runId: 'worker-two', taskId: 'slice-one', outcome: 'completed', scopeViolations: [], baseRun: { id: 'worker-one', paths: ['src/feature.mjs', 'tests/slice.test.mjs'] }, fileScope: { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false, actualPaths: changedPaths.map((entry) => entry.path) }, changedPaths }));
+}
+
+test('capture requires a revision to start from its base run output', async () => {
+  const args = (fixture) => ({ projectRoot: fixture.root, packet: fixture.packet, runId: 'worker-two', changePath: fixture.changePath, featureId: 'change-one', sliceId: 'slice-one' });
+  const good = await runFixture();
+  try {
+    await addChildRun(good.root, { continuous: true });
+    const item = await captureSliceTestReviewEnvelope(args(good));
+    assert.equal(item.identity.rootRunId, 'worker-one');
+    assert.equal(Buffer.from(item.artifacts.find((artifact) => artifact.path === 'src/feature.mjs').contentBase64, 'base64').toString(), 'export const feature = 2;\n');
+  } finally {
+    await rm(good.root, { recursive: true, force: true });
+  }
+  const bad = await runFixture();
+  try {
+    await addChildRun(bad.root, { continuous: false });
+    await assert.rejects(captureSliceTestReviewEnvelope(args(bad)), { code: 'SLICE_TEST_REVIEW_RUN_INVALID', message: /base run/u });
+  } finally {
+    await rm(bad.root, { recursive: true, force: true });
+  }
+});
+
+test('capture retains only the integrations wired by the assessed slice', async () => {
+  const { root, packet, changePath } = await runFixture({ otherSlice: true });
+  try {
+    const item = await captureSliceTestReviewEnvelope({ projectRoot: root, packet, runId: 'worker-one', changePath, featureId: 'change-one', sliceId: 'slice-one' });
+    assert.deepEqual(item.integration.map((entry) => entry.id), ['integration-one']);
+    assert.equal(item.artifacts.some((artifact) => artifact.path === 'src/other-entry.mjs'), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
