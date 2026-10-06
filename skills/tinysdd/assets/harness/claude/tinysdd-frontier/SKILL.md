@@ -10,6 +10,11 @@ one bounded feature for an implementation worker or a foreign harness. It does
 not implement the feature, invent product decisions, create approvals, invoke a
 provider, or replace the controller.
 
+For a new project or runtime, load the harness-independent [setup
+skill](../../../setup/SKILL.md) first. This router assumes the source
+checkout, project configuration, Pi route and required sandbox have already
+been discovered; it does not replace setup or readiness evidence.
+
 Follow the phase skills in order:
 
 1. [specify](specify/SKILL.md) writes observable requirements and clarifications.

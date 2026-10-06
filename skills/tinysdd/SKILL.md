@@ -15,6 +15,11 @@ assets/harness/claude/tinysdd-frontier/SKILL.md. Its phase skills implement the
 same workflow for any harness: specify, research, plan, tasks/slices, implement,
 verify and review.
 
+For a fresh project or worker runtime, load the harness-independent
+[setup skill](assets/setup/SKILL.md) first. It connects the source checkout,
+explicit skill loading, project initialization, Pi/provider/model preflight and
+the bounded readiness smoke without changing controller approval semantics.
+
 ## Establish the change
 
 Read the repository instructions and the code, contracts, callers and existing
