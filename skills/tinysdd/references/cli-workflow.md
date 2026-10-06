@@ -350,6 +350,8 @@ node scripts/archive-change.mjs --project /path/to/project \
   --draft changes/example/merge-draft.json --json
 ```
 
+The change descriptor must live inside a dedicated change directory; a root-level `change.json` is rejected before staging.
+
 `merge-draft.json` is a local-model handoff. Its mappings bind each stable
 requirement ID to exact UTF-8 base ranges/text and an output digest; the host
 performs the merge mechanically and preserves untouched prose. The committed

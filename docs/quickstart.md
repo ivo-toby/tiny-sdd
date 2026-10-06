@@ -437,6 +437,8 @@ node "$TINYSDD_CHECKOUT/scripts/archive-change.mjs" \
   --json
 ```
 
+The change descriptor must live inside a dedicated change directory; a root-level `change.json` is rejected before staging.
+
 The merge draft is a local-model handoff with explicit requirement IDs, exact
 UTF-8 base ranges/text and an output digest. The script validates those bytes,
 retains the proposal, delta descriptors, slice DAG, acceptance event, applied
