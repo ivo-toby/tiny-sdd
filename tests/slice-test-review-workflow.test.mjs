@@ -3,13 +3,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir, rm, symlink, cp } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm, symlink, cp, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runFixture, makeWorkerRuntime } from './helpers/slice-review-fixture.mjs';
-import { sha256 } from '../src/fs-utils.mjs';
+import { sha256, withExclusiveLock } from '../src/fs-utils.mjs';
 import {
   activeTestReviewPolicy, assessSliceTests, checkSliceTests, classifySliceTestObservations,
-  reviewSliceTests, sliceTestReviewStatus, exportSliceTestReviewDataset, SLICE_TEST_REVIEW_TEST_ENV,
+  reviewSliceTests, sliceTestReviewStatus, exportSliceTestReviewDataset, prepareSliceTestOperatorRevision, publishSliceTestOperatorRevision, withSliceTestWorkerGate, SLICE_TEST_REVIEW_TEST_ENV, SLICE_TEST_REVIEW_FAILURE_ENV,
 } from '../src/slice-test-review-workflow.mjs';
 import { acceptFeature, controllerStatus, applyTask, dispatchWorker, reviewTask } from '../src/controller.mjs';
 import { validateTestReviewPolicy } from '../src/phase-gates.mjs';
@@ -144,6 +144,41 @@ test('negative assessment drives a real fake-worker revision, restart preserves 
   } finally { await rm(f.root, { recursive: true, force: true }); await rm(runtime.root, { recursive: true, force: true }); }
 });
 
+test('worker revision releases the workflow lock while the worker is pending and finalizes once', async () => {
+  const f = await fixture();
+  try {
+    await assessment(f, 0.1);
+    let entered;
+    const enteredPromise = new Promise((resolve) => { entered = resolve; });
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    const worker = withSliceTestWorkerGate(f.root, { taskId: 'slice-one', baseRunId: 'worker-one' }, async () => {
+      entered();
+      await pending;
+      return { outcome: 'completed', runId: 'worker-two' };
+    });
+    await enteredPromise;
+    let contenderRan = false;
+    await withExclusiveLock(join(f.root, '.tinysdd/runs/slice-test-review/workflow.lock'), async () => { contenderRan = true; });
+    assert.equal(contenderRan, true);
+    release();
+    await worker;
+    const events = await readSliceTestReviewEvents(f.root);
+    assert.equal(events.filter((event) => event.eventType === 'revision-dispatched').length, 1);
+    assert.equal(events.filter((event) => event.eventType === 'revision-candidate').length, 1);
+    assert.equal((await sliceTestReviewStatus(f.root, { id: 'slice-one' })).revision, 1);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('worker gate leaves an initial candidate without a review history unchanged', async () => {
+  const f = await fixture();
+  try {
+    const result = await withSliceTestWorkerGate(f.root, { taskId: 'slice-one', baseRunId: 'worker-one' }, async () => ({ outcome: 'completed', runId: 'worker-one' }));
+    assert.deepEqual(result, { outcome: 'completed', runId: 'worker-one' });
+    assert.equal((await readSliceTestReviewEvents(f.root)).length, 0);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
 test('changed review evidence, candidate bytes and retained-input symlinks are refused', async () => {
   const f = await fixture();
   try {
@@ -265,4 +300,140 @@ test('legacy projects without review policy keep their approval contract and syn
     delete process.env[SLICE_TEST_REVIEW_TEST_ENV];
     await assert.rejects(applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' }), { code: 'TEST_REVIEW_SYNTHETIC' });
   } finally { process.env[SLICE_TEST_REVIEW_TEST_ENV] = '1'; await rm(legacy.root, { recursive: true, force: true }); await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('legacy testReview policies retain controller apply, acceptance and operator revision behavior', async () => {
+  const f = await runFixture();
+  try {
+    const configPath = join(f.root, '.tinysdd/config.json');
+    const config = JSON.parse(await readFile(configPath));
+    config.testReview = { positiveThreshold: 0.8, revisionLimit: 2, uncertainRoute: 'escalation', unavailableRoute: 'unavailable' };
+    await writeFile(configPath, JSON.stringify(config));
+    await mkdir(join(f.root, '.tinysdd/reviews'), { recursive: true });
+    await writeFile(join(f.root, '.tinysdd/reviews/legacy.md'), 'Legacy operator review.\n');
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    assert.equal((await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/legacy.md', by: 'operator' })).task.status, 'accepted');
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/legacy.md', by: 'operator' });
+    assert.equal((await controllerStatus(f.root)).tasks[0].status, 'ready');
+    assert.equal((await readSliceTestReviewEvents(f.root)).length, 0);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('accepted slice-test bindings become stale when their applied run evidence is missing', async () => {
+  const f = await fixture();
+  try {
+    const positive = await assessment(f, 0.9);
+    const checks = await checkSliceTests(f.root, { id: 'slice-one', eventId: positive.eventId, runner: passingRunner });
+    await strongReview(f, checks);
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    const statePath = join(f.root, '.tinysdd/runs/controller.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    delete state.tasks['slice-one'].applied;
+    await writeFile(statePath, JSON.stringify(state));
+    assert.equal((await controllerStatus(f.root)).tasks[0].status, 'stale');
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('unexpected freshness configuration errors remain visible to controller status', async () => {
+  const f = await fixture();
+  try {
+    const positive = await assessment(f, 0.9);
+    const checks = await checkSliceTests(f.root, { id: 'slice-one', eventId: positive.eventId, runner: passingRunner });
+    await strongReview(f, checks);
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    const configPath = join(f.root, '.tinysdd/config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.testReview.revisionLimit = 0;
+    await writeFile(configPath, JSON.stringify(config));
+    await assert.rejects(controllerStatus(f.root), { code: 'CONFIG_INVALID' });
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('an uncommitted operator revision intent cannot publish a ledger transition', async () => {
+  const f = await fixture();
+  try {
+    const positive = await assessment(f, 0.9);
+    const checks = await checkSliceTests(f.root, { id: 'slice-one', eventId: positive.eventId, runner: passingRunner });
+    await strongReview(f, checks);
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    await prepareSliceTestOperatorRevision(f.root, { id: 'slice-one', run: 'worker-one' });
+    assert.equal(await publishSliceTestOperatorRevision(f.root, { id: 'slice-one', run: 'worker-one' }), null);
+    assert.equal((await readSliceTestReviewEvents(f.root)).filter((event) => event.eventType === 'operator-revision').length, 0);
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    assert.equal((await readSliceTestReviewEvents(f.root)).filter((event) => event.eventType === 'operator-revision').length, 1);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('controller-save failure leaves the accepted state and inert intent for a safe retry', async () => {
+  const f = await fixture();
+  try {
+    const positive = await assessment(f, 0.9);
+    const checks = await checkSliceTests(f.root, { id: 'slice-one', eventId: positive.eventId, runner: passingRunner });
+    await strongReview(f, checks);
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    process.env.TINYSDD_SLICE_TEST_REVIEW_FAIL_CONTROLLER_SAVE = '1';
+    await assert.rejects(reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' }), { code: 'WRITE_FAILED' });
+    const state = JSON.parse(await readFile(join(f.root, '.tinysdd/runs/controller.json'), 'utf8'));
+    assert.equal(state.tasks['slice-one'].review.verdict, 'accepted');
+    assert.equal(state.tasks['slice-one'].applied.runId, 'worker-one');
+    assert.equal((await readSliceTestReviewEvents(f.root)).filter((event) => event.eventType === 'operator-revision').length, 0);
+    const retried = await reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    assert.equal(retried.task.status, 'ready');
+    const events = await readSliceTestReviewEvents(f.root);
+    assert.equal(events.filter((event) => event.eventType === 'operator-revision').length, 1);
+    assert.equal((await sliceTestReviewStatus(f.root, { id: 'slice-one' })).route, 'revision');
+  } finally { delete process.env.TINYSDD_SLICE_TEST_REVIEW_FAIL_CONTROLLER_SAVE; await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('operator revision publication can be retried after the controller state commits', async () => {
+  const f = await fixture();
+  try {
+    const positive = await assessment(f, 0.9);
+    const checks = await checkSliceTests(f.root, { id: 'slice-one', eventId: positive.eventId, runner: passingRunner });
+    await strongReview(f, checks);
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    process.env[SLICE_TEST_REVIEW_FAILURE_ENV] = 'before-ledger';
+    await assert.rejects(reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' }), { code: 'TEST_REVIEW_INJECTED_FAILURE' });
+    const state = JSON.parse(await readFile(join(f.root, '.tinysdd/runs/controller.json'), 'utf8'));
+    assert.equal(state.tasks['slice-one'].review.verdict, 'revision');
+    assert.equal(state.tasks['slice-one'].applied, undefined);
+    assert.equal((await readSliceTestReviewEvents(f.root)).filter((event) => event.eventType === 'operator-revision').length, 0);
+    const retried = await reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    assert.equal(retried.task.status, 'ready');
+    const events = await readSliceTestReviewEvents(f.root);
+    assert.equal(events.filter((event) => event.eventType === 'operator-revision').length, 1);
+    assert.equal((await sliceTestReviewStatus(f.root, { id: 'slice-one' })).route, 'revision');
+  } finally { delete process.env[SLICE_TEST_REVIEW_FAILURE_ENV]; await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('operator revision repairs an appended ledger event when immutable publication fails', async () => {
+  const f = await fixture();
+  try {
+    const positive = await assessment(f, 0.9);
+    const checks = await checkSliceTests(f.root, { id: 'slice-one', eventId: positive.eventId, runner: passingRunner });
+    await strongReview(f, checks);
+    await applyTask(f.root, { id: 'slice-one', run: 'worker-one', by: 'operator' });
+    await reviewTask(f.root, { id: 'slice-one', verdict: 'accepted', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    process.env[SLICE_TEST_REVIEW_FAILURE_ENV] = 'record-before-link';
+    await assert.rejects(reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' }), { code: 'TEST_REVIEW_INJECTED_FAILURE' });
+    const state = JSON.parse(await readFile(join(f.root, '.tinysdd/runs/controller.json'), 'utf8'));
+    assert.equal(state.tasks['slice-one'].review.verdict, 'revision');
+    assert.equal(state.tasks['slice-one'].applied, undefined);
+    const eventsAfterFailure = await readSliceTestReviewEvents(f.root);
+    const operatorEvent = eventsAfterFailure.find((event) => event.eventType === 'operator-revision');
+    assert.ok(operatorEvent);
+    await assert.rejects(readFile(join(f.root, '.tinysdd/runs/slice-test-review/records', `${operatorEvent.eventId}.json`)));
+    assert.equal((await readdir(join(f.root, '.tinysdd/runs/slice-test-review/records'))).some((name) => name.endsWith('.tmp')), false);
+    const retried = await reviewTask(f.root, { id: 'slice-one', verdict: 'revision', evidence: '.tinysdd/reviews/strong.md', by: 'operator' });
+    assert.equal(retried.task.status, 'ready');
+    const events = await readSliceTestReviewEvents(f.root);
+    assert.equal(events.filter((event) => event.eventType === 'operator-revision').length, 1);
+    assert.deepEqual(JSON.parse(await readFile(join(f.root, '.tinysdd/runs/slice-test-review/records', `${operatorEvent.eventId}.json`))), operatorEvent);
+    assert.equal((await sliceTestReviewStatus(f.root, { id: 'slice-one' })).route, 'revision');
+  } finally { delete process.env[SLICE_TEST_REVIEW_FAILURE_ENV]; await rm(f.root, { recursive: true, force: true }); }
 });

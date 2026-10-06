@@ -2,15 +2,15 @@ import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { copyIntegrationTree } from './feature-integration.mjs';
-import { lstat, open, opendir } from 'node:fs/promises';
+import { link, lstat, open, opendir, unlink } from 'node:fs/promises';
 import {
   assertInternalPath, canonicalProjectRoot, digestJson, ensureDirectory,
-  normalizeProjectRelative, readProjectFile, resolveProjectPath, sha256,
+  atomicWriteFile, normalizeProjectRelative, readProjectFile, resolveProjectPath, sha256,
   stableStringify, tinyError, withExclusiveLock,
 } from './fs-utils.mjs';
 import { resolveConfig } from './config.mjs';
 import { validateTestReviewPolicy } from './phase-gates.mjs';
-import { resolveTaskPacket } from './controller.mjs';
+import { controllerStatus, resolveTaskPacket } from './controller.mjs';
 import {
   appendSliceTestReviewEvents, captureSliceTestReviewEnvelope,
   createSliceTestReviewEvent, readSliceTestReviewEvents,
@@ -24,8 +24,10 @@ import { parseDecisionDataset } from './decision-dataset.mjs';
 import { runCheck } from './check-runner.mjs';
 
 export const SLICE_TEST_REVIEW_TEST_ENV = 'TINYSDD_SLICE_TEST_REVIEW_TEST';
+export const SLICE_TEST_REVIEW_FAILURE_ENV = 'TINYSDD_SLICE_TEST_REVIEW_FAIL_AT';
 const UNKNOWN = 'UNKNOWN';
 const DIGEST = /^[a-f0-9]{64}$/u;
+const TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const DIRECTORY = ['.tinysdd', 'runs', 'slice-test-review'];
 
 function fail(code, message) { throw tinyError(code, message); }
@@ -71,9 +73,19 @@ export function classifySliceTestObservations(envelope, observations, policyValu
 }
 
 async function readBounded(path, maxBytes) {
-  const before = await lstat(path);
+  let before;
+  try { before = await lstat(path); }
+  catch (error) {
+    if (error?.code === 'ENOENT') fail('TEST_REVIEW_ARTIFACT_INVALID', 'review artifact is missing');
+    throw error;
+  }
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > maxBytes) fail('TEST_REVIEW_ARTIFACT_INVALID', 'review artifact must be a bounded, unaliased regular file');
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  let handle;
+  try { handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)); }
+  catch (error) {
+    if (error?.code === 'ENOENT') fail('TEST_REVIEW_ARTIFACT_INVALID', 'review artifact is missing');
+    throw error;
+  }
   try {
     const opened = await handle.stat();
     if (!opened.isFile() || opened.nlink !== 1 || opened.ino !== before.ino || opened.dev !== before.dev) fail('TEST_REVIEW_ARTIFACT_INVALID', 'review artifact changed while being opened');
@@ -122,9 +134,14 @@ async function dependencyTreeDigest(directory) {
 
 async function assertDependencyFreshness(root, evidence) {
   for (const mount of evidence?.dependencies ?? []) {
-    const source = (await resolveProjectPath(root, mount.source, { allowMissing: false })).absolutePath;
-    const retained = await assertInternalPath(root, mount.retainedPath.split('/'), { allowMissing: false, requireDirectory: true });
-    if (await dependencyTreeDigest(source) !== mount.sha256 || await dependencyTreeDigest(retained) !== mount.sha256) fail('TEST_REVIEW_INPUT_STALE', 'independently checked dependencies changed');
+    try {
+      const source = (await resolveProjectPath(root, mount.source, { allowMissing: false })).absolutePath;
+      const retained = await assertInternalPath(root, mount.retainedPath.split('/'), { allowMissing: false, requireDirectory: true });
+      if (await dependencyTreeDigest(source) !== mount.sha256 || await dependencyTreeDigest(retained) !== mount.sha256) fail('TEST_REVIEW_INPUT_STALE', 'independently checked dependencies changed');
+    } catch (error) {
+      if (error instanceof Error && ['ENOENT', 'EACCES', 'ELOOP', 'ENOTDIR'].includes(error.code)) fail('TEST_REVIEW_INPUT_STALE', 'independently checked dependencies are unavailable');
+      throw error;
+    }
   }
 }
 
@@ -163,6 +180,119 @@ async function loadInput(root, event) {
 async function locked(root, callback) {
   const path = await assertInternalPath(root, [...DIRECTORY, 'workflow.lock'], { allowMissing: true });
   return withExclusiveLock(path, callback);
+}
+
+const OPERATOR_REVISION_INTENT_SCHEMA_VERSION = 1;
+
+async function operatorRevisionIntentPath(root, id, { allowMissing = true } = {}) {
+  if (typeof id !== 'string' || !TASK_ID.test(id)) fail('TEST_REVIEW_IDENTITY_REQUIRED', 'a bounded task identity is required');
+  return assertInternalPath(root, [...DIRECTORY, 'pending', `${id}.json`], { allowMissing });
+}
+
+async function readOperatorRevisionIntent(root, id) {
+  const path = await operatorRevisionIntentPath(root, id);
+  try { await lstat(path); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  let bytes;
+  try { bytes = await readBounded(path, 512 * 1024); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    if (error?.code === 'TEST_REVIEW_ARTIFACT_INVALID') {
+      try { await lstat(path); }
+      catch (missing) {
+        if (missing?.code === 'ENOENT') return null;
+        throw missing;
+      }
+    }
+    throw error;
+  }
+  let parsed;
+  try { parsed = JSON.parse(bytes); } catch { fail('TEST_REVIEW_INTENT_INVALID', 'operator revision intent is malformed'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || parsed.schemaVersion !== OPERATOR_REVISION_INTENT_SCHEMA_VERSION
+    || parsed.taskId !== id || typeof parsed.runId !== 'string'
+    || typeof parsed.previousEventId !== 'string' || !parsed.event) {
+    fail('TEST_REVIEW_INTENT_INVALID', 'operator revision intent is invalid');
+  }
+  return { ...parsed, event: createSliceTestReviewEvent(parsed.event) };
+}
+
+async function writeOperatorRevisionIntent(root, intent) {
+  const directory = await assertInternalPath(root, [...DIRECTORY, 'pending'], { allowMissing: true, requireDirectory: true });
+  await ensureDirectory(directory);
+  const path = await operatorRevisionIntentPath(root, intent.taskId);
+  await atomicWriteFile(path, `${JSON.stringify(intent)}\n`);
+}
+
+async function clearOperatorRevisionIntent(root, id) {
+  const path = await operatorRevisionIntentPath(root, id);
+  await unlink(path).catch((error) => {
+    if (error?.code !== 'ENOENT') throw error;
+  });
+}
+
+async function verifyOperatorRevisionRecord(path, event) {
+  let existing;
+  try { existing = JSON.parse(await readBounded(path, 256 * 1024)); }
+  catch (readError) {
+    if (readError instanceof SyntaxError || readError?.code === 'TEST_REVIEW_ARTIFACT_INVALID') {
+      fail('TEST_REVIEW_HISTORY_INVALID', 'operator revision record is malformed');
+    }
+    throw readError;
+  }
+  if (stableStringify(existing) !== stableStringify(event)) fail('TEST_REVIEW_HISTORY_INVALID', 'operator revision record conflicts with its event');
+}
+
+async function writeOperatorRevisionRecord(root, event) {
+  const directory = await assertInternalPath(root, [...DIRECTORY, 'records'], { allowMissing: true, requireDirectory: true });
+  await ensureDirectory(directory);
+  const path = await assertInternalPath(root, [...DIRECTORY, 'records', `${event.eventId}.json`], { allowMissing: true });
+  try {
+    await lstat(path);
+    await verifyOperatorRevisionRecord(path, event);
+    return;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  const temporary = join(directory, `.${event.eventId}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    let handle;
+    try {
+      handle = await open(temporary, 'wx', 0o600);
+      await handle.writeFile(`${JSON.stringify(event)}\n`);
+      await handle.sync();
+    } finally {
+      await handle?.close();
+    }
+    try {
+      injectSliceTestReviewFailure('record-before-link');
+      await link(temporary, path);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      await verifyOperatorRevisionRecord(path, event);
+    }
+  } finally {
+    await unlink(temporary).catch(() => {});
+  }
+}
+
+function operatorRevisionEvent(state, envelope) {
+  const last = state.last;
+  return createSliceTestReviewEvent({
+    sequence: state.all.length + 1,
+    identity: envelope.identity,
+    inputDigest: envelope.inputDigest,
+    envelopeDigest: envelope.envelopeDigest,
+    assessment: last.assessment,
+    route: budgetRoute(last.workflow.policy, last.workflow.revision),
+    reason: 'Operator requested revision of the applied project; retained budget remains in force.',
+    provenance: envelope.provenance,
+    eventType: 'operator-revision',
+    workflow: { ...last.workflow, previousEventId: last.eventId, revisionBase: 'applied-project' },
+  });
 }
 
 function reviewUsage(value) {
@@ -268,6 +398,12 @@ async function append(root, state, envelope, value) {
 
 async function currentPolicy(root) {
   return activeTestReviewPolicy((await resolveConfig(root)).config.testReview);
+}
+
+async function configuredActivePolicy(root) {
+  const configured = (await resolveConfig(root)).config.testReview;
+  if (configured === undefined || configured.negativeThreshold === undefined) return null;
+  return activeTestReviewPolicy(configured);
 }
 
 async function capture(root, { id, run, change, revision, capturedAt, applied = false }) {
@@ -470,23 +606,30 @@ async function assertAcceptable(root, { id, run, applied = false }) {
 
 export async function withSliceTestApplyGate(projectRoot, options, callback) {
   const root = await canonicalProjectRoot(projectRoot);
-  if ((await resolveConfig(root)).config.testReview === undefined) return callback();
+  if ((await configuredActivePolicy(root)) === null) return callback();
   return locked(root, async () => { await assertAcceptable(root, options); return callback(); });
 }
 
 export async function assertSliceTestAcceptance(projectRoot, options) {
-  if ((await resolveConfig(projectRoot)).config.testReview === undefined) return null;
-  return locked(projectRoot, () => assertAcceptable(projectRoot, { ...options, applied: true }));
+  const root = await canonicalProjectRoot(projectRoot);
+  if ((await configuredActivePolicy(root)) === null) return null;
+  return locked(root, () => assertAcceptable(root, { ...options, applied: true }));
 }
 
 export async function withSliceTestWorkerGate(projectRoot, options, callback) {
   const root = await canonicalProjectRoot(projectRoot);
-  if ((await resolveConfig(root)).config.testReview === undefined || options.baselineRunId) return callback();
+  if ((await configuredActivePolicy(root)) === null || options.baselineRunId) return callback();
   const policy = await currentPolicy(root);
-  return locked(root, async () => {
+  let dispatched;
+  let revisionFeedback;
+  let shouldRun = false;
+  await locked(root, async () => {
     const state = await history(root, options.taskId);
     const last = state.last;
-    if (!last) return callback();
+    if (!last) {
+      shouldRun = true;
+      return;
+    }
     if (last.route !== 'revision' || last.workflow.revision >= policy.revisionLimit) fail('TEST_REVIEW_ROUTE_BLOCKED', 'worker execution is blocked pending strong review or operator inspection');
     const fromProject = last.workflow.revisionBase === 'applied-project';
     if (fromProject ? options.baseRunId !== undefined : options.baseRunId !== last.identity.runId) fail('TEST_REVIEW_REVISION_LINEAGE', 'worker revision must use its retained candidate base');
@@ -501,40 +644,53 @@ export async function withSliceTestWorkerGate(projectRoot, options, callback) {
     const revision = last.workflow.revision + 1;
     const text = JSON.stringify({ inputDigest: last.inputDigest, verdict: last.assessment.verdict, criteria: envelope.criteria, judgments: last.workflow.criterionVerdicts ?? [], requirements: envelope.requirements, strongReview: last.workflow.reviewEvidence ?? UNKNOWN });
     const feedback = { verdict: 'revision', by: last.workflow.producer.id, evidence: { text, sha256: sha256(text) } };
-    const dispatched = await append(root, state, envelope, { eventType: 'revision-dispatched', route: 'dispatch-pending', assessment: last.assessment, workflow: { ...last.workflow, revision } });
-    let result;
-    try { result = await callback(feedback); }
-    catch (error) {
-      await append(root, state, envelope, { eventType: 'revision-candidate', route: 'escalation', assessment: last.assessment,
-        reason: 'Revision did not return a complete candidate; the reserved revision remains spent.', workflow: dispatched.workflow });
-      throw error;
-    }
-    const complete = result?.outcome === 'completed' && typeof result?.runId === 'string';
-    await append(root, state, envelope, { eventType: 'revision-candidate', route: complete ? 'assessment-required' : 'escalation', assessment: last.assessment,
-      reason: complete ? 'Revision candidate requires a fresh assessment.' : 'Incomplete revision requires strong escalation.',
-      workflow: { ...dispatched.workflow, ...(complete ? { candidateRunId: result.runId } : {}) } });
-    return result;
+    dispatched = await append(root, state, envelope, { eventType: 'revision-dispatched', route: 'dispatch-pending', assessment: last.assessment, workflow: { ...last.workflow, revision } });
+    shouldRun = true;
+    revisionFeedback = feedback;
   });
+  if (!shouldRun || !dispatched) return callback();
+
+  let result;
+  let callbackError;
+  try { result = await callback(revisionFeedback); }
+  catch (error) { callbackError = error; }
+
+  await locked(root, async () => {
+    const state = await history(root, options.taskId);
+    if (!state.last || state.last.eventId !== dispatched.eventId) {
+      fail('TEST_REVIEW_WORKFLOW_CHANGED', 'test-review workflow changed while the worker was running; inspect the retained events before retrying');
+    }
+    const envelope = await loadInput(root, dispatched);
+    const complete = callbackError === undefined && result?.outcome === 'completed' && typeof result?.runId === 'string';
+    await append(root, state, envelope, { eventType: 'revision-candidate', route: complete ? 'assessment-required' : 'escalation', assessment: dispatched.assessment,
+      reason: complete ? 'Revision candidate requires a fresh assessment.' : 'Revision did not return a complete candidate; the reserved revision remains spent.',
+      workflow: { ...dispatched.workflow, ...(complete ? { candidateRunId: result.runId } : {}) } });
+  });
+  if (callbackError !== undefined) throw callbackError;
+  return result;
 }
 
 export async function sliceTestAcceptanceFreshness(projectRoot, task) {
   const proof = task.review?.sliceTestReview;
   if (!proof) return true;
-  const state = await history(projectRoot, task.id);
+  const root = await canonicalProjectRoot(projectRoot);
+  const policy = await configuredActivePolicy(root);
+  if (policy === null) return false;
+  const state = await history(root, task.id);
   const last = state.last;
   if (!last || last.eventType !== 'strong-review' || last.route !== 'operator-acceptance'
     || last.eventId !== proof.eventId || last.inputDigest !== proof.inputDigest
     || last.workflow.policyDigest !== proof.policyDigest || last.identity.runId !== task.applied?.runId
-    || digestJson(await currentPolicy(projectRoot)) !== proof.policyDigest) return false;
+    || digestJson(policy) !== proof.policyDigest) return false;
   if (last.workflow.checkEvidence?.source === 'synthetic' && process.env[SLICE_TEST_REVIEW_TEST_ENV] !== '1') return false;
-  const envelope = await loadInput(projectRoot, last);
-  await assertDependencyFreshness(projectRoot, last.workflow.checkEvidence);
-  await verifyRetainedSliceTestLineage(projectRoot, envelope);
+  const envelope = await loadInput(root, last);
+  await assertDependencyFreshness(root, last.workflow.checkEvidence);
+  await verifyRetainedSliceTestLineage(root, envelope);
   const evidence = last.workflow.reviewEvidence;
   if (!evidence || sha256(Buffer.from(evidence.contentBase64, 'base64')) !== evidence.sha256) return false;
-  if (sha256(await readProjectFile(projectRoot, evidence.path, { encoding: null, tinysddArtifactPrefix: '.tinysdd/reviews/' })) !== evidence.sha256) return false;
+  if (sha256(await readProjectFile(root, evidence.path, { encoding: null, tinysddArtifactPrefix: '.tinysdd/reviews/' })) !== evidence.sha256) return false;
   for (const artifact of envelope.artifacts) {
-    if (sha256(await readProjectFile(projectRoot, artifact.path, { encoding: null, tinysddArtifactPrefix: '.tinysdd/tasks/' })) !== artifact.sha256) return false;
+    if (sha256(await readProjectFile(root, artifact.path, { encoding: null, tinysddArtifactPrefix: '.tinysdd/tasks/' })) !== artifact.sha256) return false;
   }
   return true;
 }
@@ -575,17 +731,93 @@ export async function exportSliceTestReviewDataset(projectRoot, { feature, parti
   return parseDecisionDataset(JSON.stringify({ schemaVersion: 1, id: 'slice-test-review', version: '1', cases }));
 }
 
-export async function recordSliceTestOperatorRevision(projectRoot, { id, run } = {}) {
+async function committedOperatorRevision(root, intent) {
+  const status = await controllerStatus(root);
+  const task = status.tasks.find((item) => item.id === intent.taskId);
+  return Boolean(task?.review?.verdict === 'revision'
+    && task.applied === undefined
+    && task.review.appliedFromRun?.runId === intent.runId);
+}
+
+function resequenceOperatorRevision(event, sequence) {
+  return createSliceTestReviewEvent({ ...event, sequence, eventId: undefined, eventDigest: undefined });
+}
+
+function injectSliceTestReviewFailure(stage) {
+  if (process.env[SLICE_TEST_REVIEW_TEST_ENV] === '1' && process.env[SLICE_TEST_REVIEW_FAILURE_ENV] === stage) {
+    delete process.env[SLICE_TEST_REVIEW_FAILURE_ENV];
+    fail('TEST_REVIEW_INJECTED_FAILURE', `synthetic slice-test review failure at ${stage}`);
+  }
+}
+
+export async function prepareSliceTestOperatorRevision(projectRoot, { id, run } = {}) {
   const root = await canonicalProjectRoot(projectRoot);
-  if ((await resolveConfig(root)).config.testReview === undefined || !run) return;
+  const policy = await configuredActivePolicy(root);
+  if (policy === null || !run) return null;
+  const policyDigest = digestJson(policy);
   return locked(root, async () => {
+    const existing = await readOperatorRevisionIntent(root, id);
+    if (existing) {
+      if (existing.runId !== run) fail('TEST_REVIEW_INTENT_CONFLICT', 'pending operator revision does not match the requested applied candidate');
+      if (existing.event.workflow.policyDigest !== policyDigest) fail('TEST_REVIEW_POLICY_STALE', 'pending operator revision uses a stale policy');
+      return existing.event;
+    }
     const state = await history(root, id);
-    if (!state.last || state.last.route !== 'operator-acceptance') return;
+    const last = state.last;
+    if (!last || last.route !== 'operator-acceptance') return null;
+    if (last.identity.runId !== run) fail('TEST_REVIEW_INPUT_MISMATCH', 'operator revision must bind the accepted applied candidate');
     await assertAcceptable(root, { id, run, applied: true });
-    const envelope = await loadInput(root, state.last);
-    return append(root, state, envelope, { eventType: 'operator-revision', assessment: state.last.assessment,
-      route: budgetRoute(state.last.workflow.policy, state.last.workflow.revision),
-      reason: 'Operator requested revision of the applied project; retained budget remains in force.',
-      workflow: { ...state.last.workflow, revisionBase: 'applied-project' } });
+    const envelope = await loadInput(root, last);
+    const event = operatorRevisionEvent(state, envelope);
+    await writeOperatorRevisionIntent(root, { schemaVersion: OPERATOR_REVISION_INTENT_SCHEMA_VERSION, taskId: id, runId: run, previousEventId: last.eventId, event });
+    return event;
   });
+}
+
+export async function publishSliceTestOperatorRevision(projectRoot, { id, run } = {}) {
+  const root = await canonicalProjectRoot(projectRoot);
+  const policy = await configuredActivePolicy(root);
+  if (policy === null || !run) return null;
+  const policyDigest = digestJson(policy);
+  return locked(root, async () => {
+    let intent = await readOperatorRevisionIntent(root, id);
+    if (!intent || intent.runId !== run) return null;
+    if (intent.event.workflow.policyDigest !== policyDigest) fail('TEST_REVIEW_POLICY_STALE', 'pending operator revision uses a stale policy');
+    if (!(await committedOperatorRevision(root, intent))) return null;
+
+    let event = intent.event;
+    let ledger = await readSliceTestReviewEvents(root);
+    let existing = ledger.find((candidate) => candidate.eventId === event.eventId);
+    if (existing) {
+      if (stableStringify(existing) !== stableStringify(event)) fail('TEST_REVIEW_HISTORY_INVALID', 'published operator revision conflicts with its pending intent');
+      await writeOperatorRevisionRecord(root, existing);
+      await clearOperatorRevisionIntent(root, id);
+      return existing;
+    }
+
+    const state = await history(root, id);
+    if (!state.last || state.last.eventId !== intent.previousEventId) fail('TEST_REVIEW_WORKFLOW_CHANGED', 'accepted candidate changed before its operator revision was published');
+    if (event.sequence !== state.all.length + 1) {
+      event = resequenceOperatorRevision(event, state.all.length + 1);
+      intent = { ...intent, event };
+      await writeOperatorRevisionIntent(root, intent);
+    }
+    injectSliceTestReviewFailure('before-ledger');
+    try {
+      await appendSliceTestReviewEvents(root, [event]);
+    } catch (error) {
+      ledger = await readSliceTestReviewEvents(root);
+      existing = ledger.find((candidate) => candidate.eventId === event.eventId);
+      if (!existing) throw error;
+      if (stableStringify(existing) !== stableStringify(event)) throw error;
+    }
+    await writeOperatorRevisionRecord(root, event);
+    await clearOperatorRevisionIntent(root, id);
+    return event;
+  });
+}
+
+export async function recordSliceTestOperatorRevision(projectRoot, { id, run } = {}) {
+  await prepareSliceTestOperatorRevision(projectRoot, { id, run });
+  return publishSliceTestOperatorRevision(projectRoot, { id, run });
 }

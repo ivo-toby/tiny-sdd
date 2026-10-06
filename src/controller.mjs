@@ -63,6 +63,14 @@ import {
   recordResearchDecision,
 } from './phase-gates.mjs';
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, pathsOverlap, preparationPaths, observedPathError } from './file-scope.mjs';
+import {
+  assertSliceTestAcceptance,
+  publishSliceTestOperatorRevision,
+  prepareSliceTestOperatorRevision,
+  sliceTestAcceptanceFreshness,
+  withSliceTestApplyGate,
+  withSliceTestWorkerGate,
+} from './slice-test-review-workflow.mjs';
 
 export { resolveConfig } from './config.mjs';
 
@@ -76,6 +84,8 @@ const MAX_RUN_SNAPSHOT_ENTRIES = 20_000;
 const MAX_RUN_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const APPLY_CHANGES = ['created', 'modified', 'deleted'];
 const APPLY_STATUSES = ['written', 'already-applied'];
+const SLICE_TEST_REVIEW_TEST_ENV = 'TINYSDD_SLICE_TEST_REVIEW_TEST';
+const SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV = 'TINYSDD_SLICE_TEST_REVIEW_FAIL_CONTROLLER_SAVE';
 
 function normalizeTaskBrief(value, field) {
   return normalizeProjectRelative(value, field, { tinysddArtifactPrefix: TASKS_PREFIX });
@@ -576,6 +586,11 @@ async function mutateState(projectRoot, callback) {
     const result = await callback(state, info);
     validateState(state);
     state.updatedAt = nowIso();
+    if (process.env[SLICE_TEST_REVIEW_TEST_ENV] === '1'
+      && process.env[SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV] === '1') {
+      delete process.env[SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV];
+      throw tinyError('WRITE_FAILED', 'synthetic controller state save failure');
+    }
     await atomicWriteJson(info.state, state);
     return result;
   });
@@ -597,6 +612,33 @@ function approvalBindsTaskShape(approval, task) {
       && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null)
       && stableStringify(approval.preparation ?? null) === stableStringify(task.preparation ?? null),
   );
+}
+
+const EXPECTED_SLICE_REVIEW_FRESHNESS_CODES = new Set([
+  'FILE_READ_FAILED',
+  'INVALID_FILE',
+  'INVALID_INTERNAL_PATH',
+  'PATH_NOT_FOUND',
+  'SLICE_TEST_REVIEW_ARTIFACT_INVALID',
+  'SLICE_TEST_REVIEW_INVALID',
+  'SLICE_TEST_REVIEW_RUN_INVALID',
+  'SLICE_TEST_REVIEW_SYMLINK',
+  'SYMLINK_PATH',
+  'TEST_REVIEW_ARTIFACT_INVALID',
+  'TEST_REVIEW_HISTORY_INVALID',
+  'TEST_REVIEW_INPUT_MISMATCH',
+  'TEST_REVIEW_INPUT_STALE',
+  'TEST_REVIEW_POLICY_MISSING',
+  'TEST_REVIEW_POLICY_STALE',
+]);
+
+async function inspectSliceTestReviewFreshness(projectRoot, task) {
+  try {
+    return await sliceTestAcceptanceFreshness(projectRoot, task);
+  } catch (error) {
+    if (error instanceof TinySDDError && EXPECTED_SLICE_REVIEW_FRESHNESS_CODES.has(error.code)) return false;
+    throw error;
+  }
 }
 
 async function inspectTask(projectRoot, state, task, seen = new Set()) {
@@ -650,7 +692,10 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   const evidenceDigest = task.review?.evidence
     ? await digestProjectFile(projectRoot, task.review.evidence, reviewEvidenceOptions()).catch(() => undefined)
     : undefined;
-  const sliceReviewFresh = task.review?.sliceTestReview === undefined || await (await import('./slice-test-review-workflow.mjs')).sliceTestAcceptanceFreshness(projectRoot, task).catch(() => false);
+  const needsSliceReviewFreshness = task.review?.verdict === 'accepted'
+    && approvalFresh
+    && task.review.sliceTestReview !== undefined;
+  const sliceReviewFresh = !needsSliceReviewFreshness || await inspectSliceTestReviewFreshness(projectRoot, task);
   const acceptedCurrent = Boolean(
     task.review?.verdict === 'accepted'
       && approvalFresh
@@ -1244,6 +1289,78 @@ function sameContent(left, right) {
   return left.bytes.equals(right.bytes);
 }
 
+async function applyTaskWithinState(root, state, task, { id, by, runId }) {
+  if (!RUN_ID_PATTERN.test(runId)) throw tinyError('INVALID_RUN_ID', 'run id must be a TinySDD worker run id such as worker-2026-01-01T00-00-00-000Z-0a1b2c3d');
+  const lineage = await loadApplyLineage(root, task, runId);
+  const rootRun = lineage[0];
+  const finalRun = lineage[lineage.length - 1];
+  await assertFinalRunApproval(root, task, finalRun);
+  await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
+  await runArtifactPath(root, finalRun.id, ['workspace-after'], { requireDirectory: true });
+
+  // Plan every validated actual change, and refuse on drift, before the first
+  // write. A revision's workspaces carry the project held at its dispatch;
+  // only the retained lineage union is applicable.
+  const recorded = new Set(lineage.flatMap((run) => run.result.changedPaths.map((change) => change.path)));
+  const plan = [];
+  const conflicts = [];
+  for (const path of [...recorded].sort()) {
+    const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
+    const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
+    if (sameContent(before, after)) continue;
+    const absolute = (await resolveProjectPath(root, path, { allowMissing: true })).absolutePath;
+    const current = await readRegularFile(absolute);
+    let applyStatus = 'written';
+    if (!sameContent(current, before)) {
+      if (sameContent(current, after)) applyStatus = 'already-applied';
+      else conflicts.push(path);
+    }
+    plan.push({ path, absolute, change: after === null ? 'deleted' : before === null ? 'created' : 'modified', after, digest: after === null ? null : sha256(after.bytes), status: applyStatus });
+  }
+  if (conflicts.length > 0) {
+    throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
+  }
+
+  // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
+  const inputs = [task.brief, task.context, task.checks, ...preparationPaths(task.preparation ?? [])].filter(Boolean);
+  const filesystemAliases = await detectFilesystemAliases(root);
+  const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
+  const rewritten = plan.filter((item) => item.status === 'written' && inputs.some((input) => pathsOverlap(item.path, input, { caseInsensitive, unicodeInsensitive, filesystemAliases }))).map((item) => item.path);
+  if (rewritten.length > 0) {
+    throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
+  }
+  const deletions = plan.filter((item) => item.change === 'deleted').map((item) => item.path);
+  if (deletions.length > 0) {
+    throw tinyError('APPLY_DELETION_UNAUTHORIZED', `run ${finalRun.id} contains file deletions, which task apply does not authorize: ${deletions.join(', ')}`, { paths: deletions, runId: finalRun.id });
+  }
+  // Compile the context as inspectTask will read it once this apply is recorded,
+  // and refuse now if that would leave the approval stale.
+  if (task.context) {
+    const after = await compilePinnedContext(root, task, rootRun.id, pinnedPaths(plan)).catch(() => undefined);
+    if (!after || !contextDigestMatches(task.approval.contextDigest ?? null, after.sha256, after.legacySha256)) {
+      throw tinyError('APPLY_WOULD_STALE', `applying run ${finalRun.id} would leave task ${id} with a stale approval; nothing was written`, { runId: finalRun.id, rootRunId: rootRun.id });
+    }
+  }
+  // The digest below reads every allowed file; refuse an unreadable or
+  // symlinked one now rather than after the writes.
+  await snapshotProjectFiles(root, [...new Set([...task.allow, ...(task.protect ?? []), ...recorded])]);
+  for (const item of plan) {
+    if (item.status !== 'written') continue;
+    await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
+  }
+  task.applied = {
+    runId: finalRun.id,
+    rootRunId: rootRun.id,
+    appliedAt: nowIso(),
+    by,
+    allowedDigest: await allowedFilesDigest(root, task.allow),
+    actualPaths: [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort(),
+    actualDigest: await allowedFilesDigest(root, [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort()),
+    files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
+  };
+  return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
+}
+
 export async function applyTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const by = requireText(options.by, 'apply by');
@@ -1255,79 +1372,7 @@ export async function applyTask(projectRoot, options = {}) {
     assertOpen(task);
     const status = await inspectTask(root, state, task);
     if (status.status !== 'ready') throw tinyError('TASK_NOT_READY', `task ${id} is ${status.status}`, { status: status.status, blockedBy: status.blockedBy });
-    const workflow = await import('./slice-test-review-workflow.mjs');
-    return workflow.withSliceTestApplyGate(root, { id, run: runId }, async () => {
-      if (!RUN_ID_PATTERN.test(runId)) throw tinyError('INVALID_RUN_ID', 'run id must be a TinySDD worker run id such as worker-2026-01-01T00-00-00-000Z-0a1b2c3d');
-      const lineage = await loadApplyLineage(root, task, runId);
-      const rootRun = lineage[0];
-      const finalRun = lineage[lineage.length - 1];
-      await assertFinalRunApproval(root, task, finalRun);
-      await runArtifactPath(root, rootRun.id, ['workspace-before'], { requireDirectory: true });
-      await runArtifactPath(root, finalRun.id, ['workspace-after'], { requireDirectory: true });
-
-      // Plan every validated actual change, and refuse on drift, before the first
-      // write. A revision's workspaces carry the project held at its dispatch;
-      // only the retained lineage union is applicable.
-      const recorded = new Set(lineage.flatMap((run) => run.result.changedPaths.map((change) => change.path)));
-      const plan = [];
-      const conflicts = [];
-      for (const path of [...recorded].sort()) {
-        if (!recorded.has(path)) continue;
-        const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
-        const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
-        if (sameContent(before, after)) continue;
-        const absolute = (await resolveProjectPath(root, path, { allowMissing: true })).absolutePath;
-        const current = await readRegularFile(absolute);
-        let applyStatus = 'written';
-        if (!sameContent(current, before)) {
-          if (sameContent(current, after)) applyStatus = 'already-applied';
-          else conflicts.push(path);
-        }
-        plan.push({ path, absolute, change: after === null ? 'deleted' : before === null ? 'created' : 'modified', after, digest: after === null ? null : sha256(after.bytes), status: applyStatus });
-      }
-      if (conflicts.length > 0) {
-        throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
-      }
-
-      // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
-      const inputs = [task.brief, task.context, task.checks, ...preparationPaths(task.preparation ?? [])].filter(Boolean);
-      const filesystemAliases = await detectFilesystemAliases(root);
-      const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
-      const rewritten = plan.filter((item) => item.status === 'written' && inputs.some((input) => pathsOverlap(item.path, input, { caseInsensitive, unicodeInsensitive, filesystemAliases }))).map((item) => item.path);
-      if (rewritten.length > 0) {
-        throw tinyError('APPLY_CHANGES_TASK_INPUT', `run ${finalRun.id} would rewrite the approval inputs of task ${id}: ${rewritten.join(', ')}; nothing was written`, { paths: rewritten, runId: finalRun.id });
-      }
-      const deletions = plan.filter((item) => item.change === 'deleted').map((item) => item.path);
-      if (deletions.length > 0) {
-        throw tinyError('APPLY_DELETION_UNAUTHORIZED', `run ${finalRun.id} contains file deletions, which task apply does not authorize: ${deletions.join(', ')}`, { paths: deletions, runId: finalRun.id });
-      }
-      // Compile the context as inspectTask will read it once this apply is recorded,
-      // and refuse now if that would leave the approval stale.
-      if (task.context) {
-        const after = await compilePinnedContext(root, task, rootRun.id, pinnedPaths(plan)).catch(() => undefined);
-        if (!after || !contextDigestMatches(task.approval.contextDigest ?? null, after.sha256, after.legacySha256)) {
-          throw tinyError('APPLY_WOULD_STALE', `applying run ${finalRun.id} would leave task ${id} with a stale approval; nothing was written`, { runId: finalRun.id, rootRunId: rootRun.id });
-        }
-      }
-      // The digest below reads every allowed file; refuse an unreadable or
-      // symlinked one now rather than after the writes.
-      await snapshotProjectFiles(root, [...new Set([...task.allow, ...(task.protect ?? []), ...recorded])]);
-      for (const item of plan) {
-        if (item.status !== 'written') continue;
-        await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
-      }
-      task.applied = {
-        runId: finalRun.id,
-        rootRunId: rootRun.id,
-        appliedAt: nowIso(),
-        by,
-        allowedDigest: await allowedFilesDigest(root, task.allow),
-        actualPaths: [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort(),
-        actualDigest: await allowedFilesDigest(root, [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort()),
-        files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
-      };
-      return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
-    });
+    return withSliceTestApplyGate(root, { id, run: runId }, () => applyTaskWithinState(root, state, task, { id, by, runId }));
   });
 }
 
@@ -1591,7 +1636,8 @@ export async function reviewTask(projectRoot, options = {}) {
       criteria: blocked.map((item) => ({ id: item.id, noul: item.noul, band: item.band })),
     });
   }
-  return mutateState(root, async (state) => {
+  let revisionRun;
+  const result = await mutateState(root, async (state) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
     assertOpen(task);
@@ -1602,8 +1648,7 @@ export async function reviewTask(projectRoot, options = {}) {
     if (evidenceContent.trim().length === 0) throw tinyError('INVALID_EVIDENCE', 'evidence must be nonempty');
     let sliceTestReview;
     if (verdict === 'accepted') {
-      const workflow = await import('./slice-test-review-workflow.mjs');
-      sliceTestReview = await workflow.assertSliceTestAcceptance(root, { id, run: task.applied?.runId });
+      sliceTestReview = await assertSliceTestAcceptance(root, { id, run: task.applied?.runId });
     }
     const requestedCandidatePaths = options.candidatePaths === undefined
       ? []
@@ -1616,6 +1661,7 @@ export async function reviewTask(projectRoot, options = {}) {
     ])].sort();
     const allowedDigest = await allowedFilesDigest(root, candidatePaths);
     const reviewedAt = nowIso();
+    const previousRevisionRun = verdict === 'revision' ? task.review?.appliedFromRun?.runId : undefined;
     const review = {
       verdict,
       by,
@@ -1631,16 +1677,20 @@ export async function reviewTask(projectRoot, options = {}) {
     if (sliceTestReview) review.sliceTestReview = sliceTestReview;
     if (gate !== null && gate.reviewField !== undefined) review.semanticGate = gate.reviewField;
     if ((verdict === 'accepted' || verdict === 'revision') && task.applied) review.appliedFromRun = { runId: task.applied.runId, identical: await appliedIdentical(root, task.applied, allowedDigest) };
+    else if (verdict === 'revision' && previousRevisionRun) review.appliedFromRun = { ...task.review.appliedFromRun };
     if (verdict === 'accepted') review.acceptanceDigest = digestJson({ ...review, taskId: id });
     task.review = review;
     // The next attempt builds on the applied project, so the record is spent;
     // an accepted or blocked review leaves it, since the files are still applied.
     if (verdict === 'revision') {
-      await (await import('./slice-test-review-workflow.mjs')).recordSliceTestOperatorRevision(root, { id, run: task.applied?.runId });
+      revisionRun = task.applied?.runId ?? previousRevisionRun;
+      if (revisionRun) await prepareSliceTestOperatorRevision(root, { id, run: revisionRun });
       delete task.applied;
     }
     return { task: publicTask(task, await inspectTask(root, state, task)) };
   });
+  if (verdict === 'revision' && revisionRun) await publishSliceTestOperatorRevision(root, { id, run: revisionRun });
+  return result;
 }
 
 async function inspectFeature(root, state, feature) {
@@ -2021,8 +2071,7 @@ export async function dispatchWorker(projectRoot, options = {}) {
     throw error;
   }
   if (typeof adapter.runWorker !== 'function') throw tinyError('WORKER_UNAVAILABLE', 'src/worker.mjs does not export runWorker');
-  const workflow = await import('./slice-test-review-workflow.mjs');
-  return workflow.withSliceTestWorkerGate(root, options, (reviewFeedback) => adapter.runWorker({
+  return withSliceTestWorkerGate(root, options, (reviewFeedback) => adapter.runWorker({
     projectRoot: root,
     packet: reviewFeedback === undefined ? packet : { ...packet, review: reviewFeedback },
     worker: resolved.worker,
