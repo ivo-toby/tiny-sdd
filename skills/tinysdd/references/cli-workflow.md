@@ -4,6 +4,12 @@ Run `tinysdd --help` for the installed interface. In a source checkout use
 `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs`; run it from the target project
 or select `--project /path/to/project`. Add `--json` for machine-readable output.
 
+For a fresh existing project, use the harness-independent [setup
+skill](../assets/setup/SKILL.md) before this workflow. It explains the private
+source-checkout route, explicit loading of the product/router/phase skills,
+supported Node/Pi layouts, provider/model and credential boundaries, reusable
+`init`/`config validate`/preflight, and the bounded synthetic readiness smoke.
+
 For the separate, offline decision-model evaluation foundation, see
 [docs/decision-evaluation.md](../../../docs/decision-evaluation.md). It consumes
 explicit dataset, saved-prediction, and optional metrics files; it does not call

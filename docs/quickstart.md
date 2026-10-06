@@ -50,6 +50,21 @@ unchanged source. Repeat it explicitly for each endpoint being qualified.
 The ordinary test suite
 uses stubs and requires no sandbox executable, network, Pi or model.
 
+## Guided setup for an existing project
+
+For a first use, follow the harness-independent [TinySDD setup
+skill](../skills/tinysdd/assets/setup/SKILL.md). It starts from the private
+source checkout, loads the product and nested phase skills explicitly, checks
+the supported Node/Pi installation layout and sandbox, reuses `init`, config
+validation and the worker's existing Pi preflight, and provides a bounded
+synthetic readiness smoke. It keeps configured route, operator-reported
+backend, runtime-observed identity and unknown model properties separate.
+
+The setup skill does not install packages, read credential stores, start
+services or run live inference by itself. Authorize those actions separately;
+keep credentials as environment references and inspect the retained
+`runtime.json`/`result.json` evidence from the exact worker run.
+
 From this checkout:
 
 ```sh
