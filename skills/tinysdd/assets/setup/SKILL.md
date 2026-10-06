@@ -58,9 +58,9 @@ the harness's explicit skill mechanism when their workflows are needed.
    router's `references/` and `templates/` siblings.
 3. Discover Node, the Pi executable in the same installation's `bin` directory,
    the required Linux or macOS sandbox, the Pi version target, and the
-   non-secret project configuration. Stop with the precise missing prerequisite
-   and the supported repair; never fall back to another executable, provider or
-   model.
+   non-secret project configuration. If Pi is absent, use the reference's
+   operator-authorized repair for the pinned package in that exact Node root;
+   never fall back to another executable, provider or model.
 4. Run `init` only when the project needs `.tinysdd/`; then run `config validate`
    and `config show`. `init` preserves an existing config. Add an optional
    `featureIntegration` command only when the operator has chosen a real

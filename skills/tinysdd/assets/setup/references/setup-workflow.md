@@ -80,6 +80,84 @@ package identity as unqualified setup evidence and stop before readiness. A Pi
 that runs from `PATH` but is beside a different Node, or a separate system/user
 installation, is not a qualified layout for this adapter.
 
+If that sibling executable is missing, stop the setup flow and obtain explicit
+operator authorization before changing the selected Node installation. The
+current pinned Pi package is `@earendil-works/pi-coding-agent@1.0.0`; install it
+into the Node root that owns the exact `process.execPath` being used by
+TinySDD. Do not use an unrelated global prefix, another Node installation or a
+`PATH`-only install:
+
+```sh
+NODE_EXECUTABLE="$(node -p 'process.execPath')"
+NODE_BIN_DIR="$(node -p 'require("node:path").dirname(process.execPath)')"
+NODE_ROOT="$(node -p 'require("node:path").dirname(require("node:path").dirname(process.execPath))')"
+NPM_EXECUTABLE="$NODE_BIN_DIR/npm"
+printf '%s\n' "$NODE_EXECUTABLE" "$NODE_BIN_DIR" "$NODE_ROOT"
+test "$NODE_BIN_DIR" = "$NODE_ROOT/bin"
+test -x "$NODE_ROOT/bin/node"
+test -x "$NPM_EXECUTABLE"
+"$NPM_EXECUTABLE" --version
+node --input-type=module <<'NODE'
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 19)) {
+  throw new Error(`Node ${process.versions.node} is below the supported 22.19.0 floor`);
+}
+NODE
+test -w "$NODE_ROOT" && test -w "$NODE_ROOT/bin"
+```
+
+If any check fails, stop and have the operator select or authorize a suitable
+Node root; do not redirect the install to a separate prefix. After that
+authorization, the one machine-level repair is:
+
+```sh
+"$NPM_EXECUTABLE" install --global --prefix "$NODE_ROOT" \
+  '@earendil-works/pi-coding-agent@1.0.0'
+```
+
+Verify the exact layout and package identity with the same Node path before
+continuing. This reads only executable/package metadata and does not create
+provider or credential configuration:
+
+```sh
+PI_EXECUTABLE="$NODE_BIN_DIR/pi"
+test -x "$PI_EXECUTABLE"
+"$PI_EXECUTABLE" --version
+node --input-type=module - "$PI_EXECUTABLE" <<'NODE'
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
+const executable = process.argv[2];
+const info = await lstat(executable);
+if (!info.isFile() && !info.isSymbolicLink()) throw new Error('Pi path is not a file or symlink');
+const resolved = await realpath(executable);
+const resolvedInfo = await lstat(resolved);
+if (!resolvedInfo.isFile() || (resolvedInfo.mode & 0o111) === 0) throw new Error('Pi does not resolve to an executable file');
+let current = dirname(resolved);
+let version = null;
+for (let count = 0; count < 8; count += 1) {
+  try {
+    const packageJson = JSON.parse(await readFile(join(current, 'package.json'), 'utf8'));
+    if (packageJson.name === '@earendil-works/pi-coding-agent' && typeof packageJson.version === 'string') {
+      version = packageJson.version;
+      break;
+    }
+  } catch {}
+  const parent = dirname(current);
+  if (parent === current) break;
+  current = parent;
+}
+if (version !== '1.0.0') throw new Error(`expected Pi package 1.0.0, found ${version ?? 'no package identity'}`);
+console.log(JSON.stringify({ executable, resolved, package: '@earendil-works/pi-coding-agent', version }));
+NODE
+```
+
+Only after this repair and verification should setup continue to the exact
+provider/model entry and environment-referenced credential described below.
+This repair does not choose a provider, invent a model alias or read a
+credential store. If the operator does not authorize the install, report the
+missing sibling executable and leave the project and Node installation alone.
+
 The current target is Pi **1.0.0**, and its fixed check-client surface requires
 Node **>=22.19.0**. The package declares Node >=22, but use the stricter
 22.19.0 floor for a worker readiness attempt. The runtime records the Pi
@@ -395,7 +473,7 @@ Use a short report with one row per capability:
 | Capability | Discovery | Observed in smoke | Next action |
 | --- | --- | --- | --- |
 | CLI source | checkout path and `--version` | command executed | keep checkout pinned or ask for source access |
-| Node/Pi layout | executable paths and versions | `runtime.json.piVersion` and `runtime.json.sandbox`; Node/platform from discovery or qualification facts | fix sibling `bin` layout or observed Node/Pi target mismatch |
+| Node/Pi layout | executable paths and versions | `runtime.json.piVersion` and `runtime.json.sandbox`; Node/platform from discovery or qualification facts | authorize the pinned package in the exact Node root, or fix the observed target mismatch |
 | provider/model | exact configured route and Pi model entry | `runtime.json.provider`/`.model` plus inference result | fix that exact route; no fallback |
 | authentication | referenced environment name only | authenticated request or exact rejection | use approved secret mechanism; never expose value |
 | worker sandbox | platform binary discovery | runtime sandbox field | ask for supported Linux/macOS host or authorization to install prerequisite |
