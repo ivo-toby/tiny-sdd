@@ -176,8 +176,8 @@ slice-test file budgets are configurable advisory warnings, and #82 allows
 ordinary extra files in the disposable candidate. Deletion, protected or
 preparation edits and arbitrary inference commands remain ineligible.
 
-The #81 transition is an offline contract, not an active provider loop, and
-does not invoke Jev or a provider. Negative assessments use only explicit
+The pure #81 transition helper remains offline; the active `slice-tests`
+commands below invoke the explicitly configured Jev provider. Negative assessments use only explicit
 bounded revision policy; every positive assessment requires independent strong
 review of identical bytes; exhaustion escalates. Do not invent thresholds or
 routes, and do not infer #39 plan approval or #38 engagement semantics. Record
@@ -345,7 +345,8 @@ If `implement` appears in `phaseGates`, it is only the existing human task
 approval alias. Its approval, review, apply and final-run bindings stay in the
 task controller; other modes and added phase requirements are rejected.
 
-The bounded #81 transition interface is offline only. It requires an explicit
+The bounded #81 transition helper is offline only; it is distinct from the
+active `slice-tests` commands below. It requires an explicit
 complete `testReview` policy; a negative assessment may request revisions only
 within that configured cap, while a positive assessment remains review-required
 until a separately identified, caller-declared strong review covers the same
@@ -972,4 +973,58 @@ escalations and measured Jev usage. Missing measurements remain `UNKNOWN`.
 Replay measurements are retained separately and do not count as live inference.
 Whole-slice reviews do not establish criterion labels or population calibration.
 This report reads evidence; it does not run a provider, approve tests, or accept
-a task or feature. The active controller/revision flow is still follow-up work.
+a task or feature. The active controller flow is described below.
+
+### Active slice-test review
+
+Configure `testReview` explicitly before using this flow: `positiveThreshold`,
+`negativeThreshold` (lower than the positive boundary), `revisionLimit`,
+`uncertainRoute: "escalation"`, and `unavailableRoute` (`revision`, `escalation`,
+or `unavailable`). There are no numerical defaults. Every criterion at or above
+the positive boundary yields a positive assessment; any criterion below the
+negative boundary yields a negative assessment; other results escalate.
+Projects without `testReview` retain their existing controller behavior.
+
+1. Run an approved worker candidate, retaining its exact final packet and lineage.
+2. Call `slice-tests assess --id ID --run RUN --change changes/CHANGE/change.json
+   --implementer MODEL_ID --producer JEV_ID --provider-config config/jev.json
+   --credential-env JEV_TOKEN` (as one command). The provider file uses the
+   #40 adapter's explicit id, endpoint, model and configSha256 contract; the
+   credential travels only through the transport. It is not a command argument,
+   retained artifact or worker input. Provider failures retain a failure event.
+3. Inspect `slice-tests status --id ID`. A negative verdict permits
+   `worker run --task ID --base-run RUN` within the retained revision cap.
+   Reassess that returned candidate. Failed/incomplete attempts spend their
+   reserved slot; restarting does not reset the cap. A pending interrupted
+   assessment requires operator inspection rather than a duplicate invocation.
+4. For positive or escalated assessments, run `slice-tests check --id ID
+   --event EVENT_ID`. This independently executes the approved slice checks
+   against retained candidate bytes, using the safe host runner and frozen
+   dependency mounts. These commands do not execute inside the inference sandbox.
+5. Have a separately identified strong reviewer inspect the exact retained
+   envelope and write evidence. Record it with `slice-tests review --id ID
+   --event CHECK_EVENT_ID --input-digest SHA256 --reviewer MODEL_ID
+   --strength strong --attested true --verdict accepted --evidence PATH`.
+   This records the caller's attestation; it does not invoke or verify that
+   reviewer's model execution. Optional measured frontier usage can be supplied
+   through `reviewSliceTests`'s `reviewUsage`; absent fields are UNKNOWN.
+6. Explicitly `task apply`, then `task review --verdict accepted`, then
+   `feature accept`. Strong test review does not accept a task or feature.
+   Feature acceptance still executes protected tests through the declared real
+   entrypoints. A failed feature check requires operator-requested task revision;
+   the applied project becomes its revision base, within the same retained cap.
+
+Changed candidate, approval, policy, retained lineage or strong-review evidence
+invalidates use of the reviewed candidate. Accepted tasks retain a review binding;
+changed policy or evidence makes that acceptance stale. Old review records remain
+valid under their original controller contract. No provider/model fallback exists.
+
+Inputs and immutable event files live under `.tinysdd/runs/slice-test-review/`;
+`events.jsonl` reconstructs the workflow and `slice-tests report` its metrics.
+`slice-tests dataset --partition train|validation|test [--feature NAME]` emits
+reviewed cases in the #32 schema, with immutable evidence references and whole
+feature/lineage grouping. Unreviewed negatives are excluded, injected transports
+and runners are synthetic, and whole-slice labels do not label each criterion.
+The export requires an explicit partition and existing reviews. Reported
+calibration, direct-strong comparison and total feature cost remain UNKNOWN
+without the corresponding measurements. Live model evaluation remains unverified.

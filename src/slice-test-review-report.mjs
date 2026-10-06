@@ -42,6 +42,7 @@ export function buildSliceTestReviewReport(values, { feature } = {}) {
       && event.identity.sliceId === assessment.identity.sliceId
       && event.identity.lineageId === assessment.identity.lineageId
       && event.identity.runId === assessment.identity.runId
+      && (event.workflow?.assessmentEventId === undefined || event.workflow.assessmentEventId === assessment.eventId)
       && event.sequence > assessment.sequence
       && event.review !== UNKNOWN
       && event.review.inputDigest === assessment.inputDigest
@@ -81,6 +82,13 @@ export function buildSliceTestReviewReport(values, { feature } = {}) {
   })));
   const live = assessments.filter((event) => event.provenance.source === 'validated-final-run' && !event.provenance.replayed);
   const replay = assessments.filter((event) => event.provenance.replayed);
+  const previousRoutes = new Map();
+  let escalations = 0;
+  for (const event of events) {
+    const key = event.identity.taskId;
+    if (event.eventType === 'escalation' || (event.route === 'escalation' && previousRoutes.get(key) !== 'escalation')) escalations += 1;
+    previousRoutes.set(key, event.route);
+  }
   const report = {
     schemaVersion: 1,
     type: 'slice-test-review-report',
@@ -89,6 +97,7 @@ export function buildSliceTestReviewReport(values, { feature } = {}) {
     assessments: assessments.length,
     positiveAssessments: positives.length,
     negativeAssessments: negatives.length,
+    uncertainAssessments: assessments.filter((event) => event.assessment.verdict === 'uncertain').length,
     unclassifiedAssessments: assessments.filter((event) => event.assessment.verdict === UNKNOWN).length,
     positiveReviewCoverage: ratio(positivePairs.length, positives.length),
     positiveReviewDisagreement: ratio(positivePairs.filter(({ review }) => review.review.verdict === 'rejected').length, positivePairs.length),
@@ -96,14 +105,15 @@ export function buildSliceTestReviewReport(values, { feature } = {}) {
     unreviewedNegatives: negatives.length - negativePairs.length,
     negativeReviewDisagreement: ratio(negativePairs.filter(({ review }) => review.review.verdict === 'accepted').length, negativePairs.length),
     revisionAssessments: assessments.filter((event) => event.eventType === 'revision-assessment').length,
-    escalations: events.filter((event) => event.eventType === 'escalation').length,
+    escalations,
     failures: events.filter((event) => ['provider-failure', 'assessment-missing', 'assessment-unavailable'].includes(event.eventType)).length,
     liveAssessments: live.length,
     replayAssessments: replay.length,
     syntheticAssessments: assessments.filter((event) => event.provenance.source === 'synthetic').length,
     measuredJevUsage: Object.fromEntries(['inputTokens', 'outputTokens', 'totalTokens', 'latencyMs'].map((key) => [key, measuredTotal(live, key)])),
     replayOriginalMeasurements: replay.map((event) => ({ eventId: event.eventId, measurements: event.assessment.measurements })),
-    frontierReviewUsage: UNKNOWN,
+    frontierReviewUsage: events.some((event) => event.eventType === 'strong-review' && event.workflow?.reviewUsage && event.workflow.reviewUsage !== UNKNOWN)
+      ? events.filter((event) => event.eventType === 'strong-review').map((event) => ({ eventId: event.eventId, measurements: event.workflow?.reviewUsage ?? UNKNOWN, provenance: event.workflow?.reviewProvenance ?? UNKNOWN })) : UNKNOWN,
     totalFeatureCost: UNKNOWN,
     directStrongImplementationComparison: UNKNOWN,
     populationCalibration: UNKNOWN,

@@ -244,16 +244,20 @@ function requireConfigName(value, label) {
  */
 export function validateTestReviewPolicy(value, label = 'config.testReview') {
   assertPlainObject(value, 'CONFIG_INVALID', label);
-  assertExactKeys(value, ['positiveThreshold', 'revisionLimit', 'uncertainRoute', 'unavailableRoute'], 'CONFIG_INVALID', label);
+  assertExactKeys(value, ['positiveThreshold', 'negativeThreshold', 'revisionLimit', 'uncertainRoute', 'unavailableRoute'], 'CONFIG_INVALID', label);
   if (typeof value.positiveThreshold !== 'number' || !Number.isFinite(value.positiveThreshold) || value.positiveThreshold <= 0 || value.positiveThreshold >= 1) {
     throw tinyError('CONFIG_INVALID', `${label}.positiveThreshold must be a number in (0,1)`);
   }
   if (!Number.isSafeInteger(value.revisionLimit) || value.revisionLimit < 1) throw tinyError('CONFIG_INVALID', `${label}.revisionLimit must be a positive safe integer`);
+  if (value.negativeThreshold !== undefined && (typeof value.negativeThreshold !== 'number' || !Number.isFinite(value.negativeThreshold) || value.negativeThreshold < 0 || value.negativeThreshold >= value.positiveThreshold)) {
+    throw tinyError('CONFIG_INVALID', `${label}.negativeThreshold must be in [0,positiveThreshold)`);
+  }
   for (const key of ['uncertainRoute', 'unavailableRoute']) {
     if (!TEST_REVIEW_ROUTES.includes(value[key])) throw tinyError('CONFIG_INVALID', `${label}.${key} must be one of ${TEST_REVIEW_ROUTES.join(', ')}`);
   }
   return {
     positiveThreshold: value.positiveThreshold,
+    ...(value.negativeThreshold === undefined ? {} : { negativeThreshold: value.negativeThreshold }),
     revisionLimit: value.revisionLimit,
     uncertainRoute: value.uncertainRoute,
     unavailableRoute: value.unavailableRoute,
