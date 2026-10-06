@@ -643,10 +643,13 @@ async function validateArchivedDerivation(archiveDir, manifest) {
   const controllerRecord = manifest.files.find((record) => record.archivePath === 'evidence/controller.json');
   if (!controllerRecord) archiveError('archive controller state is not retained');
   const controller = parseArchiveJson(await readArchiveRecord(archiveDir, controllerRecord, 'archived controller state'), 'archived controller state');
+  const syntheticSpecArchives = new Set(manifest.specs.flatMap((spec) => [spec.before.archivePath, spec.after.archivePath]));
   for (const preparation of manifest.validation.preparationFiles) {
     const records = manifest.files.filter((record) => record.sourcePath === preparation.path);
     if (!preparation.exists) {
-      if (records.length > 0) archiveError(`archive retained a file marked absent: ${preparation.path}`);
+      if (records.some((record) => !syntheticSpecArchives.has(record.archivePath))) {
+        archiveError(`archive retained a file marked absent: ${preparation.path}`);
+      }
     } else if (!records.some((record) => record.bytes === preparation.bytes && record.sha256 === preparation.sha256)) {
       archiveError(`archive does not retain validated preparation bytes: ${preparation.path}`);
     }
@@ -832,6 +835,7 @@ function draftPathFor(changePath, supplied) {
 }
 
 function ensureArchiveSeparate(changeDir, archivePath) {
+  if (changeDir === '.') archiveError('change descriptor must be inside a source change directory');
   const changeRoot = changeDir.endsWith('/') ? changeDir : `${changeDir}/`;
   if (archivePath === changeDir || archivePath.startsWith(changeRoot)) archiveError('archivePath must be outside the source change directory');
 }
