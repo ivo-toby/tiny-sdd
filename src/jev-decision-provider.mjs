@@ -28,12 +28,14 @@ const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/u;
 const TYPE = /^[a-z][a-z0-9._:-]{0,63}$/u;
 const MAX_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
-const TRUE_CRITERION = 'The assessed bytes contain concrete evidence that would fail if this criterion were false';
-const FALSE_CRITERION = 'The assessed bytes do not address this criterion or only assert completion';
 
 function providerError(code, message, details = undefined) {
-  return tinyError(code, message, details);
+  const error = tinyError(code, message, details);
+  Object.defineProperty(error, PROVIDER_ERROR, { value: true });
+  return error;
 }
+
+const PROVIDER_ERROR = Symbol('tinySddJevProviderError');
 
 function plainObject(value, label, code = 'JEV_DECISION_INVALID') {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw providerError(code, `${label} must be an object`);
@@ -44,7 +46,7 @@ function plainObject(value, label, code = 'JEV_DECISION_INVALID') {
 
 function exactKeys(value, allowed, label, code = 'JEV_DECISION_INVALID') {
   for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) throw providerError(code, `${label} contains unknown key: ${key}`);
+    if (!allowed.includes(key)) throw providerError(code, `${label} contains an unsupported key`);
   }
 }
 
@@ -204,6 +206,20 @@ function normalizeStateInput(value) {
   return { taskId, criteria, checks, requirements, interfaces, integration, artifacts, ...(inputSha256 === undefined ? {} : { inputSha256 }), ...(lineage === undefined ? {} : { lineage }) };
 }
 
+function canonicalJevQuestion(item) {
+  const { questions } = buildJudgeRequest({
+    taskId: 'slice-test-review',
+    criteria: [{ id: item.id, text: item.question }],
+    checks: [],
+  });
+  const normalized = validateDecisionQuestion({ schemaVersion: 1, id: item.id, ...questions[item.id] });
+  return {
+    type: normalized.type,
+    instruction: normalized.instruction,
+    criteria: normalized.criteria,
+  };
+}
+
 export function buildSliceTestJudgeRequest(value) {
   const input = normalizeStateInput(value);
   const base = buildJudgeRequest({
@@ -211,9 +227,7 @@ export function buildSliceTestJudgeRequest(value) {
     criteria: input.criteria.map((item) => ({ id: item.id, text: item.question })),
     checks: input.checks,
   });
-  const questions = Object.fromEntries(input.criteria.map((item) => [item.id, {
-    ...base.questions[item.id],
-  }]));
+  const questions = Object.fromEntries(input.criteria.map((item) => [item.id, canonicalJevQuestion(item)]));
   const state = {
     ...base.state,
     criteria: input.criteria.map((item) => ({ ...item, text: item.question })),
@@ -226,7 +240,17 @@ export function buildSliceTestJudgeRequest(value) {
   };
   const body = { state, questions };
   const requestSha256 = sha256(stableStringify(body));
-  return { state, questions, body, requestSha256, criteria: input.criteria, artifacts: input.artifacts };
+  const inputSha256 = input.inputSha256 ?? digestJson({
+    taskId: input.taskId,
+    criteria: input.criteria,
+    checks: input.checks,
+    requirements: input.requirements,
+    interfaces: input.interfaces,
+    integration: input.integration,
+    artifacts: input.artifacts,
+    ...(input.lineage === undefined ? {} : { lineage: input.lineage }),
+  });
+  return { state, questions, body, requestSha256, inputSha256, criteria: input.criteria, artifacts: input.artifacts };
 }
 
 function normalizeEndpoint(value) {
@@ -256,9 +280,25 @@ export function validateJevDecisionProviderConfig(value) {
   return { id, endpoint, model, configSha256, timeoutMs, maxRequestBytes, maxResponseBytes, ...(config.fetch === undefined ? {} : { fetch: config.fetch }) };
 }
 
-function responseText(response, maxBytes) {
+function cancelResponseBody(response) {
+  const body = response?.body;
+  try {
+    if (body && typeof body.cancel === 'function') {
+      const result = body.cancel();
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    } else if (body && typeof body.destroy === 'function') {
+      body.destroy();
+    }
+  } catch {
+    // A provider-owned response can fail while being cancelled. The original
+    // bounded transport error is the only error exposed to the caller.
+  }
+}
+
+async function responseText(response, maxBytes, deadline) {
+  let readPromise;
   if (response?.body && typeof response.body[Symbol.asyncIterator] === 'function') {
-    return (async () => {
+    readPromise = (async () => {
       const chunks = [];
       let bytes = 0;
       for await (const chunk of response.body) {
@@ -269,13 +309,21 @@ function responseText(response, maxBytes) {
       }
       return Buffer.concat(chunks, bytes).toString('utf8');
     })();
+  } else {
+    if (typeof response?.text !== 'function') throw providerError('JEV_DECISION_BAD_RESPONSE', 'Jev response body is unavailable');
+    readPromise = Promise.resolve().then(() => response.text()).then((value) => {
+      if (typeof value !== 'string') throw providerError('JEV_DECISION_BAD_RESPONSE', 'Jev response body is not text');
+      if (Buffer.byteLength(value) > maxBytes) throw providerError('JEV_DECISION_RESPONSE_TOO_LARGE', 'Jev response exceeds the bounded byte limit');
+      return value;
+    });
   }
-  if (typeof response?.text !== 'function') throw providerError('JEV_DECISION_BAD_RESPONSE', 'Jev response body is unavailable');
-  return Promise.resolve(response.text()).then((value) => {
-    if (typeof value !== 'string') throw providerError('JEV_DECISION_BAD_RESPONSE', 'Jev response body is not text');
-    if (Buffer.byteLength(value) > maxBytes) throw providerError('JEV_DECISION_RESPONSE_TOO_LARGE', 'Jev response exceeds the bounded byte limit');
-    return value;
-  });
+  try {
+    return await Promise.race([readPromise, deadline.promise]);
+  } catch (error) {
+    cancelResponseBody(response);
+    readPromise.catch(() => {});
+    throw error;
+  }
 }
 
 function usage(value) {
@@ -310,7 +358,7 @@ export function validateJevDecisionResponse(value, criteria) {
     return {
       criterionId: item.id,
       criterionType: item.type,
-      question: item.question,
+      question: canonicalJevQuestion(item).instruction,
       probability: answer.noul,
       judgment: DECISION_UNKNOWN,
     };
@@ -340,21 +388,41 @@ export async function assessSliceTestWithJev({ config, credential, assessment } 
   const fetchImpl = normalizedConfig.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw providerError('JEV_DECISION_UNAVAILABLE', 'Jev transport is unavailable');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), normalizedConfig.timeoutMs);
+  let rejectDeadline;
+  const deadline = {
+    promise: new Promise((_, reject) => { rejectDeadline = reject; }),
+  };
+  let deadlineExpired = false;
+  const timer = setTimeout(() => {
+    deadlineExpired = true;
+    controller.abort();
+    rejectDeadline(providerError('JEV_DECISION_UNAVAILABLE', 'Jev provider request exceeded its deadline'));
+  }, normalizedConfig.timeoutMs);
   const started = performance.now();
   let response;
   try {
-    response = await fetchImpl(normalizedConfig.endpoint, {
+    const fetchPromise = Promise.resolve().then(() => fetchImpl(normalizedConfig.endpoint, {
       method: 'POST',
       headers: requestForTransport.headers,
       body: requestForTransport.body,
       signal: controller.signal,
       redirect: 'error',
+    })).then((result) => {
+      response = result;
+      if (deadlineExpired) cancelResponseBody(result);
+      return result;
     });
+    try {
+      response = await Promise.race([fetchPromise, deadline.promise]);
+    } catch (error) {
+      fetchPromise.catch(() => {});
+      cancelResponseBody(response);
+      throw error;
+    }
     if (!Number.isInteger(response?.status) || response.status < 200 || response.status >= 300) {
       throw providerError('JEV_DECISION_UNAVAILABLE', 'Jev provider returned an unavailable response', { status: Number.isInteger(response?.status) ? response.status : 0 });
     }
-    const raw = await responseText(response, normalizedConfig.maxResponseBytes);
+    const raw = await responseText(response, normalizedConfig.maxResponseBytes, deadline);
     let payload;
     try { payload = JSON.parse(raw); } catch { throw providerError('JEV_DECISION_BAD_RESPONSE', 'Jev response is not valid JSON'); }
     const validated = validateJevDecisionResponse(payload, request.criteria);
@@ -368,7 +436,7 @@ export async function assessSliceTestWithJev({ config, credential, assessment } 
       },
       request: { sha256: requestForTransport.requestSha256, bytes: requestForTransport.bytes },
       questionSha256: digestJson(request.questions),
-      inputSha256: assessment.inputSha256 ?? digestJson(request.state),
+      inputSha256: request.inputSha256,
       observations: validated.observations,
       measurements: {
         latencyMs: Math.max(0, performance.now() - started),
@@ -376,8 +444,7 @@ export async function assessSliceTestWithJev({ config, credential, assessment } 
       },
     };
   } catch (error) {
-    if (error?.code?.startsWith('JEV_DECISION_')) throw error;
-    if (error?.name === 'AbortError') throw providerError('JEV_DECISION_UNAVAILABLE', 'Jev provider request exceeded its deadline');
+    if (error?.[PROVIDER_ERROR] === true) throw error;
     throw providerError('JEV_DECISION_UNAVAILABLE', 'Jev provider request failed');
   } finally {
     clearTimeout(timer);
@@ -397,14 +464,7 @@ export function createJevDecisionProvider(config) {
 
 export function buildJevQuestion(criterionValue) {
   const criterionValueNormalized = criterion(criterionValue, 0);
-  const question = {
-    schemaVersion: 1,
-    id: criterionValueNormalized.id,
-    type: 'noul',
-    instruction: criterionValueNormalized.question,
-    criteria: { true: TRUE_CRITERION, false: FALSE_CRITERION },
-  };
-  return validateDecisionQuestion(question);
+  return canonicalJevQuestion(criterionValueNormalized);
 }
 
 export function jevProviderConfigDigest(config) {

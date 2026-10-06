@@ -67,7 +67,7 @@ test('optional question instruction and criteria preserve the legacy digest when
   assert.deepEqual(normalized, legacy);
   assert.equal(decisionQuestionDigest(legacy), decisionQuestionDigest(normalized));
   const question = buildJevQuestion(criterion());
-  assert.equal(question.instruction, criterion().question);
+  assert.equal(question.instruction, buildSliceTestJudgeRequest(assessment()).questions['criterion-one'].instruction);
   assert.equal(question.criteria.true.length > 0, true);
 });
 
@@ -139,7 +139,40 @@ test('provider factory does not expose credentials or ambient configuration', ()
 test('response validation retains every typed criterion and refuses missing answers', () => {
   const criteria = [criterion()];
   const parsed = validateJevDecisionResponse({ answers: { 'criterion-one': { noul: 0.1 } } }, criteria);
-  assert.deepEqual(parsed.observations, [{ criterionId: 'criterion-one', criterionType: 'slice-test-adequacy', question: criterion().question, probability: 0.1, judgment: 'UNKNOWN' }]);
+  assert.deepEqual(parsed.observations, [{ criterionId: 'criterion-one', criterionType: 'slice-test-adequacy', question: buildJevQuestion(criterion()).instruction, probability: 0.1, judgment: 'UNKNOWN' }]);
   assert.equal(parsed.modelVersion, 'UNKNOWN');
   assert.throws(() => validateJevDecisionResponse({ answers: {} }, criteria), { code: 'JEV_DECISION_BAD_RESPONSE' });
+});
+
+test('body deadlines cancel an injected stream and do not expose foreign error text', async () => {
+  let cancelled = false;
+  const body = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => new Promise(() => {}),
+        return: async () => { cancelled = true; return { done: true }; },
+      };
+    },
+    cancel() { cancelled = true; },
+  };
+  await assert.rejects(assessSliceTestWithJev({ config: config(async () => ({ status: 200, body }), { timeoutMs: 5 }), credential: 'secret', assessment: assessment() }), { code: 'JEV_DECISION_UNAVAILABLE' });
+  assert.equal(cancelled, true);
+  await assert.rejects(assessSliceTestWithJev({ config: config(async () => ({ status: 200, text: async () => new Promise(() => {}) }), { timeoutMs: 5 }), credential: 'secret', assessment: assessment() }), { code: 'JEV_DECISION_UNAVAILABLE' });
+  const foreign = async () => { throw Object.assign(new Error('credential=REMOTE-SECRET'), { code: 'JEV_DECISION_UNAVAILABLE' }); };
+  await assert.rejects(assessSliceTestWithJev({ config: config(foreign), credential: 'secret', assessment: assessment() }), (error) => error.code === 'JEV_DECISION_UNAVAILABLE' && error.message === 'Jev provider request failed' && !error.message.includes('REMOTE-SECRET'));
+});
+
+test('assessment input identity is detached before an injected fetch can mutate the caller object', async () => {
+  const input = assessment({ inputSha256: digest('a') });
+  const fetch = async () => {
+    input.inputSha256 = digest('b');
+    return response({ answers: { 'criterion-one': { noul: 0.5 } } });
+  };
+  const result = await assessSliceTestWithJev({ config: config(fetch), credential: 'secret', assessment: input });
+  assert.equal(result.inputSha256, digest('a'));
+});
+
+test('remote response keys are never copied into bounded provider errors', async () => {
+  const sentinel = `REMOTE-SECRET-${'x'.repeat(32_000)}`;
+  await assert.rejects(assessSliceTestWithJev({ config: config(async () => response({ answers: { 'criterion-one': { noul: 0.5 } }, [sentinel]: true })), credential: 'secret', assessment: assessment() }), (error) => error.code === 'JEV_DECISION_BAD_RESPONSE' && error.message.length < 256 && !error.message.includes('REMOTE-SECRET'));
 });
