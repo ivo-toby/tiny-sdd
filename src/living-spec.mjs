@@ -887,7 +887,7 @@ async function stageArchive(root, archiveDir, plan, featureState, options) {
       : dirname(plan.changePath).split(sep).join('/');
     await copyTreeInto(changeDir, join(temporary, 'change'), changePrefix, 'change', records, total);
     if (!records.some((record) => record.sourcePath === plan.draftPath)) {
-      await copyInternalFile(root, plan.draftPath, join(temporary, 'change', DEFAULT_MERGE_DRAFT_NAME), `change/${DEFAULT_MERGE_DRAFT_NAME}`, records, total);
+      await copyInternalFile(root, plan.draftPath, join(temporary, 'merge', DEFAULT_MERGE_DRAFT_NAME), `merge/${DEFAULT_MERGE_DRAFT_NAME}`, records, total);
     }
     const changeRecord = records.find((record) => record.sourcePath === plan.changePath);
     const draftRecord = records.find((record) => record.sourcePath === plan.draftPath);

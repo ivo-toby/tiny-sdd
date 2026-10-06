@@ -439,6 +439,7 @@ node "$TINYSDD_CHECKOUT/scripts/archive-change.mjs" \
 
 The change descriptor must live inside a dedicated change directory; a root-level `change.json` is rejected before staging.
 The final acceptance check, archive publication and spec writes share the controller lock.
+An external `--draft` is retained separately from the change directory’s default draft.
 
 The merge draft is a local-model handoff with explicit requirement IDs, exact
 UTF-8 base ranges/text and an output digest. The script validates those bytes,

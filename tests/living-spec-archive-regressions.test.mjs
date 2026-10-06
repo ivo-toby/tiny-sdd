@@ -46,7 +46,7 @@ const requirementIds = {
   S5b: 'broker-s5b-async',
 };
 
-async function archiveFixture({ extraSpec = false, rootDescriptor = false } = {}) {
+async function archiveFixture({ extraSpec = false, rootDescriptor = false, externalDraft = false } = {}) {
   const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-living-spec-archive-'));
   await cp(examplesRoot, join(root, 'examples/artifact-format'), { recursive: true });
   const sourceChangePath = 'examples/artifact-format/changes/broker-recut/change.json';
@@ -113,6 +113,7 @@ async function archiveFixture({ extraSpec = false, rootDescriptor = false } = {}
   await writeFile(join(root, 'tests/feature-integration.mjs'), 'export const integration = true;\n');
   await mkdir(join(root, '.tinysdd/reviews'), { recursive: true });
   await writeFile(join(root, '.tinysdd/reviews/evidence.md'), 'operator evidence\n');
+  if (externalDraft) await writeFile(join(root, 'alternate-draft.json'), JSON.stringify(draft));
   await initProject(root);
   await writeFile(join(root, '.tinysdd/config.json'), JSON.stringify({
     schemaVersion: 1,
@@ -214,6 +215,22 @@ test('archive rejects a root-level change descriptor before staging the project 
   }
 });
 
+
+test('external merge draft coexists with the default draft and supports recovery', async () => {
+  const fixture = await archiveFixture({ externalDraft: true });
+  try {
+    const options = { changePath: fixture.changePath, draftPath: 'alternate-draft.json' };
+    await archiveChange(fixture.root, options);
+    const archive = join(fixture.root, 'changes/archive/broker-recut');
+    const manifest = parseArchiveManifest(JSON.parse(await readFile(join(archive, 'manifest.json'), 'utf8')));
+    assert.equal(manifest.inputs.draft.archivePath, 'merge/merge-draft.json');
+    assert.equal(await readFile(join(archive, 'merge/merge-draft.json'), 'utf8'), await readFile(join(fixture.root, 'alternate-draft.json'), 'utf8'));
+    assert.equal(await readFile(join(archive, 'change/merge-draft.json'), 'utf8'), await readFile(join(fixture.root, fixture.changePath.replace('change.json', 'merge-draft.json')), 'utf8'));
+    assert.equal((await archiveChange(fixture.root, options)).alreadyArchived, true);
+  } finally {
+    await cleanupFixture(fixture);
+  }
+});
 
 test('final feature report excludes controller revisions until its consumer completes', async () => {
   const fixture = await archiveFixture();
