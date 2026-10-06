@@ -12,6 +12,12 @@ worker tasks, request a provider, or grant approval.
 Start from the [proposal template](../templates/proposal.md) and keep the
 shared [phase workflow reference](../references/phase-workflow.md) nearby.
 
+If the project has an adopted constitution, load
+[the constitution skill](../../../../constitution/SKILL.md) first. Treat its
+approved principles as cited project design guidance, and record conflicts or
+semantic uncertainty for operator review. Do not add a constitution reference
+or infer adoption merely because the recommended files exist.
+
 Read the repository instructions, the requested behavior, relevant callers and
 existing checks. Trace the current behavior before drafting. Keep source facts,
 proposed decisions and UNKNOWN facts in separate sections. An UNKNOWN must say

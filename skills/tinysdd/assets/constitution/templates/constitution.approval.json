@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "ratifiedAt": "YYYY-MM-DDTHH:mm:ss.000Z",
+  "amendedAt": "YYYY-MM-DDTHH:mm:ss.000Z",
+  "approvedAt": "YYYY-MM-DDTHH:mm:ss.000Z",
+  "by": "operator",
+  "reason": "Approved project principles",
+  "contentSha256": "<SHA-256 of the exact constitution.md bytes>"
+}

@@ -33,6 +33,7 @@ the relative files beside the selected entrypoint:
 ```text
 <checkout>/skills/tinysdd/SKILL.md
 <checkout>/skills/tinysdd/assets/setup/SKILL.md
+<checkout>/skills/tinysdd/assets/constitution/SKILL.md
 <checkout>/skills/tinysdd/assets/harness/claude/tinysdd-frontier/SKILL.md
 <checkout>/skills/tinysdd/assets/harness/claude/tinysdd-frontier/specify/SKILL.md
 <checkout>/skills/tinysdd/assets/harness/claude/tinysdd-frontier/research/SKILL.md
@@ -41,7 +42,8 @@ the relative files beside the selected entrypoint:
 ```
 
 For a fresh project, load the setup skill and then the product skill. For a
-full feature, the setup skill points to the frontier router; load the router
+full feature, inspect the recommended constitution files and load the
+constitution skill only when the operator adopts them; then load the router
 before selecting exactly one phase. The phase files use sibling
 `references/` and `templates/` paths. Registering only a phase file, or
 assuming that a harness discovers nested files automatically, can leave the

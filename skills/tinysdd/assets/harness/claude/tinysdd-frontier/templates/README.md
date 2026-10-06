@@ -22,6 +22,23 @@ changes/<change-id>/
     checks.json
 ~~~
 
+When the operator adopts a project constitution, keep the approved files at
+the project's chosen ordinary paths and add this optional field to
+`change.json`:
+
+~~~json
+"constitution": {
+  "path": "specs/constitution.md",
+  "approval": "specs/constitution.approval.json"
+}
+~~~
+
+Copy the concise files from
+`skills/tinysdd/assets/constitution/templates/` before recording the exact
+approval digest. Every slice context must cite all approved constitution lines;
+the validator includes both files in preparation and protection. Leave the
+field absent when the change does not adopt a constitution.
+
 Copy the templates into that layout:
 
 - proposal.md records behavior, rejection and preservation cases, decisions and

@@ -16,6 +16,14 @@ is prompt guidance only: a standalone install does not include the TinySDD CLI,
 phase handler, schemas or repository docs. Keep the checkout and target roots
 from the phase workflow reference available for the human gate.
 
+When a change adopts a constitution, load
+[the constitution skill](../../../../constitution/SKILL.md) and cite the approved
+Markdown and relevant callers or contracts with exact ranges. Keep the whole
+approved compact document available to each slice context; the compiler budget
+must account for those excerpts. Report missing, malformed or changed
+constitution records as UNKNOWN or a preparation blocker instead of filling in
+principles from memory.
+
 Read the proposal and repository instructions first. Inspect only the source,
 callers, tests, configuration and dependency metadata needed to answer the
 proposal's questions. Record each result as a source fact with an exact path
