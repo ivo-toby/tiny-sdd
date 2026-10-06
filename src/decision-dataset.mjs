@@ -26,6 +26,7 @@ export const DECISION_POINTS = Object.freeze([
   'review-triage',
   'spec-coverage',
   'slice-routing',
+  'slice-test-review',
 ]);
 
 export const FAILURE_TRIAGE_LABELS = Object.freeze([
@@ -45,7 +46,10 @@ const MAX_DEPTH = 8;
 const MAX_ARRAY_LENGTH = 4096;
 const MAX_OBJECT_KEYS = 128;
 const MAX_STRING_LENGTH = 128 * 1024;
-const EVIDENCE_PATH_OPTIONS = Object.freeze({ tinysddArtifactPrefix: '.tinysdd/bench/' });
+function evidencePathOptions(path) {
+  const reviewPrefix = ['records', 'inputs'].map((name) => `.tinysdd/runs/slice-test-review/${name}/`).find((prefix) => typeof path === 'string' && path.startsWith(prefix));
+  return { tinysddArtifactPrefix: reviewPrefix ?? '.tinysdd/bench/' };
+}
 
 function invalid(message, details = undefined) {
   throw tinyError('DECISION_DATASET_INVALID', message, details);
@@ -137,7 +141,7 @@ function evidenceRef(value, label, fail = invalid) {
   exactKeys(value, ['path', 'sha256'], label, fail);
   let normalizedPath;
   try {
-    normalizedPath = normalizeProjectRelative(value.path, `${label}.path`, EVIDENCE_PATH_OPTIONS);
+    normalizedPath = normalizeProjectRelative(value.path, `${label}.path`, evidencePathOptions(value.path));
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
@@ -307,7 +311,7 @@ async function verifyReference(projectRoot, ref, label, verified) {
     resolved = await resolveProjectPath(projectRoot, ref.path, {
       field: `${label}.path`,
       allowMissing: false,
-      ...EVIDENCE_PATH_OPTIONS,
+      ...evidencePathOptions(ref.path),
     });
     const info = await lstat(resolved.absolutePath);
     if (!info.isFile()) evidenceInvalid(`${label} is not a regular file`);

@@ -37,6 +37,9 @@ import { preflightPiWorker } from '../src/pi-environment.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
 import { assessQualification, resolveBenchmarkSuite as resolveCurrentBenchmarkSuite } from '../src/qualification-dispatch.mjs';
 import { BENCHMARK_ROLES } from '../src/benchmark-schema.mjs';
+import { assessSliceTests, checkSliceTests, reviewSliceTests, sliceTestReviewStatus, exportSliceTestReviewDataset } from '../src/slice-test-review-workflow.mjs';
+import { resolveProjectPath } from '../src/fs-utils.mjs';
+import { reportSliceTestReviews } from '../src/slice-test-review-report.mjs';
 import { readQualificationEvidence, readQualificationEvidencePool } from '../src/qualification-reader.mjs';
 import {
   compareQualificationApplicability,
@@ -75,6 +78,12 @@ Usage:
   tinysdd [--json] [--project PATH] usage report --feature NAME
   tinysdd [--json] [--project PATH] feature accept --feature NAME --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] feature report --feature NAME
+  tinysdd [--json] [--project PATH] slice-tests report [--feature NAME]
+  tinysdd [--json] [--project PATH] slice-tests dataset --partition train|validation|test [--feature NAME]
+  tinysdd [--json] [--project PATH] slice-tests status --id ID
+  tinysdd [--json] [--project PATH] slice-tests assess --id ID --run RUN --change PATH --implementer ID --producer ID --provider-config PATH --credential-env NAME
+  tinysdd [--json] [--project PATH] slice-tests check --id ID --event EVENT
+  tinysdd [--json] [--project PATH] slice-tests review --id ID --event EVENT --input-digest SHA --reviewer ID --strength strong --attested true --verdict accepted|rejected --evidence PATH
   tinysdd [--json] [--project PATH] phase record|research --phase research --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID]
   tinysdd [--json] [--project PATH] phase status --feature NAME
   tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID]
@@ -258,6 +267,17 @@ function parseCommand(args) {
       advance: new Map([['from', 'value'], ['to', 'value'], ['feature', 'value'], ['record', 'value'], ['by', 'value'], ['reason', 'value'], ['worker', 'value']]),
     };
     const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
+  if (command === 'slice-tests') {
+    const flags = {
+      report: ['feature'], dataset: ['feature', 'partition'], status: ['id'], check: ['id', 'event'],
+      assess: ['id', 'run', 'change', 'implementer', 'producer', 'provider-config', 'credential-env'],
+      review: ['id', 'event', 'input-digest', 'reviewer', 'strength', 'attested', 'verdict', 'evidence'],
+    };
+    if (!Object.hasOwn(flags, subcommand)) throw cliError('slice-tests requires assess, status, check, review, report, or dataset');
+    const { values, positional } = parseFlags(rest, new Map(flags[subcommand].map((flag) => [flag, 'value'])));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -876,6 +896,34 @@ async function run(argv) {
     });
     presentation = 'phase-advance';
   }
+  else if (parsed.command === 'slice-tests' && parsed.subcommand !== 'report') {
+    const values = parsed.values;
+    const id = parsed.subcommand === 'dataset' ? undefined : requiredOption(values, 'id');
+    if (parsed.subcommand === 'dataset') data = await exportSliceTestReviewDataset(project, { feature: values.feature, partition: requiredOption(values, 'partition') });
+    else if (parsed.subcommand === 'status') data = await sliceTestReviewStatus(project, { id });
+    else if (parsed.subcommand === 'check') data = await checkSliceTests(project, { id, eventId: requiredOption(values, 'event') });
+    else if (parsed.subcommand === 'review') {
+      if (requiredOption(values, 'attested') !== 'true') throw cliError('--attested must explicitly be true');
+      data = await reviewSliceTests(project, { id, eventId: requiredOption(values, 'event'), inputDigest: requiredOption(values, 'input-digest'),
+        reviewer: requiredOption(values, 'reviewer'), strength: requiredOption(values, 'strength'), attested: true,
+        verdict: requiredOption(values, 'verdict'), evidence: requiredOption(values, 'evidence') });
+    } else {
+      const path = (await resolveProjectPath(project, requiredOption(values, 'provider-config'), { allowMissing: false })).absolutePath;
+      const info = await lstat(path);
+      if (!info.isFile() || info.nlink !== 1 || info.size > 64 * 1024) throw cliError('provider configuration must be a bounded regular file');
+      const text = await readFile(path, 'utf8');
+      if (Buffer.byteLength(text) > 64 * 1024) throw cliError('provider configuration is too large');
+      const envName = requiredOption(values, 'credential-env');
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(envName)) throw cliError('--credential-env must be an environment variable name');
+      data = await assessSliceTests(project, { id, run: requiredOption(values, 'run'), change: requiredOption(values, 'change'),
+        implementer: requiredOption(values, 'implementer'), producer: requiredOption(values, 'producer'), providerConfig: JSON.parse(text), credential: process.env[envName] });
+    }
+    presentation = 'slice-test-review-event';
+  }
+  else if (parsed.command === 'slice-tests' && parsed.subcommand === 'report') {
+    data = await reportSliceTestReviews(project, { feature: parsed.values.feature });
+    presentation = 'slice-test-review-report';
+  }
   else throw cliError('unsupported command');
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
@@ -976,6 +1024,12 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'help') {
     process.stdout.write(`${HELP}`);
+    return;
+  }
+  if (result.presentation === 'slice-test-review-report') {
+    const report = result.data;
+    process.stdout.write(`Slice-test review: ${report.assessments} assessments, ${report.escalations} escalations.\n`);
+    process.stdout.write(`Positive review disagreement: ${report.positiveReviewDisagreement.numerator}/${report.positiveReviewDisagreement.denominator}; unreviewed negatives: ${report.unreviewedNegatives}.\n`);
     return;
   }
   if (result.presentation === 'status') {

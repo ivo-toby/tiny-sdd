@@ -7,6 +7,7 @@ import { parseApprovedBriefSections, validateChange } from './change-format.mjs'
 import { resolveTaskPacket } from './controller.mjs';
 import { parseContextManifest } from './context-compiler.mjs';
 import { parseChecksManifest } from './checks-manifest.mjs';
+import { validateTestReviewPolicy } from './phase-gates.mjs';
 import {
   JEV_DECISION_MAX_ARTIFACT_BYTES,
   JEV_DECISION_MAX_ARTIFACTS,
@@ -44,6 +45,11 @@ export const SLICE_TEST_REVIEW_MAX_RUN_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 export const SLICE_TEST_REVIEW_LEDGER_RELATIVE_PATH = '.tinysdd/runs/slice-test-review/events.jsonl';
 export const SLICE_TEST_REVIEW_LOCK_RELATIVE_PATH = '.tinysdd/runs/slice-test-review/events.lock';
 export const SLICE_TEST_REVIEW_EVENT_TYPES = Object.freeze([
+  'operator-revision',
+  'assessment-started',
+  'independent-checks',
+  'revision-dispatched',
+  'revision-candidate',
   'initial-assessment',
   'revision-assessment',
   'assessment-rejected',
@@ -62,7 +68,7 @@ const SLUG = /^[a-z][a-z0-9._:-]{0,63}$/u;
 const RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const EVENT_STATUSES = new Set(['observed', 'failed', 'uncertain', 'unavailable', 'missing', 'malformed']);
-const EVENT_VERDICTS = new Set(['UNKNOWN', 'positive', 'negative', 'accepted', 'rejected']);
+const EVENT_VERDICTS = new Set(['UNKNOWN', 'positive', 'negative', 'uncertain', 'accepted', 'rejected']);
 const PROVIDER_AVAILABILITY = new Set(['available', 'unavailable', 'unknown']);
 // The observation question is the Jev instruction, which wraps a criterion
 // question of up to 16 KiB in a fixed prefix and suffix.
@@ -404,6 +410,41 @@ function eventPayload(value) {
   return payload;
 }
 
+function normalizeWorkflow(value) {
+  const item = plainObject(value, 'event.workflow');
+  exactKeys(item, ['schemaVersion', 'policy', 'policyDigest', 'changePath', 'implementer', 'producer', 'revision', 'previousEventId', 'assessmentEventId', 'candidateRunId', 'checkEvidence', 'reviewEvidence', 'reviewProvenance', 'reviewUsage', 'criterionVerdicts', 'measurementSource', 'revisionBase'], 'event.workflow');
+  if (item.schemaVersion !== 1) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'workflow.schemaVersion must be 1');
+  const policy = validateTestReviewPolicy(item.policy);
+  if (item.policyDigest !== digestJson(policy)) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'workflow policy digest does not match policy');
+  if (!Number.isSafeInteger(item.revision) || item.revision < 0) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'workflow.revision must be a nonnegative integer');
+  const actor = (value, label) => {
+    plainObject(value, label);
+    exactKeys(value, ['id', 'role'], label);
+    return { id: identifier(value.id, `${label}.id`), role: identifier(value.role, `${label}.role`) };
+  };
+  const result = {
+    schemaVersion: 1, policy, policyDigest: item.policyDigest,
+    changePath: projectPath(item.changePath, 'workflow.changePath'),
+    implementer: actor(item.implementer, 'workflow.implementer'),
+    producer: actor(item.producer, 'workflow.producer'),
+    revision: item.revision,
+    previousEventId: item.previousEventId === null ? null : identifier(item.previousEventId, 'workflow.previousEventId'),
+  };
+  for (const key of ['assessmentEventId', 'candidateRunId']) if (item[key] !== undefined) result[key] = identifier(item[key], `workflow.${key}`);
+  for (const key of ['checkEvidence', 'reviewEvidence', 'reviewUsage', 'criterionVerdicts']) if (item[key] !== undefined) result[key] = boundedJson(item[key], `workflow.${key}`);
+  for (const key of ['reviewProvenance', 'measurementSource']) {
+    if (item[key] !== undefined) {
+      if (!['invoked', 'caller-declared', 'synthetic', 'replay'].includes(item[key])) throw reviewError('SLICE_TEST_REVIEW_INVALID', `workflow.${key} is invalid`);
+      result[key] = item[key];
+    }
+  }
+  if (item.revisionBase !== undefined) {
+    if (item.revisionBase !== 'applied-project') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'workflow revision base is invalid');
+    result.revisionBase = item.revisionBase;
+  }
+  return result;
+}
+
 function eventIdentityPayload(value) {
   const { eventDigest: _eventDigest, timestamp: _timestamp, eventId: _eventId, ...payload } = value;
   return payload;
@@ -411,7 +452,7 @@ function eventIdentityPayload(value) {
 
 export function createSliceTestReviewEvent(value) {
   const item = plainObject(value, 'slice-test review event');
-  exactKeys(item, ['schemaVersion', 'type', 'eventId', 'eventType', 'sequence', 'timestamp', 'identity', 'inputDigest', 'envelopeDigest', 'assessment', 'review', 'route', 'reason', 'provenance', 'eventDigest'], 'slice-test review event');
+  exactKeys(item, ['schemaVersion', 'type', 'eventId', 'eventType', 'sequence', 'timestamp', 'identity', 'inputDigest', 'envelopeDigest', 'assessment', 'review', 'route', 'reason', 'provenance', 'workflow', 'eventDigest'], 'slice-test review event');
   const eventType = item.eventType;
   if (!SLICE_TEST_REVIEW_EVENT_TYPES.includes(eventType)) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'eventType is unsupported');
   if (!Number.isSafeInteger(item.sequence) || item.sequence < 1) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'sequence must be a positive safe integer');
@@ -429,6 +470,7 @@ export function createSliceTestReviewEvent(value) {
     ...(item.route === undefined ? {} : { route: text(item.route, 'event.route', 128) }),
     ...(item.reason === undefined ? {} : { reason: text(item.reason, 'event.reason', 2048) }),
     provenance: normalizeProvenance(item.provenance, 'event.provenance'),
+    ...(item.workflow === undefined ? {} : { workflow: normalizeWorkflow(item.workflow) }),
   };
   const expectedEventId = `event-${sha256(stableStringify(eventIdentityPayload(normalized)))}`;
   if (item.eventId !== undefined && item.eventId !== expectedEventId) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'eventId does not match immutable event identity');
@@ -795,10 +837,10 @@ function approvalBoundPacket(value) {
   };
 }
 
-async function resolveCurrentCapturePacket(root, suppliedPacket, sliceId) {
+async function resolveCurrentCapturePacket(root, suppliedPacket, sliceId, reviewRunId) {
   let current;
   try {
-    current = normalizeCapturePacket(await resolveTaskPacket(root, sliceId), `current task ${sliceId} packet`);
+    current = normalizeCapturePacket(await resolveTaskPacket(root, sliceId, { reviewRunId }), `current task ${sliceId} packet`);
   } catch (error) {
     throw reviewError('SLICE_TEST_REVIEW_APPROVAL_STALE', 'current controller approval is unavailable or stale', { cause: error?.code ?? 'invalid' });
   }
@@ -831,6 +873,7 @@ export async function captureSliceTestReviewEnvelope({
   lineageId = undefined,
   revision = 0,
   capturedAt = undefined,
+  reviewRunId = undefined,
 } = {}) {
   if (typeof projectRoot !== 'string' || projectRoot.length === 0) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'projectRoot is required');
   const root = projectRoot;
@@ -838,7 +881,8 @@ export async function captureSliceTestReviewEnvelope({
   if (typeof sliceId !== 'string' || !SLUG.test(sliceId)) {
     throw reviewError('SLICE_TEST_REVIEW_INVALID', 'sliceId is required');
   }
-  const currentPacket = await resolveCurrentCapturePacket(root, suppliedPacket, sliceId);
+  if (reviewRunId !== undefined && reviewRunId !== runId) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', 'review run must match the captured run');
+  const currentPacket = await resolveCurrentCapturePacket(root, suppliedPacket, sliceId, reviewRunId);
   if (typeof currentPacket.taskId !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'packet.taskId is required');
   if (!currentPacket.brief || typeof currentPacket.brief.text !== 'string' || typeof currentPacket.brief.sha256 !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'packet.brief must retain exact text and digest');
   if (!currentPacket.approval || typeof currentPacket.approval.approvalDigest !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'packet.approval must retain the current approval');
@@ -983,4 +1027,17 @@ export async function captureSliceTestReviewEnvelope({
     capturedAt,
     provenance: { source: 'validated-final-run', replayed: false, capture: 'controller-run-artifacts' },
   });
+}
+
+export async function verifyRetainedSliceTestLineage(projectRoot, value) {
+  const envelope = validateSliceTestReviewEnvelope(value);
+  const packet = normalizeCapturePacket(await readRunJson(projectRoot, envelope.identity.runId, 'packet.json'), 'retained packet');
+  if (packet.approval?.approvalDigest !== envelope.approval.approvalDigest || packet.taskId !== envelope.identity.taskId) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'retained packet no longer binds the assessed approval');
+  const lineage = await loadTrustedLineage(projectRoot, packet, envelope.identity.runId);
+  const final = lineage.at(-1);
+  for (const artifact of envelope.artifacts) {
+    const bytes = await readRunBytes(projectRoot, final.id, 'workspace-after', artifact.path);
+    if (sha256(bytes) !== artifact.sha256) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'retained candidate differs from assessed bytes');
+  }
+  return true;
 }

@@ -127,8 +127,8 @@ slice tests cannot substitute for a real-entrypoint integration test. The #82
 ordinary-create-modify scope allows ordinary extra files, while file lists and
 budgets remain advisory and deletion remains ineligible.
 
-The #81 transition contract is offline, not an active provider loop: it does
-not invoke Jev or a provider.
+The pure #81 transition helper is offline; the active `slice-tests` commands
+invoke only an explicitly configured Jev provider.
 Negative assessments use only an explicit bounded revision policy; every
 positive assessment requires independent strong review of identical bytes;
 exhaustion escalates. Thresholds and uncertain/unavailable routes have no
@@ -255,7 +255,8 @@ An optional `implement` entry in `phaseGates` names that same human task
 approval gate. Task approval, review, apply and final-run bindings remain the
 authority; non-human modes and added phase requirements are rejected.
 
-The bounded #81 transition interface is also offline. It accepts no inferred
+The bounded #81 transition helper is also offline; the active commands below
+are separate. It accepts no inferred
 thresholds or routes: a complete `testReview` policy must be supplied. Negative
 assessments may request revisions up to that policy's cap; positive assessments
 require a separately identified, caller-declared strong review over the same
@@ -744,3 +745,36 @@ Failures are fixed only within the approved task boundaries; the worker stops an
 declared budget or required information or permission is exhausted, and names
 observed checks separately from checks still unrun. An unavailable client keeps
 the existing no-check prompt and Pi tool arguments.
+
+For retained #81 test-review measurements, use `tinysdd --json slice-tests report`
+with optional `--feature NAME`. Keep the reported denominators and `UNKNOWN`s:
+unreviewed negatives are not false-rejection labels, replay latency is not live
+inference, and whole-slice reviews do not label every individual criterion.
+Reporting does not invoke a provider or grant acceptance. The active review and
+revision controller flow is still follow-up work.
+
+For active review, configure explicit `testReview` positive/negative boundaries,
+revision limit, `uncertainRoute: "escalation"` and an unavailable route. Follow
+`slice-tests assess` → `slice-tests check` → `slice-tests review`, identifying
+implementer, assessor and independent strong reviewer separately. Every positive
+requires passing independent checks and a strong-review attestation for the exact
+retained input digest. The review command records an external review; it does not
+invoke the strong model. Negative assessments feed bounded `worker run --base-run`
+revisions. Explicit revision after apply uses the applied project as its base.
+Pending/incomplete attempts cannot reset the budget. Use `slice-tests status` to
+inspect the retained route. No automatic task/feature acceptance follows.
+Operator revision publication follows the controller transition and retains a
+retryable intent until its ledger event and immutable record are both present;
+repeat the same revision review after a publication failure. An intent from an
+uncommitted controller transition remains inert.
+
+`task apply` and `task review --verdict accepted` enforce fresh test review when
+an active `testReview` policy with `negativeThreshold` is configured; `feature
+accept` additionally runs the configured protected integration tests through real
+entrypoints. Old projects without this active policy retain their existing
+approval contract. Review, policy and code changes
+invalidate the new review binding. `slice-tests dataset --partition test` exports
+reviewed #32 cases with immutable evidence and feature/lineage grouping; choose
+train/validation/test explicitly. Synthetic inputs stay labeled, unavailable
+measurements stay UNKNOWN, and no savings or quality improvement is established
+by the offline suite. See the quickstart's active review sequence for arguments.
