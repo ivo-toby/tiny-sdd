@@ -39,6 +39,12 @@ Use the templates in templates/README.md as starting points and docs/artifact-fo
 as the schema authority. Do not introduce another requirements file, task
 descriptor, approval flag or feature-test format.
 
+When the operator adopts a project constitution, load the harness-independent
+[constitution skill](../../../../constitution/SKILL.md) before specify. Add the optional `constitution` reference
+to the change only after the exact Markdown has been approved and its approval
+record matches the digest. Carry every constitution line through each slice's
+existing context budget and pass both files through preparation and protection.
+
 ## Command roots
 
 The phase files and templates are prompt assets; they do not bundle the

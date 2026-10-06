@@ -24,7 +24,8 @@ Keep setup facts in three separate groups:
 Read [the setup workflow reference](references/setup-workflow.md) for the
 commands and decision points. It is written for any harness. The TinySDD
 product skill is [here](../../SKILL.md); the full preparation router is
-[here](../harness/claude/tinysdd-frontier/SKILL.md). Load those files through
+[here](../harness/claude/tinysdd-frontier/SKILL.md), and the optional
+[constitution skill](../constitution/SKILL.md). Load those files through
 the harness's explicit skill mechanism when their workflows are needed.
 
 ## Setup boundaries
@@ -35,6 +36,10 @@ the harness's explicit skill mechanism when their workflows are needed.
 - Load the exact setup, product, router and selected phase paths. A nested
   `SKILL.md` is an ordinary file; copying or registering its parent does not
   make every nested phase available automatically.
+- Inspect `specs/constitution.md` and `specs/constitution.approval.json` when
+  preparing a project. Load the harness-independent constitution skill when
+  the operator adopts those files; their presence alone does not change
+  existing change or task authority.
 - Reuse `init`, `config show`, `config validate` and the worker's existing Pi
   preflight. Preserve existing project and global configuration; do not invent
   a setup state file or silently replace a named worker.
@@ -53,9 +58,10 @@ the harness's explicit skill mechanism when their workflows are needed.
 
 1. Establish `TINYSDD_CHECKOUT` and `TARGET_PROJECT`, then verify the source
    CLI with `node .../bin/tinysdd.mjs --version`.
-2. Load this skill explicitly. If preparing a feature, load the product skill,
-   then the frontier router, then only the selected phase skill. Preserve the
-   router's `references/` and `templates/` siblings.
+2. Load this skill explicitly. If preparing a feature, inspect the recommended
+   constitution files and, when adopted by the operator, load the constitution
+   skill before the product skill, frontier router and selected phase skill.
+   Preserve each router's `references/` and `templates/` siblings.
 3. Discover Node, the Pi executable in the same installation's `bin` directory,
    the required Linux or macOS sandbox, the Pi version target, and the
    non-secret project configuration. If Pi is absent, use the reference's

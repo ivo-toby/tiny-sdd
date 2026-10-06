@@ -86,6 +86,10 @@ live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
 For a full feature, load the [project-local frontier router](../assets/harness/claude/tinysdd-frontier/SKILL.md). It links
 separate specify, research, plan and slice skills and their #20 templates.
+When the operator adopts project principles, load the
+[constitution skill](../assets/constitution/SKILL.md) before specify. Keep
+`change.constitution` optional: a project file's presence alone does not adopt
+it into a change.
 Use the phases in that order:
 
 1. Specify requirements, rejection and preservation behavior. Keep proposed

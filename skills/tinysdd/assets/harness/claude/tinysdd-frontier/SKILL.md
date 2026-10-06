@@ -15,6 +15,12 @@ skill](../../../setup/SKILL.md) first. This router assumes the source
 checkout, project configuration, Pi route and required sandbox have already
 been discovered; it does not replace setup or readiness evidence.
 
+When the operator adopts project principles, load the harness-independent
+[constitution skill](../../../constitution/SKILL.md) after setup and before
+specify. It governs the optional `change.constitution` reference, exact
+approval record and amendment workflow; it does not create a new task or
+phase approval.
+
 Follow the phase skills in order:
 
 1. [specify](specify/SKILL.md) writes observable requirements and clarifications.
@@ -56,6 +62,13 @@ before drafting. Trace real callers and data flow. Keep source facts,
 operator-reviewed decisions and UNKNOWN facts visibly separate. If a source
 contradicts the request or a required caller cannot be established, stop and
 ask; do not patch around the contradiction.
+
+If a change references a constitution, carry its approved compact Markdown
+through every slice context with exact ranges covering every line, within the
+existing compiled-context budget. Include both the Markdown and approval
+record in the validator's preparation and protected paths. A new constitution
+file does not adopt itself into changes; an amendment is prepared and
+reapproved through the constitution workflow before fresh slice preparation.
 
 Use the ordinary #20 layout under one changes/<change-id>/ directory:
 

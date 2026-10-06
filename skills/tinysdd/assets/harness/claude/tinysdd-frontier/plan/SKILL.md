@@ -15,6 +15,14 @@ Use the [design](../templates/design.md), [change](../templates/change.json),
 [feature-checks](../templates/feature-checks.json) templates with the shared
 [phase workflow reference](../references/phase-workflow.md).
 
+For an adopted constitution, load
+[the constitution skill](../../../../constitution/SKILL.md), include the optional
+`constitution` object in `change.json`, and list both referenced files in the
+existing preparation and protected plan inputs. Every slice context must cover
+all approved constitution lines with exact ranges. Do not target the
+constitution or approval record in a delta; amendments require fresh
+constitution approval and preparation.
+
 Read the proposal, the current research phase record or handoff, and the exact
 compiled context excerpts. Start from the design and change templates. If a
 plan needs a source fact outside the retained excerpts, stop and return to

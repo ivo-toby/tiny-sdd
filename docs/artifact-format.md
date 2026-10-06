@@ -73,11 +73,28 @@ contains an approval flag that grants authority.
 | `featureTests` | Nonempty unique paths to existing strong-prepared tests |
 | `featureChecks` | Path to an existing checks manifest |
 | `integration` | Nonempty array of named feature integration obligations |
+| `constitution` | Optional exact `{path, approval}` reference to an adopted project constitution |
 
 The proposal records requested behavior and unresolved change-level questions.
 The design records interfaces, real callers, test responsibilities and slicing.
 A document can be a draft; registration planning is not approval. A ready slice
 has no unresolved questions in its declared scope.
+
+An adopted `constitution` object names bounded ordinary project-relative files;
+omitting it preserves the existing descriptor, task and approval behavior even
+when the recommended files happen to exist. The Markdown file is paired with
+an exact-key approval record containing `schemaVersion`, `version`, ordered UTC
+timestamps, `by`, `reason` and `contentSha256`. Validation rejects missing,
+malformed, unsafe, oversized or digest-mismatched records. These fields record
+operator decisions and exact bytes; they do not authenticate a person or prove
+that the principles are semantically complete.
+
+When referenced, both files are added to the existing preparation identity and
+protected paths. Every slice context must cite exact ranges covering every line
+of the approved compact Markdown within its existing budget. Editing either
+file stales the existing preparation and affected task approvals; the operator
+regenerates preparation and reapproves through the existing task workflow.
+Constitution and approval files cannot be delta targets in the same change.
 
 Each `integration` entry has exact keys `id`, `requirementIds`, `entrypoints`,
 `wiringSlice`, `testPaths`, `checkIds`. IDs are unique slugs; requirement IDs

@@ -13,6 +13,13 @@ Use the [slice](../templates/slice.json), [brief](../templates/slice-brief.md),
 [context](../templates/context.json) and [checks](../templates/checks.json)
 templates with the shared [phase workflow reference](../references/phase-workflow.md).
 
+If the change adopts a constitution, load
+[the constitution skill](../../../../constitution/SKILL.md). Include exact context
+ranges covering every line of its approved Markdown in each slice, count those
+bytes in the existing budget, and pass the validator's constitution and
+approval preparation entries through task registration. Keep both paths
+protected and never list either as a writable delta target.
+
 For each slice, write slice.json, brief.md, context.json and checks.json from
 the templates. Use the exact schemas parsed by parseSliceDocument(),
 parseContextManifest() and parseChecksManifest(). Keep the DAG acyclic and

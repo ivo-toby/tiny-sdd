@@ -60,6 +60,13 @@ validation and the worker's existing Pi preflight, and provides a bounded
 synthetic readiness smoke. It keeps configured route, operator-reported
 backend, runtime-observed identity and unknown model properties separate.
 
+When a project adopts concise engineering principles, load the
+[constitution skill](../skills/tinysdd/assets/constitution/SKILL.md) after
+setup. It discovers the recommended Markdown and approval files, records the
+exact approved bytes and links an adopted constitution into a change only when
+the operator chooses that reference. Existing changes remain unchanged until
+they opt in.
+
 The setup skill does not install packages, read credential stores, start
 services or run live inference by itself. Authorize those actions separately;
 keep credentials as environment references and inspect the retained

@@ -423,6 +423,9 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
   if (packet.context) {
     compiled = await compileContext(root, { path: packet.context.path, text: packet.context.text, sha256: packet.context.sha256 }, {
       readSource: async (sourcePath) => {
+        if (result.constitution && sourcePath === result.constitution.path) {
+          return result.constitution.markdown.text;
+        }
         const source = await readBoundedBytes(root, sourcePath, { allowMissing: false, label: `context resource ${sourcePath}` });
         if (source.content.length >= 3 && source.content[0] === 0xef && source.content[1] === 0xbb && source.content[2] === 0xbf) {
           throw tinyError('ARTIFACT_UTF8_BOM', `context source must not contain a UTF-8 BOM: ${sourcePath}`, { path: sourcePath });
@@ -482,6 +485,21 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
       throw tinyError('PREPARATION_STALE', `descriptor bytes changed during export: ${descriptor.path}`, { path: descriptor.path, expected: descriptor.sha256, actual: sha256(content) });
     }
     addOutput(outputs, preparationRelative(file.path), content, retention);
+  }
+  if (result.constitution) {
+    const descriptorPaths = new Set(result.preparationIdentity.descriptorFiles.map((file) => file.path));
+    for (const projectPath of [result.constitution.path, result.constitution.approval]) {
+      if (descriptorPaths.has(projectPath)) continue;
+      const preparationFile = result.preparationIdentity.preparationFiles.find((file) => file.path === projectPath);
+      if (!preparationFile?.exists) continue;
+      const file = result.files.get(projectPath);
+      if (!file) throw tinyError('PREPARATION_MISSING', `constitution bytes were not retained: ${projectPath}`);
+      const content = Buffer.from(file.text);
+      if (content.byteLength !== preparationFile.bytes || sha256(content) !== preparationFile.sha256) {
+        throw tinyError('PREPARATION_STALE', `constitution bytes changed during export: ${projectPath}`, { path: projectPath, expected: preparationFile.sha256, actual: sha256(content) });
+      }
+      addOutput(outputs, preparationRelative(projectPath), content, retention);
+    }
   }
 
   const retainedRefs = [...outputs.entries()].map(([bundlePath, content]) => ({ path: bundlePath, bytes: content.byteLength, sha256: sha256(content) }));

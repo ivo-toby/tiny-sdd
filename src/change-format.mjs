@@ -13,6 +13,7 @@ import {
   tinyError,
 } from './fs-utils.mjs';
 import { DEFAULT_RUNTIME_SCOPE } from './file-scope.mjs';
+import { constitutionContextCoverage, parseConstitutionReference, validateConstitution } from './constitution.mjs';
 
 export const ARTIFACT_SCHEMA_VERSION = 1;
 export const MAX_ARTIFACT_FILE_BYTES = 512 * 1024;
@@ -31,7 +32,7 @@ const PROJECT_SECRET_DIR = /^(?:\.aws|\.azure|\.gcloud|\.ssh|secrets?|credential
 const SLUG = /^[a-z0-9][a-z0-9_-]*$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const OPERATIONS = new Set(['add', 'modify', 'remove']);
-const CHANGE_KEYS = ['schemaVersion', 'id', 'proposal', 'design', 'specDeltas', 'slices', 'budget', 'featureTests', 'featureChecks', 'integration'];
+const CHANGE_KEYS = ['schemaVersion', 'id', 'proposal', 'design', 'specDeltas', 'slices', 'budget', 'featureTests', 'featureChecks', 'integration', 'constitution'];
 const DELTA_KEYS = ['schemaVersion', 'spec', 'baseSha256', 'changes'];
 const DELTA_CHANGE_KEYS = ['operation', 'id', 'text'];
 const SLICE_KEYS = ['schemaVersion', 'id', 'brief', 'context', 'checks', 'implementationFiles', 'sliceTests', 'protect', 'interfaces', 'dependsOn', 'budget', 'openDecisions', 'testReview'];
@@ -176,6 +177,7 @@ export function parseChangeDocument(text) {
     : invalid(`change integration must contain between 1 and ${MAX_INTEGRATION_ENTRIES} items`);
   const integrationIds = new Set(integration.map((item) => item.id));
   if (integrationIds.size !== integration.length) invalid('change integration contains duplicate ids');
+  const constitution = value.constitution === undefined ? undefined : parseConstitutionReference(value.constitution);
   return {
     schemaVersion: 1,
     id: slug(value.id, 'change.id'),
@@ -187,6 +189,7 @@ export function parseChangeDocument(text) {
     featureTests: uniquePaths(value.featureTests, 'change.featureTests', { nonempty: true }),
     featureChecks: path(value.featureChecks, 'change.featureChecks'),
     integration,
+    ...(constitution === undefined ? {} : { constitution }),
   };
 }
 
@@ -520,6 +523,21 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
   const featureChecks = parseChecksManifest(featureChecksFile.text);
   const featureCheckIds = featureChecks.checks.map((check) => check.id);
 
+  let constitution;
+  if (change.constitution !== undefined) {
+    constitution = await validateConstitution(root, change.constitution, {
+      readFile: async (projectPath, label) => readBounded(root, projectPath, { label }),
+    });
+    addRead(files, constitution.markdown);
+    addRead(files, constitution.approvalFile);
+    if (change.specDeltas.includes(constitution.path) || change.specDeltas.includes(constitution.approval)) {
+      throw tinyError('CONSTITUTION_DELTA_OVERLAP', 'a referenced constitution or approval record cannot be a delta descriptor', {
+        constitution: constitution.path,
+        approval: constitution.approval,
+      });
+    }
+  }
+
   if (change.specDeltas.length > MAX_CHANGE_DELTAS) invalid(`change references more than ${MAX_CHANGE_DELTAS} delta descriptors`);
   if (change.slices.length > MAX_CHANGE_SLICES) invalid(`change references more than ${MAX_CHANGE_SLICES} slice descriptors`);
   if (change.integration.length > MAX_INTEGRATION_ENTRIES) invalid(`change contains more than ${MAX_INTEGRATION_ENTRIES} integration obligations`);
@@ -553,6 +571,12 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
       addSnapshot(sourceSnapshots, spec);
     }
     deltas.push({ descriptor: deltaPath, file, value, spec });
+  }
+  if (constitution !== undefined && deltas.some(({ value }) => value.spec === constitution.path || value.spec === constitution.approval)) {
+    throw tinyError('CONSTITUTION_DELTA_OVERLAP', 'a referenced constitution or approval record cannot be a delta target', {
+      constitution: constitution.path,
+      approval: constitution.approval,
+    });
   }
   const requirementMap = specRequirements(deltas);
 
@@ -588,11 +612,25 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     }
     const compiled = await compileContext(root, { path: value.context, text: context.text, sha256: context.sha256 }, {
       readSource: async (resourcePath) => {
+        if (constitution !== undefined && resourcePath === constitution.path) {
+          addSnapshot(sourceSnapshots, constitution.markdown);
+          return constitution.markdown.text;
+        }
         const source = await readBounded(root, resourcePath, { label: `context resource ${resourcePath}` });
         addSnapshot(sourceSnapshots, source);
         return source.text;
       },
     });
+    if (constitution !== undefined) {
+      const coverage = constitutionContextCoverage(contextManifest, constitution);
+      if (!coverage.complete) {
+        readinessIssues.push(makeReadinessIssue(
+          'CONSTITUTION_CONTEXT_NOT_CITED',
+          `slice ${value.id} context must cover every line of the approved constitution: ${constitution.path}`,
+          { sliceId: value.id, path: constitution.path, lineCount: coverage.lineCount, missingLines: coverage.missingLines },
+        ));
+      }
+    }
     const metrics = contextSizeMetrics(compiled);
     const resolvedBudget = resolveSliceBudget(change.budget, value.budget);
     if (metrics.compiledContextBytes > resolvedBudget.maxCompiledContextBytes) {
@@ -645,6 +683,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     ...change.featureTests,
     ...deltas.map((item) => item.value.spec),
     ...slices.flatMap((item) => [item.value.brief, item.value.context, item.value.checks, ...item.value.protect]),
+    ...(constitution === undefined ? [] : [constitution.path, constitution.approval]),
   ]);
   const preparationFiles = [...preparationPaths].sort().map((preparationPath) => {
     const retained = files.get(preparationPath) ?? sourceSnapshots.get(preparationPath);
@@ -765,6 +804,7 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     slices,
     slicesInOrder,
     featureChecks: { ...featureChecksFile, parsed: featureChecks },
+    ...(constitution === undefined ? {} : { constitution }),
     featureTestCheckIds: [...featureTestCheckIds].sort(),
     preparationPaths: [...preparationPaths].sort(),
     preparationFiles,
