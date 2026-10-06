@@ -10,7 +10,9 @@ import {
   addTask,
   approveTask,
   initProject,
+  reportFeature,
   reviewTask,
+  withFeatureReport,
 } from '../src/controller.mjs';
 import { FEATURE_INTEGRATION_TEST_ENV } from '../src/feature-integration.mjs';
 import {
@@ -23,10 +25,14 @@ import { validateChange } from '../src/change-format.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
 const examplesRoot = fileURLToPath(new URL('../examples/artifact-format', import.meta.url));
+const previousLivingSpecTestEnv = process.env.TINYSDD_LIVING_SPEC_TEST;
+process.env.TINYSDD_LIVING_SPEC_TEST = '1';
 const previousIntegrationTestEnv = process.env[FEATURE_INTEGRATION_TEST_ENV];
 process.env[FEATURE_INTEGRATION_TEST_ENV] = '1';
 
 test.after(() => {
+  if (previousLivingSpecTestEnv === undefined) delete process.env.TINYSDD_LIVING_SPEC_TEST;
+  else process.env.TINYSDD_LIVING_SPEC_TEST = previousLivingSpecTestEnv;
   if (previousIntegrationTestEnv === undefined) delete process.env[FEATURE_INTEGRATION_TEST_ENV];
   else process.env[FEATURE_INTEGRATION_TEST_ENV] = previousIntegrationTestEnv;
 });
@@ -135,7 +141,7 @@ async function archiveFixture({ extraSpec = false, rootDescriptor = false } = {}
     reason: 'feature complete',
     integrationRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1 }),
   });
-  return { root, changePath, specPath, output, changeDocument };
+  return { root, changePath, specPath, base, output, changeDocument };
 }
 
 async function cleanupFixture(fixture) {
@@ -203,6 +209,51 @@ test('archive rejects a root-level change descriptor before staging the project 
       return true;
     });
     assert.deepEqual((await readdir(runsPath)).sort(), beforeRuns);
+  } finally {
+    await cleanupFixture(fixture);
+  }
+});
+
+
+test('final feature report excludes controller revisions until its consumer completes', async () => {
+  const fixture = await archiveFixture();
+  try {
+    const before = await readFile(join(fixture.root, '.tinysdd/runs/controller.json'), 'utf8');
+    await withFeatureReport(fixture.root, { feature: fixture.changeDocument.id }, async (report) => {
+      assert.equal(report.stale, false);
+      await assert.rejects(reviewTask(fixture.root, {
+        id: 'broker-s5b', verdict: 'revision', by: 'reviewer',
+        evidence: '.tinysdd/reviews/evidence.md', reason: 'revision during archive commit',
+      }), { code: 'LOCKED' });
+      assert.equal(await readFile(join(fixture.root, '.tinysdd/runs/controller.json'), 'utf8'), before);
+    });
+    await reviewTask(fixture.root, {
+      id: 'broker-s5b', verdict: 'revision', by: 'reviewer',
+      evidence: '.tinysdd/reviews/evidence.md', reason: 'revision after consumer',
+    });
+    assert.equal((await reportFeature(fixture.root, { feature: fixture.changeDocument.id })).stale, true);
+  } finally {
+    await cleanupFixture(fixture);
+  }
+});
+
+test('archive rechecks real acceptance after a revision invalidates its initial snapshot', async () => {
+  const fixture = await archiveFixture();
+  try {
+    await assert.rejects(archiveChange(fixture.root, {
+      changePath: fixture.changePath,
+      featureReport: async (root, options) => {
+        const report = await reportFeature(root, options);
+        await reviewTask(root, {
+          id: 'broker-s5b', verdict: 'revision', by: 'reviewer',
+          evidence: '.tinysdd/reviews/evidence.md', reason: 'revision after initial snapshot',
+        });
+        return report;
+      },
+    }), { code: 'FEATURE_ACCEPTANCE_STALE' });
+    assert.equal(await readFile(join(fixture.root, fixture.specPath), 'utf8'), fixture.base);
+    await assert.rejects(readFile(join(fixture.root, 'changes/archive/broker-recut/manifest.json')), { code: 'ENOENT' });
+    assert.equal((await readdir(join(fixture.root, '.tinysdd/runs'))).some((name) => name.startsWith('archive-pending-')), false);
   } finally {
     await cleanupFixture(fixture);
   }

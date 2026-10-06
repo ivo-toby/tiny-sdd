@@ -1801,6 +1801,11 @@ async function featureIntegrationState(root, feature, current, event, resolved) 
 }
 
 export async function reportFeature(projectRoot, options = {}) {
+  return withFeatureReport(projectRoot, options, (report) => report);
+}
+
+// Keep final consumers under the same lock as the acceptance snapshot.
+export async function withFeatureReport(projectRoot, options, callback) {
   const feature = validateFeature(options.feature);
   const root = await canonicalProjectRoot(projectRoot);
   const info = await layout(root, { create: true });
@@ -1811,7 +1816,7 @@ export async function reportFeature(projectRoot, options = {}) {
     const resolved = await resolveConfig(root);
     const integration = await featureIntegrationState(root, feature, current, event, resolved);
     if (!event) {
-      return {
+      return callback({
         feature,
         accepted: false,
         stale: integration.fresh === false,
@@ -1820,11 +1825,11 @@ export async function reportFeature(projectRoot, options = {}) {
         integration,
         current: currentFeatureMetadata(current),
         report: await withUsageLedgerLock(root, (usageRecords) => liveFeatureReport(root, feature, current, usageRecords)),
-      };
+      });
     }
     const stale = featureStaleness(event, current);
     const staleReasons = [...stale.reasons, ...integration.reasons];
-    return {
+    return callback({
       feature,
       accepted: true,
       stale: staleReasons.length > 0,
@@ -1834,7 +1839,7 @@ export async function reportFeature(projectRoot, options = {}) {
       current: currentFeatureMetadata(current),
       acceptance: event,
       report: event.report,
-    };
+    });
   });
 }
 

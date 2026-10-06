@@ -351,6 +351,7 @@ node scripts/archive-change.mjs --project /path/to/project \
 ```
 
 The change descriptor must live inside a dedicated change directory; a root-level `change.json` is rejected before staging.
+The final acceptance check, archive publication and spec writes share the controller lock.
 
 `merge-draft.json` is a local-model handoff. Its mappings bind each stable
 requirement ID to exact UTF-8 base ranges/text and an output digest; the host

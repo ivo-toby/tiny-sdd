@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 
-import { reportFeature } from './controller.mjs';
+import { reportFeature, withFeatureReport } from './controller.mjs';
 import { normalizeFeatureEvent } from './feature-events.mjs';
 import {
   assertExactKeys,
@@ -1104,31 +1104,32 @@ export async function archiveChange(projectRootOrOptions, optionsArgument = {}) 
     let staged;
     try {
       staged = await stageArchive(root, archiveInfo.absolute, plan, firstState, options);
-      const secondState = await featureReader(root, { feature: plan.change.id });
-      const secondAcceptance = assertFreshFeatureAcceptance(plan.change.id, secondState);
-      if (secondAcceptance.id !== firstAcceptance.id || acceptanceDigest(secondAcceptance) !== acceptanceDigest(firstAcceptance)) {
-        throw tinyError('FEATURE_ACCEPTANCE_STALE', 'feature acceptance changed while archive was being prepared', { first: firstAcceptance.id, current: secondAcceptance.id });
-      }
-      const finalController = await loadControllerState(root);
-      assertFeatureScope(plan, secondState, finalController.value);
-      await validateArchivedDerivation(staged.temporary, staged.manifest);
-      await ensureDirectory(dirname(archiveInfo.absolute));
-      await rename(staged.temporary, archiveInfo.absolute);
+      return await withFeatureReport(root, { feature: plan.change.id }, async (secondState) => {
+        const secondAcceptance = assertFreshFeatureAcceptance(plan.change.id, secondState);
+        if (secondAcceptance.id !== firstAcceptance.id || acceptanceDigest(secondAcceptance) !== acceptanceDigest(firstAcceptance)) {
+          throw tinyError('FEATURE_ACCEPTANCE_STALE', 'feature acceptance changed while archive was being prepared', { first: firstAcceptance.id, current: secondAcceptance.id });
+        }
+        const finalController = await loadControllerState(root);
+        assertFeatureScope(plan, secondState, finalController.value);
+        await validateArchivedDerivation(staged.temporary, staged.manifest);
+        await ensureDirectory(dirname(archiveInfo.absolute));
+        await rename(staged.temporary, archiveInfo.absolute);
+        const manifest = staged.manifest;
+        const applied = await applyArchivedSpecs(root, archiveInfo.absolute, manifest);
+        return {
+          schemaVersion: LIVING_SPEC_SCHEMA_VERSION,
+          changeId: manifest.changeId,
+          archivePath: archiveInfo.path,
+          manifestPath: `${archiveInfo.path}/manifest.json`,
+          alreadyArchived: false,
+          acceptanceId: manifest.acceptance.eventId,
+          specs: applied,
+        };
+      });
     } catch (error) {
       if (staged?.temporary) await rm(staged.temporary, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
-    const manifest = staged.manifest;
-    const applied = await applyArchivedSpecs(root, archiveInfo.absolute, manifest);
-    return {
-      schemaVersion: LIVING_SPEC_SCHEMA_VERSION,
-      changeId: manifest.changeId,
-      archivePath: archiveInfo.path,
-      manifestPath: `${archiveInfo.path}/manifest.json`,
-      alreadyArchived: false,
-      acceptanceId: manifest.acceptance.eventId,
-      specs: applied,
-    };
   });
 }
 
