@@ -102,6 +102,38 @@ be unique across this change's delta entries, so criteria can reference them
 unambiguously. Validation checks structure, paths and base identity. Applying
 spec deltas and archiving belong to #30.
 
+### Living-spec merge drafts and archives (#30)
+
+`merge-draft.json` is a local-model handoff, not an approval record. It has
+`schemaVersion`, the change `changeId`, and a nonempty `specs` array. Each spec
+entry has `spec`, `baseSha256`, `outputSha256` and `changes`. Every change maps
+one delta requirement ID to exact UTF-8 byte offsets and the exact observed
+`baseText`/`outputText` replacement:
+
+```json
+{
+  "id": "broker-s1-errors",
+  "operation": "modify",
+  "baseStart": 42,
+  "baseEnd": 78,
+  "baseText": "S1 old wording.",
+  "outputText": "S1 revised wording."
+}
+```
+
+The archive script validates the descriptor graph and current feature state,
+requires a fresh explicit `feature accept` event with passed integration
+evidence, and then applies only mappings whose base bytes and output digest
+match. Existing prose outside the explicit ranges is copied byte-for-byte.
+The resulting `changes/archive/<change-id>/manifest.json` binds the declared
+change ID, descriptor and draft bytes, delta/slice preparation digests, the
+acceptance event and integration/run evidence, and the before/after spec bytes.
+It retains the original change tree and never deletes source changes or runs.
+The archive is published only after a final unchanged acceptance check; a
+repeat verifies the retained derivation and recovers missing spec writes when
+the current file is still at its archived before bytes. A different base,
+draft, acceptance scope or archive byte fails closed.
+
 ## Slice schema, writable tests and sizing
 
 `slice.json` has exact required keys `schemaVersion: 1`, `id`, `brief`,
