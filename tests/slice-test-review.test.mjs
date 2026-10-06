@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,8 @@ import {
 } from '../src/slice-test-review.mjs';
 import { sha256 } from '../src/fs-utils.mjs';
 import { validateChange } from '../src/change-format.mjs';
+import { addTask, approveTask, initProject, resolveTaskPacket, updateTask } from '../src/controller.mjs';
+import { runWorker } from '../src/worker.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
 const digest = (value) => sha256(value);
@@ -125,6 +127,33 @@ test('event ledger is append-only, ordered, and restart-readable', async () => {
   }
 });
 
+test('event append validates the per-record cap before writing and retains maximum questions', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-slice-event-cap-'));
+  try {
+    const oversized = event({
+      assessment: {
+        ...event().assessment,
+        observations: Array.from({ length: 70 }, (_, index) => ({
+          criterionId: `criterion-${index}`,
+          criterionType: 'slice-test-adequacy',
+          question: 'q'.repeat(4096),
+          probability: 0.5,
+          judgment: 'UNKNOWN',
+        })),
+      },
+    });
+    await assert.rejects(appendSliceTestReviewEvents(root, [oversized]), { code: 'SLICE_TEST_REVIEW_EVENT_TOO_LARGE' });
+    assert.deepEqual(await readSliceTestReviewEvents(root), []);
+
+    const maximumQuestion = 'q'.repeat(16 * 1024);
+    const retained = event({ assessment: { ...event().assessment, observations: [{ ...event().assessment.observations[0], question: maximumQuestion }] } });
+    await appendSliceTestReviewEvents(root, [retained]);
+    assert.equal((await readSliceTestReviewEvents(root))[0].assessment.observations[0].question, maximumQuestion);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function briefText() {
   return [
     '# Approved slice',
@@ -188,6 +217,18 @@ async function runFixture() {
   }
   const validated = await validateChange({ projectRoot: root, changePath: 'changes/change/change.json', requireReady: true });
   const plan = validated.registrationPlan[0];
+  await initProject(root);
+  await addTask(root, {
+    id: 'slice-one',
+    brief: 'changes/change/slices/slice-one/brief.md',
+    context: 'changes/change/slices/slice-one/context.json',
+    checks: 'changes/change/slices/slice-one/checks.json',
+    allow: ['src/feature.mjs', 'tests/slice.test.mjs'],
+    protect: ['tests/protected.test.mjs'],
+    preparation: plan.preparation,
+  });
+  await approveTask(root, { id: 'slice-one', by: 'operator', reason: 'approved capture fixture' });
+  const packet = await resolveTaskPacket(root, 'slice-one');
   const run = join(root, '.tinysdd', 'runs', 'worker-one');
   await mkdir(join(run, 'workspace-before'), { recursive: true });
   await mkdir(join(run, 'workspace-after'), { recursive: true });
@@ -217,20 +258,49 @@ async function runFixture() {
   const changedPaths = Object.keys(after).filter((path) => before[path] === undefined || JSON.stringify(before[path]) !== JSON.stringify(after[path])).map((path) => ({ path, change: before[path] === undefined ? 'created' : 'modified', before: before[path] ?? null, after: after[path] }));
   await writeFile(join(run, 'before-snapshot.json'), JSON.stringify(before));
   await writeFile(join(run, 'after-snapshot.json'), JSON.stringify(after));
-  const approvalDigest = digest('approval');
-  const brief = briefText();
-  const packet = {
-    taskId: 'slice-one',
-    brief: { path: 'changes/change/slices/slice-one/brief.md', text: brief, sha256: sha256(brief) },
-    approval: { approvalDigest, briefDigest: sha256(brief), contextDigest: sha256(sourceFiles['changes/change/slices/slice-one/context.json']), checksDigest: sha256(sourceFiles['changes/change/slices/slice-one/checks.json']), preparationDigest: digest('preparation') },
-    protectedPaths: ['tests/protected.test.mjs'],
-    preparation: plan.preparation,
-    context: { path: 'changes/change/slices/slice-one/context.json', text: sourceFiles['changes/change/slices/slice-one/context.json'], sha256: sha256(sourceFiles['changes/change/slices/slice-one/context.json']) },
-    checks: { path: 'changes/change/slices/slice-one/checks.json', text: sourceFiles['changes/change/slices/slice-one/checks.json'], sha256: sha256(sourceFiles['changes/change/slices/slice-one/checks.json']) },
-  };
-  await writeFile(join(run, 'packet.json'), JSON.stringify(packet));
+  await writeFile(join(run, 'packet.json'), JSON.stringify({
+    taskId: packet.taskId,
+    briefText: packet.brief.text,
+    briefPath: packet.brief.path,
+    briefSha256: packet.brief.sha256,
+    runtimeScope: packet.runtimeScope,
+    allowedPaths: packet.allowedPaths,
+    protectedPaths: packet.protectedPaths,
+    preparation: packet.preparation,
+    dependencies: packet.dependencies,
+    approval: packet.approval,
+    context: packet.context,
+    checks: packet.checks,
+  }));
   await writeFile(join(run, 'result.json'), JSON.stringify({ schemaVersion: 1, runId: 'worker-one', taskId: 'slice-one', outcome: 'completed', scopeViolations: [], fileScope: { mode: 'ordinary-create-modify', ordinaryCreateModify: true, deletions: false, actualPaths: changedPaths.map((entry) => entry.path) }, changedPaths }));
   return { root, packet, changePath: 'changes/change/change.json' };
+}
+
+async function makeWorkerRuntime() {
+  const runtimeRoot = await mkdtemp(join(canonicalTmpdir, 'tinysdd-slice-worker-runtime-'));
+  const sourceAgentDir = join(runtimeRoot, 'agent');
+  await mkdir(sourceAgentDir, { recursive: true });
+  await writeFile(join(sourceAgentDir, 'models.json'), JSON.stringify({
+    providers: {
+      fake: {
+        api: 'openai-completions',
+        baseUrl: 'https://example.invalid/v1',
+        models: [{ id: 'fake/model', contextWindow: 4096, maxTokens: 256, input: ['text'], reasoning: false }],
+      },
+    },
+  }));
+  const pi = join(runtimeRoot, 'fake-pi.mjs');
+  await writeFile(pi, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync('src/feature.mjs', 'export const feature = true;\\n');
+writeFileSync('tests/slice.test.mjs', 'test("feature", () => {});\\n');
+console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'changed approved files' }] } }));
+`);
+  await chmod(pi, 0o755);
+  return {
+    root: runtimeRoot,
+    runtime: { test: true, piExecutable: pi, sourceAgentDir, sourceEnv: {} },
+  };
 }
 
 test('capture uses full retained snapshots, protected tests, and actual extra paths', async () => {
@@ -248,6 +318,8 @@ test('capture uses full retained snapshots, protected tests, and actual extra pa
     assert.equal(item.artifacts.some((artifact) => artifact.path === 'tests/slice.test.mjs'), true);
     assert.equal(item.artifacts.some((artifact) => artifact.path === 'changes/change/change.json'), true);
     assert.equal(item.artifacts.some((artifact) => artifact.path === 'changes/change/slices/slice-one/brief.md'), true);
+    assert.equal(item.artifacts.find((artifact) => artifact.path === 'src/entry.mjs').role, 'assessed-interface');
+    assert.equal(item.artifacts.find((artifact) => artifact.path === 'src/entry.mjs').contentBase64, Buffer.from('export function entry() { return true; }\n').toString('base64'));
     assert.equal(item.artifacts.find((artifact) => artifact.path === 'tests/protected.test.mjs').role, 'protected-feature-test');
     assert.equal(item.artifacts.find((artifact) => artifact.path === 'src/feature.mjs').contentBase64, Buffer.from('export const feature = true;\n').toString('base64'));
   } finally {
@@ -262,6 +334,61 @@ test('capture refuses changed retained snapshots and approval-bound requirement 
     await writeFile(join(root, '.tinysdd', 'runs', 'worker-one', 'after-snapshot.json'), JSON.stringify({}));
     await assert.rejects(captureSliceTestReviewEnvelope({ projectRoot: root, packet, runId: 'worker-one', changePath, featureId: 'change-one', sliceId: 'slice-one' }), { code: 'SLICE_TEST_REVIEW_RUN_INVALID' });
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('capture refuses a packet retained from before controller re-approval', async () => {
+  const { root, packet, changePath } = await runFixture();
+  try {
+    await updateTask(root, {
+      id: 'slice-one',
+      allow: ['src/feature.mjs', 'tests/slice.test.mjs', 'src/extra.mjs'],
+      by: 'operator',
+      reason: 'expanded approved output boundary',
+    });
+    await approveTask(root, { id: 'slice-one', by: 'operator', reason: 're-approved expanded output boundary' });
+    await assert.rejects(
+      captureSliceTestReviewEnvelope({ projectRoot: root, packet, runId: 'worker-one', changePath, featureId: 'change-one', sliceId: 'slice-one' }),
+      { code: 'SLICE_TEST_REVIEW_APPROVAL_STALE' },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('capture accepts an actual fake-worker run with the retained flat packet', async () => {
+  const { root, packet, changePath } = await runFixture();
+  const runtimeState = await makeWorkerRuntime();
+  const previousTestFlag = process.env.TINYSDD_WORKER_TEST;
+  const previousTmpdir = process.env.TINYSDD_TMPDIR;
+  process.env.TINYSDD_WORKER_TEST = '1';
+  process.env.TINYSDD_TMPDIR = canonicalTmpdir;
+  try {
+    const result = await runWorker({
+      projectRoot: root,
+      packet,
+      worker: { type: 'pi', provider: 'fake', model: 'fake/model', limits: { timeoutMs: 2000, maxToolCalls: 4 } },
+      runtime: runtimeState.runtime,
+    });
+    assert.equal(result.outcome, 'completed');
+    const item = await captureSliceTestReviewEnvelope({
+      projectRoot: root,
+      packet,
+      runId: result.runId,
+      changePath,
+      featureId: 'change-one',
+      sliceId: 'slice-one',
+    });
+    assert.equal(item.provenance.source, 'validated-final-run');
+    assert.equal(item.artifacts.find((artifact) => artifact.path === 'src/entry.mjs').role, 'assessed-interface');
+    assert.equal(item.artifacts.find((artifact) => artifact.path === 'src/feature.mjs').contentBase64, Buffer.from('export const feature = true;\n').toString('base64'));
+  } finally {
+    if (previousTestFlag === undefined) delete process.env.TINYSDD_WORKER_TEST;
+    else process.env.TINYSDD_WORKER_TEST = previousTestFlag;
+    if (previousTmpdir === undefined) delete process.env.TINYSDD_TMPDIR;
+    else process.env.TINYSDD_TMPDIR = previousTmpdir;
+    await rm(runtimeState.root, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });

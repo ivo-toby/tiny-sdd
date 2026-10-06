@@ -4,6 +4,9 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import { parseApprovedBriefSections, validateChange } from './change-format.mjs';
+import { resolveTaskPacket } from './controller.mjs';
+import { parseContextManifest } from './context-compiler.mjs';
+import { parseChecksManifest } from './checks-manifest.mjs';
 import {
   JEV_DECISION_MAX_ARTIFACT_BYTES,
   JEV_DECISION_MAX_ARTIFACTS,
@@ -61,6 +64,7 @@ const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const EVENT_STATUSES = new Set(['observed', 'failed', 'uncertain', 'unavailable', 'missing', 'malformed']);
 const EVENT_VERDICTS = new Set(['UNKNOWN', 'positive', 'negative', 'accepted', 'rejected']);
 const PROVIDER_AVAILABILITY = new Set(['available', 'unavailable', 'unknown']);
+const REVIEW_QUESTION_MAX = 16 * 1024;
 
 function reviewError(code, message, details = undefined) {
   return tinyError(code, message, details);
@@ -341,7 +345,7 @@ function normalizeObservation(value, index) {
   return {
     criterionId: identifier(item.criterionId, `${label}.criterionId`),
     criterionType: identifier(item.criterionType, `${label}.criterionType`, SLUG),
-    question: text(item.question, `${label}.question`),
+    question: text(item.question, `${label}.question`, REVIEW_QUESTION_MAX),
     probability: item.probability,
     judgment: SLICE_TEST_REVIEW_UNKNOWN,
   };
@@ -514,7 +518,13 @@ export async function appendSliceTestReviewEvents(projectRoot, values) {
       }
       if (event.sequence !== firstSequence + index) throw reviewError('SLICE_TEST_REVIEW_OUT_OF_ORDER', `event sequence must be ${firstSequence + index}`);
     }
-    const content = `${normalized.map((event) => JSON.stringify(event)).join('\n')}\n`;
+    const serialized = normalized.map((event) => JSON.stringify(event));
+    for (const [index, line] of serialized.entries()) {
+      if (Buffer.byteLength(line) > SLICE_TEST_REVIEW_MAX_EVENT_BYTES) {
+        throw reviewError('SLICE_TEST_REVIEW_EVENT_TOO_LARGE', `slice-test review event ${firstSequence + index} exceeds its byte limit`);
+      }
+    }
+    const content = `${serialized.join('\n')}\n`;
     const currentBytes = Buffer.byteLength(await readLedgerText(ledger));
     if (currentBytes + Buffer.byteLength(content) > SLICE_TEST_REVIEW_MAX_ENVELOPE_BYTES) throw reviewError('SLICE_TEST_REVIEW_LEDGER_TOO_LARGE', 'slice-test review ledger exceeds its byte limit');
     if (existing.length + normalized.length > SLICE_TEST_REVIEW_MAX_EVENTS) throw reviewError('SLICE_TEST_REVIEW_LEDGER_TOO_LARGE', 'slice-test review ledger contains too many events');
@@ -656,7 +666,14 @@ async function loadTrustedLineage(root, packet, runId) {
   const preparation = packet.preparation ?? [];
   const immutablePreparationPaths = preparationPaths(preparation);
   const protectedPaths = packet.protectedPaths ?? [];
-  const dependencyMounts = packet.dependencies?.filter((item) => typeof item === 'string') ?? [];
+  let dependencyMounts = [];
+  if (packet.checks?.text !== undefined) {
+    try {
+      dependencyMounts = parseChecksManifest(packet.checks.text).dependencyMounts;
+    } catch (error) {
+      throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', 'packet checks manifest is not valid retained scope evidence', { cause: error?.code ?? 'invalid' });
+    }
+  }
   while (currentId !== undefined && currentId !== null) {
     if (seen.has(currentId)) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', 'run lineage contains a cycle');
     if (seen.size >= 32) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', 'run lineage exceeds its bounded depth');
@@ -742,6 +759,45 @@ function compareCriteria(left, right) {
   return stableStringify(left.map(withoutType)) === stableStringify(right.map(withoutType));
 }
 
+function normalizeCapturePacket(value, label = 'packet') {
+  const item = plainObject(value, label);
+  if (item.brief !== undefined) return item;
+  if (typeof item.briefText !== 'string' || typeof item.briefPath !== 'string' || typeof item.briefSha256 !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', `${label} must retain exact brief text and digest`);
+  return {
+    ...item,
+    brief: { path: item.briefPath, text: item.briefText, sha256: item.briefSha256 },
+  };
+}
+
+function approvalBoundPacket(value) {
+  return {
+    taskId: value.taskId,
+    brief: value.brief ?? null,
+    context: value.context ?? null,
+    checks: value.checks ?? null,
+    runtimeScope: value.runtimeScope ?? null,
+    allowedPaths: value.allowedPaths ?? null,
+    protectedPaths: value.protectedPaths ?? null,
+    preparation: value.preparation ?? null,
+    dependencies: value.dependencies ?? null,
+    approval: value.approval ?? null,
+    review: value.review ?? null,
+  };
+}
+
+async function resolveCurrentCapturePacket(root, suppliedPacket, sliceId) {
+  let current;
+  try {
+    current = normalizeCapturePacket(await resolveTaskPacket(root, sliceId), `current task ${sliceId} packet`);
+  } catch (error) {
+    throw reviewError('SLICE_TEST_REVIEW_APPROVAL_STALE', 'current controller approval is unavailable or stale', { cause: error?.code ?? 'invalid' });
+  }
+  if (stableStringify(approvalBoundPacket(suppliedPacket)) !== stableStringify(approvalBoundPacket(current))) {
+    throw reviewError('SLICE_TEST_REVIEW_APPROVAL_STALE', 'capture packet is not the current controller-approved packet');
+  }
+  return current;
+}
+
 /**
  * Capture the exact approved packet and a controller-validated final-run
  * candidate. The helper derives candidate paths from retained changed-path
@@ -768,7 +824,11 @@ export async function captureSliceTestReviewEnvelope({
 } = {}) {
   if (typeof projectRoot !== 'string' || projectRoot.length === 0) throw reviewError('SLICE_TEST_REVIEW_INVALID', 'projectRoot is required');
   const root = projectRoot;
-  const currentPacket = plainObject(packet, 'packet');
+  const suppliedPacket = normalizeCapturePacket(packet, 'packet');
+  if (typeof sliceId !== 'string' || !SLUG.test(sliceId)) {
+    throw reviewError('SLICE_TEST_REVIEW_INVALID', 'sliceId is required');
+  }
+  const currentPacket = await resolveCurrentCapturePacket(root, suppliedPacket, sliceId);
   if (typeof currentPacket.taskId !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'packet.taskId is required');
   if (!currentPacket.brief || typeof currentPacket.brief.text !== 'string' || typeof currentPacket.brief.sha256 !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'packet.brief must retain exact text and digest');
   if (!currentPacket.approval || typeof currentPacket.approval.approvalDigest !== 'string') throw reviewError('SLICE_TEST_REVIEW_INVALID', 'packet.approval must retain the current approval');
@@ -776,7 +836,7 @@ export async function captureSliceTestReviewEnvelope({
   if (sha256(currentPacket.brief.text) !== currentPacket.brief.sha256) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'packet brief digest does not match its retained text');
   if (currentPacket.context?.text !== undefined && sha256(currentPacket.context.text) !== currentPacket.context.sha256) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'packet context digest does not match its retained text');
   if (currentPacket.checks?.text !== undefined && sha256(currentPacket.checks.text) !== currentPacket.checks.sha256) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'packet checks digest does not match its retained text');
-  const packetOnDisk = await readRunJson(root, runId, 'packet.json');
+  const packetOnDisk = normalizeCapturePacket(await readRunJson(root, runId, 'packet.json'), `run ${runId} packet`);
   if (!packetOnDisk.approval || packetOnDisk.approval.approvalDigest !== currentPacket.approval.approvalDigest) throw reviewError('SLICE_TEST_REVIEW_RUN_APPROVAL_MISMATCH', `run ${runId} approval does not match the current packet`);
   if (packetOnDisk.taskId !== currentPacket.taskId) throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${runId} belongs to another task`);
   if (packetOnDisk.brief?.sha256 !== currentPacket.brief.sha256 || packetOnDisk.context?.sha256 !== currentPacket.context?.sha256 || packetOnDisk.checks?.sha256 !== currentPacket.checks?.sha256) throw reviewError('SLICE_TEST_REVIEW_RUN_APPROVAL_MISMATCH', `run ${runId} packet inputs do not match the current packet`);
@@ -811,12 +871,32 @@ export async function captureSliceTestReviewEnvelope({
   if (sliceTests !== undefined && stableStringify(sliceTests) !== stableStringify(approvedSliceTests)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'slice tests do not match the validated descriptor graph');
   const approvedProtectedPaths = [...new Set([...validated.change.featureTests, ...descriptorSlice.value.protect])].sort();
   if (protectedPaths !== undefined && stableStringify([...protectedPaths].sort()) !== stableStringify(approvedProtectedPaths)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'protected paths do not match the validated descriptor graph');
-  const roles = new Map();
-  for (const [index, candidatePath] of approvedImplementationFiles.entries()) roles.set(projectPath(candidatePath, `implementationFiles[${index}]`), 'candidate');
-  for (const [index, testPath] of approvedSliceTests.entries()) roles.set(projectPath(testPath, `sliceTests[${index}]`), 'slice-test');
   const preparationList = currentPacket.preparation ?? [];
   const inputPaths = new Set([currentPacket.brief.path, currentPacket.context?.path, currentPacket.checks?.path, ...preparationPaths(preparationList)].filter((value) => typeof value === 'string'));
   const packetInputPaths = new Set([currentPacket.brief.path, currentPacket.context?.path, currentPacket.checks?.path].filter((value) => typeof value === 'string'));
+  const immutablePreparationPaths = new Set(preparationPaths(preparationList));
+  const roles = new Map();
+  const addRole = (pathValue, role, label) => {
+    const normalized = projectPath(pathValue, label);
+    if (!roles.has(normalized) && !approvedProtectedPaths.includes(normalized) && !inputPaths.has(normalized) && !immutablePreparationPaths.has(normalized)) roles.set(normalized, role);
+  };
+  for (const [index, candidatePath] of approvedImplementationFiles.entries()) addRole(candidatePath, 'candidate', `implementationFiles[${index}]`);
+  for (const [index, testPath] of approvedSliceTests.entries()) addRole(testPath, 'slice-test', `sliceTests[${index}]`);
+  for (const [index, interfacePath] of approvedInterfaces.entries()) addRole(interfacePath, 'assessed-interface', `interfaces[${index}]`);
+  for (const [index, integration] of approvedIntegration.entries()) {
+    for (const [entrypointIndex, entrypoint] of integration.entrypoints.entries()) addRole(entrypoint, 'integration-entrypoint', `integration[${index}].entrypoints[${entrypointIndex}]`);
+    for (const [testIndex, testPath] of integration.testPaths.entries()) addRole(testPath, 'integration-test', `integration[${index}].testPaths[${testIndex}]`);
+  }
+  for (const [index, requirement] of approvedRequirements.entries()) {
+    if (typeof requirement.spec === 'string') addRole(requirement.spec, 'approved-spec', `requirements[${index}].spec`);
+  }
+  if (currentPacket.context?.text !== undefined) {
+    let manifest;
+    try { manifest = parseContextManifest(currentPacket.context.text); } catch (error) {
+      throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', 'approved context manifest is not valid retained evidence', { cause: error?.code ?? 'invalid' });
+    }
+    for (const [index, resource] of manifest.resources.entries()) addRole(resource.path, 'context-source', `context.resources[${index}].path`);
+  }
   const protectedList = approvedProtectedPaths.map((pathValue, index) => projectPath(pathValue, `protectedPaths[${index}]`)).filter((value) => !packetInputPaths.has(value)).sort();
   for (const pathValue of roles.keys()) {
     if (protectedList.includes(pathValue) || inputPaths.has(pathValue)) throw reviewError('SLICE_TEST_REVIEW_INPUT_MISMATCH', `candidate path overlaps an immutable input: ${pathValue}`);
