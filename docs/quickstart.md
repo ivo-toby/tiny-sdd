@@ -3,8 +3,10 @@
 This is an early local prototype. The controller does not require a model.
 Spawned workers require Linux with bubblewrap or macOS with `sandbox-exec`, and
 an existing Pi installation with the exact provider/model configured. Missing
-sandbox support fails closed. No package installation is needed for the
-dependency-free CLI itself. Node24 is the development/test environment.
+sandbox support fails closed. The package is prepared for publication as a
+dependency-free npm CLI; the current repository has no npm publication or
+version tag, so `npm install --global tinysdd` remains an operator release step.
+Node24 is the development/test environment.
 The fixed check client targets Pi 1.0.0, which requires Node >=22.19.0;
 its live sandbox loading and Titan smoke still require qualification.
 The first adapter expects Pi in the same installation's `bin` directory as the
@@ -52,6 +54,22 @@ uses stubs and requires no sandbox executable, network, Pi or model.
 
 ## Guided setup for an existing project
 
+For global onboarding from a published release, run setup from any directory;
+it does not require a project:
+
+```sh
+npm install --global tinysdd
+tinysdd setup
+```
+
+`setup` downloads the matching versioned Git archive, validates its package and
+resource tree, checks Node/Pi/sandbox/model metadata, and installs the complete
+skills bundle for Claude and Codex. It refuses an unavailable release instead
+of falling back to an unpinned branch. It does not install prerequisites, read
+credentials, start services or run inference. Repeatable setup preserves
+identical files and refuses conflicting paths. See the [setup guide](setup.md)
+for the global layout and release prerequisite.
+
 For a first use, start Claude or Codex from this checkout. A fresh clone
 registers the setup and product skills in the native `.claude/skills/` and
 `.agents/skills/` locations. Invoke `/tinysdd-setup` in Claude or
@@ -65,10 +83,10 @@ router and selected phase. Codex may list nested skills reached through the
 product link; use the explicit path when another harness does not list one.
 
 The harness-independent [TinySDD setup skill](../skills/tinysdd/assets/setup/SKILL.md)
-starts from the private source checkout, loads the product and selected phase
-skills explicitly, checks the supported Node/Pi installation layout and sandbox,
-reuses `init`, config validation and the worker's existing Pi preflight, and
-provides a bounded synthetic readiness smoke. It keeps configured route,
+can be loaded from the global bundle or source checkout. It checks the
+supported Node/Pi installation layout and sandbox, reuses `init`, config
+validation and the worker's existing Pi preflight, and provides a bounded
+synthetic readiness smoke. It keeps configured route,
 operator-reported backend, runtime-observed identity and unknown model
 properties separate.
 
@@ -79,7 +97,7 @@ exact approved bytes and links an adopted constitution into a change only when
 the operator chooses that reference. Existing changes remain unchanged until
 they opt in.
 
-The setup skill does not install packages, read credential stores, start
+The setup command does not install prerequisites, read credential stores, start
 services or run live inference by itself. Authorize those actions separately;
 keep credentials as environment references and inspect the retained
 `runtime.json`/`result.json` evidence from the exact worker run.

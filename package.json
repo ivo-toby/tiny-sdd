@@ -1,18 +1,22 @@
 {
   "name": "tinysdd",
   "version": "0.1.0",
-  "private": true,
+  "description": "Operator-led spec-driven development workflow CLI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ivo-toby/tiny-sdd.git"
+  },
   "files": [
     "bin/",
     "src/",
     "prompts/",
     "profiles/",
     "skills/",
-    "docs/quickstart.md"
+    "docs/"
   ],
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "bin": {
     "tinysdd": "bin/tinysdd.mjs"

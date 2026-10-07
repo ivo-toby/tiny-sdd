@@ -48,11 +48,13 @@ import {
   replaceQualificationRecord,
 } from '../src/qualification-store.mjs';
 import { buildQualificationRecord, rescoreQualificationRecord } from '../src/qualification.mjs';
+import { CLI_VERSION, runSetup } from '../src/setup.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = CLI_VERSION;
 const HELP = `TinySDD ${VERSION}
 
 Usage:
+  tinysdd setup
   tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID]
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
   tinysdd [--json] [--project PATH] status [--feature NAME]
@@ -105,6 +107,10 @@ keeping its evidence and candidate.
 Use --json for machine-readable results, including failed worker evidence.
 Feature acceptance requires featureIntegration in .tinysdd/config.json; TinySDD
 executes that typed command through the host check runner before recording an event.
+
+\`setup\` checks the supported Node/Pi/sandbox layout, downloads the matching
+versioned skills archive, and installs global Codex and Claude skill links. It
+does not install prerequisites, inspect credentials, start services or run a model.
 `;
 
 function cliError(message, code = 'INVALID_ARGUMENT') {
@@ -119,6 +125,7 @@ function extractGlobals(argv) {
   let help = false;
   let version = false;
   let project = process.cwd();
+  let projectSpecified = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--json') {
@@ -130,14 +137,16 @@ function extractGlobals(argv) {
     } else if (arg === '--project') {
       if (argv[index + 1] === undefined) throw cliError('--project requires a path');
       project = argv[++index];
+      projectSpecified = true;
     } else if (arg.startsWith('--project=')) {
       project = arg.slice('--project='.length);
       if (!project) throw cliError('--project requires a path');
+      projectSpecified = true;
     } else {
       args.push(arg);
     }
   }
-  return { args, json, help, version, project };
+  return { args, json, help, version, project, projectSpecified };
 }
 
 function parseFlags(tokens, allowed) {
@@ -175,6 +184,11 @@ function parseCommand(args) {
     const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([
       ['worker', 'value'], ['provider', 'value'], ['model', 'value'],
     ]));
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, values };
+  }
+  if (command === 'setup') {
+    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map());
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
   }
@@ -742,6 +756,18 @@ function qualificationBoundLabel(value, reason) {
   return String(value);
 }
 
+function renderSetup(data) {
+  const status = (value) => value ? 'ready' : 'not ready';
+  process.stdout.write(`TinySDD ${data.version} skills installed.\n`);
+  process.stdout.write(`Node ${data.checks.node.version}: ${status(data.checks.node.supported)} (requires ${data.checks.node.minimum})\n`);
+  process.stdout.write(`Pi ${data.checks.pi.version ?? 'not found'}: ${data.checks.pi.supported ? 'ready' : data.checks.pi.status}\n`);
+  process.stdout.write(`Worker sandbox: ${data.checks.sandbox.worker.supported ? data.checks.sandbox.worker.sandbox : 'unavailable'}\n`);
+  process.stdout.write(`run_checks: ${data.checks.sandbox.checks.available ? 'available' : `unavailable (${data.checks.sandbox.checks.reason})`}\n`);
+  process.stdout.write(`Explicit Pi models: ${data.checks.models.usable ? 'found' : data.checks.models.status}\n`);
+  process.stdout.write(`Worker readiness: ${data.ready ? 'ready for an authorized smoke' : 'not ready'}\n`);
+  for (const step of data.nextSteps ?? []) process.stdout.write(`Next: ${step}\n`);
+}
+
 function renderQualification(data) {
   const record = data.record;
   process.stdout.write(`Qualification ${record.suite.id}@${record.suite.version}\n`);
@@ -757,13 +783,18 @@ function renderQualification(data) {
 }
 
 async function run(argv) {
-  const { args, json, help, version, project } = extractGlobals(argv);
+  const { args, json, help, version, project, projectSpecified } = extractGlobals(argv);
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
   if (help) return { ok: true, data: { help: HELP }, presentation: 'help' };
   const parsed = parseCommand(args);
   let data;
   let presentation;
-  if (parsed.command === 'init') data = await initProject(project, parsed.values);
+  if (parsed.command === 'setup') {
+    if (projectSpecified) throw tinyError('SETUP_PROJECT_UNSUPPORTED', 'setup is global and cannot be combined with --project; use init for project configuration');
+    data = await runSetup({ version: VERSION });
+    presentation = 'setup';
+  }
+  else if (parsed.command === 'init') data = await initProject(project, parsed.values);
   else if (parsed.command === 'config') data = parsed.subcommand === 'show'
     ? await configShow(project, { worker: parsed.values.worker })
     : await configValidate(project, { worker: parsed.values.worker });
@@ -1024,6 +1055,10 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'help') {
     process.stdout.write(`${HELP}`);
+    return;
+  }
+  if (result.presentation === 'setup') {
+    renderSetup(result.data);
     return;
   }
   if (result.presentation === 'slice-test-review-report') {

@@ -4,13 +4,19 @@ Run `tinysdd --help` for the installed interface. In a source checkout use
 `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs`; run it from the target project
 or select `--project /path/to/project`. Add `--json` for machine-readable output.
 
+For global onboarding from a reviewed release, run `tinysdd setup` without
+`--project`. It checks Node/Pi/sandbox/model metadata, downloads the matching
+versioned archive, and installs the complete global skills resource tree for
+Codex and Claude. It does not install prerequisites, inspect credentials, start
+services or run inference; use `init` separately for project configuration.
+
 For a fresh existing project, start Claude or Codex from this checkout and use
 the native repository registration for the harness-independent setup skill:
 `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex. Then load
 `/tinysdd` or `$tinysdd` for this workflow. If discovery is unavailable, start
 a new session or restart the harness. These registrations are scoped to this
 checkout and do not install skills into the target project. The setup skill
-explains the private source-checkout route, explicit loading of the
+explains the published or source-checkout route, explicit loading of the
 product/router/phase skills, supported Node/Pi layouts, provider/model and
 credential boundaries, reusable `init`/`config validate`/preflight, and the
 bounded synthetic readiness smoke.

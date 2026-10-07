@@ -27,6 +27,18 @@ The [operator walkthrough](docs/operator-walkthrough.md) shows the intended
 in-agent experience; [review lessons](docs/feature-review-lessons.md) capture
 what the first feature pilot exposed.
 
+## CLI onboarding
+
+The dependency-free npm package is prepared for a reviewed publication. After
+an operator publishes a versioned release and creates its matching Git tag,
+install it with `npm install --global tinysdd` and run `tinysdd setup` from any
+directory. Setup checks the supported Node/Pi/sandbox layout, downloads the
+matching archive, and installs the complete skills resource tree for Claude and
+Codex without changing the current project. It does not install prerequisites,
+inspect credentials, start services or run inference. The current repository
+has no npm publication or release tag; that release prerequisite is documented
+in [the setup guide](docs/setup.md).
+
 ## Repository-local skills
 
 A fresh clone registers the `tinysdd-setup` and `tinysdd` product skills in both
