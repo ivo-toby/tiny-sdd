@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: tinysdd-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'ivo-toby/tiny-sdd' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      NPM_RELEASES_ENABLED: ${{ vars.NPM_RELEASES_ENABLED }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the complete main history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Use Node 24 without npm auth configuration
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Check publishing toolchain
+        run: |
+          node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && (minor < 19 || (minor === 19 && patch < 0)))) process.exit(1);'
+          npm --version
+          node -e 'const { execFileSync } = require("node:child_process"); const [major, minor, patch] = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim().split(".").map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) process.exit(1);'
+
+      - name: Plan, verify and publish the immutable release
+        run: node scripts/release.mjs --root . --json

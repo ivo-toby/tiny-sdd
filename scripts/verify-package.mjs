@@ -17,6 +17,23 @@ export class PackageVerificationError extends Error {
   }
 }
 
+export const PACKAGED_RESOURCES = Object.freeze([
+  'skills/tinysdd/SKILL.md',
+  'skills/tinysdd/references/cli-workflow.md',
+  'skills/tinysdd/assets/setup/SKILL.md',
+  'skills/tinysdd/assets/setup/references/setup-workflow.md',
+  'skills/tinysdd/assets/constitution/templates/constitution.md',
+  'skills/tinysdd/assets/harness/claude/tinysdd-frontier/templates/change.json',
+  'skills/tinysdd/assets/harness/claude/tinysdd-frontier/templates/context.json',
+  'skills/tinysdd/assets/harness/claude/tinysdd-frontier/templates/slice.json',
+  'skills/tinysdd/assets/harness/claude/tinysdd-frontier/references/phase-workflow.md',
+  'prompts/worker.md',
+  'profiles/qwen36-titan.json',
+  'docs/quickstart.md',
+  'docs/setup.md',
+  'src/setup.mjs',
+]);
+
 function verificationError(code, message) {
   return new PackageVerificationError(code, message);
 }
@@ -104,23 +121,7 @@ export async function verifyPackage({ artifact, projectRoot = process.cwd(), ver
     if (packageJson.name !== 'tinysdd' || packageJson.version !== version) {
       throw verificationError('PACKAGE_VERIFY_METADATA_MISMATCH', `installed package is ${packageJson.name}@${packageJson.version}`);
     }
-    const resources = [
-      'skills/tinysdd/SKILL.md',
-      'skills/tinysdd/references/cli-workflow.md',
-      'skills/tinysdd/assets/setup/SKILL.md',
-      'skills/tinysdd/assets/setup/references/setup-workflow.md',
-      'skills/tinysdd/assets/constitution/templates/constitution.md',
-      'skills/tinysdd/assets/harness/claude/tinysdd-frontier/templates/change.json',
-      'skills/tinysdd/assets/harness/claude/tinysdd-frontier/templates/context.json',
-      'skills/tinysdd/assets/harness/claude/tinysdd-frontier/templates/slice.json',
-      'skills/tinysdd/assets/harness/claude/tinysdd-frontier/references/phase-workflow.md',
-      'prompts/worker.md',
-      'profiles/qwen36-titan.json',
-      'docs/quickstart.md',
-      'docs/setup.md',
-      'src/setup.mjs',
-    ];
-    for (const resource of resources) await readFile(join(packageRoot, resource));
+    for (const resource of PACKAGED_RESOURCES) await readFile(join(packageRoot, resource));
     await run(node, ['-e', `import(${JSON.stringify(join(packageRoot, 'src/setup.mjs'))}).then((m) => { if (m.CLI_VERSION !== ${JSON.stringify(version)}) process.exit(2); })`], { env: environment });
     const project = join(root, 'smoke-project');
     await mkdir(project, { recursive: true });
@@ -128,7 +129,7 @@ export async function verifyPackage({ artifact, projectRoot = process.cwd(), ver
     const initResult = JSON.parse(init.stdout);
     if (initResult.ok !== true) throw verificationError('PACKAGE_VERIFY_INIT_FAILED', 'installed CLI init did not report success');
     await readFile(join(project, '.tinysdd', 'config.json'));
-    return { artifact: artifact ? packagePath : null, filename: basename(packagePath), version, resources: resources.length, initialized: true };
+    return { artifact: artifact ? packagePath : null, filename: basename(packagePath), version, resources: PACKAGED_RESOURCES.length, initialized: true };
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -8,7 +8,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
-  INITIAL_VERSION,
   buildReleasePlan,
   bumpVersion,
   classifyCommit,
@@ -101,12 +100,12 @@ test('planner reports no release for documentation-only commits after a tag', as
 });
 
 test('first no-tag plan bootstraps the current reviewed package version', async () => {
-  const root = await repository({ version: INITIAL_VERSION });
+  const root = await repository({ version: '0.1.0' });
   try {
     await commit(root, 'feat: historical feature');
     const plan = await readReleasePlan(root);
     assert.equal(plan.kind, 'bootstrap');
-    assert.equal(plan.version, INITIAL_VERSION);
+    assert.equal(plan.version, '0.1.0');
     assert.equal(plan.bump, 'none');
     await writeFile(join(root, 'package.json'), `${JSON.stringify({ name: 'tinysdd', version: '0.2.0' }, null, 2)}\n`);
     const reviewedVersionPlan = await readReleasePlan(root);

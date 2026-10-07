@@ -34,6 +34,7 @@ jobs:
       - name: Check script syntax
         run: |
           node --check scripts/release-plan.mjs
+          node --check scripts/release.mjs
           node --check scripts/verify-package.mjs
 
       - name: Run offline test suite

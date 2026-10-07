@@ -9,7 +9,6 @@ import { join, resolve } from 'node:path';
 const execFile = promisify(execFileCallback);
 
 export const PACKAGE_NAME = 'tinysdd';
-export const INITIAL_VERSION = '0.1.0';
 export const RELEASE_TAG_PATTERN = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 
 const BUMP_RANK = Object.freeze({ none: 0, patch: 1, minor: 2, major: 3 });
@@ -132,11 +131,9 @@ export function buildReleasePlan({
   head,
   tags = [],
   commits = [],
-  initialVersion = INITIAL_VERSION,
 } = {}) {
   if (packageName !== PACKAGE_NAME) throw planError('RELEASE_PACKAGE_INVALID', `release workflow is configured for ${PACKAGE_NAME}, found ${packageName}`);
   parseVersion(packageVersion);
-  parseVersion(initialVersion);
   if (typeof head !== 'string' || head.length === 0) throw planError('RELEASE_HEAD_MISSING', 'release plan needs the current commit');
   const reachableTags = normalizeTags(tags);
   const normalizedCommits = commits.map(normalizeCommit);
@@ -229,7 +226,7 @@ async function gitValue(git, root, args) {
   return String(await git(root, args)).trim();
 }
 
-export async function readReleasePlan(root = process.cwd(), { git = defaultGit, initialVersion = INITIAL_VERSION } = {}) {
+export async function readReleasePlan(root = process.cwd(), { git = defaultGit } = {}) {
   const projectRoot = resolve(root);
   const packagePath = join(projectRoot, 'package.json');
   const packageDocument = parseJson(await readFile(packagePath, 'utf8'), packagePath);
@@ -261,7 +258,6 @@ export async function readReleasePlan(root = process.cwd(), { git = defaultGit, 
     head,
     tags,
     commits: parseCommitLog(String(log)),
-    initialVersion,
   });
 }
 
