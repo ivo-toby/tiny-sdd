@@ -715,7 +715,8 @@ test('CLI exposes help and version without touching project state', async () => 
     assert.equal(helpResult.ok, true);
     assert.match(helpResult.data.help, /Usage:/u);
     const version = await exec(process.execPath, [bin, '--version']);
-    assert.match(version.stdout, /^0\.1\.0\n$/u);
+    const packageDocument = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'));
+    assert.equal(version.stdout, `${packageDocument.version}\n`);
   } finally {
     await cleanup(root);
   }
