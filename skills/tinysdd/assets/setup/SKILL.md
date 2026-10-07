@@ -1,15 +1,16 @@
 ---
 name: tinysdd-setup
-description: Guide setup of TinySDD in an existing project, from a source checkout and explicit skill loading through Pi worker preflight and a bounded readiness smoke.
+description: Guide TinySDD CLI onboarding, global skill loading, Pi worker preflight and a bounded readiness smoke.
 ---
 
 # TinySDD setup
 
 Use this skill before the TinySDD specification or worker workflow when the
-target project, CLI checkout, harness skills, Pi runtime, provider/model route,
-or authentication boundary is not already established. It is a setup guide,
-not a second controller, configuration format, provider selector, or model
-qualification process.
+CLI, global harness skills, target project, Pi runtime, provider/model route,
+or authentication boundary is not already established. `tinysdd setup` is the
+global onboarding command; this skill explains the checks and the later project
+configuration. It is not a second controller, configuration format, provider
+selector, or model qualification process.
 
 In a fresh clone, the repository registers this setup skill and the product
 skill as relative directory links in both native harness locations. Start the
@@ -42,9 +43,18 @@ the harness's explicit skill mechanism when their workflows are needed.
 
 ## Setup boundaries
 
-- Use an existing TinySDD checkout or an operator-authorized source checkout.
-  The package is private and has no supported registry or `npx` installation
-  route. Run the dependency-free CLI with Node from `bin/tinysdd.mjs`.
+- Use a reviewed published package with `npm install --global tinysdd` and
+  `tinysdd setup`, or an operator-authorized source checkout with
+  `node bin/tinysdd.mjs setup`. The repository currently has no npm publication
+  or version tag; setup reports that missing release instead of using an
+  unpinned branch.
+- Run global setup from any directory and do not pass `--project`; it does not
+  inspect or change the current project. Use `init` separately for project
+  configuration.
+- Setup validates the matching versioned archive and installs the complete
+  `skills/` plus sibling `docs/` resource tree under `~/.agents/tinysdd`, with
+  relative Codex and Claude skill links. It preserves unrelated agent config
+  and refuses conflicting managed paths.
 - Load the exact setup, product, router and selected phase paths. Use the
   setup/product links to preserve each router's `references/` and `templates/`
   siblings, and use an explicit path when the harness does not list a nested
@@ -63,14 +73,15 @@ the harness's explicit skill mechanism when their workflows are needed.
   and retained artifacts. Use only an operator-authorized environment
   reference. Do not read a keychain, Pi auth store or other credential store
   as part of this skill.
-- Do not install packages, start a service, or run live inference until the
-  operator authorizes that action. A readiness smoke is evidence about one
-  configured path, not acceptance of a feature or a model.
+- Do not install prerequisites, read credential stores, start a service, or run
+  live inference from setup. A readiness smoke is evidence about one configured
+  path, not acceptance of a feature or a model.
 
 ## Procedure
 
-1. Establish `TINYSDD_CHECKOUT` and `TARGET_PROJECT`, then verify the source
-   CLI with `node .../bin/tinysdd.mjs --version`.
+1. Verify the CLI with `tinysdd --version`, or use
+   `node .../bin/tinysdd.mjs --version` from a source checkout, then run
+   `tinysdd setup` from any directory when global links are absent.
 2. Load this skill explicitly. If preparing a feature, inspect the recommended
    constitution files and, when adopted by the operator, load the constitution
    skill before the product skill, frontier router and selected phase skill.

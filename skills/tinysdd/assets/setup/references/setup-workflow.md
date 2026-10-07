@@ -1,15 +1,29 @@
 # TinySDD setup workflow
 
-This reference describes the current source checkout, Pi worker and
-authentication boundaries. It intentionally uses the existing CLI and worker
-contracts; it does not add a setup command or another configuration format.
+This reference describes the published CLI onboarding command, source checkout,
+Pi worker and authentication boundaries. It uses the existing CLI and worker
+contracts; it does not add another configuration format.
 
-## 1. Choose the source checkout and CLI route
+## 1. Published package route (primary)
 
-`package.json` marks TinySDD as `private: true`. There is no supported
-`npm install tinysdd`, `npx tinysdd` or published package route. Use a checkout
-provided by the operator or an operator-authorized Git checkout. The CLI has no
-runtime dependencies or build step:
+The package is dependency-free and has no build step. After an operator
+publishes a reviewed package and matching Git tag, use:
+
+```sh
+npm install --global tinysdd
+tinysdd --version
+tinysdd setup
+```
+
+The published command is global and cwd-independent. Run it from the existing
+project directory if that is where the operator is working; omit `--project` so
+the command installs only the global bundle. `init` remains the separate
+project-configuration command.
+
+### Source checkout alternative (development only)
+
+The current repository has no npm publication or version tag. Until that
+release prerequisite is completed, use an operator-authorized source checkout:
 
 ```sh
 TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
@@ -18,11 +32,23 @@ TARGET_PROJECT=/absolute/path/to/existing-project
 node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --version
 ```
 
-Keep `TINYSDD_CHECKOUT` separate from `TARGET_PROJECT`. Use the absolute source
-path when the current harness does not install a command named `tinysdd`. Do
-not use a global link or a registry package as a substitute for this checkout.
+Keep `TINYSDD_CHECKOUT` separate from `TARGET_PROJECT`. This variable is only
+needed for the source-checkout alternative. Published-package users use
+`tinysdd` directly in the project commands below and do not define it. Global
+setup is run without `--project`; `init` remains the project-scoped
+configuration command.
+The setup archive is pinned to the CLI version and validated for package name,
+version, safe paths and required resources. An unavailable tag is an actionable
+release error; setup never falls back to `main` or another unpinned source.
 The development suite is separate from user setup and, when run, uses
 `TYPESAFE_API_KEY=stub npm test` as described by the repository instructions.
+
+Setup installs a bundle under `~/.agents/tinysdd`, then links the product and
+setup skills into `~/.agents/skills` for Codex and `~/.claude/skills` for
+Claude. The sibling `docs/`, `assets/`, `references/` and `templates/` files
+stay in the bundle so relative skill resources continue to resolve. Existing
+agent configuration and unrelated skill entries are preserved; differing
+managed files or links are conflicts.
 
 ## 2. Load the skills explicitly
 
@@ -206,8 +232,9 @@ separate action when needed.
 
 ## 4. Inspect and initialize project configuration
 
-Use the source CLI against the target project. These operations are
-controller-only and do not call a model:
+Use the installed `tinysdd` command against the target project. If the release
+prerequisite is not available, use the source-checkout prefix shown below.
+These operations are controller-only and do not call a model:
 
 ```sh
 node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" init
@@ -287,16 +314,18 @@ selected endpoint is currently reachable or authenticated.
 
 ## 6. Use existing preflight before a readiness run
 
-There is no separate setup preflight command. `worker start` resolves the
-effective worker and calls the existing `preflightPiWorker` before it detaches
-the launcher. It verifies the exact Pi provider/model entry, referenced
-credential environment values, profile/runtime constraints and thinking
-compatibility. A preflight failure is reported as `WORKER_PREFLIGHT_FAILED`
-and should be fixed in the selected setup; do not bypass it with a different
-route.
+`tinysdd setup` performs deterministic host and explicit model metadata checks
+without reading credential values. `worker start` then resolves the effective
+worker and calls the existing `preflightPiWorker` before it detaches the
+launcher. It verifies the exact Pi provider/model entry, referenced credential
+environment values, profile/runtime constraints and thinking compatibility. A
+preflight failure is reported as `WORKER_PREFLIGHT_FAILED` and should be fixed
+in the selected setup; do not bypass it with a different route.
 
 Prepare and approve the task packet first. Then use the detached command for a
-real run and retain its single JSON result on stdout:
+real run and retain its single JSON result on stdout. Published-package users
+invoke `tinysdd` directly; the source-checkout form remains below for
+development checkouts:
 
 ```sh
 node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
