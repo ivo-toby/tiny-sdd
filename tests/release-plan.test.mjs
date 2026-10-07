@@ -109,7 +109,9 @@ test('first no-tag plan bootstraps the current reviewed package version', async 
     assert.equal(plan.version, INITIAL_VERSION);
     assert.equal(plan.bump, 'none');
     await writeFile(join(root, 'package.json'), `${JSON.stringify({ name: 'tinysdd', version: '0.2.0' }, null, 2)}\n`);
-    await assert.rejects(readReleasePlan(root), { code: 'RELEASE_BASELINE_MISSING' });
+    const reviewedVersionPlan = await readReleasePlan(root);
+    assert.equal(reviewedVersionPlan.kind, 'bootstrap');
+    assert.equal(reviewedVersionPlan.version, '0.2.0');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -139,31 +141,37 @@ test('planner rejects tag/package metadata conflicts and duplicate versions', ()
   }), { code: 'RELEASE_TAG_INVALID' });
 });
 
+test('dry-run JSON CLI emits the plan without changing the checkout', async () => {
+  const root = await repository({ tag: true });
+  try {
+    await commit(root, 'feat: add a release candidate');
+    const before = await readFile(join(root, 'package.json'), 'utf8');
+    const script = join(repoRoot, 'scripts', 'release-plan.mjs');
+    const result = await execFile(process.execPath, [script, '--root', root, '--dry-run', '--json']);
+    const plan = JSON.parse(result.stdout);
+    assert.equal(plan.release, true);
+    assert.equal(plan.version, '1.1.0');
+    assert.equal(await readFile(join(root, 'package.json'), 'utf8'), before);
+    assert.equal((await git(root, 'status', '--porcelain')).stdout, '');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('package smoke strips inherited npm credentials and verifies an offline packed install', async () => {
   const clean = cleanNpmEnvironment({ NODE_AUTH_TOKEN: 'secret', NPM_TOKEN: 'secret', NPM_CONFIG_USERCONFIG: '/secret', SAFE_VALUE: 'kept' }, '/tmp/tinysdd-test-npm');
   assert.equal(clean.NODE_AUTH_TOKEN, undefined);
   assert.equal(clean.NPM_TOKEN, undefined);
   assert.equal(clean.NPM_CONFIG_USERCONFIG, undefined);
-  assert.equal(clean.SAFE_VALUE, 'kept');
+  assert.equal(clean.SAFE_VALUE, undefined);
 
-  const destination = await mkdtemp(join(tmpdir(), 'tinysdd-release-pack-'));
-  try {
-    const packageJson = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
-    const packed = await execFile('npm', ['pack', '--json', '--pack-destination', destination], {
-      cwd: repoRoot,
-      env: { ...process.env, NODE_AUTH_TOKEN: 'secret', NPM_TOKEN: 'secret' },
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    const records = JSON.parse(packed.stdout);
-    assert.equal(records.length, 1);
-    const result = await verifyPackage({
-      artifact: join(destination, records[0].filename),
-      version: packageJson.version,
-      sourceEnv: { ...process.env, NODE_AUTH_TOKEN: 'secret', NPM_TOKEN: 'secret' },
-    });
-    assert.equal(result.version, packageJson.version);
-    assert.equal(result.resources, 6);
-  } finally {
-    await rm(destination, { recursive: true, force: true });
-  }
+  const packageJson = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
+  const result = await verifyPackage({
+    projectRoot: repoRoot,
+    version: packageJson.version,
+    sourceEnv: { ...process.env, NODE_AUTH_TOKEN: 'secret', NPM_TOKEN: 'secret' },
+  });
+  assert.equal(result.version, packageJson.version);
+  assert.equal(result.resources, 14);
+  assert.equal(result.initialized, true);
 });

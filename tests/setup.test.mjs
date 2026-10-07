@@ -317,7 +317,7 @@ test('release download is version-pinned and reports a missing tag without falli
     return { ok: false, status: 404 };
   } }), (error) => {
     assert.equal(error.code, 'SETUP_RELEASE_UNAVAILABLE');
-    assert.match(error.message, /versioned Git tag v0\.1\.0|docs\/setup\.md/u);
+    assert.ok(error.message.includes(`versioned Git tag v${CLI_VERSION}`));
     return true;
   });
   assert.equal(requested, `https://codeload.github.com/ivo-toby/tiny-sdd/tar.gz/refs/tags/v${CLI_VERSION}`);

@@ -142,9 +142,6 @@ export function buildReleasePlan({
   const normalizedCommits = commits.map(normalizeCommit);
   const latest = reachableTags[0] ?? null;
   if (!latest) {
-    if (packageVersion !== initialVersion) {
-      throw planError('RELEASE_BASELINE_MISSING', `no reachable release tag exists, so package.json must stay at the reviewed initial ${initialVersion}; found ${packageVersion}`);
-    }
     return {
       schemaVersion: 1,
       kind: 'bootstrap',

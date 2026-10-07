@@ -50,14 +50,7 @@ jobs:
           NPM_TOKEN: ''
 
       - name: Pack and verify the installed package
-        shell: bash
         env:
           NODE_AUTH_TOKEN: ''
           NPM_TOKEN: ''
-        run: |
-          set -euo pipefail
-          pack_dir="$RUNNER_TEMP/tinysdd-package"
-          mkdir -p "$pack_dir"
-          npm pack --json --pack-destination "$pack_dir" > "$RUNNER_TEMP/tinysdd-pack.json"
-          tarball="$(node -e 'const fs = require("node:fs"); const records = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (records.length !== 1) process.exit(2); process.stdout.write(records[0].filename);' "$RUNNER_TEMP/tinysdd-pack.json")"
-          node scripts/verify-package.mjs --package "$pack_dir/$tarball" --version "$(node -p 'require("./package.json").version')" --json
+        run: node scripts/verify-package.mjs --project . --version "$(node -p 'require("./package.json").version')" --json
