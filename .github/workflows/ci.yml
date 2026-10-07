@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '22.19.0'
+          - '24'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+
+      - name: Check script syntax
+        run: |
+          node --check scripts/release-plan.mjs
+          node --check scripts/verify-package.mjs
+
+      - name: Run offline test suite
+        run: npm test
+        env:
+          TYPESAFE_API_KEY: stub
+          NODE_AUTH_TOKEN: ''
+          NPM_TOKEN: ''
+
+      - name: Check package release plan
+        run: node scripts/release-plan.mjs --dry-run --json
+        env:
+          NODE_AUTH_TOKEN: ''
+          NPM_TOKEN: ''
+
+      - name: Pack and verify the installed package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ''
+          NPM_TOKEN: ''
+        run: |
+          set -euo pipefail
+          pack_dir="$RUNNER_TEMP/tinysdd-package"
+          mkdir -p "$pack_dir"
+          npm pack --json --pack-destination "$pack_dir" > "$RUNNER_TEMP/tinysdd-pack.json"
+          tarball="$(node -e 'const fs = require("node:fs"); const records = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (records.length !== 1) process.exit(2); process.stdout.write(records[0].filename);' "$RUNNER_TEMP/tinysdd-pack.json")"
+          node scripts/verify-package.mjs --package "$pack_dir/$tarball" --version "$(node -p 'require("./package.json").version')" --json

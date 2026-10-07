@@ -320,7 +320,7 @@ test('release download is version-pinned and reports a missing tag without falli
     assert.match(error.message, /versioned Git tag v0\.1\.0|docs\/setup\.md/u);
     return true;
   });
-  assert.equal(requested, 'https://codeload.github.com/ivo-toby/tiny-sdd/tar.gz/refs/tags/v0.1.0');
+  assert.equal(requested, `https://codeload.github.com/ivo-toby/tiny-sdd/tar.gz/refs/tags/v${CLI_VERSION}`);
 });
 
 test('setup rejects a requested version different from the installed CLI', async () => {
