@@ -1,5 +1,9 @@
 # Local agent configuration
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/tinysdd
+!.agents/skills/tinysdd-setup
 .codex/
 .worktrees/
 

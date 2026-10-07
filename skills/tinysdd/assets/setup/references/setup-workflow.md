@@ -26,9 +26,28 @@ The development suite is separate from user setup and, when run, uses
 
 ## 2. Load the skills explicitly
 
-The skill files are project-local prompt assets. A harness may register one
-file, a directory, or a named route, so use the mode it supports and retain
-the relative files beside the selected entrypoint:
+The skill files are project-local prompt assets. This checkout tracks relative
+directory registrations for the two entrypoints in both native repository
+locations:
+
+```text
+<checkout>/.agents/skills/tinysdd       -> ../../skills/tinysdd
+<checkout>/.agents/skills/tinysdd-setup -> ../../skills/tinysdd/assets/setup
+<checkout>/.claude/skills/tinysdd       -> ../../skills/tinysdd
+<checkout>/.claude/skills/tinysdd-setup -> ../../skills/tinysdd/assets/setup
+```
+
+Start Claude or Codex from a fresh clone of this checkout to use repository
+discovery. Invoke `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex, then
+load `/tinysdd` or `$tinysdd`. If the entries are unavailable, start a new
+session or restart the harness. The links are scoped to this checkout and do
+not install skills into `TARGET_PROJECT`, a user directory or a global harness
+configuration. The linked directories preserve the relative `references/` and
+`assets/` beside each `SKILL.md`; nested `SKILL.md` files are supporting paths
+to load through the selected skill or an explicit path.
+
+For a harness without native repository discovery, use the direct project-local
+paths and retain the relative files beside the selected entrypoint:
 
 ```text
 <checkout>/skills/tinysdd/SKILL.md

@@ -11,6 +11,17 @@ or authentication boundary is not already established. It is a setup guide,
 not a second controller, configuration format, provider selector, or model
 qualification process.
 
+In a fresh clone, the repository registers this setup skill and the product
+skill as relative directory links in both native harness locations. Start the
+session from this checkout and invoke `/tinysdd-setup` in Claude or
+`$tinysdd-setup` in Codex; after setup, invoke `/tinysdd` or `$tinysdd`. If a
+registration is unavailable, start a new session or restart the harness. These
+links are scoped to this checkout and do not install skills into the target
+project or a user/global skill directory. Nested phase, constitution and other
+files under `skills/tinysdd/assets/` are supporting resources; load them through
+the selected skill or an explicit path. Files outside the native registration
+directories are not separate auto-discovered entries.
+
 Keep setup facts in three separate groups:
 
 - **Discovered:** executable paths, versions, platform capability, project
