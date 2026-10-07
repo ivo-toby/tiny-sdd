@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
 import { benchmarkFixtureDigest, inspectBenchmarkIdentity, RESERVED_VERIFIER_ROOT, runBenchmark } from '../src/benchmark-runner.mjs';
 import { parseBenchmarkInvocation } from '../src/benchmark-results.mjs';
+import { checkRunnerAvailable } from '../src/check-runner.mjs';
 
 const digest = (value) => sha256(value);
 const execFileAsync = promisify(execFile);
@@ -215,6 +216,7 @@ test('binds a missing test check runner as unavailable in worker identity', asyn
     await makeSuite(root);
     const runtime = await makeRuntime(root);
     delete runtime.checkRunner;
+    const hostCheckRunner = checkRunnerAvailable();
     const result = await runBenchmark({
       suiteRoot: root,
       outputRoot: join(root, 'results'),
@@ -225,7 +227,7 @@ test('binds a missing test check runner as unavailable in worker identity', asyn
     assert.equal(result.config.identity.runChecks.available, false);
     assert.equal(
       result.config.identity.runChecks.unavailableReason,
-      process.platform === 'linux' ? 'test runtime did not provide a check runner' : result.config.identity.runChecks.unavailableReason,
+      hostCheckRunner.available ? 'test runtime did not provide a check runner' : hostCheckRunner.reason,
     );
     const caseResult = JSON.parse(await readFile(join(root, 'results', result.invocation.caseResults[0].path), 'utf8'));
     assert.equal(caseResult.observed.runChecks.available, false);
