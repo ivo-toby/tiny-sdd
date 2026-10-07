@@ -17,10 +17,11 @@ session from this checkout and invoke `/tinysdd-setup` in Claude or
 `$tinysdd-setup` in Codex; after setup, invoke `/tinysdd` or `$tinysdd`. If a
 registration is unavailable, start a new session or restart the harness. These
 links are scoped to this checkout and do not install skills into the target
-project or a user/global skill directory. Nested phase, constitution and other
-files under `skills/tinysdd/assets/` are supporting resources; load them through
-the selected skill or an explicit path. Files outside the native registration
-directories are not separate auto-discovered entries.
+project or a user/global skill directory. The product link preserves its
+relative `assets/` and `references/`; use the setup/product skill links to load
+the frontier router and selected phase. Codex may list nested skills reached
+through the product link; use an explicit path when another harness does not
+list one.
 
 Keep setup facts in three separate groups:
 
@@ -44,9 +45,10 @@ the harness's explicit skill mechanism when their workflows are needed.
 - Use an existing TinySDD checkout or an operator-authorized source checkout.
   The package is private and has no supported registry or `npx` installation
   route. Run the dependency-free CLI with Node from `bin/tinysdd.mjs`.
-- Load the exact setup, product, router and selected phase paths. A nested
-  `SKILL.md` is an ordinary file; copying or registering its parent does not
-  make every nested phase available automatically.
+- Load the exact setup, product, router and selected phase paths. Use the
+  setup/product links to preserve each router's `references/` and `templates/`
+  siblings, and use an explicit path when the harness does not list a nested
+  phase entry.
 - Inspect `specs/constitution.md` and `specs/constitution.approval.json` when
   preparing a project. Load the harness-independent constitution skill when
   the operator adopts those files; their presence alone does not change

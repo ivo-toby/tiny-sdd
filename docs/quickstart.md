@@ -57,11 +57,12 @@ registers the setup and product skills in the native `.claude/skills/` and
 `.agents/skills/` locations. Invoke `/tinysdd-setup` in Claude or
 `$tinysdd-setup` in Codex, then load `/tinysdd` or `$tinysdd`. If either skill is
 unavailable, start a new session or restart the harness. These registrations are
-scoped to this checkout; they do not install skills into the target project.
-The nested phase and constitution files under `skills/tinysdd/assets/` are
-supporting resources loaded through the selected skill or an explicit path.
-Files outside the native registration directories are not separate
-auto-discovered entries.
+scoped to this checkout; they do not install skills into the target project. The
+`tinysdd-setup` registration points to `skills/tinysdd/assets/setup` and the
+`tinysdd` registration points to `skills/tinysdd`, preserving their relative
+supporting resources. Use the setup/product skill links to load the frontier
+router and selected phase. Codex may list nested skills reached through the
+product link; use the explicit path when another harness does not list one.
 
 The harness-independent [TinySDD setup skill](../skills/tinysdd/assets/setup/SKILL.md)
 starts from the private source checkout, loads the product and selected phase

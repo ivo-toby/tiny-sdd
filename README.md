@@ -39,11 +39,12 @@ user directory or global harness configuration. The canonical frontmatter keeps
 automatic invocation enabled by default.
 
 If a skill is unavailable, start a new session or restart the harness so it
-rescans the checkout. The checkout registers these two entrypoint names; nested
-phase, constitution and other files under `skills/tinysdd/assets/` remain
-supporting resources loaded through the selected skill or an explicit path.
-Files outside the native registration directories are not separate
-auto-discovered entries.
+rescans the checkout. The two explicit directory registrations point to
+`skills/tinysdd/assets/setup` and `skills/tinysdd`, preserving their relative
+`assets/` and `references/` resources. Use the setup/product skill links to load
+the frontier router and the relevant phase; Codex may also list nested skills
+reached through the linked product tree, while other harnesses may require the
+explicit path.
 
 ## Current feature experiment
 

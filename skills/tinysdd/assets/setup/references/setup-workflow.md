@@ -43,8 +43,10 @@ load `/tinysdd` or `$tinysdd`. If the entries are unavailable, start a new
 session or restart the harness. The links are scoped to this checkout and do
 not install skills into `TARGET_PROJECT`, a user directory or a global harness
 configuration. The linked directories preserve the relative `references/` and
-`assets/` beside each `SKILL.md`; nested `SKILL.md` files are supporting paths
-to load through the selected skill or an explicit path.
+`assets/` beside each `SKILL.md`. Use the setup/product links to load the
+frontier router and selected phase. Codex may list nested `SKILL.md` entries
+reached through the linked product tree; for a harness that does not list one,
+use its explicit path.
 
 For a harness without native repository discovery, use the direct project-local
 paths and retain the relative files beside the selected entrypoint:
