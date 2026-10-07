@@ -27,6 +27,25 @@ The [operator walkthrough](docs/operator-walkthrough.md) shows the intended
 in-agent experience; [review lessons](docs/feature-review-lessons.md) capture
 what the first feature pilot exposed.
 
+## Repository-local skills
+
+A fresh clone registers the `tinysdd-setup` and `tinysdd` product skills in both
+native repository skill locations: `.claude/skills/` for Claude and
+`.agents/skills/` for Codex. Start a Claude or Codex session from this checkout,
+then invoke `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex; load the
+matching product skill as `/tinysdd` or `$tinysdd` after setup. The registrations
+are repository-local and do not install skills into an unrelated target project,
+user directory or global harness configuration. The canonical frontmatter keeps
+automatic invocation enabled by default.
+
+If a skill is unavailable, start a new session or restart the harness so it
+rescans the checkout. The two explicit directory registrations point to
+`skills/tinysdd/assets/setup` and `skills/tinysdd`, preserving their relative
+`assets/` and `references/` resources. Use the setup/product skill links to load
+the frontier router and the relevant phase; Codex may also list nested skills
+reached through the linked product tree, while other harnesses may require the
+explicit path.
+
 ## Current feature experiment
 
 [Experiment 004](docs/podcast-titan-q3-results-2026-09-05.md) ran Qwen against

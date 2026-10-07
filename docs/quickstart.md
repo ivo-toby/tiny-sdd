@@ -52,13 +52,25 @@ uses stubs and requires no sandbox executable, network, Pi or model.
 
 ## Guided setup for an existing project
 
-For a first use, follow the harness-independent [TinySDD setup
-skill](../skills/tinysdd/assets/setup/SKILL.md). It starts from the private
-source checkout, loads the product and nested phase skills explicitly, checks
-the supported Node/Pi installation layout and sandbox, reuses `init`, config
-validation and the worker's existing Pi preflight, and provides a bounded
-synthetic readiness smoke. It keeps configured route, operator-reported
-backend, runtime-observed identity and unknown model properties separate.
+For a first use, start Claude or Codex from this checkout. A fresh clone
+registers the setup and product skills in the native `.claude/skills/` and
+`.agents/skills/` locations. Invoke `/tinysdd-setup` in Claude or
+`$tinysdd-setup` in Codex, then load `/tinysdd` or `$tinysdd`. If either skill is
+unavailable, start a new session or restart the harness. These registrations are
+scoped to this checkout; they do not install skills into the target project. The
+`tinysdd-setup` registration points to `skills/tinysdd/assets/setup` and the
+`tinysdd` registration points to `skills/tinysdd`, preserving their relative
+supporting resources. Use the setup/product skill links to load the frontier
+router and selected phase. Codex may list nested skills reached through the
+product link; use the explicit path when another harness does not list one.
+
+The harness-independent [TinySDD setup skill](../skills/tinysdd/assets/setup/SKILL.md)
+starts from the private source checkout, loads the product and selected phase
+skills explicitly, checks the supported Node/Pi installation layout and sandbox,
+reuses `init`, config validation and the worker's existing Pi preflight, and
+provides a bounded synthetic readiness smoke. It keeps configured route,
+operator-reported backend, runtime-observed identity and unknown model
+properties separate.
 
 When a project adopts concise engineering principles, load the
 [constitution skill](../skills/tinysdd/assets/constitution/SKILL.md) after
@@ -142,10 +154,13 @@ otherwise commands use the current directory. No global npm/Pi setup is changed.
 
 ## Use it inside your coding agent
 
-Load this checkout's [TinySDD skill](../skills/tinysdd/SKILL.md) into your agent
-and ask it to prepare one bounded feature. The skill covers either implementation
-inside that agent or delegation to a named worker. Product decisions and review
-remain with you or the authority you explicitly delegate to the outer agent.
+From a session started in this checkout, invoke `/tinysdd` in Claude or
+`$tinysdd` in Codex and ask it to prepare one bounded feature. The skill covers
+either implementation inside that agent or delegation to a named worker.
+Product decisions and review remain with you or the authority you explicitly
+delegate to the outer agent. If native discovery is unavailable, start a new
+session or restart the harness, then use the direct
+[TinySDD skill path](../skills/tinysdd/SKILL.md).
 
 ## Frontier preparation skills
 

@@ -26,9 +26,30 @@ The development suite is separate from user setup and, when run, uses
 
 ## 2. Load the skills explicitly
 
-The skill files are project-local prompt assets. A harness may register one
-file, a directory, or a named route, so use the mode it supports and retain
-the relative files beside the selected entrypoint:
+The skill files are project-local prompt assets. This checkout tracks relative
+directory registrations for the two entrypoints in both native repository
+locations:
+
+```text
+<checkout>/.agents/skills/tinysdd       -> ../../skills/tinysdd
+<checkout>/.agents/skills/tinysdd-setup -> ../../skills/tinysdd/assets/setup
+<checkout>/.claude/skills/tinysdd       -> ../../skills/tinysdd
+<checkout>/.claude/skills/tinysdd-setup -> ../../skills/tinysdd/assets/setup
+```
+
+Start Claude or Codex from a fresh clone of this checkout to use repository
+discovery. Invoke `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex, then
+load `/tinysdd` or `$tinysdd`. If the entries are unavailable, start a new
+session or restart the harness. The links are scoped to this checkout and do
+not install skills into `TARGET_PROJECT`, a user directory or a global harness
+configuration. The linked directories preserve the relative `references/` and
+`assets/` beside each `SKILL.md`. Use the setup/product links to load the
+frontier router and selected phase. Codex may list nested `SKILL.md` entries
+reached through the linked product tree; for a harness that does not list one,
+use its explicit path.
+
+For a harness without native repository discovery, use the direct project-local
+paths and retain the relative files beside the selected entrypoint:
 
 ```text
 <checkout>/skills/tinysdd/SKILL.md
@@ -45,9 +66,9 @@ For a fresh project, load the setup skill and then the product skill. For a
 full feature, inspect the recommended constitution files and load the
 constitution skill only when the operator adopts them; then load the router
 before selecting exactly one phase. The phase files use sibling
-`references/` and `templates/` paths. Registering only a phase file, or
-assuming that a harness discovers nested files automatically, can leave the
-agent without the contract or templates that phase requires.
+`references/` and `templates/` paths. Preserve those siblings through the
+linked product tree, and use the phase's explicit path when the harness does
+not list its nested entry.
 
 The Pi interactive consumer has its own explicit skill path under
 `assets/harness/pi/`; it is a separate consumer workflow. Do not use the setup
