@@ -17,6 +17,7 @@ import {
   runRelease,
   validateReleaseCheckout,
 } from '../scripts/release.mjs';
+import { cleanNpmEnvironment } from '../scripts/verify-package.mjs';
 
 const execFile = promisify(execFileCallback);
 const gitAdapter = createGitAdapter();
@@ -321,6 +322,33 @@ test('refreshed main checkout accepts an older triggering event SHA', async () =
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
     await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
+test('isolated verification git environment ignores inherited commit and tag signing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tinysdd-release-git-config-'));
+  const isolated = join(root, 'isolated');
+  const hostile = join(root, 'hostile.gitconfig');
+  try {
+    await mkdir(isolated, { recursive: true });
+    await writeFile(hostile, '[commit]\n\tgpgsign = true\n[tag]\n\tgpgSign = true\n[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = /definitely/missing/key\n');
+    const env = cleanNpmEnvironment({ ...process.env, HOME: join(root, 'hostile-home'), GIT_CONFIG_GLOBAL: hostile }, isolated);
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(env.GIT_CONFIG_GLOBAL, join(isolated, 'gitconfig'));
+    await writeFile(join(isolated, 'gitconfig'), '');
+    await execFile('git', ['init', '--quiet', '--initial-branch=main'], { cwd: root, env });
+    await execFile('git', ['config', 'user.name', 'TinySDD tests'], { cwd: root, env });
+    await execFile('git', ['config', 'user.email', 'tests@example.test'], { cwd: root, env });
+    await writeFile(join(root, 'README.md'), 'isolated\n');
+    await execFile('git', ['add', 'README.md'], { cwd: root, env });
+    await execFile('git', ['commit', '--quiet', '-m', 'chore: isolated fixture'], { cwd: root, env });
+    await execFile('git', ['tag', '-a', 'v1.0.0', '-m', 'isolated tag'], { cwd: root, env });
+    const commit = await execFile('git', ['cat-file', 'commit', 'HEAD'], { cwd: root, env });
+    const tag = await execFile('git', ['cat-file', 'tag', 'v1.0.0'], { cwd: root, env });
+    assert.doesNotMatch(commit.stdout, /^gpgsig /mu);
+    assert.doesNotMatch(tag.stdout, /^gpgsig /mu);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

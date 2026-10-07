@@ -62,6 +62,8 @@ export function cleanNpmEnvironment(source = process.env, root) {
   environment.npm_config_userconfig = join(root, 'user.npmrc');
   environment.npm_config_globalconfig = join(root, 'global.npmrc');
   environment.npm_config_cache = join(root, 'npm-cache');
+  environment.GIT_CONFIG_NOSYSTEM = '1';
+  environment.GIT_CONFIG_GLOBAL = join(root, 'gitconfig');
   return environment;
 }
 
