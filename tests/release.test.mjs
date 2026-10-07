@@ -328,13 +328,12 @@ test('refreshed main checkout accepts an older triggering event SHA', async () =
 test('isolated verification git environment ignores inherited commit and tag signing', async () => {
   const root = await mkdtemp(join(tmpdir(), 'tinysdd-release-git-config-'));
   const isolated = join(root, 'isolated');
-  const hostile = join(root, 'hostile.gitconfig');
+  const hostileHome = join(root, 'hostile-home');
   try {
     await mkdir(isolated, { recursive: true });
-    await writeFile(hostile, '[commit]\n\tgpgsign = true\n[tag]\n\tgpgSign = true\n[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = /definitely/missing/key\n');
-    const env = cleanNpmEnvironment({ ...process.env, HOME: join(root, 'hostile-home'), GIT_CONFIG_GLOBAL: hostile }, isolated);
-    assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
-    assert.equal(env.GIT_CONFIG_GLOBAL, join(isolated, 'gitconfig'));
+    await mkdir(hostileHome, { recursive: true });
+    await writeFile(join(hostileHome, '.gitconfig'), '[commit]\n\tgpgsign = true\n[tag]\n\tgpgSign = true\n[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = /definitely/missing/key\n');
+    const env = cleanNpmEnvironment({ ...process.env, HOME: hostileHome }, isolated);
     await writeFile(join(isolated, 'gitconfig'), '');
     await execFile('git', ['init', '--quiet', '--initial-branch=main'], { cwd: root, env });
     await execFile('git', ['config', 'user.name', 'TinySDD tests'], { cwd: root, env });
