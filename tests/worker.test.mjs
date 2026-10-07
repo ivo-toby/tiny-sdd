@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { compileContext } from "../src/context-compiler.mjs";
+import { checkRunnerAvailable } from "../src/check-runner.mjs";
 import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
 import { copyProjectTree, runWorker } from "../src/worker.mjs";
 import { buildSessionContext } from "./pi100-session-projection.mjs";
@@ -1092,6 +1093,8 @@ describe("Pi worker capture and scope", () => {
     try {
       const text = JSON.stringify({ schemaVersion: 1, dependencyMounts: [], checks: [{ id: "declared", argv: ["node", "-e", "0"], timeoutMs: 1000 }] });
       const digest = createHash("sha256").update(text).digest("hex");
+      const hostCheckRunner = checkRunnerAvailable();
+      const expectedReason = hostCheckRunner.available ? "test runtime did not provide a check runner" : hostCheckRunner.reason;
       const result = await runWorker({
         projectRoot: await realpath(project),
         packet: { ...packet(), checks: { path: ".tinysdd/tasks/checks.json", text, sha256: digest } },
@@ -1102,12 +1105,14 @@ describe("Pi worker capture and scope", () => {
       assert.deepEqual(runtimeMetadata.runtimeScope, { mode: "ordinary-create-modify", ordinaryCreateModify: true, deletions: false });
       assert.equal(runtimeMetadata.runChecks.declared, true);
       assert.equal(runtimeMetadata.runChecks.available, false);
+      assert.equal(runtimeMetadata.runChecks.reason, expectedReason);
       assert.equal(runtimeMetadata.capabilities.tools.includes("run_checks"), false);
       assert.equal(runtimeMetadata.capabilities.extensions, false);
       assert.equal(runtimeMetadata.limits.maxCheckRuns, 12);
-      assert.match(result.warnings.find((warning) => warning.startsWith("run_checks unavailable: ")), /requires Linux|test runtime did not provide/u);
+      assert.equal(result.warnings.find((warning) => warning.startsWith("run_checks unavailable: ")), `run_checks unavailable: ${expectedReason}`);
       assert.equal(result.artifactPaths.checks, undefined);
       assert.equal(result.runChecks.available, false);
+      assert.equal(result.runChecks.reason, expectedReason);
     } finally {
       await rm(project, { recursive: true, force: true });
     }

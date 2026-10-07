@@ -36,8 +36,10 @@ directory. Setup checks the supported Node/Pi/sandbox layout, downloads the
 matching archive, and installs the complete skills resource tree for Claude and
 Codex without changing the current project. It does not install prerequisites,
 inspect credentials, start services or run inference. The current repository
-has no npm publication or release tag; that release prerequisite is documented
-in [the setup guide](docs/setup.md).
+has no npm publication or release tag. The initial package/tag bootstrap and
+the later OIDC-backed automatic releases are documented in
+[the release guide](docs/releases.md); setup's versioned archive prerequisite
+is covered by [the setup guide](docs/setup.md).
 
 ## Repository-local skills
 

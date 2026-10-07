@@ -8,7 +8,9 @@ For global onboarding from a reviewed release, run `tinysdd setup` without
 `--project`. It checks Node/Pi/sandbox/model metadata, downloads the matching
 versioned archive, and installs the complete global skills resource tree for
 Codex and Claude. It does not install prerequisites, inspect credentials, start
-services or run inference; use `init` separately for project configuration.
+services or run inference; use `init` separately for project configuration. The
+initial version/tag bootstrap and the automatic OIDC-backed release workflow
+are described in [the release guide](../../../docs/releases.md).
 
 For a fresh existing project, start Claude or Codex from this checkout and use
 the native repository registration for the harness-independent setup skill:

@@ -6,6 +6,8 @@ an existing Pi installation with the exact provider/model configured. Missing
 sandbox support fails closed. The package is prepared for publication as a
 dependency-free npm CLI; the current repository has no npm publication or
 version tag, so `npm install --global tinysdd` remains an operator release step.
+See [releases](releases.md) for the reviewed bootstrap tag and the later
+automatic Trusted Publisher workflow.
 Node24 is the development/test environment.
 The fixed check client targets Pi 1.0.0, which requires Node >=22.19.0;
 its live sandbox loading and Titan smoke still require qualification.

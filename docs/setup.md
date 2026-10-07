@@ -12,7 +12,8 @@ has no npm publication or Git version tag. An operator must publish a reviewed
 version and create the matching `v<version>` tag before
 the command can download its archive. `setup` refuses an unavailable or
 version-mismatched release; it never falls back to `main` or another latest
-source.
+source. The initial tag/account bootstrap and automatic OIDC-backed releases
+are described in the [release guide](releases.md).
 
 `tinysdd setup` is global onboarding. Run it from any directory without
 `--project`; it does not require or inspect a project. Use
