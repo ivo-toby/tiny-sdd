@@ -66,9 +66,9 @@ For a fresh project, load the setup skill and then the product skill. For a
 full feature, inspect the recommended constitution files and load the
 constitution skill only when the operator adopts them; then load the router
 before selecting exactly one phase. The phase files use sibling
-`references/` and `templates/` paths. Registering only a phase file, or
-assuming that a harness discovers nested files automatically, can leave the
-agent without the contract or templates that phase requires.
+`references/` and `templates/` paths. Preserve those siblings through the
+linked product tree, and use the phase's explicit path when the harness does
+not list its nested entry.
 
 The Pi interactive consumer has its own explicit skill path under
 `assets/harness/pi/`; it is a separate consumer workflow. Do not use the setup
