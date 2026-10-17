@@ -457,6 +457,11 @@ not deep-merge partial worker fields. Inspect effective configuration before
 dispatch. Copy a suitable profile into the project and set its relative path
 on the selected worker when needed. Profiles do not include credentials.
 
+If a worker omits `limits.timeoutMs` or `limits.maxToolCalls`, the effective
+defaults are 600000 ms (10 minutes) and 100 tool calls. `limits.maxCheckRuns`
+defaults to 12; `firstWriteMs` remains opt-in. Inspect the resolved values before
+dispatch when a project uses an explicit budget.
+
 Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`, Pi in
 the same installation as the CLI's Node executable, and the exact model in Pi's
 configured models. Pi 1.0.0 requires Node >=22.19.0; its fixed check-client

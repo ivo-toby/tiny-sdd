@@ -264,6 +264,10 @@ named worker as a whole rather than deep-merging it, so inspect the effective
 result before dispatch. Preserve an existing worker and ask before changing
 its route or limits.
 
+When the worker omits limits, TinySDD applies a 600000 ms (10 minute) timeout,
+100 tool calls and 12 check runs. `firstWriteMs` remains opt-in; set explicit
+limits deliberately for a bounded readiness or implementation run.
+
 `featureIntegration` is optional setup for later feature acceptance. Add it
 only after choosing a real application entrypoint, its protected integration
 test and the typed `argv` the host should execute. It is unrelated to the
