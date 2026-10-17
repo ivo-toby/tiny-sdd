@@ -110,12 +110,23 @@ synthetic readiness smoke. It keeps configured route,
 operator-reported backend, runtime-observed identity and unknown model
 properties separate.
 
-When a project adopts concise engineering principles, load the
-[constitution skill](../skills/tinysdd/assets/constitution/SKILL.md) after
-setup. It discovers the recommended Markdown and approval files, records the
-exact approved bytes and links an adopted constitution into a change only when
-the operator chooses that reference. Existing changes remain unchanged until
-they opt in.
+Before asking which change to implement or specify, run the constitution entry
+check for the target project. Honor an explicitly selected Markdown/approval
+pair, including custom paths; otherwise inspect the recommended
+`specs/constitution.md` and `specs/constitution.approval.json` files only as
+candidates. Use `validateConstitution` or the existing read-only validator where
+available, and report valid, missing, unapproved, malformed, mismatched/stale
+or unavailable state with the exact paths. If the pair is missing, offer to
+load the [constitution skill](../skills/tinysdd/assets/constitution/SKILL.md)
+and create it together, then wait for the operator's create-or-skip choice. For
+an invalid pair, offer repair or re-ratification or an explicit skip and wait.
+Carry an explicit skip through nested skills for the same target project and
+pair without repeating the offer. A different project, reference or changed
+evidence requires a fresh check. A skip declines optional adoption only; it
+cannot erase an existing change reference or bypass its validator. A valid pair
+found at the defaults remains optional until the operator explicitly adopts it;
+creating or discovering files alone does not change existing task authority or
+adopt them into a change.
 
 The setup command does not install prerequisites, read credential stores, start
 services or run live inference by itself. Authorize those actions separately;
@@ -204,7 +215,8 @@ session or restart the harness, then use the direct
 
 For a complete feature, load the [project-local frontier router](../skills/tinysdd/assets/harness/claude/tinysdd-frontier/SKILL.md). It provides
 separate specify, research, plan and slice skills and reusable #20 templates.
-The preparation order is:
+Before phase preparation, complete the constitution entry check above. The
+preparation order is:
 
 1. Specify observable requirements, rejection and preservation behavior.
 2. Research exact cited source excerpts, callers, checks, dependency accessors

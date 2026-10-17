@@ -15,13 +15,30 @@ skill](../../../setup/SKILL.md) first. This router assumes the source
 checkout, project configuration, Pi route and required sandbox have already
 been discovered; it does not replace setup or readiness evidence.
 
-When the operator adopts project principles, load the harness-independent
-[constitution skill](../../../constitution/SKILL.md) after setup and before
-specify. It governs the optional `change.constitution` reference, exact
-approval record and amendment workflow; it does not create a new task or
-phase approval.
+Before asking which change to implement or what change to specify, run the
+constitution entry check from the product skill. Honor an explicitly selected
+Markdown/approval pair, including custom paths; otherwise inspect the
+recommended pair only as candidates. Validate it with `validateConstitution` or
+the existing read-only validator where available, and report valid, missing,
+unapproved, malformed, mismatched/stale or unavailable state with the exact
+paths and result. If it is missing, offer to load the harness-independent
+[constitution skill](../../../constitution/SKILL.md) and create it together;
+wait for the operator's create-or-skip choice. For an invalid pair, offer
+repair or re-ratification or an explicit skip and wait. Carry a session-local
+skip into every phase for the same target project and pair without repeating the
+offer. A different project, reference or changed evidence requires a fresh
+check. A skip declines optional adoption only; it cannot erase an existing
+change reference or bypass its validator. A valid pair found at the defaults
+remains optional until explicitly adopted; do not replace custom paths or adopt
+files because they exist.
 
-Follow the phase skills in order:
+When the operator chooses creation, repair, re-ratification or amendment, or
+adopts existing project principles, load the constitution skill after setup and
+before specify. It governs the optional `change.constitution` reference, exact
+approval record and amendment workflow; it does not create a new task or phase
+approval.
+
+After the constitution entry check, follow the phase skills in order:
 
 1. [specify](specify/SKILL.md) writes observable requirements and clarifications.
 2. [research](research/SKILL.md) retains exact cited excerpts, dependency facts
@@ -66,9 +83,11 @@ ask; do not patch around the contradiction.
 If a change references a constitution, carry its approved compact Markdown
 through every slice context with exact ranges covering every line, within the
 existing compiled-context budget. Include both the Markdown and approval
-record in the validator's preparation and protected paths. A new constitution
-file does not adopt itself into changes; an amendment is prepared and
-reapproved through the constitution workflow before fresh slice preparation.
+record in the validator's preparation and protected paths. Existing references
+remain gated by that validator; invalid or stale constitution evidence cannot
+bypass preparation. A new constitution file does not adopt itself into changes;
+an amendment is prepared and reapproved through the constitution workflow
+before fresh slice preparation.
 
 Use the ordinary #20 layout under one changes/<change-id>/ directory:
 

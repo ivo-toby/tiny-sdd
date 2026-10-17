@@ -59,10 +59,15 @@ the harness's explicit skill mechanism when their workflows are needed.
   setup/product links to preserve each router's `references/` and `templates/`
   siblings, and use an explicit path when the harness does not list a nested
   phase entry.
-- Inspect `specs/constitution.md` and `specs/constitution.approval.json` when
-  preparing a project. Load the harness-independent constitution skill when
-  the operator adopts those files; their presence alone does not change
-  existing change or task authority.
+- Before feature preparation, run the product skill's constitution entry check.
+  Honor an explicitly selected Markdown/approval pair, including custom paths;
+  otherwise inspect the recommended `specs/constitution.md` and
+  `specs/constitution.approval.json` paths only as candidates. Report missing,
+  unapproved, malformed, mismatched or stale state using the existing
+  validator where available. Load the constitution skill when the operator
+  chooses creation, repair, re-ratification or amendment, or adopts an existing
+  valid pair. A pair's presence does not adopt it or change existing change or
+  task authority.
 - Reuse `init`, `config show`, `config validate` and the worker's existing Pi
   preflight. Preserve existing project and global configuration; do not invent
   a setup state file or silently replace a named worker.
@@ -82,10 +87,19 @@ the harness's explicit skill mechanism when their workflows are needed.
 1. Verify the CLI with `tinysdd --version`, or use
    `node .../bin/tinysdd.mjs --version` from a source checkout, then run
    `tinysdd setup` from any directory when global links are absent.
-2. Load this skill explicitly. If preparing a feature, inspect the recommended
-   constitution files and, when adopted by the operator, load the constitution
-   skill before the product skill, frontier router and selected phase skill.
-   Preserve each router's `references/` and `templates/` siblings.
+2. Load this skill explicitly. For feature preparation, hand off to the product
+   skill and run its constitution entry check before asking which change to
+   implement or specify. If the pair is missing, offer to create it together
+   with the constitution skill and wait for an explicit create-or-skip choice. If
+   it is invalid, offer repair or re-ratification or an explicit skip and wait;
+   carry a session-local skip into nested skills for the same target project and
+   pair without repeating the offer. A different project, reference or changed
+   evidence requires a fresh check. A skip declines optional adoption only; it
+   cannot erase an existing change reference or bypass its validator. Load the
+   constitution skill when the operator chooses creation, repair,
+   re-ratification or amendment, or adopts an existing valid pair, then load the
+   frontier router and selected phase skill. Preserve each router's
+   `references/` and `templates/` siblings.
 3. Discover Node, the Pi executable in the same installation's `bin` directory,
    the required Linux or macOS sandbox, the Pi version target, and the
    non-secret project configuration. If Pi is absent, use the reference's

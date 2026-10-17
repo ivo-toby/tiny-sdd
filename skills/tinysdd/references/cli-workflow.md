@@ -114,10 +114,24 @@ live under `.tinysdd/runs/`; briefs remain user-visible project documents.
 
 For a full feature, load the [project-local frontier router](../assets/harness/claude/tinysdd-frontier/SKILL.md). It links
 separate specify, research, plan and slice skills and their #20 templates.
-When the operator adopts project principles, load the
-[constitution skill](../assets/constitution/SKILL.md) before specify. Keep
-`change.constitution` optional: a project file's presence alone does not adopt
-it into a change.
+Before asking which change to implement or specify, run the constitution entry
+check for the target project. Honor an explicitly selected Markdown/approval
+pair, including custom paths; otherwise inspect the recommended pair only as
+candidates. Use `validateConstitution` or the existing read-only validator
+where available and report valid, missing, unapproved, malformed,
+mismatched/stale or unavailable state honestly. If missing, offer to load the
+[constitution skill](../assets/constitution/SKILL.md) and create it together,
+then wait for create or skip. If invalid, offer repair or re-ratification or
+skip and wait. Carry an explicit skip through nested skills without repeating
+the offer for the same target project and pair. A different project, reference
+or changed evidence requires a fresh check. A skip declines optional adoption
+only; it cannot erase an existing change reference or bypass its validator. A
+valid pair found at the defaults remains optional until the operator adopts it.
+Keep `change.constitution` optional: a project file's presence alone does not
+adopt it into a change, and existing references remain subject to validator
+rejection when their evidence is invalid. After the entry check, load the
+constitution skill when the operator chooses creation, repair, re-ratification
+or amendment, or adopts an existing valid pair, before specify.
 Use the phases in that order:
 
 1. Specify requirements, rejection and preservation behavior. Keep proposed

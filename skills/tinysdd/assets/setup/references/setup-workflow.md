@@ -88,10 +88,23 @@ paths and retain the relative files beside the selected entrypoint:
 <checkout>/skills/tinysdd/assets/harness/claude/tinysdd-frontier/slice/SKILL.md
 ```
 
-For a fresh project, load the setup skill and then the product skill. For a
-full feature, inspect the recommended constitution files and load the
-constitution skill only when the operator adopts them; then load the router
-before selecting exactly one phase. The phase files use sibling
+For a fresh project, load the setup skill and then the product skill. Before
+asking which change to implement or specify, run the product skill's
+constitution entry check. Honor an explicitly selected pair and its custom
+paths; otherwise inspect the recommended files only as candidates. Validate the
+pair with `validateConstitution` or the existing read-only validator where
+available, and report valid, missing, unapproved, malformed, mismatched/stale
+or unavailable state honestly. If the pair is missing, offer to create it
+together with the constitution skill and wait for create or skip. If it is
+invalid, offer repair or re-ratification or skip and wait. Carry an explicit
+skip through nested skills for the same target project and pair without
+repeating the offer. A different project, reference or changed evidence
+requires a fresh check. A skip declines optional adoption only; it cannot erase
+an existing change reference or bypass its validator. A valid pair found at the
+defaults remains optional until the operator adopts it. Load the constitution
+skill when the operator chooses creation, repair, re-ratification or amendment,
+or adopts an existing valid pair, then load the router before selecting exactly
+one phase. The phase files use sibling
 `references/` and `templates/` paths. Preserve those siblings through the
 linked product tree, and use the phase's explicit path when the harness does
 not list its nested entry.
