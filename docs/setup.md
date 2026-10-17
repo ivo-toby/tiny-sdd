@@ -25,7 +25,7 @@ Node executable running the CLI, and the supported worker sandbox:
 
 | Host | Worker sandbox | Check runner |
 | --- | --- | --- |
-| Linux | `/usr/bin/bwrap` or `/bin/bwrap` | bubblewrap plus `prlimit` and, for root callers, `setpriv` |
+| Linux | `/usr/bin/bwrap` or `/bin/bwrap`, with a passing startup probe | bubblewrap plus `prlimit` and, for root callers, `setpriv` |
 | macOS | `/usr/bin/sandbox-exec` | unavailable; `run_checks` is Linux-only |
 
 Setup does not install any of these prerequisites. For Node, use the [official
@@ -50,6 +50,68 @@ documentation](https://github.com/containers/bubblewrap) and the
 describe those host tools. macOS `sandbox-exec` is an operating-system
 facility; TinySDD reports `run_checks` as unavailable there while the worker
 Seatbelt path can remain supported.
+
+### Linux bubblewrap startup failures
+
+On Linux, setup performs a bounded direct `bubblewrap` startup probe after it
+finds the executable. The probe uses the worker's user and PID namespace flags,
+core read-only system mounts, temporary `/tmp` and `/home` mounts, disposable
+`/work` and `/pi-state` bind mounts, and the trusted no-op `/usr/bin/true`. It
+does not invoke a shell, model, network request, Pi, or check runner. Setup
+passes only a small fixed environment (`HOME`, `PATH`, and `LC_ALL`) and bounds
+captured output. A passing probe establishes only that this startup shape works;
+it does not authenticate a provider, run inference, or qualify every worker or
+check-runner path.
+
+If `bwrap` exists but the probe fails, setup keeps installing the skills and
+reports the worker as not ready. The JSON result distinguishes a nonzero exit
+with stderr, a silent nonzero exit, a launch error, and a timeout. It includes a
+copyable reproduction command, for example:
+
+```sh
+/usr/bin/bwrap --die-with-parent --unshare-user --unshare-pid \
+  --dev /dev --tmpfs /tmp --tmpfs /home --dir /etc \
+  --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib \
+  --ro-bind /lib64 /lib64 --dir /work --dir /pi-state \
+  --chdir /work --setenv HOME /home --setenv PATH /usr/bin:/bin \
+  /usr/bin/true
+```
+
+Run the emitted command from the same host or container boundary as
+`tinysdd setup`, then collect only the small, non-secret diagnostics that setup
+uses when available:
+
+```sh
+cat /proc/self/uid_map
+cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true
+```
+
+These values are clues, not a diagnosis. A generic exit status or empty stderr
+does not identify the policy that blocked startup. Ask the administrator who
+controls that boundary to inspect the host's user-namespace, mount, and
+AppArmor/audit policy and rerun the reproduction command after an approved
+change. Ubuntu documents the unprivileged user-namespace restriction and
+purpose-built AppArmor profiles for applications such as bubblewrap in its
+[AppArmor guidance](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/)
+and [user-namespace restriction guide](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007).
+
+If TinySDD runs inside a container, check the outer host and the container
+runtime configuration. On an Incus host, an administrator can inspect the
+container's nesting setting with this read-only command:
+
+```sh
+incus config get <container-name> security.nesting
+```
+
+Incus's `security.nesting=true` is documented for specific nested-container
+cases such as Docker; it is not a universal fix for every VM or container.
+Review the outer host's user-namespace and AppArmor policy as well, then rerun
+the emitted probe command and `tinysdd setup` after any approved change. See
+the [Incus FAQ](https://linuxcontainers.org/incus/docs/main/faq/) and the
+[bubblewrap project documentation](https://github.com/containers/bubblewrap)
+for the relevant environment. TinySDD does not write sysctls, AppArmor rules,
+container settings, packages, or services, and it does not provide an
+unsandboxed fallback.
 
 Pi is reported separately from TinySDD model configuration. A missing Pi
 executable is a missing runtime. An installed Pi with no readable

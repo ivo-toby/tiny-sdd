@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
@@ -20,6 +21,7 @@ import {
   inspectSandbox,
   installBundle,
   downloadReleaseArchive,
+  probeBubblewrapStartup,
   runSetup,
   validateBundle,
 } from '../src/setup.mjs';
@@ -103,6 +105,42 @@ async function fakePi(home, version = PI_VERSION) {
   return { node, pi, root: nodeRoot };
 }
 
+function fakeProbe({ code = 0, signal = null, stderr = '', stdout = '', timeout = false, error = null, throwError = null } = {}) {
+  const calls = [];
+  let lastChild;
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options });
+    if (throwError) throw throwError;
+    const child = new EventEmitter();
+    lastChild = child;
+    child.killSignals = [];
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = (killSignal) => {
+      child.killed = killSignal;
+      child.killSignals.push(killSignal);
+      if (!child.closed) {
+        child.closed = true;
+        queueMicrotask(() => child.emit('close', null, killSignal));
+      }
+      return true;
+    };
+    if (!timeout) {
+      queueMicrotask(() => {
+        if (error) child.emit('error', error);
+        if (stdout) child.stdout.emit('data', stdout);
+        if (stderr) child.stderr.emit('data', stderr);
+        if (!child.closed) {
+          child.closed = true;
+          child.emit('close', code, signal);
+        }
+      });
+    }
+    return child;
+  };
+  return { spawnImpl, calls, get lastChild() { return lastChild; } };
+}
+
 test('Node floor and Pi installation checks distinguish missing, unsupported, and ready states', async () => {
   assert.equal(checkNodeVersion('22.18.9').supported, false);
   assert.equal(checkNodeVersion('22.19.0').supported, true);
@@ -153,6 +191,92 @@ test('Pi model metadata is secret-blind and distinguishes no explicit config fro
   }
 });
 
+test('bubblewrap startup probe uses the worker namespace and mount shape with a scrubbed environment', async () => {
+  const fixture = fakeProbe();
+  const opened = [];
+  const openImpl = async (path) => ({
+    read: async (buffer, offset, length) => {
+      opened.push({ path, length });
+      const value = path.endsWith('uid_map') ? '0 1000000 1000000000\n' : '1\n';
+      buffer.write(value, offset, Math.min(length, Buffer.byteLength(value)), 'utf8');
+      return { bytesRead: Math.min(length, Buffer.byteLength(value)) };
+    },
+    close: async () => {},
+  });
+  const probe = await probeBubblewrapStartup({
+    executable: '/usr/bin/bwrap',
+    spawnImpl: fixture.spawnImpl,
+    openImpl,
+  });
+  assert.equal(probe.status, 'passed');
+  assert.equal(probe.supported, true);
+  assert.deepEqual(probe.diagnostics, { uidMap: '0 1000000 1000000000', apparmorUnprivilegedUserns: '1' });
+  assert.equal(fixture.calls.length, 1);
+  const [call] = fixture.calls;
+  assert.equal(call.command, '/usr/bin/bwrap');
+  assert.equal(call.options.shell, false);
+  assert.deepEqual(call.options.env, { HOME: '/home', PATH: '/usr/bin:/bin', LC_ALL: 'C' });
+  assert.equal(opened.length, 2);
+  assert.ok(opened.every(({ length }) => length === 256));
+  assert.ok(call.args.includes('--unshare-user'));
+  assert.ok(call.args.includes('--unshare-pid'));
+  assert.ok(call.args.includes('--ro-bind'));
+  assert.ok(call.args.includes('--bind'));
+  assert.equal(call.args.at(-1), '/usr/bin/true');
+  assert.match(probe.reproduction.command, /--unshare-user.*--unshare-pid.*\/usr\/bin\/true/u);
+});
+
+test('bubblewrap startup probe distinguishes silent failures, diagnostics, timeouts, and launch errors', async () => {
+  const cases = [
+    { name: 'silent failure', fixture: fakeProbe({ code: 1 }), status: 'failed-empty-stderr', expected: /without diagnostic output/u },
+    { name: 'diagnostic failure', fixture: fakeProbe({ code: 1, stderr: 'unshare failed\n' }), status: 'failed', expected: /unshare failed/u },
+    { name: 'timeout', fixture: fakeProbe({ timeout: true }), status: 'timeout', expected: /timed out/u },
+    { name: 'launch error event', fixture: fakeProbe({ error: Object.assign(new Error('spawn denied'), { code: 'EPERM' }) }), status: 'launch-error', expected: /spawn denied/u },
+    { name: 'launch error throw', fixture: fakeProbe({ throwError: new Error('spawn unavailable') }), status: 'launch-error', expected: /spawn unavailable/u },
+  ];
+  for (const entry of cases) {
+    const probe = await probeBubblewrapStartup({ executable: '/usr/bin/bwrap', timeoutMs: 20, spawnImpl: entry.fixture.spawnImpl });
+    assert.equal(probe.status, entry.status, entry.name);
+    assert.equal(probe.supported, false, entry.name);
+    assert.match(probe.reason, entry.expected, entry.name);
+    if (entry.status === 'timeout') assert.ok(entry.fixture.lastChild.killSignals.includes('SIGTERM'));
+  }
+  const oversized = await probeBubblewrapStartup({ executable: '/usr/bin/bwrap', spawnImpl: fakeProbe({ code: 1, stderr: 'x'.repeat(10_000) }).spawnImpl });
+  assert.equal(oversized.outputTruncated, true);
+  assert.ok(Buffer.byteLength(oversized.stderr) <= 4 * 1024);
+});
+
+test('bubblewrap startup probe marks missing and non-Linux hosts without launching anything', async () => {
+  let launches = 0;
+  const spawnImpl = () => { launches += 1; throw new Error('must not launch'); };
+  const missing = await probeBubblewrapStartup({ spawnImpl });
+  assert.equal(missing.status, 'missing');
+  assert.equal(missing.attempted, false);
+  const mac = await probeBubblewrapStartup({ platform: 'darwin', executable: '/usr/bin/bwrap', spawnImpl });
+  assert.equal(mac.status, 'unsupported-platform');
+  assert.equal(mac.attempted, false);
+  assert.equal(launches, 0);
+});
+
+test('bubblewrap startup probe can spawn a deterministic executable and cleans a timed-out child', async () => {
+  const fixtureRoot = await temporary('tinysdd-bwrap-executable-');
+  const passingExecutable = join(fixtureRoot, 'passing-bwrap');
+  const hangingExecutable = join(fixtureRoot, 'hanging-bwrap');
+  try {
+    await writeFile(passingExecutable, '#!/bin/sh\nexit 0\n');
+    await writeFile(hangingExecutable, '#!/bin/sh\nwhile :; do :; done\n');
+    await chmod(passingExecutable, 0o755);
+    await chmod(hangingExecutable, 0o755);
+    const passing = await probeBubblewrapStartup({ executable: passingExecutable });
+    assert.equal(passing.status, 'passed');
+    const timedOut = await probeBubblewrapStartup({ executable: hangingExecutable, timeoutMs: 25 });
+    assert.equal(timedOut.status, 'timeout');
+    assert.equal(timedOut.timedOut, true);
+  } finally {
+    await cleanup(fixtureRoot);
+  }
+});
+
 test('sandbox inspection reports macOS inference support with Linux-only check limitation', async () => {
   const home = await temporary('tinysdd-sandbox-');
   try {
@@ -162,13 +286,18 @@ test('sandbox inspection reports macOS inference support with Linux-only check l
     await writeFile(prlimit, '');
     await chmod(bwrap, 0o755);
     await chmod(prlimit, 0o755);
-    const linux = await inspectSandbox({ platform: 'linux', privileged: false, executablePaths: { bwrap, prlimit } });
+    const passingProbe = fakeProbe();
+    const linux = await inspectSandbox({ platform: 'linux', privileged: false, executablePaths: { bwrap, prlimit }, probe: { spawnImpl: passingProbe.spawnImpl } });
     assert.equal(linux.worker.supported, true);
     assert.equal(linux.checks.available, true);
-    const missingRunnerTool = await inspectSandbox({ platform: 'linux', privileged: false, executablePaths: { bwrap, prlimit: join(home, 'missing-prlimit') } });
+    const missingRunnerTool = await inspectSandbox({ platform: 'linux', privileged: false, executablePaths: { bwrap, prlimit: join(home, 'missing-prlimit') }, probe: { spawnImpl: fakeProbe().spawnImpl } });
     assert.equal(missingRunnerTool.worker.supported, true);
     assert.equal(missingRunnerTool.checks.available, false);
     assert.match(missingRunnerTool.checks.reason, /prlimit/u);
+    const blocked = await inspectSandbox({ platform: 'linux', privileged: false, executablePaths: { bwrap, prlimit }, probe: { spawnImpl: fakeProbe({ code: 1 }).spawnImpl } });
+    assert.equal(blocked.worker.supported, false);
+    assert.equal(blocked.worker.probe.status, 'failed-empty-stderr');
+    assert.equal(blocked.checks.available, false);
     const mac = await inspectSandbox({ platform: 'darwin', executablePaths: { sandboxExec: bwrap } });
     assert.equal(mac.worker.supported, true);
     assert.equal(mac.checks.available, false);
@@ -299,11 +428,17 @@ test('runSetup installs a version-matched archive and reports metadata-only read
     assert.equal(result.checks.sandbox.worker.supported, true);
     assert.equal(result.checks.authentication.status, 'unknown');
     assert.match(result.nextSteps.join('\n'), /Linux-only|authorized worker smoke|metadata/u);
-    const linuxResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: join(home, 'missing-prlimit') } }, archiveBytes: archive(entries) });
+    const linuxResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: join(home, 'missing-prlimit') }, probe: { spawnImpl: fakeProbe().spawnImpl } }, archiveBytes: archive(entries) });
     assert.equal(linuxResult.ready, true);
     assert.equal(linuxResult.checks.sandbox.checks.available, false);
     assert.match(linuxResult.nextSteps.join('\n'), /Linux run_checks is unavailable/u);
     assert.match(linuxResult.warnings.join('\n'), /check-runner readiness/u);
+    const blockedResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: pi.pi }, probe: { spawnImpl: fakeProbe({ code: 1 }).spawnImpl } }, archiveBytes: archive(entries) });
+    assert.equal(blockedResult.ready, false);
+    assert.equal(blockedResult.checks.sandbox.worker.supported, false);
+    assert.equal(blockedResult.checks.sandbox.worker.probe.status, 'failed-empty-stderr');
+    assert.match(blockedResult.nextSteps.join('\n'), /Reproduce the bounded probe with:.*--unshare-user/u);
+    assert.match(blockedResult.warnings.join('\n'), /prerequisites are not ready/u);
   } finally {
     await cleanup(home);
     await cleanup(pi.root);

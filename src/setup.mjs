@@ -1,5 +1,6 @@
+import { spawn as childProcessSpawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, posix, relative, resolve } from 'node:path';
@@ -17,11 +18,13 @@ export const PI_VERSION = '1.0.0';
 export const NODE_MINIMUM = Object.freeze({ major: 22, minor: 19, patch: 0 });
 export const GIT_REPOSITORY = 'https://github.com/ivo-toby/tiny-sdd';
 export const SETUP_DOCS_URL = `${GIT_REPOSITORY}/blob/main/docs/setup.md`;
+export const LINUX_SANDBOX_DOCS_URL = `${SETUP_DOCS_URL}#linux-bubblewrap-startup-failures`;
 export const QUICKSTART_DOCS_URL = `${GIT_REPOSITORY}/blob/main/docs/quickstart.md`;
 export const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 export const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 export const MAX_ARCHIVE_ENTRIES = 20_000;
 export const DOWNLOAD_TIMEOUT_MS = 30_000;
+export const SANDBOX_PROBE_TIMEOUT_MS = 2_000;
 
 const REQUIRED_FILES = Object.freeze([
   'package.json',
@@ -38,6 +41,10 @@ const LINK_TARGETS = Object.freeze([
   { name: 'tinysdd-setup', target: ['skills', 'tinysdd', 'assets', 'setup'] },
 ]);
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+const MAX_SANDBOX_PROBE_OUTPUT_BYTES = 4 * 1024;
+const MAX_SANDBOX_DIAGNOSTIC_BYTES = 256;
+const REQUIRED_BUBBLEWRAP_MOUNTS = Object.freeze(['/usr', '/bin', '/lib', '/lib64']);
+const PROBE_ENV = Object.freeze({ HOME: '/home', PATH: '/usr/bin:/bin', LC_ALL: 'C' });
 
 function setupError(code, message, details = undefined) {
   return tinyError(code, message, details);
@@ -347,20 +354,328 @@ export async function inspectPiModels({ homeDir = homedir(), sourceAgentDir, sou
   };
 }
 
-export async function inspectSandbox({ platform = process.platform, privileged = typeof process.getuid === 'function' && process.getuid() === 0, executablePaths = {} } = {}) {
+function boundedProbeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/gu, ' ').trim().slice(0, MAX_SANDBOX_PROBE_OUTPUT_BYTES);
+}
+
+function shellQuote(value) {
+  return /^[A-Za-z0-9_./:-]+$/u.test(value) ? value : `'${value.replace(/'/gu, "'\\''")}'`;
+}
+
+function bubblewrapProbeArgs({ workspace, stateDir, includeHostBinds = true } = {}) {
+  const args = [
+    '--die-with-parent',
+    '--unshare-user',
+    '--unshare-pid',
+    '--dev', '/dev',
+    '--tmpfs', '/tmp',
+    '--tmpfs', '/home',
+    '--dir', '/etc',
+  ];
+  for (const mount of REQUIRED_BUBBLEWRAP_MOUNTS) args.push('--ro-bind', mount, mount);
+  if (includeHostBinds) {
+    args.push('--dir', '/work', '--bind', workspace, '/work');
+    args.push('--dir', '/pi-state', '--bind', stateDir, '/pi-state');
+  } else {
+    args.push('--dir', '/work', '--dir', '/pi-state');
+  }
+  args.push('--chdir', '/work', '--setenv', 'HOME', '/home', '--setenv', 'PATH', '/usr/bin:/bin', '/usr/bin/true');
+  return args;
+}
+
+function probeReproduction(executable) {
+  const args = bubblewrapProbeArgs({ includeHostBinds: false });
+  return {
+    args,
+    command: [executable ?? 'bwrap', ...args].map(shellQuote).join(' '),
+  };
+}
+
+async function readLinuxSandboxDiagnostics({ readFileImpl, openImpl = open } = {}) {
+  const files = [
+    ['uidMap', '/proc/self/uid_map'],
+    ['apparmorUnprivilegedUserns', '/proc/sys/kernel/apparmor_restrict_unprivileged_userns'],
+  ];
+  const diagnostics = {};
+  for (const [name, path] of files) {
+    let handle;
+    try {
+      let value;
+      if (readFileImpl) {
+        value = String(await readFileImpl(path, 'utf8')).slice(0, MAX_SANDBOX_DIAGNOSTIC_BYTES);
+      } else {
+        handle = await openImpl(path, 'r');
+        const buffer = Buffer.alloc(MAX_SANDBOX_DIAGNOSTIC_BYTES);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        value = buffer.subarray(0, bytesRead).toString('utf8');
+      }
+      value = value.trim();
+      if (value.length > 0) diagnostics[name] = value;
+    } catch {
+      // These files are optional and can be unavailable in VMs or containers.
+    } finally {
+      if (handle) await handle.close().catch(() => {});
+    }
+  }
+  return diagnostics;
+}
+
+function collectProbeOutput(stream) {
+  const chunks = [];
+  let bytes = 0;
+  let truncated = false;
+  const onData = (chunk) => {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    if (bytes < MAX_SANDBOX_PROBE_OUTPUT_BYTES) {
+      const remaining = MAX_SANDBOX_PROBE_OUTPUT_BYTES - bytes;
+      chunks.push(buffer.subarray(0, remaining));
+    }
+    bytes += buffer.length;
+    if (bytes > MAX_SANDBOX_PROBE_OUTPUT_BYTES) truncated = true;
+  };
+  try { stream?.on?.('data', onData); } catch {}
+  return () => ({
+    text: Buffer.concat(chunks).toString('utf8'),
+    truncated,
+  });
+}
+
+function waitForProbe(ms) {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
+}
+
+async function stopProbeProcess(child, closePromise) {
+  try { child.kill?.('SIGTERM'); } catch {}
+  const closed = await Promise.race([
+    closePromise.then(() => true),
+    waitForProbe(100).then(() => false),
+  ]);
+  if (!closed) {
+    try { child.kill?.('SIGKILL'); } catch {}
+    await Promise.race([closePromise, waitForProbe(100)]);
+    if (child.stdout?.destroy) child.stdout.destroy();
+    if (child.stderr?.destroy) child.stderr.destroy();
+  }
+}
+
+function probeResult({ executable, status, supported = false, attempted = true, timeoutMs, reproduction, diagnostics, reason, ...details }) {
+  return {
+    attempted,
+    supported,
+    status,
+    executable: executable ?? null,
+    timeoutMs,
+    reproduction,
+    diagnostics,
+    reason: reason ?? null,
+    ...details,
+  };
+}
+
+export async function probeBubblewrapStartup({
+  executable,
+  platform = 'linux',
+  timeoutMs = SANDBOX_PROBE_TIMEOUT_MS,
+  spawnImpl = childProcessSpawn,
+  readFileImpl,
+  openImpl = open,
+} = {}) {
+  const reproduction = probeReproduction(executable);
+  const diagnostics = platform === 'linux' ? await readLinuxSandboxDiagnostics({ readFileImpl, openImpl }) : {};
+  if (platform !== 'linux') {
+    return probeResult({
+      executable,
+      status: 'unsupported-platform',
+      attempted: false,
+      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS,
+      reproduction,
+      diagnostics,
+      reason: 'bubblewrap startup is only probed on Linux',
+    });
+  }
+  if (!executable) {
+    return probeResult({
+      executable,
+      status: 'missing',
+      attempted: false,
+      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS,
+      reproduction: null,
+      diagnostics,
+      reason: 'bubblewrap executable was not found at a supported path',
+    });
+  }
+  const effectiveTimeoutMs = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : SANDBOX_PROBE_TIMEOUT_MS;
+  let probeRoot;
+  try {
+    probeRoot = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-sandbox-probe-'));
+    const workspace = join(probeRoot, 'workspace');
+    const stateDir = join(probeRoot, 'pi-state');
+    await mkdir(workspace);
+    await mkdir(stateDir);
+    const args = bubblewrapProbeArgs({ workspace, stateDir });
+    let child;
+    try {
+      child = spawnImpl(executable, args, {
+        cwd: workspace,
+        env: { ...PROBE_ENV },
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      return probeResult({
+        executable,
+        status: 'launch-error',
+        timeoutMs: effectiveTimeoutMs,
+        reproduction,
+        diagnostics,
+        reason: `bubblewrap startup probe could not launch: ${boundedProbeError(error)}`,
+        error: boundedProbeError(error),
+      });
+    }
+    const stdout = collectProbeOutput(child.stdout);
+    const stderr = collectProbeOutput(child.stderr);
+    let spawnError = null;
+    let closed = false;
+    let resolveClose;
+    const closePromise = new Promise((resolvePromise) => { resolveClose = resolvePromise; });
+    const onError = (error) => { spawnError = error; };
+    child.once?.('error', onError);
+    child.once?.('close', (code, signal) => {
+      closed = true;
+      resolveClose({ code, signal });
+    });
+    let timeoutTimer;
+    const timeoutPromise = new Promise((resolvePromise) => {
+      timeoutTimer = setTimeout(() => resolvePromise({ timedOut: true }), effectiveTimeoutMs);
+    });
+    const errorPromise = new Promise((resolvePromise) => {
+      if (typeof child.once !== 'function') return;
+      child.once('error', (error) => resolvePromise({ error }));
+    });
+    const outcome = await Promise.race([closePromise, timeoutPromise, errorPromise]);
+    clearTimeout(timeoutTimer);
+    if (outcome?.timedOut) {
+      await stopProbeProcess(child, closePromise);
+      return probeResult({
+        executable,
+        status: 'timeout',
+        timeoutMs: effectiveTimeoutMs,
+        reproduction,
+        diagnostics,
+        reason: `bubblewrap startup probe timed out after ${effectiveTimeoutMs} ms`,
+        timedOut: true,
+        stdout: stdout().text,
+        stderr: stderr().text,
+        outputTruncated: stdout().truncated || stderr().truncated,
+      });
+    }
+    if (outcome?.error || spawnError) {
+      if (!closed) await stopProbeProcess(child, closePromise);
+      const error = outcome?.error ?? spawnError;
+      return probeResult({
+        executable,
+        status: 'launch-error',
+        timeoutMs: effectiveTimeoutMs,
+        reproduction,
+        diagnostics,
+        reason: `bubblewrap startup probe could not launch: ${boundedProbeError(error)}`,
+        error: boundedProbeError(error),
+        stdout: stdout().text,
+        stderr: stderr().text,
+        outputTruncated: stdout().truncated || stderr().truncated,
+      });
+    }
+    const output = { stdout: stdout(), stderr: stderr() };
+    if (outcome?.code === 0 && !outcome.signal) {
+      return probeResult({
+        executable,
+        status: 'passed',
+        supported: true,
+        timeoutMs: effectiveTimeoutMs,
+        reproduction,
+        diagnostics,
+        reason: null,
+        exitCode: outcome.code,
+        signal: outcome.signal,
+        stdout: output.stdout.text,
+        stderr: output.stderr.text,
+        outputTruncated: output.stdout.truncated || output.stderr.truncated,
+      });
+    }
+    const detail = output.stderr.text.replace(/\s+/gu, ' ').trim();
+    const status = detail.length > 0 ? 'failed' : 'failed-empty-stderr';
+    return probeResult({
+      executable,
+      status,
+      timeoutMs: effectiveTimeoutMs,
+      reproduction,
+      diagnostics,
+      reason: detail.length > 0
+        ? `bubblewrap startup probe exited ${outcome?.signal ? `on ${outcome.signal}` : `with code ${outcome?.code ?? 'unknown'}`}: ${detail}`
+        : `bubblewrap startup probe exited ${outcome?.signal ? `on ${outcome.signal}` : `with code ${outcome?.code ?? 'unknown'}`} without diagnostic output`,
+      exitCode: outcome?.code ?? null,
+      signal: outcome?.signal ?? null,
+      stdout: output.stdout.text,
+      stderr: output.stderr.text,
+      outputTruncated: output.stdout.truncated || output.stderr.truncated,
+    });
+  } catch (error) {
+    return probeResult({
+      executable,
+      status: 'launch-error',
+      timeoutMs: effectiveTimeoutMs,
+      reproduction,
+      diagnostics,
+      reason: `bubblewrap startup probe could not prepare its temporary fixture: ${boundedProbeError(error)}`,
+      error: boundedProbeError(error),
+    });
+  } finally {
+    if (probeRoot) await rm(probeRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function inspectSandbox({ platform = process.platform, privileged = typeof process.getuid === 'function' && process.getuid() === 0, executablePaths = {}, probe: probeOptions = {} } = {}) {
   if (platform === 'linux') {
     const bwrap = await firstExecutable(executablePaths.bwrap ? [executablePaths.bwrap] : ['/usr/bin/bwrap', '/bin/bwrap']);
     const prlimit = await firstExecutable(executablePaths.prlimit ? [executablePaths.prlimit] : ['/usr/bin/prlimit']);
     const setpriv = privileged
       ? await firstExecutable(executablePaths.setpriv ? [executablePaths.setpriv] : ['/usr/bin/setpriv', '/bin/setpriv'])
       : null;
-    const checksAvailable = Boolean(bwrap && prlimit && (!privileged || setpriv));
+    const probe = bwrap
+      ? await probeBubblewrapStartup({ ...probeOptions, platform, executable: bwrap.path })
+      : await probeBubblewrapStartup({ ...probeOptions, platform, executable: null });
+    const worker = bwrap
+      ? {
+          supported: probe.supported,
+          sandbox: 'bubblewrap',
+          executable: bwrap.path,
+          probe,
+          ...(probe.supported ? {} : { reason: probe.reason }),
+        }
+      : {
+          supported: false,
+          sandbox: 'bubblewrap',
+          executable: null,
+          probe,
+          reason: 'bubblewrap is not an executable file at /usr/bin/bwrap or /bin/bwrap',
+        };
+    const checksAvailable = Boolean(bwrap && probe.supported && prlimit && (!privileged || setpriv));
+    const checksReason = !bwrap
+      ? 'the check runner requires bubblewrap and prlimit'
+      : !probe.supported
+        ? `bubblewrap startup probe is unavailable (${probe.status})`
+        : privileged && !setpriv
+          ? 'root setup requires setpriv for the check runner'
+          : 'the check runner requires bubblewrap and prlimit';
     return {
       platform,
-      worker: bwrap ? { supported: true, sandbox: 'bubblewrap', executable: bwrap.path } : { supported: false, sandbox: 'bubblewrap', executable: null, reason: 'bubblewrap is not an executable file at /usr/bin/bwrap or /bin/bwrap' },
+      worker,
       checks: checksAvailable
         ? { available: true, runner: 'linux-bubblewrap', bwrap: bwrap.path, prlimit: prlimit.path, ...(setpriv ? { setpriv: setpriv.path } : {}) }
-        : { available: false, runner: 'linux-bubblewrap', reason: privileged && !setpriv ? 'root setup requires setpriv for the check runner' : 'the check runner requires bubblewrap and prlimit' },
+        : { available: false, runner: 'linux-bubblewrap', reason: checksReason },
     };
   }
   if (platform === 'darwin') {
@@ -373,7 +688,13 @@ export async function inspectSandbox({ platform = process.platform, privileged =
   }
   return {
     platform,
-    worker: { supported: false, sandbox: null, executable: null, reason: 'TinySDD requires Linux bubblewrap or macOS Seatbelt' },
+    worker: {
+      supported: false,
+      sandbox: null,
+      executable: null,
+      probe: { attempted: false, supported: false, status: 'unsupported-platform', reason: 'TinySDD requires Linux bubblewrap or macOS Seatbelt' },
+      reason: 'TinySDD requires Linux bubblewrap or macOS Seatbelt',
+    },
     checks: { available: false, runner: null, reason: 'unsupported host platform' },
   };
 }
@@ -781,8 +1102,19 @@ function setupInstructions(checks) {
   if (!checks.node.supported) instructions.push(`Use Node >=22.19.0 and rerun setup: ${SETUP_DOCS_URL}`);
   if (checks.pi.status === 'missing') instructions.push(`Install ${PI_PACKAGE_NAME}@${PI_VERSION} beside this Node executable, then rerun setup: ${SETUP_DOCS_URL}`);
   else if (checks.pi.status === 'unsupported-version' || checks.pi.status === 'unqualified') instructions.push(`Use the supported ${PI_PACKAGE_NAME}@${PI_VERSION} beside this Node executable: ${SETUP_DOCS_URL}`);
-  if (!checks.sandbox.worker.supported) instructions.push(`Install or enable the supported ${checks.sandbox.platform === 'linux' ? 'bubblewrap' : checks.sandbox.platform === 'darwin' ? 'macOS Seatbelt' : 'worker sandbox'}; no automatic installation is performed: ${SETUP_DOCS_URL}`);
-  if (checks.sandbox.platform === 'linux' && checks.sandbox.checks.available === false) instructions.push(`Linux run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing bubblewrap, prlimit or setpriv executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
+  if (!checks.sandbox.worker.supported) {
+    if (checks.sandbox.platform !== 'linux' || checks.sandbox.worker.probe?.status === 'missing') {
+      instructions.push(`Install or enable the supported ${checks.sandbox.platform === 'linux' ? 'bubblewrap' : checks.sandbox.platform === 'darwin' ? 'macOS Seatbelt' : 'worker sandbox'}; no automatic installation is performed: ${SETUP_DOCS_URL}`);
+    } else {
+      const probe = checks.sandbox.worker.probe;
+      instructions.push(`Bubblewrap was found, but its Linux worker startup probe is ${probe.status}; setup will not report the worker ready until this probe passes.`);
+      if (probe.reproduction?.command) instructions.push(`Reproduce the bounded probe with: ${probe.reproduction.command}`);
+      instructions.push(`Inspect user-namespace and mount policy from the same host or container, then rerun setup; do not use an unsandboxed worker fallback: ${LINUX_SANDBOX_DOCS_URL}`);
+    }
+  }
+  if (checks.sandbox.platform === 'linux' && checks.sandbox.checks.available === false && checks.sandbox.worker.probe?.supported !== false) {
+    instructions.push(`Linux run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing bubblewrap, prlimit or setpriv executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
+  }
   if (!checks.models.usable) instructions.push(`Add an explicit provider/model entry to ${checks.models.modelsPath}; credentials remain environment references and are not inspected: ${SETUP_DOCS_URL}`);
   if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin') instructions.push(`macOS worker setup is supported; run_checks is Linux-only: ${SETUP_DOCS_URL}`);
   if (instructions.length === 0) {
@@ -812,6 +1144,9 @@ export async function runSetup({ version = CLI_VERSION, homeDir = homedir(), nod
       installation,
       warnings: [
         ...(checks.ready ? [] : ['setup installed the skills, but prerequisites are not ready for a TinySDD worker']),
+        ...(checks.sandbox.platform === 'linux' && !checks.sandbox.worker.supported && checks.sandbox.worker.probe
+          ? [`Linux worker startup probe ${checks.sandbox.worker.probe.status}: ${checks.sandbox.worker.probe.reason}`]
+          : []),
         ...(checks.sandbox.checks.available ? [] : [`${checks.sandbox.platform === 'darwin' ? 'macOS' : 'Linux'} run_checks is unavailable; worker readiness does not prove check-runner readiness`]),
       ],
       nextSteps: setupInstructions(checks),

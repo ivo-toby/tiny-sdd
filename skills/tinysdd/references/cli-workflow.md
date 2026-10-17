@@ -12,6 +12,17 @@ services or run inference; use `init` separately for project configuration. The
 initial version/tag bootstrap and the automatic OIDC-backed release workflow
 are described in [the release guide](../../../docs/releases.md).
 
+On Linux, setup runs a bounded direct bubblewrap startup probe with the worker's
+user/PID namespace and core mount shape and the trusted no-op `/usr/bin/true`.
+This establishes only sandbox startup. A present-but-blocked probe makes worker
+readiness false while skills installation continues; human and `--json` output
+include the status and a reproduction command. Run it from the same host or
+container, inspect `/proc/self/uid_map` and the optional AppArmor restriction
+flag, and have the administrator responsible for that boundary review the
+policy. Do not bypass the sandbox or disable global restrictions; see the
+[Linux setup guidance](../../../docs/setup.md#linux-bubblewrap-startup-failures)
+for conditional Ubuntu/AppArmor and container/Incus advice.
+
 After `setup`, start a fresh Claude or Codex session in the intended project.
 Invoke `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex; the installed
 setup skill guides project/model setup and your first worker trial. Then load

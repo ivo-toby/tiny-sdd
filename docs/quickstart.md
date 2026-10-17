@@ -71,6 +71,20 @@ credentials, start services or run inference. Repeatable setup preserves
 identical files and refuses conflicting paths. See the [setup guide](setup.md)
 for the global layout and release prerequisite.
 
+On Linux, setup also runs a bounded direct bubblewrap startup probe using the
+worker's user/PID namespace and core mount shape with `/usr/bin/true`. A passing
+probe covers sandbox startup only; it does not prove provider authentication,
+inference, Pi startup, or full check-runner execution. If bubblewrap is present
+but startup is blocked, setup still installs the skills, marks worker readiness
+false, and reports a status-specific next step plus a reproduction command in
+human and `--json` output. Run that command from the same host or container,
+inspect `/proc/self/uid_map` and (when present)
+`/proc/sys/kernel/apparmor_restrict_unprivileged_userns`, and ask the owner of
+that boundary to review the user-namespace, mount, and AppArmor policy. Do not
+disable global restrictions or use an unsandboxed fallback; the longer
+[Linux guidance](setup.md#linux-bubblewrap-startup-failures) explains the
+conditional container/Incus and Ubuntu/AppArmor cases.
+
 After a successful global setup, start a fresh Claude or Codex session in the
 intended project so it rescans the global skill directory. Invoke
 `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex; the installed setup
