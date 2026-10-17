@@ -20,6 +20,41 @@ For a fresh project or worker runtime, load the harness-independent
 explicit skill loading, project initialization, Pi/provider/model preflight and
 the bounded readiness smoke without changing controller approval semantics.
 
+## Constitution entry check
+
+Before asking which existing change to implement or what change to specify, run
+one constitution entry check for the target project. Carry its result through
+setup, the frontier router and nested phase skills as a session-local decision
+for that same target project and currently applicable pair. A different project,
+reference or changed evidence requires a fresh check. An explicit skip is valid
+for this session and nested skills must not ask again.
+
+- Honor an operator-provided pair exactly, including a `change.constitution`
+  reference from an already-selected change. When no pair was explicitly
+  selected, inspect the recommended `specs/constitution.md` and
+  `specs/constitution.approval.json` paths only as candidates. Do not replace a
+  custom path with the defaults, erase a reference or adopt a pair because the
+  files happen to exist.
+- Validate the pair with `validateConstitution` or the existing read-only
+  validator where available. Check both bounded ordinary files, the approval
+  record shape and timestamps, and the approval record's digest against the
+  exact Markdown bytes. Report a valid pair, missing files, an unapproved or
+  malformed record, a digest mismatch/stale pair, or an unavailable check with
+  its exact paths and observed status.
+- If the pair is missing, offer to load the [constitution
+  skill](assets/constitution/SKILL.md) and create it together. Wait for the
+  operator to choose create or skip before asking about a change. For an
+  invalid or unapproved pair, offer repair or re-ratification through that same
+  skill, or an explicit skip, and wait for that choice. A skip only declines
+  optional adoption for this target and pair; it cannot erase or change an
+  already-selected change's constitution reference or bypass its validator.
+  Record the skip for this session.
+- For creation or amendment, use the constitution skill's templates, exact-byte
+  operator approval and validation rules, then recheck the pair. A valid pair
+  discovered at default paths remains optional until the operator explicitly
+  adopts it. Existing changes that already reference a pair still go through
+  the existing validator; invalid constitution evidence cannot be bypassed.
+
 ## Establish the change
 
 Read the repository instructions and the code, contracts, callers and existing
