@@ -4,10 +4,9 @@ This is an early local prototype. The controller does not require a model.
 Spawned workers require Linux with bubblewrap or macOS with `sandbox-exec`, and
 an existing Pi installation with the exact provider/model configured. Missing
 sandbox support fails closed. The package is prepared for publication as a
-dependency-free npm CLI; the current repository has no npm publication or
-version tag, so `npm install --global tinysdd` remains an operator release step.
-See [releases](releases.md) for the reviewed bootstrap tag and the later
-automatic Trusted Publisher workflow.
+dependency-free npm CLI; install its published release with
+`npm install --global tinysdd`. See [releases](releases.md) for the reviewed
+bootstrap tag and the later automatic Trusted Publisher workflow.
 Node24 is the development/test environment.
 The fixed check client targets Pi 1.0.0, which requires Node >=22.19.0;
 its live sandbox loading and Titan smoke still require qualification.
@@ -72,13 +71,18 @@ credentials, start services or run inference. Repeatable setup preserves
 identical files and refuses conflicting paths. See the [setup guide](setup.md)
 for the global layout and release prerequisite.
 
-For a first use, start Claude or Codex from this checkout. A fresh clone
-registers the setup and product skills in the native `.claude/skills/` and
-`.agents/skills/` locations. Invoke `/tinysdd-setup` in Claude or
-`$tinysdd-setup` in Codex, then load `/tinysdd` or `$tinysdd`. If either skill is
-unavailable, start a new session or restart the harness. These registrations are
-scoped to this checkout; they do not install skills into the target project. The
-`tinysdd-setup` registration points to `skills/tinysdd/assets/setup` and the
+After a successful global setup, start a fresh Claude or Codex session in the
+intended project so it rescans the global skill directory. Invoke
+`/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex; the installed setup
+skill guides project/model setup and your first worker trial. Then load
+`/tinysdd` or `$tinysdd` for the product workflow. If either skill is
+unavailable, start a new session or restart the harness.
+
+For a source checkout instead of the global installation, start Claude or Codex
+from this checkout. A fresh clone registers the setup and product skills in the
+native `.claude/skills/` and `.agents/skills/` locations. These registrations
+are scoped to this checkout; they do not install skills into the target project.
+The `tinysdd-setup` registration points to `skills/tinysdd/assets/setup` and the
 `tinysdd` registration points to `skills/tinysdd`, preserving their relative
 supporting resources. Use the setup/product skill links to load the frontier
 router and selected phase. Codex may list nested skills reached through the

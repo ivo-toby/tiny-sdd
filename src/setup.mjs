@@ -785,7 +785,12 @@ function setupInstructions(checks) {
   if (checks.sandbox.platform === 'linux' && checks.sandbox.checks.available === false) instructions.push(`Linux run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing bubblewrap, prlimit or setpriv executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
   if (!checks.models.usable) instructions.push(`Add an explicit provider/model entry to ${checks.models.modelsPath}; credentials remain environment references and are not inspected: ${SETUP_DOCS_URL}`);
   if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin') instructions.push(`macOS worker setup is supported; run_checks is Linux-only: ${SETUP_DOCS_URL}`);
-  if (instructions.length === 0) instructions.push(`Run an authorized worker smoke when you are ready; setup metadata does not prove authentication or inference: ${QUICKSTART_DOCS_URL}`);
+  if (instructions.length === 0) {
+    instructions.push(
+      'Start a fresh Claude or Codex session in the intended project, then invoke /tinysdd-setup in Claude or $tinysdd-setup in Codex.',
+      `The installed setup skill guides project/model setup and the first worker trial. Setup metadata does not prove authentication or inference: ${QUICKSTART_DOCS_URL}`,
+    );
+  }
   return instructions;
 }
 
