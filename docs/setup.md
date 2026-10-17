@@ -7,13 +7,10 @@ npm install --global tinysdd
 tinysdd setup
 ```
 
-The package metadata is prepared in this repository, but the current checkout
-has no npm publication or Git version tag. An operator must publish a reviewed
-version and create the matching `v<version>` tag before
-the command can download its archive. `setup` refuses an unavailable or
-version-mismatched release; it never falls back to `main` or another latest
-source. The initial tag/account bootstrap and automatic OIDC-backed releases
-are described in the [release guide](releases.md).
+The reviewed package is published with matching Git version tags. `setup`
+refuses an unavailable or version-mismatched release; it never falls back to
+`main` or another latest source. The initial tag/account bootstrap and
+automatic OIDC-backed releases are described in the [release guide](releases.md).
 
 `tinysdd setup` is global onboarding. Run it from any directory without
 `--project`; it does not require or inspect a project. Use
@@ -102,11 +99,12 @@ Existing agent configuration and unrelated skill entries remain untouched.
 Repeated setup with identical release bytes is a no-op. A differing existing
 managed path or link is a conflict and stops setup rather than overwriting it.
 
-After setup, start a fresh Claude or Codex session so it rescans the global
-skill directory, then invoke `/tinysdd-setup` in Claude or `$tinysdd-setup` in
-Codex. Load `/tinysdd` or `$tinysdd` for the product workflow. Claude and
-Codex are the supported global registrations; other harness discovery is not
-claimed.
+After setup, start a fresh Claude or Codex session in the intended project so
+it rescans the global skill directory. Invoke `/tinysdd-setup` in Claude or
+`$tinysdd-setup` in Codex; the installed setup skill guides project/model setup
+and your first worker trial. Load `/tinysdd` or `$tinysdd` for the product
+workflow. Claude and Codex are the supported global registrations; other
+harness discovery is not claimed.
 
 For the worker route, exact Pi provider/model configuration and the
 environment-referenced credential boundary, see

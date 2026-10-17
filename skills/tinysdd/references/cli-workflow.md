@@ -12,11 +12,15 @@ services or run inference; use `init` separately for project configuration. The
 initial version/tag bootstrap and the automatic OIDC-backed release workflow
 are described in [the release guide](../../../docs/releases.md).
 
-For a fresh existing project, start Claude or Codex from this checkout and use
-the native repository registration for the harness-independent setup skill:
-`/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex. Then load
+After `setup`, start a fresh Claude or Codex session in the intended project.
+Invoke `/tinysdd-setup` in Claude or `$tinysdd-setup` in Codex; the installed
+setup skill guides project/model setup and your first worker trial. Then load
 `/tinysdd` or `$tinysdd` for this workflow. If discovery is unavailable, start
-a new session or restart the harness. These registrations are scoped to this
+a new session or restart the harness.
+
+For a source checkout instead of the global installation, start Claude or Codex
+from this checkout and use the native repository registration for the
+harness-independent setup skill. These registrations are scoped to this
 checkout and do not install skills into the target project. The setup skill
 explains the published or source-checkout route, explicit loading of the
 product/router/phase skills, supported Node/Pi layouts, provider/model and
