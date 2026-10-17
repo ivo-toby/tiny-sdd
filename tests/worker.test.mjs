@@ -638,6 +638,30 @@ describe("Pi runtime preflight", () => {
 });
 
 describe("Pi worker capture and scope", () => {
+  test("records shared default limits on the direct worker path", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({
+        projectRoot: project,
+        packet: packet(),
+        worker: { type: "pi", provider: "fake", model: "fake/exact-model" },
+        runtime: runtime(undefined, "complete"),
+      });
+      const runtimeRecord = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.deepEqual(
+        {
+          timeoutMs: runtimeRecord.limits.timeoutMs,
+          maxToolCalls: runtimeRecord.limits.maxToolCalls,
+          maxCheckRuns: runtimeRecord.limits.maxCheckRuns,
+          firstWriteMs: runtimeRecord.limits.firstWriteMs,
+        },
+        { timeoutMs: 600000, maxToolCalls: 100, maxCheckRuns: 12, firstWriteMs: null },
+      );
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("runs a fake Pi only through the test harness and reports an allowed edit", async () => {
     const project = await makeProject();
     try {

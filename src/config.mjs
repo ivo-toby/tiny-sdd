@@ -15,9 +15,9 @@ import { validatePhasePolicy, validateTestReviewPolicy } from './phase-gates.mjs
 import { validateFeatureIntegrationConfig } from './feature-integration.mjs';
 
 export const CONFIG_SCHEMA_VERSION = 1;
-export const DEFAULT_TIMEOUT_MS = 300_000;
+export const DEFAULT_TIMEOUT_MS = 600_000;
 export const MAX_TIMEOUT_MS = 3_600_000;
-export const DEFAULT_MAX_TOOL_CALLS = 40;
+export const DEFAULT_MAX_TOOL_CALLS = 100;
 export const MAX_TOOL_CALLS = 100;
 
 const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits', 'modelMetadata'];

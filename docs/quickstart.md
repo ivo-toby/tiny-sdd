@@ -651,6 +651,10 @@ reorder sibling writes. Checks share
 the worker wall-clock deadline and are cancelled when the worker ends. Declared
 dependency mounts cannot overlap any allowed path.
 
+When `limits.timeoutMs` and `limits.maxToolCalls` are omitted, each worker gets
+600000 ms (10 minutes) and 100 tool calls. Explicit values remain bounded by
+the existing 3600000 ms and 100-call caps; `firstWriteMs` remains opt-in.
+
 `checks.jsonl` and bounded output artifacts retain host observations, including
 the digests of the candidate bytes checked. `result.workerObservedChecks` labels
 these as `source: "worker run_checks", acceptanceEvidence: false`. They are
@@ -684,7 +688,7 @@ re-running init does not replace it. A configuration with two named workers:
       "provider": "titan",
       "model": "titan/llamacpp/qwen3.6-35b-a3b-256k",
       "profile": "tinysdd-profiles/qwen36.json",
-      "limits": { "timeoutMs": 300000, "maxToolCalls": 40 }
+      "limits": { "timeoutMs": 600000, "maxToolCalls": 100 }
     },
     "gemma": {
       "type": "pi",
