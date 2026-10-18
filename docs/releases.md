@@ -61,7 +61,10 @@ the isolated installed-package smoke. The candidate's package integrity and
 commit are recorded in an annotated immutable tag. The commit and tag are
 pushed atomically after a fresh `origin/main` check. The versioned Git archive,
 package metadata, draft GitHub release asset and npm artifact are checked
-before publication.
+before publication. A successful `npm publish` is only a submission
+acknowledgement; the workflow then checks public npm metadata for the exact tag
+integrity (up to 19 checks, ten seconds apart) before it finalizes the GitHub
+release or plans another version.
 
 ## Retry and race behavior
 
@@ -76,7 +79,13 @@ artifact from that exact tag only when the draft asset is absent, then resumes
 the draft release and npm publication. It never uses a newer `main` commit or
 computes a second bump for the pending tag. An existing npm version is accepted
 only when its immutable integrity matches the tag; it is then not published
-again and missing GitHub release metadata is completed.
+again and missing GitHub release metadata is completed. After a new submission,
+the same visibility check is required during pending-release recovery; absent
+metadata leaves the tag, artifact and draft release retained for a later rerun,
+and the command reports a recoverable registry-visibility error without a second
+upload in that invocation. A conflicting integrity or registry error fails
+immediately. The check distinguishes a submitted artifact from confirmed public
+publication; it does not establish that manual staged-package approval is needed.
 Registry, archive, GitHub and authentication failures remain errors and must
 be retried or investigated.
 
