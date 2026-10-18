@@ -669,7 +669,13 @@ The repository's fixture suite is `bench/implement-slice-suite`. It runs nine
 references and deliberately wrong candidates audited outside the worker
 fixtures. The stop-and-ask case writes only `questions/report.json` with named
 missing inputs and a nonempty question, while implementation and protected
-files remain untouched.
+files remain untouched. The current corrected suite version runs Opal's worker
+check against its protected `tests/visible.test.mjs`, keeps independent
+held-out verifier material outside the fixture, and covers Cedar's valid zero
+amount in visible and independent checks. Its positive-only Cedar audit mutant
+must fail the independent zero-boundary check; the affected challenge and
+suite versions and digests therefore identify a new benchmark identity, while
+historical results stay attached to the old identity.
 
 The write-tests suite at `bench/write-tests-suite` runs five contract-test
 challenges. Its visible check evaluates the submitted bytes against the

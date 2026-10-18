@@ -33,7 +33,7 @@ const EXPECTED_VISIBLE_TESTS = new Map([
   ['harbor-playlist', 2],
   ['quartz-ledger', 3],
   ['maple-queue-fix', 1],
-  ['cedar-receipt-fix', 3],
+  ['cedar-receipt-fix', 4],
   ['ripple-batch-async', 1],
   ['ember-option-api', 2],
   ['linen-retry-lint', 2],
@@ -100,13 +100,36 @@ async function makeRuntime(root, candidateRoots, mutations = {}) {
   });
   const pi = join(root, 'fake-pi.mjs');
   await writeFile(pi, `#!/usr/bin/env node
-import { cpSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const challenge = process.env.TINYSDD_TEST_CHALLENGE;
 const roots = JSON.parse(process.env.TINYSDD_TEST_CANDIDATE_ROOTS || '{}');
 const mutation = JSON.parse(process.env.TINYSDD_TEST_MUTATIONS || '{}')[challenge];
 const candidate = roots[challenge];
+const checkChannel = process.env.TINYSDD_CHECK_CHANNEL;
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+function writeCheckRequest(toolCallId, params) {
+  const name = createHash('sha256').update(toolCallId).digest('hex') + '.json';
+  const temporary = join(checkChannel, 'requests', name + '.tmp');
+  writeFileSync(temporary, JSON.stringify(params), { flag: 'wx', mode: 0o600 });
+  renameSync(temporary, join(checkChannel, 'requests', name));
+  return name;
+}
+async function requestCheck(toolCallId, params) {
+  const name = writeCheckRequest(toolCallId, params);
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try { return JSON.parse(readFileSync(join(checkChannel, 'responses', name), 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    await delay(10);
+  }
+  throw new Error('check response timeout');
+}
+async function runCheckTool(toolCallId, params) {
+  console.log(JSON.stringify({ type: 'tool_execution_start', toolName: 'run_checks', args: params }));
+  return requestCheck(toolCallId, params);
+}
 if (candidate && mutation !== 'required-patch-absent') {
   for (const name of ['src', 'questions']) {
     const source = join(candidate, name);
@@ -120,7 +143,8 @@ if (mutation === 'protected-file') writeFileSync(join(process.cwd(), 'src', 'opt
 if (mutation === 'protected-test') writeFileSync(join(process.cwd(), 'tests', 'visible.test.mjs'), '\\n// retained protected test\\n', { flag: 'a' });
 if (mutation === 'stop-and-ask-source') writeFileSync(join(process.cwd(), 'src', 'service.mjs'), '\\n// retained protected source\\n', { flag: 'a' });
 if (process.env.TINYSDD_TEST_SPAWN_MARKER && existsSync(process.env.TINYSDD_TEST_SPAWN_MARKER)) writeFileSync(process.env.TINYSDD_TEST_SPAWN_MARKER, 'spawned\\n');
-console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'done' }] } }));
+const checkResult = challenge === 'opal-missing-inputs' ? await runCheckTool('opal-visible-check', {}) : null;
+console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: JSON.stringify({ checkResult }) }] } }));
 `);
   await chmod(pi, 0o755);
   return {
@@ -132,14 +156,35 @@ console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', 
       TINYSDD_TEST_CANDIDATE_ROOTS: JSON.stringify(candidateRoots),
       TINYSDD_TEST_MUTATIONS: JSON.stringify(mutations),
     },
-    checkRunner: async () => ({
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      durationMs: 1,
-      output: { text: '', tail: '', truncated: false },
-      sandbox: { runner: 'test-check-runner', network: 'none' },
-    }),
+    checkRunner: async ({ check, candidateDir }) => {
+      try {
+        const output = await execFileAsync(process.execPath, check.argv.slice(1), {
+          cwd: candidateDir,
+          env: childEnvironment({ NODE_OPTIONS: '' }),
+          maxBuffer: 1024 * 1024,
+          timeout: check.timeoutMs,
+        });
+        const text = `${output.stdout}${output.stderr}`;
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          durationMs: 1,
+          output: { text, tail: text, totalBytes: Buffer.byteLength(text), truncated: false },
+          sandbox: { runner: 'test-check-runner', network: 'none' },
+        };
+      } catch (error) {
+        const text = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+        return {
+          exitCode: typeof error.code === 'number' ? error.code : 1,
+          signal: error.signal ?? null,
+          timedOut: error.code === 'ETIMEDOUT' || error.killed === true,
+          durationMs: 1,
+          output: { text, tail: text, totalBytes: Buffer.byteLength(text), truncated: false },
+          sandbox: { runner: 'test-check-runner', network: 'none' },
+        };
+      }
+    },
   };
 }
 
@@ -290,6 +335,8 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
           missingInputs: ['sourceEndpoint', 'timeoutMs'],
           question: 'Please provide sourceEndpoint and timeoutMs.',
         });
+        const workerResult = JSON.parse(await readFile(join(reference.outputRoot, value.artifacts.result.path), 'utf8'));
+        assert.deepEqual(workerResult.workerObservedChecks.runs.map(({ checkId, outcome }) => ({ checkId, outcome })), [{ checkId: 'visible-report', outcome: 'passed' }]);
       }
       for (const artifactName of ['prompt', 'workspace-before', 'workspace-after', 'candidate', 'candidate-files']) {
         const text = await readFile(join(reference.outputRoot, value.artifacts[artifactName].path), 'utf8');
@@ -322,6 +369,12 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
       assert.equal(opalCase.hardGates.protectedFileEdit, false);
       assert.equal(opalCase.hardGates.protectedTestEdit, false);
       assert.equal(opalCase.hardGates.requiredPatchAbsent, false);
+      if (wrongIndex === 1) {
+        const cedarCase = cases.find(({ value }) => value.challenge.id === 'cedar-receipt-fix').value;
+        assert.equal(cedarCase.verifier.heldOut[0].checkId, 'held-out-format');
+        assert.equal(cedarCase.verifier.heldOut[0].status, 'failed');
+        assert.equal(cedarCase.failure.category, 'verifier_failed');
+      }
     }
   } finally {
     await Promise.all(wrongRuns.map((wrong) => rm(wrong.root, { recursive: true, force: true })));

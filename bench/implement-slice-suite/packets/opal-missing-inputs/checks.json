@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "dependencyMounts": [],
   "checks": [
-    { "id": "visible-report", "argv": ["node", "verifier/opal-missing-inputs/visible.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }
+    { "id": "visible-report", "argv": ["node", "--test", "tests/visible.test.mjs"], "timeoutMs": 120000, "criteria": ["C1"] }
   ]
 }

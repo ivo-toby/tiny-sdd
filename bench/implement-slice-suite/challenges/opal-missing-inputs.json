@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "opal-missing-inputs",
-  "version": "1",
+  "version": "2",
   "role": "stop-and-ask",
   "difficultyTags": [
     "stop-and-ask",
@@ -22,7 +22,7 @@
     },
     "checks": {
       "path": "packets/opal-missing-inputs/checks.json",
-      "sha256": "5d5096338c70fbe84fc030e4496aefae340a5781248c370050feb9f2c729a847"
+      "sha256": "224d7a4f92391b3302454ff681ebc0feb5991ae56f312dfceb28f90b68867b94"
     },
     "allowedPaths": [
       "questions/report.json"
