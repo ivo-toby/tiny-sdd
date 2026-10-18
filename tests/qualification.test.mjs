@@ -7,6 +7,7 @@ import {
   DEFAULT_QUALIFICATION_TARGET,
   QUALIFICATION_CONFIDENCE,
   QUALIFICATION_Z,
+  summarizeConfigurationCauses,
   aggregateBenchmarkCases,
   aggregateBenchmarkObservations,
   buildQualificationRecord,
@@ -381,4 +382,21 @@ test('refuses roster merges when verifier challenge definitions differ', () => {
   const first = rosteredRecord(digest('2'));
   const second = rosteredRecord(digest('6'));
   assert.throws(() => mergeQualificationRecords(first, second), { code: 'QUALIFICATION_INVALID' });
+});
+
+test('configuration-limited attribution retains failures, denominator and existing success semantics', () => {
+  const cases = [
+    caseResult({ attemptId: 'limited-fail', outcome: 'response_token_limit', status: 'failed' }),
+    caseResult({ attemptId: 'limited-pass', outcome: 'response_token_limit' }),
+    caseResult({ attemptId: 'ordinary-fail', outcome: 'failed', status: 'failed' }),
+  ];
+  const before = buildQualificationRecord({ cases });
+  const causes = summarizeConfigurationCauses(cases);
+  assert.equal(causes.responseTokenLimitCount, 2);
+  assert.equal(causes.attempts[0].attribution, 'configuration-limited');
+  assert.equal(causes.attempts[0].passed, false);
+  assert.equal(causes.attempts[1].passed, true);
+  assert.equal(before.roles['implement-slice'].n, 3);
+  assert.equal(before.roles['implement-slice'].passes, 1);
+  assert.deepEqual(buildQualificationRecord({ cases }), before);
 });

@@ -33,6 +33,7 @@ import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirect
 import { appendUsageRecord, importUsageRecords, USAGE_LEDGER_MAX_BYTES } from '../src/usage.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
+import { inspectEffectiveModelSettings } from '../src/effective-model-settings.mjs';
 import { preflightPiWorker } from '../src/pi-environment.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
 import { assessQualification, resolveBenchmarkSuite as resolveCurrentBenchmarkSuite } from '../src/qualification-dispatch.mjs';
@@ -47,7 +48,7 @@ import {
   readQualificationRecord,
   replaceQualificationRecord,
 } from '../src/qualification-store.mjs';
-import { buildQualificationRecord, rescoreQualificationRecord } from '../src/qualification.mjs';
+import { buildQualificationRecord, rescoreQualificationRecord, summarizeConfigurationCauses } from '../src/qualification.mjs';
 import { CLI_VERSION, runSetup } from '../src/setup.mjs';
 
 import { analyzeInstructionEvidence, createInstructionProfile, planInstructionExperiment, readInstructionJson, readInstructionReport, runInstructionExperiment } from '../src/instruction-experiment-store.mjs';
@@ -75,7 +76,8 @@ Usage:
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
   tinysdd [--json] [--project PATH] bench instructions analyze|plan|profile --request PATH --out PATH [--worker NAME]
   tinysdd [--json] [--project PATH] bench instructions run|report --plan PATH [--worker NAME] [--out PATH]
-  tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K]
+  tinysdd [--json] [--project PATH] worker settings --worker NAME --entry-kind real|synthetic [--observed-reasoning-tokens N]
+  tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
   tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
   tinysdd [--json] [--project PATH] bench rescore --record PATH [--target ROLE=NUMBER,...]
   tinysdd [--json] [--project PATH] bench qualification show --record PATH [--suite PATH] [--worker NAME]
@@ -220,8 +222,9 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'worker') {
-    if (!['run', 'start', 'status', 'stop'].includes(subcommand)) throw cliError('worker requires run, start, status, or stop');
+    if (!['run', 'start', 'status', 'stop', 'settings'].includes(subcommand)) throw cliError('worker requires run, start, status, stop, or settings');
     const allowedBySubcommand = {
+      settings: new Map([['worker', 'value'], ['entry-kind', 'value'], ['observed-reasoning-tokens', 'value']]),
       status: new Map([['id', 'value']]),
       stop: new Map([['id', 'value'], ['wait-ms', 'value']]),
     };
@@ -258,7 +261,7 @@ function parseCommand(args) {
     }
     if (!['run', 'qualify', 'rescore'].includes(subcommand)) throw cliError('bench requires run, qualify, or rescore');
     const allowedBySubcommand = {
-      run: new Map([['worker', 'value'], ['suite', 'value'], ['repeat', 'value']]),
+      run: new Map([['worker', 'value'], ['suite', 'value'], ['repeat', 'value'], ['entry-kind', 'value'], ['confirm-settings', 'value'], ['ack-finding', 'list'], ['observed-reasoning-tokens', 'value']]),
       qualify: new Map([['results', 'list'], ['suite', 'value'], ['worker', 'value'], ['target', 'list']]),
       rescore: new Map([['record', 'value'], ['target', 'list']]),
     };
@@ -503,27 +506,43 @@ async function instructionExperimentCommand(projectRoot, action, options) {
   return runInstructionExperiment({ ...common, worker: resolved.worker });
 }
 
+function observedReasoningTokens(options) {
+  const raw = options['observed-reasoning-tokens'];
+  if (raw === undefined) return undefined;
+  if (!/^\d+$/u.test(raw) || !Number.isSafeInteger(Number(raw))) throw cliError('--observed-reasoning-tokens must be a non-negative integer');
+  return Number(raw);
+}
+
+async function workerSettingsCommand(project, options) {
+  const resolved = await configShow(project, { worker: options.worker });
+  if (!resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
+  return inspectEffectiveModelSettings({ worker: resolved.worker, profile: resolved.profile, entryKind: options['entry-kind'], observedReasoningTokens: observedReasoningTokens(options) });
+}
+
 async function runBenchmarkCommand(project, options) {
   if (!options.worker) throw cliError('--worker requires a value');
   const repeat = parseBenchmarkRepeat(options.repeat);
   const resolved = await configShow(project, { worker: options.worker });
   if (!resolved.workerName || !resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
   const suite = await resolveBenchmarkSuite(resolved.projectRoot, options.suite ?? resolved.config?.qualification?.suite ?? 'bench');
+  const settingsConfirmation = { entryKind: options['entry-kind'], settingsDigest: options['confirm-settings'], acknowledgedFindings: options['ack-finding'] ?? [], observedReasoningTokens: observedReasoningTokens(options) };
   process.stderr.write(`Benchmark ${suite.relative} started with worker ${resolved.workerName}.\n`);
   const result = await runBenchmark({
     projectRoot: resolved.projectRoot,
     suiteRoot: suite.root,
     suitePath: suite.path,
     repeat,
+    settingsConfirmation,
     worker: resolved.worker,
     workerName: resolved.workerName,
     profile: resolved.profile,
     model: resolved.worker.modelMetadata,
     maxCheckRuns: resolved.worker.limits.maxCheckRuns,
   });
-  const warnings = result.config.checkRunner.available
-    ? []
-    : [`run_checks unavailable: ${result.config.checkRunner.reason}`];
+  const warnings = [
+    ...(result.config.checkRunner.available ? [] : [`run_checks unavailable: ${result.config.checkRunner.reason}`]),
+    ...(result.effectiveModelSettings?.findings ?? []).map((finding) => `${finding.code}: ${finding.message}`),
+  ];
   process.stderr.write(`Benchmark complete: ${result.invocation.caseResults.length} attempt(s); results ${result.directory}\n`);
   return warnings.length === 0 ? result : { ...result, warnings };
 }
@@ -602,6 +621,7 @@ async function qualifyBenchmarkCommand(project, options) {
     applicability,
     duplicateInputs: evidence.duplicateInputs,
     registeredInputs: evidence.registeredInputs,
+    configurationCauses: summarizeConfigurationCauses(evidence.observations),
   };
 }
 
@@ -812,6 +832,9 @@ function renderQualification(data) {
     process.stdout.write(`passesToQualify: ${qualificationBoundLabel(score.passesToQualify, score.passesToQualifyReason)} (best-case bound, not a prediction)\n`);
     process.stdout.write(`failuresToRuleOut: ${qualificationBoundLabel(score.failuresToRuleOut, score.failuresToRuleOutReason)} (best-case bound, not a prediction)\n`);
   }
+  if (data.configurationCauses?.responseTokenLimitCount > 0) {
+    process.stdout.write(`Configuration-limited: ${data.configurationCauses.responseTokenLimitCount} response_token_limit attempt(s). ${data.configurationCauses.interpretation}\n`);
+  }
   if (data.applicability) process.stdout.write(`Applicability: ${data.applicability.status}\n`);
   if (data.path) process.stdout.write(`Record: ${data.path}\n`);
   for (const duplicate of data.duplicateInputs ?? []) process.stdout.write(`Duplicate input ignored: ${duplicate}\n`);
@@ -890,6 +913,7 @@ async function run(argv) {
     by: parsed.values.by,
     reason: parsed.values.reason,
   });
+  else if (parsed.command === 'worker' && parsed.subcommand === 'settings') data = await workerSettingsCommand(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'run') data = await runWorkerCommand(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'start') data = await startWorker(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
@@ -1167,6 +1191,7 @@ function writeResult(result, json) {
     } else if (data?.invocation?.invocationId && data?.summary?.groups) {
       const scheduled = data.summary.groups.reduce((total, group) => total + group.scheduled, 0);
       process.stdout.write(`Benchmark ${data.invocation.invocationId}: ${scheduled} attempt(s) recorded.\nResults: ${data.directory}\n`);
+      if (data.effectiveModelSettings) process.stdout.write(`Model entry: ${data.effectiveModelSettings.settings.entryKind} (operator-declared); confirmed settings ${data.effectiveModelSettings.settingsDigest}\n`);
     } else if (data?.configPath) {
       process.stdout.write(`${data.configCreated ? 'Created' : 'Preserved'} config: ${data.configPath}\n`);
     } else {
