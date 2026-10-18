@@ -610,8 +610,45 @@ The complete packet contract is in
 Run an operator-selected benchmark suite with the serial CLI lane:
 
 ```sh
-tinysdd bench run --worker qwen --suite bench --repeat 2 --json
+tinysdd worker settings --worker qwen --entry-kind real --json
+# After the operator reviews the report and confirms its settingsDigest:
+tinysdd bench run --worker qwen --suite bench --repeat 2 --entry-kind real \
+  --confirm-settings CONFIRMED_SETTINGS_DIGEST --json
 ```
+
+Before live readiness or benchmarking, show the effective settings and obtain
+operator confirmation. Use the operator's real Pi entry; the setup fixture's
+`reasoning: false` and `maxTokens: 1024` are offline placeholders. `worker
+settings` reports the entry kind (operator-declared), model-file path,
+reasoning/map, requested/default/effective thinking, cap and sources, and context
+window without credentials. `THINKING_CONTROL_MISMATCH` needs explicit operator
+acknowledgement via `--ack-finding THINKING_CONTROL_MISMATCH` on `bench run`.
+A missing/stale settings digest or missing required acknowledgement stops that
+CLI benchmark before inference. Ordinary worker commands retain their current
+contract; setup enforces confirmation through its skill workflow. Do not
+script automatic digest confirmation. Reinspect and reconfirm settings changes.
+
+The report separates `requestedThinking` from Pi's `effectiveThinking` after
+level clamping. In Pi 1.0.0, `thinkingLevelMap.off: null` can clamp `off` to
+`minimal`, enabling reasoning; this requires the named mismatch acknowledgement.
+OpenAI-format `off` needs both a string off mapping and reasoning-effort support
+to send a value. Unsupported non-off requests still fail preflight rather than
+silently accepting a clamped level. `sent` predicts request construction only,
+not server compliance. The basis names checked Pi 1.0.0 clamping/OpenAI/DeepSeek
+rules; other format predictions are legacy and auto-detection stays unverified.
+`maxTokens` is the configured response ceiling. Pi can lower the cap for an
+individual request based on remaining context; this report is not an observation
+of the wire request or the server response.
+
+Optional `--observed-reasoning-tokens N` on inspection/benchmark reports a
+configuration advisory when that operator-supplied count meets/exceeds the
+response cap; there is no universal low-token refusal threshold. `bench qualify`
+reports `response_token_limit` attempts as configuration-limited while retaining
+their actual checks, failures, denominator and qualification result. These stops
+alone do not establish model capability. Known `worker.modelMetadata.quantization`
+and `.server.id`/`.version` can be supplied in config; profile digests are derived
+from configured profiles. Absent metadata stays `UNKNOWN`. See the
+[setup reference](../assets/setup/references/setup-workflow.md) for the confirmation and metadata procedure.
 
 `--suite` accepts a project-relative suite directory or its `suite.json`; when
 omitted it defaults to `bench`. Runnable roles are `implement-slice`,
