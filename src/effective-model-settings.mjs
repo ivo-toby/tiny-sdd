@@ -19,6 +19,7 @@ export async function inspectEffectiveModelSettings({ worker, profile, sourceAge
     routeDigest: sha256(preflight.endpointFingerprint ?? 'UNKNOWN'),
     entryKindSource: 'operator-declared',
     requestedThinking: preflight.thinking.requested,
+    effectiveThinking: preflight.thinking.effective,
     effectiveThinkingControl: preflight.thinking.control,
     effectiveThinkingReason: preflight.thinking.reason,
     maxTokens: preflight.maxTokens.value,
@@ -28,11 +29,12 @@ export async function inspectEffectiveModelSettings({ worker, profile, sourceAge
     basis: preflight.basis,
   };
   const findings = [];
-  if (['not-sent', 'unverified'].includes(preflight.thinking.control)) {
+  if (['not-sent', 'unverified'].includes(preflight.thinking.control)
+    || (preflight.thinking.effective !== 'UNKNOWN' && preflight.thinking.requested !== preflight.thinking.effective)) {
     findings.push({
       code: THINKING_CONTROL_MISMATCH,
       acknowledgementRequired: true,
-      message: `Requested thinking ${preflight.thinking.requested}: ${preflight.thinking.reason}. The server default may apply; off does not prove reasoning is disabled.`,
+      message: `Requested thinking ${preflight.thinking.requested}, effective ${preflight.thinking.effective}: ${preflight.thinking.reason}. The server default may apply; off does not prove reasoning is disabled.`,
     });
   }
   if (entryKind === 'synthetic') {

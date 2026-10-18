@@ -23,7 +23,7 @@ export const MAX_TOOL_LIMIT = MAX_TOOL_CALLS;
 // Pi 0.84.4 documents these model defaults (docs/models.md).  A model entry
 // without maxTokens is silently capped at PI_DEFAULT_MAX_TOKENS per response.
 export const PI_DEFAULT_MAX_TOKENS = 16_384;
-// pi-ai 0.84.4 DEFAULT_THINKING_BUDGETS and MIN_ANSWER_TOKENS
+// pi-ai 1.0.0 DEFAULT_THINKING_BUDGETS and MIN_ANSWER_TOKENS
 // (dist/api/simple-options.js): the per-level reasoning cap Pi sends when a
 // thinkingTokenBudgetField is configured, clamped to leave answer room.
 export const PI_DEFAULT_THINKING_BUDGETS = Object.freeze({ minimal: 1024, low: 2048, medium: 8192, high: 16384 });
@@ -332,11 +332,24 @@ function validateWorker(worker) {
   return { timeoutMs, maxToolCalls, firstWriteMs, maxCheckRuns };
 }
 
-// Thinking-control rules for Pi's openai-completions requests, read from
-// @earendil-works/pi-ai 0.84.4 (dist/api/openai-completions.js).  Every branch
-// there requires model.reasoning === true; without it no thinking parameter is
-// sent in either direction.  Re-check these sets when the Pi version changes.
-export const PREFLIGHT_BASIS = "pi-ai 0.84.4 openai-completions thinking rules";
+// Pi clamps the requested level before constructing OpenAI-compatible requests.
+// Provider auto-detection and server behavior remain outside this prediction.
+export const PREFLIGHT_BASIS = "pi-ai 1.0.0 models.js clampThinkingLevel and api/openai-completions.js OpenAI/DeepSeek control; other formats legacy predictions; server behavior unverified";
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function clampThinkingLevel(model, requested) {
+  const available = model.reasoning === true
+    ? THINKING_LEVELS.filter((level) => model.thinkingLevelMap?.[level] !== null
+      && (!["xhigh", "max"].includes(level) || model.thinkingLevelMap?.[level] !== undefined))
+    : ["off"];
+  if (available.includes(requested)) return requested;
+  const index = THINKING_LEVELS.indexOf(requested);
+  if (index === -1) return available[0] ?? "off";
+  return THINKING_LEVELS.slice(index).find((level) => available.includes(level))
+    ?? THINKING_LEVELS.slice(0, index).reverse().find((level) => available.includes(level))
+    ?? "off";
+}
+
 const OFF_ALWAYS_SENT = new Set(["qwen", "qwen-chat-template", "zai", "together"]);
 const OFF_SENT_UNLESS_MAP_NULL = new Set(["deepseek", "openrouter", "string-thinking"]);
 const OFF_SENT_IF_MAP_STRING = new Set(["openai", "baseten"]);
@@ -384,6 +397,7 @@ function thinkingControl({ api, thinking, reasoning, compat, thinkingLevelMap })
       : { ...base, control: "sent", reason: `thinkingFormat ${format} sends an explicit off value` };
   }
   if (OFF_SENT_IF_MAP_STRING.has(format)) {
+    if (format === "openai" && compat?.supportsReasoningEffort === false) return { ...base, control: "not-sent", reason: "thinkingFormat openai with supportsReasoningEffort false sends no reasoning_effort" };
     return typeof thinkingLevelMap?.off === "string"
       ? { ...base, control: "sent", reason: `thinkingFormat ${format} sends thinkingLevelMap.off` }
       : { ...base, control: "not-sent", reason: `thinkingFormat ${format} sends an off value only when thinkingLevelMap.off is a string` };
@@ -406,9 +420,20 @@ function thinkingControl({ api, thinking, reasoning, compat, thinkingLevelMap })
 export function piRuntimePreflight({ api, model, thinking = "off", thinkingBudgets = null, compaction: compactionProfile = undefined }) {
   const errors = [];
   const warnings = [];
-  const control = thinkingControl({ api, thinking, reasoning: model.reasoning, compat: model.compat, thinkingLevelMap: model.thinkingLevelMap });
+  const effectiveThinking = api === "openai-completions" ? clampThinkingLevel(model, thinking) : thinking;
+  const prediction = thinkingControl({ api, thinking: effectiveThinking, reasoning: model.reasoning, compat: model.compat, thinkingLevelMap: model.thinkingLevelMap });
+  const clamped = effectiveThinking !== thinking;
+  const control = {
+    ...prediction,
+    requested: thinking,
+    effective: api === "openai-completions" ? effectiveThinking : "UNKNOWN",
+    reason: clamped ? `Pi clamps thinking ${thinking} to ${effectiveThinking}; ${prediction.reason}` : prediction.reason,
+  };
+  if (clamped) warnings.push(`Pi clamps thinking ${thinking} to ${effectiveThinking}; the requested level is not the effective level`);
   if (thinking !== "off" && (control.control === "not-sent")) {
     errors.push(`thinking "${thinking}" was requested but cannot be sent: ${control.reason}`);
+  } else if (thinking !== "off" && clamped) {
+    errors.push(`thinking "${thinking}" was requested but cannot be sent unchanged: ${control.reason}`);
   } else if (thinking !== "off" && control.control === "unverified") {
     warnings.push(`thinking "${thinking}" may not reach the server: ${control.reason}`);
   } else if (thinking === "off" && ["not-sent", "unverified"].includes(control.control)) {
@@ -420,16 +445,17 @@ export function piRuntimePreflight({ api, model, thinking = "off", thinkingBudge
     warnings.push(`model entry has no maxTokens; Pi caps every response at its default ${PI_DEFAULT_MAX_TOKENS} output tokens, reasoning included`);
   }
   const budgetField = model.compat?.thinkingTokenBudgetField ?? (model.compat?.supportsThinkingTokenBudget ? "thinking_token_budget" : null);
-  if (thinking !== "off" && control.control === "sent" && api === "openai-completions" && !budgetField) {
+  if (effectiveThinking !== "off" && control.control === "sent" && api === "openai-completions" && !budgetField) {
     warnings.push(`reasoning and the answer share one ${maxTokens.value}-token response cap and no compat.thinkingTokenBudgetField is set, so a single thinking phase can consume the whole response`);
   }
   if (thinkingBudgets && !budgetField && api === "openai-completions") {
     warnings.push("thinkingBudgets are configured but no compat.thinkingTokenBudgetField is set, so Pi will not send them");
   }
   let thinkingBudget = null;
-  if (thinking !== "off" && control.control === "sent" && api === "openai-completions" && budgetField) {
-    const configured = thinkingBudgets?.[thinking];
-    const levelBudget = configured ?? PI_DEFAULT_THINKING_BUDGETS[thinking];
+  if (effectiveThinking !== "off" && control.control === "sent" && api === "openai-completions" && budgetField) {
+    const budgetLevel = ["xhigh", "max"].includes(effectiveThinking) ? "high" : effectiveThinking;
+    const configured = thinkingBudgets?.[budgetLevel];
+    const levelBudget = configured ?? PI_DEFAULT_THINKING_BUDGETS[budgetLevel];
     const tokens = Math.min(levelBudget, Math.max(0, maxTokens.value - PI_MIN_ANSWER_TOKENS));
     // Pi omits the field when the clamped budget is zero.
     thinkingBudget = { field: budgetField, tokens, source: configured === undefined ? "pi-default" : "profile", clamped: tokens < levelBudget, sent: tokens > 0 };
@@ -494,7 +520,7 @@ export async function preflightPiWorker({ worker, profile = null, sourceAgentDir
       reasoning: typeof resolved.model.reasoning === "boolean" ? resolved.model.reasoning : "UNKNOWN",
       reasoningSource: profile?.runtime?.reasoning !== undefined ? "profile" : typeof resolved.model.reasoning === "boolean" ? "model" : "UNKNOWN",
       thinkingLevelMap: Object.fromEntries(
-        ["off", "minimal", "low", "medium", "high", "xhigh"]
+        THINKING_LEVELS
           .filter((level) => Object.hasOwn(resolved.model.thinkingLevelMap ?? {}, level))
           .map((level) => [level, typeof resolved.model.thinkingLevelMap[level] === "string" || resolved.model.thinkingLevelMap[level] === null ? resolved.model.thinkingLevelMap[level] : "UNKNOWN"]),
       ),

@@ -628,6 +628,18 @@ CLI benchmark before inference. Ordinary worker commands retain their current
 contract; setup enforces confirmation through its skill workflow. Do not
 script automatic digest confirmation. Reinspect and reconfirm settings changes.
 
+The report separates `requestedThinking` from Pi's `effectiveThinking` after
+level clamping. In Pi 1.0.0, `thinkingLevelMap.off: null` can clamp `off` to
+`minimal`, enabling reasoning; this requires the named mismatch acknowledgement.
+OpenAI-format `off` needs both a string off mapping and reasoning-effort support
+to send a value. Unsupported non-off requests still fail preflight rather than
+silently accepting a clamped level. `sent` predicts request construction only,
+not server compliance. The basis names checked Pi 1.0.0 clamping/OpenAI/DeepSeek
+rules; other format predictions are legacy and auto-detection stays unverified.
+`maxTokens` is the configured response ceiling. Pi can lower the cap for an
+individual request based on remaining context; this report is not an observation
+of the wire request or the server response.
+
 Optional `--observed-reasoning-tokens N` on inspection/benchmark reports a
 configuration advisory when that operator-supplied count meets/exceeds the
 response cap; there is no universal low-token refusal threshold. `bench qualify`

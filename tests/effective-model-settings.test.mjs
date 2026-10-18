@@ -56,3 +56,44 @@ test('unconfigured limits remain explicit defaults and low caps alone never crea
   await assert.rejects(inspectEffectiveModelSettings({ ...input, entryKind: undefined }), { code: 'MODEL_SETTINGS_INVALID' });
   await assert.rejects(inspectEffectiveModelSettings({ ...input, observedReasoningTokens: -1 }), { code: 'MODEL_SETTINGS_INVALID' });
 });
+
+test('Pi 1.0.0 OpenAI off mapping sends no effort when compatibility disables it', async (t) => {
+  const input = await fixture(t, { reasoning: true, maxTokens: 16384, thinkingLevelMap: { off: 'none' }, compat: { thinkingFormat: 'openai', supportsReasoningEffort: false } });
+  const report = await inspectEffectiveModelSettings(input);
+  assert.equal(report.settings.effectiveThinkingControl, 'not-sent');
+  assert.equal(report.settings.requestedThinking, 'off');
+  assert.equal(report.settings.effectiveThinking, 'off');
+  assert.equal(report.findings[0].code, 'THINKING_CONTROL_MISMATCH');
+});
+
+test('Pi 1.0.0 clamps unsupported off before classifying DeepSeek control and its budget', async (t) => {
+  const input = await fixture(t, { reasoning: true, maxTokens: 16384, thinkingLevelMap: { off: null }, compat: { thinkingFormat: 'deepseek', thinkingTokenBudgetField: 'thinking_budget_tokens' } });
+  const report = await inspectEffectiveModelSettings(input);
+  assert.equal(report.settings.effectiveThinkingControl, 'sent');
+  assert.equal(report.settings.requestedThinking, 'off');
+  assert.equal(report.settings.effectiveThinking, 'minimal');
+  assert.equal(report.settings.thinkingBudget.tokens, 1024);
+  assert.match(report.settings.effectiveThinkingReason, /clamp.*off.*minimal/u);
+  assert.match(report.warnings.join('\n'), /clamp.*off.*minimal/u);
+  assert.throws(() => assertEffectiveModelSettingsConfirmed(report, { settingsDigest: report.settingsDigest }), { code: 'MODEL_SETTINGS_FINDING_ACKNOWLEDGEMENT_REQUIRED' });
+});
+
+test('Pi 1.0.0 keeps supported medium unchanged and retains the complete level map', async (t) => {
+  const input = await fixture(t, { reasoning: true, maxTokens: 16384, contextWindow: 256000, thinkingLevelMap: { minimal: 'low', low: 'low', medium: 'medium', high: 'xhigh', xhigh: 'xhigh', max: 'xhigh' } });
+  const report = await inspectEffectiveModelSettings({ ...input, profile: { runtime: { thinking: 'medium' } } });
+  assert.equal(report.settings.requestedThinking, 'medium');
+  assert.equal(report.settings.effectiveThinking, 'medium');
+  assert.equal(report.settings.effectiveThinkingControl, 'unverified');
+  assert.equal(report.settings.thinkingLevelMap.max, 'xhigh');
+  assert.match(report.settings.basis, /1\.0\.0.*models\.js/u);
+});
+
+test('unsupported non-off levels show Pi clamping while preserving the existing preflight refusal', async (t) => {
+  const input = await fixture(t, { reasoning: true, maxTokens: 16384, thinkingLevelMap: { high: null }, compat: { thinkingFormat: 'openai' } });
+  const report = await inspectEffectiveModelSettings({ ...input, profile: { runtime: { thinking: 'high' } } });
+  assert.equal(report.settings.requestedThinking, 'high');
+  assert.equal(report.settings.effectiveThinking, 'medium');
+  assert.equal(report.settings.effectiveThinkingControl, 'sent');
+  assert.match(report.errors[0], /cannot be sent unchanged/u);
+  assert.throws(() => assertEffectiveModelSettingsConfirmed(report, { settingsDigest: report.settingsDigest, acknowledgedFindings: ['THINKING_CONTROL_MISMATCH'] }), { code: 'WORKER_PREFLIGHT_FAILED' });
+});

@@ -344,6 +344,9 @@ The report includes provider/model, selected model-file path, effective
 reasoning and source, `thinkingLevelMap`, requested/default thinking and source,
 effective thinking control and reason, output cap and source, thinking budget,
 and context window (`UNKNOWN` when absent). It does not print credentials.
+The reported `maxTokens` is the configured response ceiling. Pi may lower it
+per request based on remaining context; inspection does not observe wire
+requests or prove which cap the server applies.
 The current preflight still requires referenced environment values to be
 available; inspection does not authenticate or call a model.
 
@@ -362,8 +365,15 @@ Thinking lives in the worker profile's `runtime.thinking`:
 Set the worker's `profile` to that project-relative JSON file and validate it.
 For OpenAI-compatible routes, `reasoning: true`, `compat.thinkingFormat`, and
 `thinkingLevelMap` determine what Pi sends. With OpenAI thinking format, `off`
-is sent only with a string `thinkingLevelMap.off`; otherwise the server default
-can still reason. A sent parameter does not prove the server honored it.
+is sent only with a string `thinkingLevelMap.off` and reasoning-effort support;
+`supportsReasoningEffort: false` suppresses it. Pi 1.0.0 clamps unsupported
+levels before constructing requests: `thinkingLevelMap.off: null` can turn
+requested `off` into effective `minimal` and enable reasoning. The report shows
+both levels and requires mismatch acknowledgement. Unsupported non-off requests
+still fail preflight instead of silently accepting Pi's clamped level.
+A sent parameter does not prove the server honored it. The basis identifies
+checked Pi 1.0.0 level-clamping and OpenAI/DeepSeek request rules; other format
+predictions are legacy, and provider auto-detection remains unverified.
 Profile reasoning/compat overrides also appear in the effective result.
 
 Use the real entry again for benchmarks, inspect again, and pass the operator's
