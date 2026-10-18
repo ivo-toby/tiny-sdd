@@ -112,6 +112,16 @@ Stop when a
 required fact is missing, a plan/descriptor mismatch appears, or a requested
 change alters approval, acceptance or verification meaning.
 
+To propose new guidance, first run `bench instructions analyze` with an empty
+`proposals` array and give the strong analyst only that safe discovery export.
+For each exact configuration and role, inspect the retained prompts, patches and
+visible check evidence. Draft one bounded before/after instruction hypothesis
+with the observed failure, discovery case references, expected effect and a
+separate-control experiment plan; record setup failures or insufficient evidence
+as inconclusive. Submit it through a new analysis request before planning runs.
+Use the [instruction experiment contracts](../../../../../../../docs/instruction-experiments.md);
+never inspect control answers or hidden verifier content to generate advice.
+
 When selecting optional model-specific instruction guidance, use an explicitly
 chosen versioned `preparation-instruction-profile` produced by `bench instructions
 profile`. Inspect its exact target configuration, state, synthetic flag,

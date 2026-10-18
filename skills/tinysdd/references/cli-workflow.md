@@ -871,7 +871,10 @@ criteria. `bench instructions run --plan PATH --worker NAME` performs inference
 only after the operator authorizes it. `bench instructions report --plan PATH
 [--out NEW_FILE]` is read-only unless saving a new report. Retain regressions,
 failures, missing observations and preparation overhead. Speed alone is not an
-improvement; synthetic runs establish no real-model effectiveness.
+improvement; synthetic runs establish no real-model effectiveness. The declared
+regression budget counts a paired correctness or explicit integration regression,
+including integration regressions on already-failing candidates; an overlapping
+regression counts once.
 
 `bench instructions profile --request PATH --out NEW_FILE` retains reviewed,
 versioned guidance with explicit A/B choice, provenance and previous-version

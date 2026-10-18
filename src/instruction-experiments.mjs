@@ -188,6 +188,8 @@ function summarizePairs(pairs, criteria) {
   const complete = pairs.filter(({ A, B }) => typeof A?.quality === 'boolean' && typeof B?.quality === 'boolean');
   const improved = complete.filter(({ A, B }) => !A.quality && B.quality).length;
   const regressed = complete.filter(({ A, B }) => A.quality && !B.quality).length;
+  const regressionPairs = pairs.filter(({ A, B }) => (A?.quality === true && B?.quality === false)
+    || (A?.integration === true && B?.integration === false)).length;
   const n = complete.length;
   const gain = n ? (improved - regressed) / n : U;
   const counts = (arm) => ({ success: pairs.filter((pair) => pair[arm]?.quality === true).length, failure: pairs.filter((pair) => pair[arm]?.quality === false).length, unknown: pairs.filter((pair) => typeof pair[arm]?.quality !== 'boolean').length, scheduled: pairs.length });
@@ -196,9 +198,9 @@ function summarizePairs(pairs, criteria) {
     return { lineage, pairs: selected.length, difference: selected.length ? selected.reduce((sum, { A, B }) => sum + Number(B.quality) - Number(A.quality), 0) / selected.length : U };
   });
   let state = 'inconclusive';
-  if (regressed > criteria.maxRegressions) state = 'regressed';
+  if (regressionPairs > criteria.maxRegressions) state = 'regressed';
   else if (n === pairs.length && n >= criteria.minPairsPerPartition) state = gain >= criteria.minQualityGain ? 'tested-improved' : gain < 0 ? 'regressed' : 'no-improvement';
-  return { state, A: counts('A'), B: counts('B'), integration: integrationCounts(pairs), completePairs: n, improved, regressed, tied: n - improved - regressed, meanPairedDifference: gain,
+  return { state, A: counts('A'), B: counts('B'), integration: integrationCounts(pairs), completePairs: n, improved, regressed, regressionPairs, tied: n - improved - regressed, meanPairedDifference: gain,
     uncertainty: { missingPairs: pairs.length - n, lineages, method: 'descriptive lineage-level paired differences; repeated runs within a lineage are not independent samples', confidenceInterval: U },
     telemetry: Object.fromEntries(['elapsedMs', 'repairRounds', 'inputTokens', 'outputTokens', 'reasoningTokens', 'totalTokens'].map((name) => [name, pairedMetric(pairs, name)])) };
 }

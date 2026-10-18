@@ -124,7 +124,10 @@ real callers.
 
 `tested-improved` requires both partitions to meet the predeclared minimum/gain
 and regression criteria without missing quality observations. A regression beyond
-the declared limit takes precedence. Reports recommend **consider B for the tested
+the declared limit takes precedence. `maxRegressions` counts distinct pairs
+with either correctness or explicit integration loss, including integration loss
+when correctness was already failing; overlapping losses count once. Reports
+retain both component counts and the combined `regressionPairs` count. Reports recommend **consider B for the tested
 configuration**, **keep A**, or **gather more evidence**. Speed/token differences
 never choose the winner. Uncertainty is descriptive: per-lineage paired effects
 and missingness, with no confidence interval or population-effectiveness claim.

@@ -1161,4 +1161,6 @@ no advice or qualification threshold is invented. Preparation uses only the
 safe discovery export. Live inference requires operator authorization.
 See [the request contracts and workflow](instruction-experiments.md). Synthetic
 examples verify tooling only; real-model effectiveness and #108's live acceptance
-remain pending. Profiles require explicit review/selection and preserve rollback.
+remain pending. Profiles require explicit review/selection and preserve rollback. The experiment
+regression budget covers correctness and explicitly measured integration losses,
+including integration losses hidden by an existing correctness failure.

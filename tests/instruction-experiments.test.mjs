@@ -174,3 +174,27 @@ test('CLI analysis and report keep JSON stdout singular and reject unknown flags
   assert.equal(JSON.parse(result.stdout).data.analysis.proposals[0].status, 'proposed');
   await assert.rejects(execFileAsync(process.execPath, [cli, '--json', '--project', fixture.root, 'bench', 'instructions', 'analyze', '--network']), (error) => JSON.parse(error.stdout).ok === false);
 });
+
+test('an integration regression cannot hide behind an existing correctness failure', () => {
+  const plan = { repetitions: 2, criteria: { ...criteria, minQualityGain: 0.1 }, partitions, confounds: [], synthetic: true };
+  const telemetry = Object.fromEntries(['elapsedMs', 'repairRounds', 'inputTokens', 'outputTokens', 'reasoningTokens', 'totalTokens'].map((name) => [name, 'UNKNOWN']));
+  const outcomes = partitions.flatMap(({ challengeId }) => instructionSchedule(2).map(({ arm, repetition }) => ({
+    challengeId, arm, repetition, telemetry,
+    quality: repetition === 2 && arm === 'B',
+    integration: repetition === 1 ? arm === 'A' : arm === 'B',
+  })));
+  const report = reportInstructionPairs({ plan, outcomes });
+  assert.equal(report.state, 'regressed');
+  assert.equal(report.recommendation, 'keep A');
+  for (const value of Object.values(report.partitions)) {
+    assert.equal(value.meanPairedDifference, 0.5);
+    assert.equal(value.regressed, 0);
+    assert.equal(value.integration.regressed, 1);
+    assert.equal(value.regressionPairs, 1);
+  }
+  const overlapping = outcomes.map((entry) => entry.repetition === 1 && entry.arm === 'A' ? { ...entry, quality: true } : entry);
+  const countedOnce = reportInstructionPairs({ plan, outcomes: overlapping });
+  assert.equal(countedOnce.partitions.discovery.regressed, 1);
+  assert.equal(countedOnce.partitions.discovery.integration.regressed, 1);
+  assert.equal(countedOnce.partitions.discovery.regressionPairs, 1);
+});
