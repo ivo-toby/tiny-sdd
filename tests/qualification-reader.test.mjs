@@ -237,6 +237,38 @@ test('refuses a case with missing declared repetition', async () => {
   }
 });
 
+test('refuses a tampered executed verifier roster', async () => {
+  const fixture = await makeEvidenceRoot();
+  try {
+    const invocationRoot = join(fixture.root, '.tinysdd', 'bench', 'reader-suite', 'invocation-a');
+    const casePath = join(invocationRoot, 'cases', 'challenge-a-repeat-1', 'case-result.json');
+    const caseValue = JSON.parse(await readFile(casePath, 'utf8'));
+    caseValue.verifier.visible[0].checkId = 'tampered';
+    const caseText = `${JSON.stringify(caseValue)}\n`;
+    await writeFile(casePath, caseText);
+    const caseSha256 = sha256(caseText);
+
+    const summaryPath = join(invocationRoot, 'summary.json');
+    const summaryValue = JSON.parse(await readFile(summaryPath, 'utf8'));
+    summaryValue.groups[0].caseResults[0].sha256 = caseSha256;
+    const summaryText = `${JSON.stringify(summaryValue)}\n`;
+    await writeFile(summaryPath, summaryText);
+    const summarySha256 = sha256(summaryText);
+
+    const invocationPath = join(invocationRoot, 'invocation.json');
+    const invocationValue = JSON.parse(await readFile(invocationPath, 'utf8'));
+    invocationValue.caseResults[0].sha256 = caseSha256;
+    invocationValue.summary.sha256 = summarySha256;
+    await writeFile(invocationPath, `${JSON.stringify(invocationValue)}\n`);
+    await assert.rejects(
+      readQualificationEvidence({ projectRoot: fixture.root, suitePath: fixture.suitePath, results: [fixture.invocationPath] }),
+      /visible checks do not match the suite roster/u,
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('discovers every retained invocation for an exact digest and records idempotent registrations', async () => {
   const fixture = await makeEvidenceRoot();
   try {

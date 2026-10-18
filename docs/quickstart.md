@@ -988,6 +988,18 @@ record stale; unavailable identity fields remain `UNKNOWN` and are not treated
 as a completeness or eligibility gate. Qualification is evidence only and does
 not authorize dispatch or acceptance.
 
+### Incomplete benchmark evidence
+
+A settings or runtime drift can stop an invocation between cases. The runner
+retains every declared visible and held-out check as either its executed record
+or an explicit `not_run` record, so qualification and instruction reports can
+read the retained invocation and expose the incomplete case. `not_run` checks
+never count as passes: qualification cannot qualify from them and instruction
+reports remain inconclusive until the paired evidence is complete. The reader
+still requires exact challenge/repetition coverage, check IDs, definition
+digests, config identity and artifact hashes; edited or missing roster records
+are rejected.
+
 ## Controlled benchmark replay
 
 To compare workers fairly after the live project has moved on, replay the

@@ -889,8 +889,7 @@ async function persistVerifierOutput(root, caseRelativeDirectory, record, visibi
   };
 }
 
-async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibility, candidateSource, packet, root, caseRelativeDirectory, verifier, runtime, checkRunnerOptions, budgetState, verifyStable }) {
-  const records = [];
+async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibility, candidateSource, packet, root, caseRelativeDirectory, verifier, runtime, checkRunnerOptions, budgetState, verifyStable, records = [] }) {
   const plan = await verifierPlan(suiteRoot, manifestPath, definition.manifest, visibility, candidateSource, packet);
   await applyVerifierPlan(candidateSource, plan);
   for (let index = 0; index < plan.checks.length; index += 1) {
@@ -1030,6 +1029,12 @@ function verifierDefinitionNotRun(definition, checks = []) {
   return checks.map((check) => unknownVerifierRecord(check.id, definition?.resource?.sha256 ?? BENCHMARK_UNKNOWN));
 }
 
+function completeVerifierRecords(definition, records) {
+  if (!definition) return records;
+  const recorded = new Map(records.map((record) => [record.checkId, record]));
+  return verifierDefinitionNotRun(definition, definition.manifest.checks).map((record) => recorded.get(record.checkId) ?? record);
+}
+
 function assertWorkerRunChecksIdentity(config, runtimeMetadata) {
   const actual = runtimeMetadata?.runChecks;
   if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
@@ -1108,12 +1113,12 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
   let fixture;
   let fixtureWork;
   let packetInfo;
-  let visibleDefinition;
-  let heldOutDefinition;
+  let visibleDefinition = challengeInfo.verifierDefinitions?.visible;
+  let heldOutDefinition = challengeInfo.verifierDefinitions?.heldOut;
   let workerResult;
   let setupError;
-  let visibleRecords = [];
-  let heldOutRecords = [];
+  let visibleRecords = verifierDefinitionNotRun(visibleDefinition, visibleDefinition?.manifest.checks);
+  let heldOutRecords = verifierDefinitionNotRun(heldOutDefinition, heldOutDefinition?.manifest.checks);
   let retainedCandidate;
   let inputStable = true;
   let fixtureDigest = challenge.fixture.sha256;
@@ -1138,10 +1143,10 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
     packetPayload.brief = packetInfo.packet.briefText;
     packetPayload.context = packetInfo.packet.context;
     packetPayload.checks = packetInfo.packet.checks;
-    visibleDefinition = challengeInfo.verifierDefinitions?.visible
-      ?? await loadVerifier(suiteRoot, challenge.verifier.visible, challenge.id, 'visible');
-    heldOutDefinition = challengeInfo.verifierDefinitions?.heldOut
-      ?? await loadVerifier(suiteRoot, challenge.verifier.heldOut, challenge.id, 'held-out');
+    visibleDefinition ??= await loadVerifier(suiteRoot, challenge.verifier.visible, challenge.id, 'visible');
+    heldOutDefinition ??= await loadVerifier(suiteRoot, challenge.verifier.heldOut, challenge.id, 'held-out');
+    visibleRecords = verifierDefinitionNotRun(visibleDefinition, visibleDefinition.manifest.checks);
+    heldOutRecords = verifierDefinitionNotRun(heldOutDefinition, heldOutDefinition.manifest.checks);
     await assertVerifierOutsideFixture(fixture, visibleDefinition, 'visible', suiteRoot);
     await assertVerifierOutsideFixture(fixture, heldOutDefinition, 'held-out', suiteRoot);
     fixtureWork = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-fixture-'));
@@ -1208,30 +1213,30 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
       };
       if (inputStable && visibleDefinition) {
         const evaluator = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-evaluator-'));
+        const records = [];
         try {
           const candidate = join(evaluator, 'candidate');
           await copyRegularTree(retainedCandidate, candidate, 'retained worker candidate');
-          const records = await runVerifierGroup({ suiteRoot, manifestPath: visibleDefinition.resource.path, definition: visibleDefinition, visibility: 'visible', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState, verifyStable });
-          visibleRecords = records;
+          await runVerifierGroup({ suiteRoot, manifestPath: visibleDefinition.resource.path, definition: visibleDefinition, visibility: 'visible', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState, verifyStable, records });
         } catch (error) {
           setupError ??= error instanceof Error ? error : new Error(String(error));
-          visibleRecords = verifierDefinitionNotRun(visibleDefinition, visibleDefinition.manifest.checks);
         } finally {
+          visibleRecords = completeVerifierRecords(visibleDefinition, records);
           await rm(evaluator, { recursive: true, force: true }).catch(() => {});
         }
       }
       if (inputStable && heldOutDefinition) {
         const evaluator = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-benchmark-evaluator-'));
+        const records = [];
         try {
           const candidate = join(evaluator, 'candidate');
           await copyRegularTree(retainedCandidate, candidate, 'retained worker candidate');
-          const records = await runVerifierGroup({ suiteRoot, manifestPath: heldOutDefinition.resource.path, definition: heldOutDefinition, visibility: 'held-out', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState, verifyStable });
-          heldOutRecords = records;
+          await runVerifierGroup({ suiteRoot, manifestPath: heldOutDefinition.resource.path, definition: heldOutDefinition, visibility: 'held-out', candidateSource: candidate, packet: challenge.packet, root: outputRoot, caseRelativeDirectory, verifier, runtime, checkRunnerOptions: config.checkRunnerOptions, budgetState, verifyStable, records });
         } catch (error) {
           inputStable = false;
           setupError ??= error instanceof Error ? error : new Error(String(error));
-          heldOutRecords = verifierDefinitionNotRun(heldOutDefinition, heldOutDefinition.manifest.checks);
         } finally {
+          heldOutRecords = completeVerifierRecords(heldOutDefinition, records);
           await rm(evaluator, { recursive: true, force: true }).catch(() => {});
         }
       }
