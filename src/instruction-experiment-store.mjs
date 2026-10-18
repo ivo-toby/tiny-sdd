@@ -94,11 +94,14 @@ export async function analyzeInstructionEvidence({ projectRoot, request, output 
       const result = entry.caseResult;
       const publicArtifacts = [];
       for (const kind of ['prompt', 'patch']) {
+        const expectedPath = `cases/${result.attemptId}/${kind === 'prompt' ? 'worker-prompt.txt' : 'patch.diff'}`;
+        if (result.artifacts[kind] && result.artifacts[kind] !== U && result.artifacts[kind].path !== expectedPath) invalidInstruction('public artifact is outside the benchmark runner allowlist');
         const artifact = await publicArtifact(projectRoot, invocationRoot, result.artifacts[kind], kind);
         if (artifact) publicArtifacts.push(artifact);
       }
-      for (const check of result.verifier.visible) {
+      for (const [index, check] of result.verifier.visible.entries()) {
         if (check.output.ref === U || check.output.sha256 === U) continue;
+        if (check.output.ref !== `cases/${result.attemptId}/verifier-output-visible-${index}.txt`) invalidInstruction('visible output is outside the benchmark runner allowlist');
         const artifact = await publicArtifact(projectRoot, invocationRoot, { path: check.output.ref, sha256: check.output.sha256 }, 'visible-verifier-output');
         if (artifact) publicArtifacts.push(artifact);
       }
@@ -319,14 +322,18 @@ export async function createInstructionProfile({ projectRoot, request, output })
   await readResource(projectRoot, request.review.evidence.path, request.review.evidence.sha256);
   await readResource(projectRoot, request.plan.path, request.plan.sha256);
   const { root, plan, profiles } = await readPlan(projectRoot, request.plan.path);
-  const { report } = await readInstructionReport({ projectRoot, planPath: request.plan.path });
+  let report = U;
+  let started = false;
+  try { await readResource(root, 'run/start.json'); started = true; }
+  catch (error) { if (error?.code !== 'ENOENT' && error?.code !== 'PATH_NOT_FOUND') throw error; }
+  if (started) report = (await readInstructionReport({ projectRoot, planPath: request.plan.path })).report;
   if (request.previous !== null) {
     instructionRef(request.previous, 'previous profile');
     const previous = JSON.parse((await readResource(projectRoot, request.previous.path, request.previous.sha256)).text);
     if (previous.kind !== 'preparation-instruction-profile' || previous.id !== request.id || previous.version + 1 !== request.version) invalidInstruction('previous profile must be the preceding version of this id');
   } else if (request.version !== 1) invalidInstruction('profile versions after 1 require a previous profile');
   const profile = { schemaVersion: 1, kind: 'preparation-instruction-profile', id: request.id, version: request.version,
-    state: report.state, synthetic: plan.synthetic, selectedArm: request.arm, instructions: profiles[request.arm].instructions ?? '',
+    state: report === U ? 'proposed' : report.state, synthetic: plan.synthetic, selectedArm: request.arm, instructions: profiles[request.arm].instructions ?? '',
     targetConfigDigest: plan.configurations.A.configDigest, targetConfigIdentity: plan.configurations.A.identity,
     runtimeProfile: profiles[request.arm], provenance: { plan: request.plan, analysis: { path: relative(projectRoot, localPath(root, plan.analysis.path)), sha256: plan.analysis.sha256 }, report },
     review: request.review, previous: request.previous,

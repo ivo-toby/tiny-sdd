@@ -878,6 +878,7 @@ versioned guidance with explicit A/B choice, provenance and previous-version
 rollback. The preparation agent deliberately selects an exact profile path and
 digest after checking configuration, state and reviewer evidence. Include that
 record in existing task preparation inputs; apply only its instructions to the
-brief/profile. Do not feed its control results back into preparation or worker
+selected worker profile instructions field. Moving the guidance into a brief is
+a different, untested intervention. Do not feed its control results back into preparation or worker
 prompts. Approval, independent review, qualification and feature acceptance keep
 their existing meaning. Full contracts: `docs/instruction-experiments.md`.

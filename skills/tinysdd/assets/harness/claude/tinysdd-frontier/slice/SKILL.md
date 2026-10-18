@@ -118,7 +118,9 @@ profile`. Inspect its exact target configuration, state, synthetic flag,
 provenance and review before applying it. Record its path and SHA-256 as an
 existing preparation input; never silently select the newest version or promote
 `proposed`, `inconclusive`, `regressed`, or synthetic guidance to proven advice.
-Use only the selected instruction text. Keep embedded control reports and hidden
+Use only the selected instruction text in the worker profile instructions field;
+changing its placement or rewriting briefs is a separate untested intervention.
+Keep embedded control reports and hidden
 verifier evidence out of task briefs, context packets and worker prompts. Revert
 by explicitly selecting the previous profile or baseline A. Task approval,
 independent review and feature acceptance remain unchanged.

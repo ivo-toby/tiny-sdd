@@ -47,6 +47,10 @@ test('offline A/B retains instructions, executes integration checks, and keeps c
   const plannedOrder = fixture.planned.plan.schedule.map(({ arm }) => arm);
   assert.deepEqual(plannedOrder, ['A', 'B', 'B', 'A']);
   assert.notEqual(fixture.planned.plan.configurations.A.configDigest, fixture.planned.plan.configurations.B.configDigest);
+  const proposalReview = await jsonFile(fixture.root, 'proposal-review.json', { note: 'Reviewed as an untested hypothesis only.' });
+  const proposed = await createInstructionProfile({ projectRoot: fixture.root, output: 'proposed-profile.json', request: { id: 'proposed-guidance', version: 1, plan: fixture.planned.ref, arm: 'B', review: { by: 'fixture-reviewer', reason: 'Retain untested guidance explicitly.', evidence: proposalReview }, previous: null } });
+  assert.equal(proposed.profile.state, 'proposed');
+  assert.equal(proposed.profile.provenance.report, 'UNKNOWN');
   const run = await runInstructionExperiment({ ...fixture, projectRoot: fixture.root, planPath: 'experiment/plan.json' });
   assert.equal(run.stopped, false);
   const { report } = await readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json', output: 'report.json' });

@@ -88,7 +88,13 @@ are correlated: increase independent lineages as well as repetitions. Unknown
 model/server metadata remains `UNKNOWN` in the frozen identity and must be
 disclosed as a confound; equal unknown values cannot prove equal hidden settings.
 
-After explicit authorization for live inference:
+The effective-settings acknowledgement integration is tracked in #109: live
+benchmark entry must display and confirm each arm's actual thinking/token settings.
+This #108 increment freezes those settings but does not itself implement that
+acknowledgement API. Live use requires the #109 integration as well as explicit
+operator authorization; the offline synthetic example remains runnable.
+
+After that integration and explicit authorization for live inference:
 
 ```sh
 node bin/tinysdd.mjs --project /absolute/project bench instructions run \
@@ -124,7 +130,9 @@ never choose the winner. Uncertainty is descriptive: per-lineage paired effects
 and missingness, with no confidence interval or population-effectiveness claim.
 Repair rounds are `UNKNOWN` because the runner does not measure semantic repair
 cycles. Elapsed time and cumulative usage are reported only where observed;
-preparation/review overhead is separate and never silently treated as zero.
+preparation/review overhead is separate and never silently treated as zero. The
+current worker schema does not count requests missing usage metadata; multi-message
+cumulative totals are therefore conservatively `UNKNOWN`.
 
 `bench instructions profile --request profile-request.json --out preparation-profiles/caller-v1.json`
 creates a reviewed guidance record without changing any config. Its request is:
@@ -144,18 +152,25 @@ creates a reviewed guidance record without changing any config. Its request is:
 }
 ```
 
-The state comes from the report, including unsuccessful/inconclusive outcomes;
+Before a run starts, the reviewed profile state is `proposed`. After a run,
+the state comes from its report, including unsuccessful/inconclusive outcomes;
 a review does not turn a null or synthetic result into effectiveness evidence.
 Select the exact profile path/digest deliberately in preparation. Check its target
 configuration, state, evidence and review. Record the selected guidance as a
-preparation input using existing task registration. Do not copy its embedded
+preparation input using existing task registration. Apply its `runtimeProfile`
+through deliberate worker profile selection, preserving the tested instruction
+placement. Rewriting briefs/context from the guidance is a different untested
+intervention. Do not copy its embedded
 control report or hidden evidence into a worker prompt. A later version requires
 `previous: {path, sha256}` referencing the preceding version. Revert by selecting
 the earlier version or baseline A. No automatic installation, promotion or
 historical rewrite occurs.
 
-See `tests/helpers/instruction-experiment-fixture.mjs` and the retained synthetic
-example for the complete request/report contract. The fixture intentionally uses
+Run `node scripts/run-instruction-example.mjs --out /absolute/new-directory`
+to retain a complete synthetic example, including exact requests, prompts,
+patches, independently executed verifier logs, plan, report and reviewed profile.
+The script refuses an existing directory and uses only the offline fake runtime.
+See `tests/helpers/instruction-experiment-fixture.mjs` for the fixture contract. The fixture intentionally uses
 a deterministic fake worker; independent Node checks validate the public caller
 on separate greeting and checkout lineages. This proves harness behavior, not a
 model preference. A real model discovery/control experiment remains required to
