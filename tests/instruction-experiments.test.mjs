@@ -8,6 +8,8 @@ import { promisify } from 'node:util';
 import { QUALIFICATION_EVIDENCE_INDEX_PATH } from '../src/qualification-store.mjs';
 import { runBenchmark } from '../src/benchmark-runner.mjs';
 import { digestJson } from '../src/fs-utils.mjs';
+import { readQualificationEvidence } from '../src/qualification-reader.mjs';
+import { buildQualificationRecord } from '../src/qualification.mjs';
 import { analyzeInstructionObservations, instructionSchedule, reportInstructionPairs, summarizeInstructionCase, validateInstructionPartitions } from '../src/instruction-experiments.mjs';
 import { analyzeInstructionEvidence, createInstructionProfile, planInstructionExperiment, readInstructionReport, runInstructionExperiment } from '../src/instruction-experiment-store.mjs';
 import { analysisRequest, criteria, discoveryRun, instructionFixture, jsonFile, partitions } from './helpers/instruction-experiment-fixture.mjs';
@@ -270,4 +272,47 @@ test('settings drift after an A invocation stops B and retains the failed and un
   assert.equal(report.state, 'inconclusive');
   assert.deepEqual(report.slots.map(({ status }) => status), ['recorded', 'failed', 'not_run', 'not_run']);
   await assert.rejects(readFile(join(fixture.root, 'experiment/run/1-B/invocation.json')), { code: 'ENOENT' });
+});
+
+test('mid-invocation settings drift retains readable incomplete evidence and prevents qualification', async (t) => {
+  const fixture = await planned(t, { entryKind: 'synthetic' });
+  const confirmation = Object.fromEntries(['A', 'B'].map((arm) => [arm, {
+    entryKind: 'synthetic', settingsDigest: fixture.planned.plan.effectiveModelSettings[arm].settingsDigest,
+    acknowledgedFindings: ['THINKING_CONTROL_MISMATCH'],
+  }]));
+  const verifierCalls = [];
+  const verifier = async (input) => {
+    const result = await fixture.verifier(input);
+    verifierCalls.push(input.visibility);
+    if (verifierCalls.length === 2) {
+      const path = join(fixture.runtime.sourceAgentDir, 'models.json');
+      const models = JSON.parse(await readFile(path, 'utf8'));
+      models.providers.fake.models[0].maxTokens = 1024;
+      await writeFile(path, JSON.stringify(models));
+    }
+    return result;
+  };
+  const run = await runInstructionExperiment({ ...fixture, verifier, projectRoot: fixture.root, planPath: 'experiment/plan.json', confirmation });
+  assert.equal(run.stopped, true);
+  assert.deepEqual(verifierCalls, ['visible', 'held-out']);
+  const { report } = await readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  assert.equal(report.state, 'inconclusive');
+  assert.deepEqual(report.slots.map(({ status }) => status), ['recorded', 'failed', 'not_run', 'not_run']);
+
+  const evidence = await readQualificationEvidence({ projectRoot: join(fixture.root, 'experiment'), suitePath: fixture.planned.plan.suitePath, results: ['run/1-A/invocation.json'] });
+  assert.equal(evidence.observations.length, 2);
+  const incomplete = evidence.observations.find(({ caseResult }) => caseResult.challenge.id === 'checkout');
+  assert.equal(incomplete.caseResult.outcome, 'setup_error');
+  assert.deepEqual(incomplete.caseResult.verifier.visible.map(({ status }) => status), ['not_run']);
+  assert.deepEqual(incomplete.caseResult.verifier.heldOut.map(({ status }) => status), ['not_run']);
+  const qualification = buildQualificationRecord({
+    observations: evidence.observations,
+    source: evidence.source,
+    roster: evidence.roster,
+    configIdentity: evidence.configIdentity,
+    configDigest: evidence.configDigest,
+    suite: evidence.suite,
+  });
+  assert.equal(qualification.roles['implement-slice'].passes, 0);
+  assert.equal(qualification.roles['implement-slice'].status, 'not_qualified');
 });

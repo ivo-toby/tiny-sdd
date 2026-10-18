@@ -641,7 +641,10 @@ test('retains setup results when verifier content mutates during an attempt', as
     });
     const cases = await Promise.all(result.invocation.caseResults.map(async ({ path }) => JSON.parse(await readFile(join(root, 'results', path), 'utf8'))));
     assert.ok(cases.every((entry) => entry.outcome === 'setup_error'));
-    assert.ok(cases.every((entry) => entry.verifier.visible.length === 0 && entry.verifier.heldOut.length === 0));
+    assert.ok(cases.every((entry) => entry.verifier.visible.length === 1
+      && entry.verifier.heldOut.length === 1
+      && entry.verifier.visible[0].status === 'not_run'
+      && entry.verifier.heldOut[0].status === 'not_run'));
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;

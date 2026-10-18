@@ -744,6 +744,17 @@ stale. `UNKNOWN` availability fields remain distinct from known-disabled
 configuration and are not converted into an eligibility or completeness gate.
 Qualification is evidence only; dispatch and enforcement remain separate.
 
+### Incomplete retained evidence
+
+A settings or runtime drift can stop an invocation between cases. The runner
+retains every declared visible and held-out check as its executed record or an
+explicit `not_run` record, allowing `bench qualify` and instruction reports to
+read the failure. `not_run` checks cannot pass, qualify a worker, or improve an
+instruction profile; the instruction report stays inconclusive until paired
+evidence is complete. The reader still validates exact challenge/repetition
+coverage, check IDs, definition digests, config identity and artifact hashes,
+and rejects edited or missing roster records.
+
 For a review revision, reuse a prior completed, scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays every retained eligible actual change from that prior run into
