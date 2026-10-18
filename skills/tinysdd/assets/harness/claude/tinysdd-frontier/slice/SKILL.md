@@ -111,3 +111,14 @@ checks, apply a candidate or accept a feature:
 Stop when a
 required fact is missing, a plan/descriptor mismatch appears, or a requested
 change alters approval, acceptance or verification meaning.
+
+When selecting optional model-specific instruction guidance, use an explicitly
+chosen versioned `preparation-instruction-profile` produced by `bench instructions
+profile`. Inspect its exact target configuration, state, synthetic flag,
+provenance and review before applying it. Record its path and SHA-256 as an
+existing preparation input; never silently select the newest version or promote
+`proposed`, `inconclusive`, `regressed`, or synthetic guidance to proven advice.
+Use only the selected instruction text. Keep embedded control reports and hidden
+verifier evidence out of task briefs, context packets and worker prompts. Revert
+by explicitly selecting the previous profile or baseline A. Task approval,
+independent review and feature acceptance remain unchanged.

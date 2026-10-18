@@ -855,3 +855,29 @@ reviewed #32 cases with immutable evidence and feature/lineage grouping; choose
 train/validation/test explicitly. Synthetic inputs stay labeled, unavailable
 measurements stay UNKNOWN, and no savings or quality improvement is established
 by the offline suite. See the quickstart's active review sequence for arguments.
+
+## Instruction experiments and preparation guidance
+
+Use `bench instructions analyze --request PATH --out PATH` to export only
+discovery prompts, patches and visible check evidence. Give the strong analyst
+that export, not the raw suite/results directories: hidden verifiers and control
+answers must remain outside instruction generation. Supply concrete observed
+failures, evidence references, exact target configuration and one before/after
+`profile.instructions` hypothesis. Setup-only or sparse evidence is inconclusive.
+
+Use `bench instructions plan --request PATH --out NEW_DIRECTORY --worker NAME`
+to freeze an explicit lineage partition, repeat count, AB/BA order and quality
+criteria. `bench instructions run --plan PATH --worker NAME` performs inference
+only after the operator authorizes it. `bench instructions report --plan PATH
+[--out NEW_FILE]` is read-only unless saving a new report. Retain regressions,
+failures, missing observations and preparation overhead. Speed alone is not an
+improvement; synthetic runs establish no real-model effectiveness.
+
+`bench instructions profile --request PATH --out NEW_FILE` retains reviewed,
+versioned guidance with explicit A/B choice, provenance and previous-version
+rollback. The preparation agent deliberately selects an exact profile path and
+digest after checking configuration, state and reviewer evidence. Include that
+record in existing task preparation inputs; apply only its instructions to the
+brief/profile. Do not feed its control results back into preparation or worker
+prompts. Approval, independent review, qualification and feature acceptance keep
+their existing meaning. Full contracts: `docs/instruction-experiments.md`.
