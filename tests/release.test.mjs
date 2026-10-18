@@ -5,7 +5,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
@@ -62,18 +62,74 @@ async function clone(remote) {
   return root;
 }
 
-function adapters({ published = false, failArchive = false, failFinalize = false } = {}) {
-  const state = { published, publishCount: 0, archiveCount: 0, verifyTaggedCount: 0, downloadRoots: [], releases: new Map(), failFinalize };
+function adapters({
+  published = false,
+  failArchive = false,
+  failFinalize = false,
+  publishVisible = true,
+  publishIntegrity = null,
+  visibilityDelayReads = 0,
+  registryError = null,
+} = {}) {
+  const state = {
+    published,
+    publishCount: 0,
+    registryGetCount: 0,
+    publishedVersions: new Map(),
+    archiveCount: 0,
+    verifyTaggedCount: 0,
+    downloadRoots: [],
+    events: [],
+    releases: new Map(),
+    failFinalize,
+    publishVisible,
+    publishIntegrity,
+    visibilityDelayReads,
+    registryError,
+  };
   return {
     state,
     registry: {
-      async get() {
-        return state.published ? { exists: true, integrity: state.integrity } : { exists: false, integrity: null };
+      async get(_name, version) {
+        state.registryGetCount += 1;
+        if (state.registryError) {
+          state.events.push({ type: 'registry-error', version });
+          throw state.registryError;
+        }
+        const publication = state.publishedVersions.get(version);
+        if (publication && !state.publishVisible) {
+          state.events.push({ type: 'registry-get', version, exists: false, integrity: null });
+          return { exists: false, integrity: null };
+        }
+        if (publication && state.visibilityDelayReads > 0) {
+          state.visibilityDelayReads -= 1;
+          state.events.push({ type: 'registry-get', version, exists: false, integrity: null });
+          return { exists: false, integrity: null };
+        }
+        if (publication) {
+          state.events.push({ type: 'registry-get', version, exists: true, integrity: publication.integrity });
+          return { exists: true, integrity: publication.integrity };
+        }
+        if (state.publishedVersions.size > 0) {
+          state.events.push({ type: 'registry-get', version, exists: false, integrity: null });
+          return { exists: false, integrity: null };
+        }
+        if (state.published) {
+          state.events.push({ type: 'registry-get', version, exists: true, integrity: state.integrity });
+          return { exists: true, integrity: state.integrity };
+        }
+        state.events.push({ type: 'registry-get', version, exists: false, integrity: null });
+        return { exists: false, integrity: null };
       },
       async publish(artifact) {
         state.publishCount += 1;
-        state.integrity = `sha512-${createHash('sha512').update(await readFile(artifact)).digest('base64')}`;
-        state.published = true;
+        const artifactIntegrity = `sha512-${createHash('sha512').update(await readFile(artifact)).digest('base64')}`;
+        state.integrity = state.publishIntegrity ?? artifactIntegrity;
+        const version = /^tinysdd-(\d+\.\d+\.\d+)\.tgz$/u.exec(basename(artifact))?.[1];
+        assert.ok(version, `test artifact has a versioned filename: ${basename(artifact)}`);
+        state.publishedVersions.set(version, { integrity: state.integrity });
+        state.events.push({ type: 'publish', version, integrity: state.integrity });
+        state.published = state.publishVisible;
       },
     },
     github: {
@@ -101,6 +157,7 @@ function adapters({ published = false, failArchive = false, failFinalize = false
           state.failFinalize = false;
           throw new ReleaseError('RELEASE_GITHUB_FAILED', 'finalize failed');
         }
+        state.events.push({ type: 'finalize', tag });
         state.releases.get(tag).draft = false;
       },
     },
@@ -151,6 +208,117 @@ test('publishes one exact artifact and a later retry does not duplicate npm publ
   }
 });
 
+test('waits for delayed registry metadata before finalizing the GitHub release', async () => {
+  const fixture = await repo();
+  const bundle = adapters({ visibilityDelayReads: 2 });
+  try {
+    const result = await runRelease(await releaseOptions(fixture.root, bundle, {
+      registryVisibilityAttempts: 3,
+      registryVisibilityDelayMs: 0,
+    }));
+    assert.equal(result.status, 'published');
+    assert.equal(bundle.state.publishCount, 1);
+    assert.equal(bundle.state.releases.get('v1.1.0').draft, false);
+    const publishIndex = bundle.state.events.findIndex((event) => event.type === 'publish' && event.version === '1.1.0');
+    const finalizeIndex = bundle.state.events.findIndex((event) => event.type === 'finalize' && event.tag === 'v1.1.0');
+    assert.ok(publishIndex >= 0);
+    assert.ok(finalizeIndex > publishIndex);
+    assert.ok(bundle.state.events.slice(publishIndex + 1, finalizeIndex).some((event) => (
+      event.type === 'registry-get' && event.exists && event.integrity === bundle.state.integrity
+    )));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+    await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
+test('keeps the draft release pending when registry visibility remains absent', async () => {
+  const fixture = await repo();
+  const bundle = adapters({ publishVisible: false });
+  try {
+    await assert.rejects(
+      runRelease(await releaseOptions(fixture.root, bundle, {
+        registryVisibilityAttempts: 3,
+        registryVisibilityDelayMs: 0,
+      })),
+      { code: 'RELEASE_REGISTRY_UNAVAILABLE' },
+    );
+    assert.equal(bundle.state.publishCount, 1);
+    assert.equal(bundle.state.releases.get('v1.1.0').draft, true);
+    assert.equal((await git(fixture.root, 'ls-remote', 'origin', 'refs/tags/v1.1.0')).stdout.includes('refs/tags/v1.1.0'), true);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+    await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
+test('resumes after a visibility timeout without republishing once metadata appears', async () => {
+  const fixture = await repo();
+  const bundle = adapters({ publishVisible: false });
+  try {
+    await assert.rejects(
+      runRelease(await releaseOptions(fixture.root, bundle, {
+        registryVisibilityAttempts: 3,
+        registryVisibilityDelayMs: 0,
+      })),
+      { code: 'RELEASE_REGISTRY_UNAVAILABLE' },
+    );
+    assert.equal(bundle.state.publishCount, 1);
+    bundle.state.publishVisible = true;
+    const retryRoot = await clone(fixture.remote);
+    try {
+      const retry = await runRelease(await releaseOptions(retryRoot, bundle, {
+        prepareTagged: async () => { throw new Error('retry must reuse the retained asset'); },
+        verifyTagged: async () => { bundle.state.verifyTaggedCount += 1; },
+        registryVisibilityDelayMs: 0,
+      }));
+      assert.equal(retry.status, 'published');
+      assert.equal(retry.version, '1.1.0');
+      assert.equal(bundle.state.publishCount, 1);
+      assert.equal(bundle.state.events.filter((event) => event.type === 'publish' && event.version === '1.1.0').length, 1);
+      assert.equal(bundle.state.verifyTaggedCount, 1);
+    } finally {
+      await rm(retryRoot, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+    await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
+test('rejects a registry integrity mismatch before finalizing the GitHub release', async () => {
+  const fixture = await repo();
+  const bundle = adapters({ publishIntegrity: 'sha512-conflicting-integrity' });
+  try {
+    await assert.rejects(
+      runRelease(await releaseOptions(fixture.root, bundle, { registryVisibilityDelayMs: 0 })),
+      { code: 'RELEASE_ARTIFACT_MISMATCH' },
+    );
+    assert.equal(bundle.state.publishCount, 1);
+    assert.equal(bundle.state.releases.get('v1.1.0').draft, true);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+    await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
+test('propagates registry inspection errors instead of treating them as absent metadata', async () => {
+  const fixture = await repo();
+  const bundle = adapters({ registryError: new ReleaseError('RELEASE_REGISTRY_FAILED', 'registry unavailable') });
+  try {
+    await assert.rejects(
+      runRelease(await releaseOptions(fixture.root, bundle, { registryVisibilityDelayMs: 0 })),
+      { code: 'RELEASE_REGISTRY_FAILED' },
+    );
+    assert.equal(bundle.state.publishCount, 0);
+    assert.equal(bundle.state.releases.size, 0);
+    assert.equal((await git(fixture.root, 'ls-remote', 'origin', 'refs/tags/v1.1.0')).stdout, '');
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+    await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
 test('a failure after the atomic tag push resumes from the same tag bytes', async () => {
   const fixture = await repo();
   const failed = adapters({ failArchive: true });
@@ -190,6 +358,39 @@ test('a draft asset is reused when finalization failed after npm publication', a
       assert.equal(bundle.state.publishCount, 1);
       assert.equal(bundle.state.verifyTaggedCount, 1);
       await assert.rejects(access(bundle.state.downloadRoots[0]));
+    } finally {
+      await rm(retryRoot, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+    await rm(fixture.remote, { recursive: true, force: true });
+  }
+});
+
+test('resumes a pending release before planning the newer main commit', async () => {
+  const fixture = await repo();
+  const bundle = adapters({ failFinalize: true });
+  try {
+    await assert.rejects(runRelease(await releaseOptions(fixture.root, bundle)), { code: 'RELEASE_GITHUB_FAILED' });
+    assert.equal(bundle.state.publishCount, 1);
+    const retryRoot = await clone(fixture.remote);
+    try {
+      await writeFile(join(retryRoot, 'README.md'), 'follow-up release\n');
+      await git(retryRoot, 'add', 'README.md');
+      await git(retryRoot, 'commit', '--quiet', '-m', 'feat: follow-up release');
+      await git(retryRoot, 'push', '--quiet', 'origin', 'main');
+      const retry = await runRelease(await releaseOptions(retryRoot, bundle, {
+        prepareTagged: async () => { throw new Error('pending release must reuse the retained asset'); },
+        verifyTagged: async () => { bundle.state.verifyTaggedCount += 1; },
+        registryVisibilityDelayMs: 0,
+      }));
+      assert.equal(retry.status, 'published');
+      assert.equal(retry.version, '1.2.0');
+      assert.equal(bundle.state.publishCount, 2);
+      assert.equal(bundle.state.events.filter((event) => event.type === 'publish' && event.version === '1.1.0').length, 1);
+      assert.equal(bundle.state.releases.get('v1.1.0').draft, false);
+      assert.equal(bundle.state.releases.get('v1.2.0').draft, false);
+      assert.equal(bundle.state.verifyTaggedCount, 1);
     } finally {
       await rm(retryRoot, { recursive: true, force: true });
     }

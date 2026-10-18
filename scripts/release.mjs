@@ -26,6 +26,8 @@ const execFile = promisify(execFileCallback);
 export const GITHUB_REPOSITORY = 'ivo-toby/tiny-sdd';
 export const RELEASE_REMOTE = 'origin';
 export const RELEASE_BRANCH = 'main';
+export const REGISTRY_VISIBILITY_ATTEMPTS = 19;
+export const REGISTRY_VISIBILITY_DELAY_MS = 10_000;
 const INTEGRITY_PATTERN = /^sha512-[A-Za-z0-9+/]+={0,2}$/u;
 
 export class ReleaseError extends Error {
@@ -224,6 +226,49 @@ function normalizeRegistryStatus(status) {
   if (status.exists === true) return { exists: true, integrity: status.integrity ?? null };
   if (typeof status === 'string') return { exists: true, integrity: status };
   return { exists: Boolean(status), integrity: status.integrity ?? null };
+}
+
+function assertRegistryIntegrity(status, version, integrity) {
+  if (status.exists && status.integrity !== integrity) {
+    throw releaseError('RELEASE_ARTIFACT_MISMATCH', `npm has ${PACKAGE_NAME}@${version} with ${status.integrity ?? 'unknown integrity'}, expected ${integrity}`);
+  }
+}
+
+function positiveAttempts(value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+export async function confirmRegistryVisibility({
+  registry,
+  version,
+  integrity,
+  attempts = REGISTRY_VISIBILITY_ATTEMPTS,
+  delayMs = REGISTRY_VISIBILITY_DELAY_MS,
+} = {}) {
+  const checkAttempts = positiveAttempts(attempts, REGISTRY_VISIBILITY_ATTEMPTS);
+  for (let attempt = 1; attempt <= checkAttempts; attempt += 1) {
+    const status = normalizeRegistryStatus(await registry.get(PACKAGE_NAME, version));
+    assertRegistryIntegrity(status, version, integrity);
+    if (status.exists) return status;
+    if (attempt < checkAttempts) await wait(Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0);
+  }
+  throw releaseError(
+    'RELEASE_REGISTRY_UNAVAILABLE',
+    `npm ${PACKAGE_NAME}@${version} was not publicly visible with expected integrity after ${checkAttempts} checks; retry this release`,
+    { version, attempts: checkAttempts },
+  );
+}
+
+async function submitRegistryArtifact({ registry, artifact, version, integrity, submittedPublications, attempts, delayMs }) {
+  const previousIntegrity = submittedPublications.get(version);
+  if (previousIntegrity !== undefined && previousIntegrity !== integrity) {
+    throw releaseError('RELEASE_ARTIFACT_MISMATCH', `submitted npm ${PACKAGE_NAME}@${version} integrity changed from ${previousIntegrity} to ${integrity}`);
+  }
+  if (previousIntegrity === undefined) {
+    await registry.publish(artifact);
+    submittedPublications.set(version, integrity);
+  }
+  return confirmRegistryVisibility({ registry, version, integrity, attempts, delayMs });
 }
 
 function publicationEnvironment(source = process.env) {
@@ -546,7 +591,21 @@ async function inspectPending({ root, git, plan, registry, github }) {
   return null;
 }
 
-async function finishPending({ root, git, pending, registry, github, archive, prepareTagged = prepareTaggedRelease, verifyTagged = verifyTaggedArtifact, runTests, verify }) {
+async function finishPending({
+  root,
+  git,
+  pending,
+  registry,
+  github,
+  archive,
+  prepareTagged = prepareTaggedRelease,
+  verifyTagged = verifyTaggedArtifact,
+  runTests,
+  verify,
+  submittedPublications,
+  registryVisibilityAttempts,
+  registryVisibilityDelayMs,
+}) {
   let candidate = null;
   let asset = null;
   try {
@@ -578,12 +637,28 @@ async function finishPending({ root, git, pending, registry, github, archive, pr
         release: pending.release,
       });
     }
-    const status = normalizeRegistryStatus(await registry.get(PACKAGE_NAME, pending.version));
     const integrity = pending.metadata.integrity;
-    if (status.exists && status.integrity !== integrity) {
-      throw releaseError('RELEASE_ARTIFACT_MISMATCH', `npm has ${PACKAGE_NAME}@${pending.version} with ${status.integrity ?? 'unknown integrity'}, expected ${integrity}`);
+    const status = normalizeRegistryStatus(await registry.get(PACKAGE_NAME, pending.version));
+    assertRegistryIntegrity(status, pending.version, integrity);
+    if (!status.exists) {
+      await submitRegistryArtifact({
+        registry,
+        artifact: asset.artifact,
+        version: pending.version,
+        integrity,
+        submittedPublications,
+        attempts: registryVisibilityAttempts,
+        delayMs: registryVisibilityDelayMs,
+      });
+    } else {
+      await confirmRegistryVisibility({
+        registry,
+        version: pending.version,
+        integrity,
+        attempts: registryVisibilityAttempts,
+        delayMs: registryVisibilityDelayMs,
+      });
     }
-    if (!status.exists) await registry.publish(asset.artifact);
     await github.publishRelease(pending.tag);
     return { status: 'published', version: pending.version, tag: pending.tag, commit: pending.commit, integrity };
   } finally {
@@ -592,7 +667,20 @@ async function finishPending({ root, git, pending, registry, github, archive, pr
   }
 }
 
-async function createRelease({ root, git, plan, registry, github, archive, prepareCandidate = prepareReleaseCandidate, runTests, verify }) {
+async function createRelease({
+  root,
+  git,
+  plan,
+  registry,
+  github,
+  archive,
+  prepareCandidate = prepareReleaseCandidate,
+  runTests,
+  verify,
+  submittedPublications,
+  registryVisibilityAttempts,
+  registryVisibilityDelayMs,
+}) {
   const beforeRegistry = normalizeRegistryStatus(await registry.get(PACKAGE_NAME, plan.version));
   if (beforeRegistry.exists) throw releaseError('RELEASE_VERSION_CONFLICT', `npm already contains ${PACKAGE_NAME}@${plan.version}; refusing to replace it`);
   if (await remoteTag(git, root, plan.tag)) throw releaseError('RELEASE_TAG_CONFLICT', `origin already contains ${plan.tag}; refusing to replace it`);
@@ -622,7 +710,15 @@ async function createRelease({ root, git, plan, registry, github, archive, prepa
       notes,
       artifact: candidate.artifact,
     });
-    await registry.publish(asset.artifact);
+    await submitRegistryArtifact({
+      registry,
+      artifact: asset.artifact,
+      version: plan.version,
+      integrity: candidate.integrity,
+      submittedPublications,
+      attempts: registryVisibilityAttempts,
+      delayMs: registryVisibilityDelayMs,
+    });
     await github.publishRelease(plan.tag);
     return { status: 'published', version: plan.version, tag: plan.tag, commit: candidate.commit, integrity: candidate.integrity };
   } finally {
@@ -647,6 +743,8 @@ export async function runRelease({
   runTests = undefined,
   verify = verifyPackage,
   verifyTagged = verifyTaggedArtifact,
+  registryVisibilityAttempts = REGISTRY_VISIBILITY_ATTEMPTS,
+  registryVisibilityDelayMs = REGISTRY_VISIBILITY_DELAY_MS,
 } = {}) {
   const projectRoot = resolve(root);
   if (shouldValidate) await validateReleaseCheckout({ root: projectRoot, git, env, requireRemote });
@@ -655,17 +753,45 @@ export async function runRelease({
   if (plan.kind === 'bootstrap') return { status: 'bootstrap', plan, message: `create and publish the reviewed ${plan.tag} bootstrap tag before enabling npm releases` };
   if (!enabled) return { status: 'disabled', plan, message: 'NPM_RELEASES_ENABLED is not true; release publication is not configured' };
   let completedPending = false;
+  const submittedPublications = new Map();
   for (let cycle = 0; cycle < 2; cycle += 1) {
     const currentPlan = cycle === 0 ? plan : await readReleasePlan(projectRoot, { git: (cwd, args) => git.run(args, cwd) });
     const pending = await inspectPending({ root: projectRoot, git, plan: currentPlan, registry, github });
     if (pending) {
-      const result = await finishPending({ root: projectRoot, git, pending, registry, github, archive, prepareTagged, verifyTagged, runTests, verify });
+      const result = await finishPending({
+        root: projectRoot,
+        git,
+        pending,
+        registry,
+        github,
+        archive,
+        prepareTagged,
+        verifyTagged,
+        runTests,
+        verify,
+        submittedPublications,
+        registryVisibilityAttempts,
+        registryVisibilityDelayMs,
+      });
       completedPending = true;
       if (currentPlan.kind === 'release') continue;
       return { ...result, resumed: true };
     }
     if (!currentPlan.release || currentPlan.kind === 'none') return { status: completedPending ? 'pending-complete' : 'no-release', plan: currentPlan };
-    const result = await createRelease({ root: projectRoot, git, plan: currentPlan, registry, github, archive, prepareCandidate, runTests, verify });
+    const result = await createRelease({
+      root: projectRoot,
+      git,
+      plan: currentPlan,
+      registry,
+      github,
+      archive,
+      prepareCandidate,
+      runTests,
+      verify,
+      submittedPublications,
+      registryVisibilityAttempts,
+      registryVisibilityDelayMs,
+    });
     return result;
   }
   throw releaseError('RELEASE_PENDING_LOOP', 'pending release completion did not converge before planning another release');
@@ -691,7 +817,13 @@ function parseArguments(argv) {
 async function main(argv) {
   const options = parseArguments(argv);
   if (options.help) {
-    process.stdout.write('usage: release.mjs [--root PATH] [--enabled true|false] [--dry-run] [--json]\n');
+    process.stdout.write([
+      'usage: release.mjs [--root PATH] [--enabled true|false] [--dry-run] [--json]',
+      'after npm publish, the command checks public registry metadata and exact integrity before finalizing GitHub',
+      'the confirmation is bounded to 19 checks at 10-second intervals',
+      'if visibility remains unavailable, inspect `npm view tinysdd@VERSION dist.integrity` and rerun to resume',
+      '',
+    ].join('\n'));
     return;
   }
   const result = await runRelease({ root: options.root, enabled: options.enabled, dryRun: options.dryRun });
