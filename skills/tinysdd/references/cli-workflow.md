@@ -892,3 +892,39 @@ reviewed #32 cases with immutable evidence and feature/lineage grouping; choose
 train/validation/test explicitly. Synthetic inputs stay labeled, unavailable
 measurements stay UNKNOWN, and no savings or quality improvement is established
 by the offline suite. See the quickstart's active review sequence for arguments.
+
+## Instruction experiments and preparation guidance
+
+Use `bench instructions analyze --request PATH --out PATH` to export only
+discovery prompts, patches and visible check evidence. Give the strong analyst
+that export, not the raw suite/results directories: hidden verifiers and control
+answers must remain outside instruction generation. Supply concrete observed
+failures, evidence references, exact target configuration and one before/after
+`profile.instructions` hypothesis. Setup-only or sparse evidence is inconclusive.
+
+Use `bench instructions plan --request PATH --out NEW_DIRECTORY --worker NAME
+--entry-kind real` to freeze an explicit lineage partition, repeat count, AB/BA order and quality
+criteria. Show both `effectiveModelSettings.A` and `.B` reports to the operator;
+obtain confirmation of both digests and each required named finding. Save the
+reviewed `A`/`B` entries (`entryKind`, `settingsDigest`, `acknowledgedFindings`)
+in a project-relative JSON file. Do not automate the operator's confirmation.
+`bench instructions run --plan PATH --worker NAME --confirmation PATH` checks
+both arms before artifacts/inference and rechecks every invocation. Drift requires
+a new plan and confirmation. Prior plans remain readable, but live execution
+requires settings snapshots. `bench instructions report --plan PATH
+[--out NEW_FILE]` is read-only unless saving a new report. Retain regressions,
+failures, missing observations and preparation overhead. Speed alone is not an
+improvement; synthetic runs establish no real-model effectiveness. The declared
+regression budget counts a paired correctness or explicit integration regression,
+including integration regressions on already-failing candidates; an overlapping
+regression counts once.
+
+`bench instructions profile --request PATH --out NEW_FILE` retains reviewed,
+versioned guidance with explicit A/B choice, provenance and previous-version
+rollback. The preparation agent deliberately selects an exact profile path and
+digest after checking configuration, state and reviewer evidence. Include that
+record in existing task preparation inputs; apply only its instructions to the
+selected worker profile instructions field. Moving the guidance into a brief is
+a different, untested intervention. Do not feed its control results back into preparation or worker
+prompts. Approval, independent review, qualification and feature acceptance keep
+their existing meaning. Full contracts: `docs/instruction-experiments.md`.

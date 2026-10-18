@@ -1321,7 +1321,9 @@ export async function runBenchmark({
   checkLimits,
   checkRunnerOptions,
   runChecksDeclared = true,
+  registerEvidence = true,
 } = {}) {
+  if (typeof registerEvidence !== 'boolean') invalid('registerEvidence must be a boolean');
   if (typeof invocationId !== 'string' || !BENCHMARK_ID_PATTERN.test(invocationId)) {
     invalid('invocationId must be a lowercase benchmark identifier');
   }
@@ -1389,7 +1391,7 @@ export async function runBenchmark({
   const recordedSuitePath = relative(benchmarkProjectRoot, suiteInfo.suiteFile.absolute).replaceAll('\\', '/');
   const registrationEscapesProject = invocationPath.startsWith('../') || invocationPath === '..'
     || recordedSuitePath.startsWith('../') || recordedSuitePath === '..';
-  if (!registrationEscapesProject) {
+  if (registerEvidence && !registrationEscapesProject) {
     await registerQualificationInvocation(benchmarkProjectRoot, {
       invocationPath,
       invocationSha256: result.invocationRef.sha256,
