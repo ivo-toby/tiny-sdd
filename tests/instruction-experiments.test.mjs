@@ -301,6 +301,17 @@ test('mid-invocation settings drift retains readable incomplete evidence and pre
 
   const evidence = await readQualificationEvidence({ projectRoot: join(fixture.root, 'experiment'), suitePath: fixture.planned.plan.suitePath, results: ['run/1-A/invocation.json'] });
   assert.equal(evidence.observations.length, 2);
+  const completed = evidence.observations.find(({ caseResult }) => caseResult.challenge.id === 'greeting');
+  assert.equal(completed.caseResult.outcome, 'failed');
+  for (const [visibility, records] of Object.entries({
+    visible: completed.caseResult.verifier.visible,
+    heldOut: completed.caseResult.verifier.heldOut,
+  })) {
+    assert.deepEqual(records.map(({ status }) => status), ['failed']);
+    const outputVisibility = visibility === 'heldOut' ? 'held-out' : visibility;
+    assert.equal(records[0].output.ref, `cases/greeting-repeat-1/verifier-output-${outputVisibility}-0.txt`);
+    assert.match(records[0].output.sha256, /^[0-9a-f]{64}$/u);
+  }
   const incomplete = evidence.observations.find(({ caseResult }) => caseResult.challenge.id === 'checkout');
   assert.equal(incomplete.caseResult.outcome, 'setup_error');
   assert.deepEqual(incomplete.caseResult.verifier.visible.map(({ status }) => status), ['not_run']);
