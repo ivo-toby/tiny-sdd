@@ -58,7 +58,7 @@ establish that instructions caused the failures.
 
 ## Freeze and run
 
-`bench instructions plan --request plan-request.json --out instruction-runs/pilot-1 --worker NAME`
+`bench instructions plan --request plan-request.json --out instruction-runs/pilot-1 --worker NAME --entry-kind real`
 freezes the suite bytes, both runtime profiles, exact identities and schedule.
 The output directory must be new and outside the source suite. A baseline profile
 must be selected explicitly through the existing worker configuration. Its current
@@ -88,17 +88,37 @@ are correlated: increase independent lineages as well as repetitions. Unknown
 model/server metadata remains `UNKNOWN` in the frozen identity and must be
 disclosed as a confound; equal unknown values cannot prove equal hidden settings.
 
-The effective-settings acknowledgement integration is tracked in #109: live
-benchmark entry must display and confirm each arm's actual thinking/token settings.
-This #108 increment freezes those settings but does not itself implement that
-acknowledgement API. Live use requires the #109 integration as well as explicit
-operator authorization; the offline synthetic example remains runnable.
+Planning also retains `effectiveModelSettings.A` and `.B`: the same credential-free
+settings reports used by `worker settings` and ordinary benchmarks. Inspect both
+reports, including requested/effective thinking, token cap, context window, route
+digest, and named findings. The entry kind is explicitly operator-declared; use
+`real` for the actual model route, never synthetic setup placeholders. A plan can
+retain preflight errors for inspection, but those errors block execution.
 
-After that integration and explicit authorization for live inference:
+After the operator confirms both frozen settings reports and authorizes the run,
+create a project-relative confirmation file with the reviewed digests:
+
+```json
+{
+  "A": {"entryKind": "real", "settingsDigest": "REVIEWED_A_DIGEST", "acknowledgedFindings": ["THINKING_CONTROL_MISMATCH"]},
+  "B": {"entryKind": "real", "settingsDigest": "REVIEWED_B_DIGEST", "acknowledgedFindings": ["THINKING_CONTROL_MISMATCH"]}
+}
+```
+
+List a named acknowledgement only after the operator acknowledges that finding;
+use an empty array if none are required. Do not automatically copy digests and
+acknowledgements into a runnable confirmation. Both arms must match their frozen
+reports and freshly inspected settings before `run/` is created. Each invocation
+rechecks through the ordinary benchmark guard and retains `model-settings.json`;
+`run/start.json` retains both reports and confirmations. Drift stops execution.
+Replan and obtain fresh confirmation when settings change. Old plans remain
+readable for reports, but live execution requires a new plan with settings
+snapshots. Offline test-harness plans without settings remain supported.
 
 ```sh
 node bin/tinysdd.mjs --project /absolute/project bench instructions run \
-  --plan instruction-runs/pilot-1/plan.json --worker NAME
+  --plan instruction-runs/pilot-1/plan.json --worker NAME \
+  --confirmation instruction-runs/pilot-1-confirmation.json
 node bin/tinysdd.mjs --json --project /absolute/project bench instructions report \
   --plan instruction-runs/pilot-1/plan.json --out instruction-runs/pilot-1-report.json
 ```

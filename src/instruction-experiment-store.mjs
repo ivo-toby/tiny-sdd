@@ -4,6 +4,7 @@ import { assertNoSymlinkPath, digestJson, normalizeProjectRelative, publicError,
 import { parseChecksManifest } from './checks-manifest.mjs';
 import { parseBenchmarkChallenge, parseBenchmarkSuite } from './benchmark-schema.mjs';
 import { benchmarkFixtureDigest, inspectBenchmarkIdentity, runBenchmark } from './benchmark-runner.mjs';
+import { inspectEffectiveModelSettings, assertEffectiveModelSettingsConfirmed } from './effective-model-settings.mjs';
 import { readQualificationEvidence } from './qualification-reader.mjs';
 import {
   analyzeInstructionObservations, instructionId, instructionInteger, instructionObject, instructionRef,
@@ -150,7 +151,7 @@ async function freezeSuite(sourceRoot, destination) {
   return tree;
 }
 
-export async function planInstructionExperiment({ projectRoot, request, output, worker, profile, runtime, verifier, checkRunnerOptions }) {
+export async function planInstructionExperiment({ projectRoot, request, output, worker, profile, runtime, verifier, checkRunnerOptions, entryKind }) {
   instructionObject(request, ['id', 'analysis', 'proposalId', 'repetitions', 'criteria', 'confounds', 'preparation', 'exposureAttestation', 'integrationChecks'], 'experiment request');
   instructionId(request.id, 'experiment id');
   instructionRef(request.analysis, 'analysis');
@@ -176,6 +177,13 @@ export async function planInstructionExperiment({ projectRoot, request, output, 
   if (baseline.configDigest !== proposal.configDigest) invalidInstruction('current baseline configuration differs from the proposal evidence');
   if (!baseline.profile || (baseline.profile.instructions ?? '') !== proposal.before) invalidInstruction('proposal.before must exactly match the current profile instructions; select an explicit baseline profile');
   const profiles = { A: baseline.profile, B: { ...baseline.profile, instructions: proposal.after } };
+  const effectiveModelSettings = {};
+  if (runtime?.test !== true || entryKind !== undefined) {
+    for (const arm of ['A', 'B']) {
+      effectiveModelSettings[arm] = await inspectEffectiveModelSettings({ worker, profile: profiles[arm],
+        sourceAgentDir: runtime?.sourceAgentDir, sourceEnv: runtime?.sourceEnv, entryKind });
+    }
+  }
   const root = localPath(projectRoot, output);
   await assertNoSymlinkPath(root, { allowMissing: true, requireDirectory: false });
   const sourceRelative = relative(roster.root, root);
@@ -195,6 +203,7 @@ export async function planInstructionExperiment({ projectRoot, request, output, 
   const plan = { schemaVersion: 1, kind: 'instruction-experiment-plan', id: request.id, analysis: analysisRef, proposalId: proposal.id,
     suitePath: `suite/${relative(roster.root, localPath(projectRoot, analysis.suite.path))}`, suiteTree, profiles: profileRefs,
     configurations: Object.fromEntries(['A', 'B'].map((arm) => [arm, { identity: configurations[arm].identity, configDigest: configurations[arm].configDigest }])),
+    ...(Object.keys(effectiveModelSettings).length ? { effectiveModelSettings } : {}),
     partitions, integrationChecks, repetitions: request.repetitions, schedule, criteria, confounds: request.confounds,
     preparation: validatePreparation(request.preparation), exposureAttestation: request.exposureAttestation, synthetic: runtime?.test === true };
   const ref = await writeNew(root, 'plan.json', plan);
@@ -204,7 +213,7 @@ export async function planInstructionExperiment({ projectRoot, request, output, 
 async function readPlan(projectRoot, path) {
   const resource = await readInstructionJson(projectRoot, path);
   const plan = resource.value;
-  instructionObject(plan, ['schemaVersion', 'kind', 'id', 'analysis', 'proposalId', 'suitePath', 'suiteTree', 'profiles', 'configurations', 'partitions', 'repetitions', 'schedule', 'criteria', 'confounds', 'preparation', 'exposureAttestation', 'synthetic', 'integrationChecks'], 'plan');
+  instructionObject(plan, ['schemaVersion', 'kind', 'id', 'analysis', 'proposalId', 'suitePath', 'suiteTree', 'profiles', 'configurations', 'partitions', 'repetitions', 'schedule', 'criteria', 'confounds', 'preparation', 'exposureAttestation', 'synthetic', 'integrationChecks', 'effectiveModelSettings'], 'plan');
   if (plan.schemaVersion !== 1 || plan.kind !== 'instruction-experiment-plan' || typeof plan.synthetic !== 'boolean') invalidInstruction('invalid experiment plan');
   instructionId(plan.id, 'plan.id');
   if (!same(instructionSchedule(plan.repetitions), plan.schedule)) invalidInstruction('experiment order changed');
@@ -231,12 +240,27 @@ async function readPlan(projectRoot, path) {
   return { root, plan, profiles, roster, ref: resource.ref };
 }
 
-export async function runInstructionExperiment({ projectRoot, planPath, worker, runtime, verifier, checkRunnerOptions }) {
+export async function runInstructionExperiment({ projectRoot, planPath, worker, runtime, verifier, checkRunnerOptions, confirmation }) {
   const loaded = await readPlan(projectRoot, planPath);
   const { root, plan, profiles, roster } = loaded;
   if (plan.synthetic !== (runtime?.test === true)) invalidInstruction('synthetic and live experiment runtimes cannot be interchanged');
+  const effectiveModelSettings = {};
+  if (runtime?.test !== true || plan.effectiveModelSettings !== undefined || confirmation !== undefined) {
+    if (!plan.effectiveModelSettings?.A || !plan.effectiveModelSettings?.B) invalidInstruction('plan lacks effective settings for both arms; create a new plan with an explicit entryKind');
+    if (confirmation !== undefined) instructionObject(confirmation, ['A', 'B'], 'confirmation');
+    for (const arm of ['A', 'B']) {
+      const frozen = plan.effectiveModelSettings[arm];
+      assertEffectiveModelSettingsConfirmed(frozen, confirmation?.[arm]);
+      const current = await inspectEffectiveModelSettings({ worker, profile: profiles[arm],
+        sourceAgentDir: runtime?.sourceAgentDir, sourceEnv: runtime?.sourceEnv,
+        entryKind: confirmation[arm].entryKind ?? frozen.settings.entryKind });
+      assertEffectiveModelSettingsConfirmed(current, confirmation[arm]);
+      effectiveModelSettings[arm] = current;
+    }
+  }
   await mkdir(join(root, 'run'), { mode: 0o700 });
-  await writeNew(root, 'run/start.json', { plan: { path: 'plan.json', sha256: loaded.ref.sha256 }, startedAt: new Date().toISOString() });
+  await writeNew(root, 'run/start.json', { plan: { path: 'plan.json', sha256: loaded.ref.sha256 }, startedAt: new Date().toISOString(),
+    ...(Object.keys(effectiveModelSettings).length ? { effectiveModelSettings, confirmation } : {}) });
   const slots = [];
   let stopped = false;
   for (const [index, slot] of plan.schedule.entries()) {
@@ -251,6 +275,7 @@ export async function runInstructionExperiment({ projectRoot, planPath, worker, 
       const config = await inspectBenchmarkIdentity({ projectRoot: roster.root, suiteRoot: roster.root, suitePath: relative(roster.root, localPath(root, plan.suitePath)), worker, profile: profiles[slot.arm], runtime, checkRunnerOptions, verifierMode: verifier ? 'test-injection' : 'runCheck' });
       if (!same(config.identity, plan.configurations[slot.arm].identity)) invalidInstruction('runtime configuration changed since planning');
       const result = await runBenchmark({ projectRoot, registerEvidence: false, suiteRoot: roster.root, suitePath: relative(roster.root, localPath(root, plan.suitePath)), repeat: 1, worker, profile: profiles[slot.arm], runtime, verifier, checkRunnerOptions,
+        settingsConfirmation: effectiveModelSettings[slot.arm] ? { ...confirmation[slot.arm], entryKind: effectiveModelSettings[slot.arm].settings.entryKind } : undefined,
         outputRoot: join(root, 'run', name), invocationId: `${plan.id}-${name.toLowerCase()}` });
       if (!same(result.config.identity, config.identity)) invalidInstruction('runtime changed while starting invocation');
       slots.push(await writeNew(root, `run/${name}.json`, { ...slot, index, status: 'recorded', invocation: { path: `run/${name}/invocation.json`, sha256: result.invocationRef.sha256 } }));

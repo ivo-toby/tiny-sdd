@@ -30,11 +30,11 @@ async function setup(t) {
   return { ...fixture, ...discovery };
 }
 
-async function planned(t) {
+async function planned(t, options = {}) {
   const fixture = await setup(t);
   const request = analysisRequest(fixture.observations, fixture.result.config.configDigest);
   const analysis = await analyzeInstructionEvidence({ projectRoot: fixture.root, request, output: 'analysis.json' });
-  const planned = await planInstructionExperiment({ ...fixture, projectRoot: fixture.root, output: 'experiment', request: { id: 'caller-pilot', analysis: analysis.ref, proposalId: 'wire-callers', repetitions: 2, criteria, integrationChecks: { greeting: [{ visibility: 'heldOut', checkId: 'integration' }], checkout: [{ visibility: 'heldOut', checkId: 'integration' }] }, confounds: ['Synthetic worker implements a deterministic response to instruction text.'], preparation: 'UNKNOWN', exposureAttestation: 'Control fixture answers are not inputs to the proposal generator.' } });
+  const planned = await planInstructionExperiment({ ...fixture, ...options, projectRoot: fixture.root, output: 'experiment', request: { id: 'caller-pilot', analysis: analysis.ref, proposalId: 'wire-callers', repetitions: 2, criteria, integrationChecks: { greeting: [{ visibility: 'heldOut', checkId: 'integration' }], checkout: [{ visibility: 'heldOut', checkId: 'integration' }] }, confounds: ['Synthetic worker implements a deterministic response to instruction text.'], preparation: 'UNKNOWN', exposureAttestation: 'Control fixture answers are not inputs to the proposal generator.' } });
   return { ...fixture, analysis, planned };
 }
 
@@ -197,4 +197,77 @@ test('an integration regression cannot hide behind an existing correctness failu
   assert.equal(countedOnce.partitions.discovery.regressed, 1);
   assert.equal(countedOnce.partitions.discovery.integration.regressed, 1);
   assert.equal(countedOnce.partitions.discovery.regressionPairs, 1);
+});
+
+
+test('A/B settings require both frozen confirmations and named acknowledgements before artifacts or inference', async (t) => {
+  const fixture = await planned(t, { entryKind: 'synthetic' });
+  const snapshots = fixture.planned.plan.effectiveModelSettings;
+  assert.ok(snapshots, 'plan must retain both effective-settings reports');
+  assert.equal(snapshots.A.settings.entryKind, 'synthetic');
+  assert.equal(snapshots.B.settings.maxTokens, 512);
+  assert.ok(snapshots.B.findings.some(({ code }) => code === 'THINKING_CONTROL_MISMATCH'));
+  const confirmation = Object.fromEntries(['A', 'B'].map((arm) => [arm, {
+    entryKind: 'synthetic', settingsDigest: snapshots[arm].settingsDigest,
+    acknowledgedFindings: ['THINKING_CONTROL_MISMATCH'],
+  }]));
+  const run = (value) => runInstructionExperiment({ ...fixture, projectRoot: fixture.root, planPath: 'experiment/plan.json', confirmation: value });
+  const absentRun = () => assert.rejects(readFile(join(fixture.root, 'experiment/run/start.json')), { code: 'ENOENT' });
+  await assert.rejects(run(), { code: 'MODEL_SETTINGS_CONFIRMATION_REQUIRED' });
+  await absentRun();
+  await assert.rejects(run({ A: confirmation.A }), { code: 'MODEL_SETTINGS_CONFIRMATION_REQUIRED' });
+  await absentRun();
+  await assert.rejects(run({ ...confirmation, B: { ...confirmation.B, acknowledgedFindings: [] } }), { code: 'MODEL_SETTINGS_FINDING_ACKNOWLEDGEMENT_REQUIRED' });
+  await absentRun();
+  await assert.rejects(run({ ...confirmation, B: { ...confirmation.B, settingsDigest: 'stale' } }), { code: 'MODEL_SETTINGS_CONFIRMATION_REQUIRED' });
+  await absentRun();
+  await assert.rejects(run({ ...confirmation, B: { ...confirmation.B, entryKind: 'real' } }), { code: 'MODEL_SETTINGS_CONFIRMATION_REQUIRED' });
+  await absentRun();
+  const modelPath = join(fixture.runtime.sourceAgentDir, 'models.json');
+  const originalModels = await readFile(modelPath, 'utf8');
+  const changedModels = JSON.parse(originalModels);
+  changedModels.providers.fake.models[0].maxTokens = 1024;
+  await writeFile(modelPath, JSON.stringify(changedModels));
+  await assert.rejects(run(confirmation), { code: 'MODEL_SETTINGS_CONFIRMATION_REQUIRED' });
+  await absentRun();
+  await writeFile(modelPath, originalModels);
+  assert.equal((await run(confirmation)).stopped, false);
+  const start = JSON.parse(await readFile(join(fixture.root, 'experiment/run/start.json'), 'utf8'));
+  assert.deepEqual(start.confirmation, confirmation);
+  assert.deepEqual(start.effectiveModelSettings, snapshots);
+  for (const slot of fixture.planned.plan.schedule) {
+    const retained = JSON.parse(await readFile(join(fixture.root, `experiment/run/${slot.repetition}-${slot.arm}/model-settings.json`), 'utf8'));
+    assert.equal(retained.settingsDigest, snapshots[slot.arm].settingsDigest);
+    assert.deepEqual(retained.acknowledgedFindings, ['THINKING_CONTROL_MISMATCH']);
+    assert.equal(retained.settings.entryKind, 'synthetic');
+  }
+  const { report } = await readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  assert.equal(report.state, 'tested-improved');
+});
+
+
+test('settings drift after an A invocation stops B and retains the failed and unrun slots', async (t) => {
+  const fixture = await planned(t, { entryKind: 'synthetic' });
+  const confirmation = Object.fromEntries(['A', 'B'].map((arm) => [arm, {
+    entryKind: 'synthetic', settingsDigest: fixture.planned.plan.effectiveModelSettings[arm].settingsDigest,
+    acknowledgedFindings: ['THINKING_CONTROL_MISMATCH'],
+  }]));
+  let checksCompleted = 0;
+  const verifier = async (input) => {
+    const result = await fixture.verifier(input);
+    checksCompleted += 1;
+    if (checksCompleted === 4) {
+      const path = join(fixture.runtime.sourceAgentDir, 'models.json');
+      const models = JSON.parse(await readFile(path, 'utf8'));
+      models.providers.fake.models[0].maxTokens = 1024;
+      await writeFile(path, JSON.stringify(models));
+    }
+    return result;
+  };
+  const run = await runInstructionExperiment({ ...fixture, verifier, projectRoot: fixture.root, planPath: 'experiment/plan.json', confirmation });
+  assert.equal(run.stopped, true);
+  const { report } = await readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  assert.equal(report.state, 'inconclusive');
+  assert.deepEqual(report.slots.map(({ status }) => status), ['recorded', 'failed', 'not_run', 'not_run']);
+  await assert.rejects(readFile(join(fixture.root, 'experiment/run/1-B/invocation.json')), { code: 'ENOENT' });
 });

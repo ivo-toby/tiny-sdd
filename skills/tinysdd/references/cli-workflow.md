@@ -902,10 +902,16 @@ answers must remain outside instruction generation. Supply concrete observed
 failures, evidence references, exact target configuration and one before/after
 `profile.instructions` hypothesis. Setup-only or sparse evidence is inconclusive.
 
-Use `bench instructions plan --request PATH --out NEW_DIRECTORY --worker NAME`
-to freeze an explicit lineage partition, repeat count, AB/BA order and quality
-criteria. `bench instructions run --plan PATH --worker NAME` performs inference
-only after the operator authorizes it. `bench instructions report --plan PATH
+Use `bench instructions plan --request PATH --out NEW_DIRECTORY --worker NAME
+--entry-kind real` to freeze an explicit lineage partition, repeat count, AB/BA order and quality
+criteria. Show both `effectiveModelSettings.A` and `.B` reports to the operator;
+obtain confirmation of both digests and each required named finding. Save the
+reviewed `A`/`B` entries (`entryKind`, `settingsDigest`, `acknowledgedFindings`)
+in a project-relative JSON file. Do not automate the operator's confirmation.
+`bench instructions run --plan PATH --worker NAME --confirmation PATH` checks
+both arms before artifacts/inference and rechecks every invocation. Drift requires
+a new plan and confirmation. Prior plans remain readable, but live execution
+requires settings snapshots. `bench instructions report --plan PATH
 [--out NEW_FILE]` is read-only unless saving a new report. Retain regressions,
 failures, missing observations and preparation overhead. Speed alone is not an
 improvement; synthetic runs establish no real-model effectiveness. The declared

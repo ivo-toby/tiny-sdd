@@ -74,8 +74,8 @@ Usage:
   tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
-  tinysdd [--json] [--project PATH] bench instructions analyze|plan|profile --request PATH --out PATH [--worker NAME]
-  tinysdd [--json] [--project PATH] bench instructions run|report --plan PATH [--worker NAME] [--out PATH]
+  tinysdd [--json] [--project PATH] bench instructions analyze|plan|profile --request PATH --out PATH [--worker NAME] [--entry-kind real|synthetic]
+  tinysdd [--json] [--project PATH] bench instructions run|report --plan PATH [--worker NAME] [--out PATH] [--confirmation PATH]
   tinysdd [--json] [--project PATH] worker settings --worker NAME --entry-kind real|synthetic [--observed-reasoning-tokens N]
   tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
   tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
@@ -240,8 +240,8 @@ function parseCommand(args) {
       const [action, ...actionRest] = rest;
       const flags = {
         analyze: [['request', 'value'], ['out', 'value']],
-        plan: [['request', 'value'], ['out', 'value'], ['worker', 'value']],
-        run: [['plan', 'value'], ['worker', 'value']],
+        plan: [['request', 'value'], ['out', 'value'], ['worker', 'value'], ['entry-kind', 'value']],
+        run: [['plan', 'value'], ['worker', 'value'], ['confirmation', 'value']],
         report: [['plan', 'value'], ['out', 'value']],
         profile: [['request', 'value'], ['out', 'value']],
       };
@@ -501,9 +501,10 @@ async function instructionExperimentCommand(projectRoot, action, options) {
   if (!options.worker) throw cliError('--worker requires a value');
   const resolved = await configShow(projectRoot, { worker: options.worker });
   if (!resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected');
-  if (action === 'plan') return planInstructionExperiment({ ...common, worker: resolved.worker, profile: resolved.profile });
+  if (action === 'plan') return planInstructionExperiment({ ...common, worker: resolved.worker, profile: resolved.profile, entryKind: options['entry-kind'] });
+  const confirmation = options.confirmation ? (await readInstructionJson(projectRoot, options.confirmation)).value : undefined;
   process.stderr.write('Instruction experiment started; each A/B invocation and failure is retained.\n');
-  return runInstructionExperiment({ ...common, worker: resolved.worker });
+  return runInstructionExperiment({ ...common, worker: resolved.worker, confirmation });
 }
 
 function observedReasoningTokens(options) {
