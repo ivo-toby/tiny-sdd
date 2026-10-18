@@ -616,6 +616,10 @@ test('refuses verifier mutation between visible and held-out evaluation', async 
     assert.equal(firstCase.outcome, 'setup_error');
     assert.equal(visibleCalls, 1);
     assert.equal(heldOutCalls, 0);
+    assert.deepEqual(firstCase.verifier.visible.map(({ status }) => status), ['passed']);
+    assert.equal(firstCase.verifier.visible[0].output.ref, 'cases/slow-slice-repeat-1/verifier-output-visible-0.txt');
+    assert.match(firstCase.verifier.visible[0].output.sha256, /^[0-9a-f]{64}$/u);
+    assert.deepEqual(firstCase.verifier.heldOut.map(({ status }) => status), ['not_run']);
   } finally {
     if (previousWorkerTest === undefined) delete process.env.TINYSDD_WORKER_TEST;
     else process.env.TINYSDD_WORKER_TEST = previousWorkerTest;
