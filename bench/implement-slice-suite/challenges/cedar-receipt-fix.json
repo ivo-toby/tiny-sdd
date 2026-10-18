@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "cedar-receipt-fix",
-  "version": "1",
+  "version": "2",
   "role": "implement-slice",
   "difficultyTags": [
     "bugfix",
@@ -9,7 +9,7 @@
   ],
   "fixture": {
     "path": "fixtures/cedar-receipt-fix",
-    "sha256": "ed8139a8a232d3aab99b3b8f20696ed1076e371ded64af0b91f133a4b9622cfc"
+    "sha256": "75dc58d6f623ce5614fa65b4ed99c0649da354d0277d47f0da7ca6018ae31e22"
   },
   "packet": {
     "brief": {

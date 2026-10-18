@@ -12,6 +12,14 @@ Verifier manifests and their scripts are under `verifier/`; held-out scripts
 are never packet resources and are overlaid only into the independent
 evaluator copy by the benchmark runner.
 
+The current suite version keeps Opal's worker check inside its fixture by
+running the protected `tests/visible.test.mjs`; its independent held-out
+verifier remains outside the fixture. Cedar's visible and independent checks
+cover the valid `r-0|0` boundary, and the audit retains a positive-only mutant
+that must fail that held-out check. These corrections bump the affected
+challenge versions and suite version, so prior retained results remain bound
+to their original identities.
+
 The `stop-and-ask` challenge writes only `questions/report.json`, whose exact
 fields are `missingInputs` and `question`. Its verifier requires the known
 missing input names, a nonempty question, and no invented values; implementation

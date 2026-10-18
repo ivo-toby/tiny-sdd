@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "implement-slice-v1",
-  "version": "2026-10-03.2",
+  "version": "2026-10-18.1",
   "challenges": [
     {
       "path": "challenges/copper-tokenize.json",
@@ -25,7 +25,7 @@
     },
     {
       "path": "challenges/cedar-receipt-fix.json",
-      "sha256": "c68ebdbe8d17914b56b461e91998c633938c5dffb411f34db18af57f59ef2aa0"
+      "sha256": "f45c1e7468fc5043c2ffd6c6340795d973995f585a260490ad94cd61c90cdb69"
     },
     {
       "path": "challenges/ripple-batch-async.json",
@@ -41,7 +41,7 @@
     },
     {
       "path": "challenges/opal-missing-inputs.json",
-      "sha256": "fedac98672697616013305f7e32c702bbee71378d838216c3e53314ccd29b7fc"
+      "sha256": "932fc62e2379b3f548a312190dc261082240f52357968943ac84529db5d460ae"
     }
   ],
   "defaults": {

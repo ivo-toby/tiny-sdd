@@ -108,6 +108,14 @@
           "heldOutFailures": [
             "held-out-format"
           ]
+        },
+        {
+          "id": "wrong-positive-only",
+          "path": "candidates/cedar-receipt-fix/wrong-positive-only",
+          "sha256": "3442bf13d674d6bad2dd9fe172f2a96bde8e5e6f0a1201b98332362366d6df36",
+          "heldOutFailures": [
+            "held-out-format"
+          ]
         }
       ]
     },

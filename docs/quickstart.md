@@ -910,8 +910,13 @@ contains nine runnable `implement-slice` challenges (two new-module, two
 brownfield, two bug-fix, one async-heavy, one library-API, and one lint-rule)
 plus one runnable `stop-and-ask` challenge. The tenth writes only
 `questions/report.json` with named missing inputs and a nonempty question; it
-must leave implementation and protected files unchanged. Run the suite with
-`--suite bench/implement-slice-suite`.
+must leave implementation and protected files unchanged. The current corrected
+version runs Opal's worker check against the protected fixture test and covers
+Cedar's valid zero amount in both visible and independent checks; its
+positive-only audit mutant fails the independent zero-boundary check. The
+affected challenge and suite identities are versioned and digest-bound, so
+historical results remain comparable only within their original identity. Run
+the suite with `--suite bench/implement-slice-suite`.
 
 The write-tests challenge data is at `bench/write-tests-suite`. It contains five
 contract-test challenges with a visible reference run and 20 held-out mutant
