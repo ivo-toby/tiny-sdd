@@ -59,6 +59,7 @@ export function instructionRuntimeIdentity(value) {
 }
 
 function verifierQuality(result) {
+  if (Object.values(result.hardGates).some((value) => value === true)) return false;
   if (result.outcome === 'setup_error' || ['not_run', 'unavailable'].includes(result.outcome)) return U;
   const checks = [...result.verifier.visible, ...result.verifier.heldOut];
   if (result.verifier.visible.length === 0 || result.verifier.heldOut.length === 0

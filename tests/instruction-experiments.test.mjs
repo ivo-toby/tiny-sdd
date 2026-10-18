@@ -146,6 +146,10 @@ test('reports paired regressions, null results, missing pairs and telemetry with
   missingUsage.observed.cumulativeUsage.assistantMessages = 2;
   assert.equal(summarizeInstructionCase(missingUsage).telemetry.inputTokens, 'UNKNOWN');
   assert.equal(summarizeInstructionCase(missingUsage).integration, 'UNKNOWN');
+  const knownScopeFailure = structuredClone(missingUsage);
+  knownScopeFailure.outcome = 'unavailable';
+  knownScopeFailure.hardGates.outOfScopeEdit = true;
+  assert.equal(summarizeInstructionCase(knownScopeFailure).quality, false);
   assert.throws(() => reportInstructionPairs({ plan, outcomes: [...outcomes, outcomes[0]] }), /duplicate/u);
 });
 
