@@ -964,3 +964,26 @@ export function aggregateBenchmarkCases(cases, options = {}) {
 }
 
 export const scoreBenchmarkCases = aggregateBenchmarkCases;
+
+/** Attribute retained token stops without changing qualification evidence. */
+export function summarizeConfigurationCauses(observations) {
+  if (!Array.isArray(observations)) invalid('qualification observations must be an array');
+  const attempts = observations.flatMap((observation) => {
+    const result = validateBenchmarkCaseResult(observation.caseResult ?? observation);
+    if (result.outcome !== 'response_token_limit') return [];
+    return [{
+      ...(observation.invocationId === undefined ? {} : { invocationId: observation.invocationId }),
+      attemptId: result.attemptId,
+      role: result.role,
+      cause: 'response_token_limit',
+      attribution: 'configuration-limited',
+      passed: isSuccessfulBenchmarkCase(result),
+      limitDetails: result.limitDetails,
+    }];
+  });
+  return {
+    responseTokenLimitCount: attempts.length,
+    attempts,
+    interpretation: 'Response token limits constrain this configuration. All attempts and actual verifier failures remain in qualification; these stops alone do not establish model capability.',
+  };
+}

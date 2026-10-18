@@ -37,6 +37,7 @@ import { BENCHMARK_VERIFIER_STATUSES, parseBenchmarkCaseResult } from './benchma
 import { writeBenchmarkResults } from './benchmark-results-writer.mjs';
 import { registerQualificationInvocation } from './qualification-store.mjs';
 import { runWorker, workerLimits } from './worker.mjs';
+import { inspectEffectiveModelSettings, assertEffectiveModelSettingsConfirmed } from './effective-model-settings.mjs';
 import { defaultPiAgentDir, preflightPiWorker, validatePiWorker } from './pi-environment.mjs';
 import { DEFAULT_RUNTIME_SCOPE } from './file-scope.mjs';
 
@@ -1299,6 +1300,7 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
  * worker test runtime; production runs use runCheck.
  */
 export async function runBenchmark({
+  settingsConfirmation,
   projectRoot,
   suiteRoot,
   suitePath = 'suite.json',
@@ -1347,10 +1349,20 @@ export async function runBenchmark({
   }
   const effectiveProfile = await resolveBenchmarkProfile({ profile, worker, projectRoot, suiteRoot: suiteInfo.root });
   const config = await buildIdentity({ suite: suiteInfo.suite, suiteSha256: suiteInfo.suiteSha256, challenges: suiteInfo.challenges, verifierContent, worker, profile: effectiveProfile, runtime, model, workerSettings, piVersion, tinySddVersion, codeRevision, checkBudget: maxCheckRuns, checkLimits, verifierMode: verifier ? 'test-injection' : 'runCheck', suiteRoot: suiteInfo.root, projectRoot, checkRunnerOptions, runChecksDeclared });
+  let effectiveModelSettings = null;
+  if (runtime?.test !== true || settingsConfirmation !== undefined) {
+    effectiveModelSettings = await inspectEffectiveModelSettings({
+      worker, profile: effectiveProfile, sourceAgentDir: runtime?.sourceAgentDir,
+      sourceEnv: runtime?.sourceEnv, entryKind: settingsConfirmation?.entryKind,
+      observedReasoningTokens: settingsConfirmation?.observedReasoningTokens,
+    });
+    assertEffectiveModelSettingsConfirmed(effectiveModelSettings, settingsConfirmation);
+  }
   const root = resolve(outputRoot ?? join(projectRoot ?? suiteInfo.root, '.tinysdd', 'bench', suiteInfo.suite.id, invocationId));
   await assertNoSymlinkPath(root, { allowMissing: true, requireDirectory: false });
   if (await pathExists(root)) invalid(`benchmark invocation output already exists: ${root}`);
   await ensureDirectory(root);
+  if (effectiveModelSettings) await writeFile(join(root, 'model-settings.json'), `${JSON.stringify({ ...effectiveModelSettings, acknowledgedFindings: settingsConfirmation.acknowledgedFindings ?? [] }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   const startedAt = new Date().toISOString();
   const cases = [];
   for (const challengeInfo of suiteInfo.challenges) {
@@ -1388,6 +1400,7 @@ export async function runBenchmark({
   }
   return {
     ...result,
+    effectiveModelSettings,
     suite: suiteInfo.suite,
     config: { identity: config.identity, configDigest: config.configDigest, checkRunner: config.availability },
   };

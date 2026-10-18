@@ -329,7 +329,73 @@ the separate `run_checks` sandbox receives neither the provider credential nor
 network access. These are implementation boundaries, not evidence that a
 selected endpoint is currently reachable or authenticated.
 
-## 6. Use existing preflight before a readiness run
+## 6. Confirm effective model settings before a readiness run
+
+Before any live readiness smoke, inspect the exact selected worker:
+
+```sh
+tinysdd --project "$TARGET_PROJECT" worker settings --worker WORKER_NAME \
+  --entry-kind real --json
+```
+
+Use `synthetic` only for an explicitly synthetic entry and report that fact.
+This classification is operator-declared; the directory name is not proof.
+The report includes provider/model, selected model-file path, effective
+reasoning and source, `thinkingLevelMap`, requested/default thinking and source,
+effective thinking control and reason, output cap and source, thinking budget,
+and context window (`UNKNOWN` when absent). It does not print credentials.
+The current preflight still requires referenced environment values to be
+available; inspection does not authenticate or call a model.
+
+Show the report to the operator. Stop for confirmation or requested changes;
+do not infer confirmation from a previous smoke, config validation, or the
+agent's own selection. Record the confirmed `settingsDigest`, whether the entry
+is real or synthetic, and explicit acknowledgement of every finding marked
+`acknowledgementRequired`. In particular, `THINKING_CONTROL_MISMATCH` means the
+requested level may not control the server. Reinspect after any setting change.
+This is a setup-skill gate; ordinary `worker run/start` do not enforce it.
+`bench run` enforces a current digest and named acknowledgements separately.
+Neither form changes task approval or acceptance.
+
+Thinking lives in the worker profile's `runtime.thinking`:
+`off|minimal|low|medium|high`; the TinySDD default is `off`.
+Set the worker's `profile` to that project-relative JSON file and validate it.
+For OpenAI-compatible routes, `reasoning: true`, `compat.thinkingFormat`, and
+`thinkingLevelMap` determine what Pi sends. With OpenAI thinking format, `off`
+is sent only with a string `thinkingLevelMap.off`; otherwise the server default
+can still reason. A sent parameter does not prove the server honored it.
+Profile reasoning/compat overrides also appear in the effective result.
+
+Use the real entry again for benchmarks, inspect again, and pass the operator's
+confirmed digest and required acknowledgements:
+
+```sh
+tinysdd bench run --worker WORKER_NAME --suite bench --entry-kind real \
+  --confirm-settings CONFIRMED_SETTINGS_DIGEST \
+  --ack-finding THINKING_CONTROL_MISMATCH --json
+```
+
+Omit `--ack-finding` when no finding requires it. Never automatically extract
+and feed a digest back into a live command before the operator has reviewed it.
+If prior observed reasoning use is known, pass `--observed-reasoning-tokens N`
+to inspection and the benchmark to display an advisory when it meets/exceeds
+the response cap. This is operator-supplied evidence, not a universal low-token
+refusal threshold. `response_token_limit` attempts remain in the score and are
+reported as configuration-limited by `bench qualify`; inspect actual verifier
+failures as well, and do not infer conclusive model quality from these stops.
+
+### Qualification identity metadata
+
+Supply known non-secret model metadata in the selected worker's
+`modelMetadata`: `{"quantization":"Q4_K_M","server":{"id":"SERVER","version":"VERSION"}}`.
+These are operator-supplied identifiers, not server attestation. The configured
+profile is hashed automatically; no profile means `worker.profileDigest` stays
+`UNKNOWN`. TinySDD attempts to discover its code revision; an installed archive
+without Git metadata can leave it `UNKNOWN`. `runChecks.unavailableReason` is
+`UNKNOWN` when checks are available; this is not itself a missing capability.
+Other absent metadata stays `UNKNOWN`; never invent values to hide findings.
+
+### Existing runtime preflight
 
 `tinysdd setup` performs deterministic host and explicit model metadata checks
 without reading credential values. `worker start` then resolves the effective
@@ -367,8 +433,9 @@ inference against the exact provider/model and an approved environment
 credential.
 
 Define the fixture and exact route values before creating any files. The
-synthetic base URL is deliberately unreachable; replace it and the provider
-and model IDs only for a later, operator-authorized live attempt:
+synthetic base URL is deliberately unreachable. Its `reasoning: false` and
+`maxTokens: 1024` are offline placeholders, not live model settings. Never reuse
+this `models.json` for a live smoke or benchmark by changing only the route:
 
 ```sh
 TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
@@ -490,12 +557,16 @@ NODE
 
 This expected failure proves that the selected model entry and environment
 reference were read without attempting a model call. It is not a readiness
-result. For the later live attempt, an operator must replace the synthetic
-provider/model/base URL in both Pi `models.json` and the TinySDD worker route,
-then supply the value of `READY_CREDENTIAL_ENV` through an approved process
-environment mechanism. Never put that value in a command, task brief, source
+result. For the later live attempt, select the operator's real Pi directory
+(default `$HOME/.config/pi/agent`) and update the readiness worker to its exact
+provider/model and chosen profile. Unset the fixture `PI_CODING_AGENT_DIR`, or
+set it explicitly to the real operator-selected directory. Do not copy or
+rewrite the real model entry. Supply its referenced credential through an
+approved process environment mechanism. Repeat the effective-settings
+inspection in section 6 for this real entry and obtain the operator's confirmation
+and named finding acknowledgements before continuing. Never put that value in a command, task brief, source
 file, chat message or retained artifact. After that authorization, start the
-same approved task and poll the returned launch:
+approved task and poll the returned launch:
 
 ```sh
 node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$READY_PROJECT" \
@@ -544,6 +615,7 @@ Use a short report with one row per capability:
 | CLI source | checkout path and `--version` | command executed | keep checkout pinned or ask for source access |
 | Node/Pi layout | executable paths and versions | `runtime.json.piVersion` and `runtime.json.sandbox`; Node/platform from discovery or qualification facts | authorize the pinned package in the exact Node root, or fix the observed target mismatch |
 | provider/model | exact configured route and Pi model entry | `runtime.json.provider`/`.model` plus inference result | fix that exact route; no fallback |
+| effective model settings | confirmed digest, real/synthetic entry, reasoning/map, requested/default/effective thinking, cap/source and context window | compare `runtime.json.effectiveThinkingControl`, `.effectiveThinkingReason`, `.effectiveMaxTokens`, `.maxTokensSource`; retain named acknowledgements | stop and reconfirm on changes; never reuse the offline placeholders |
 | authentication | referenced environment name only | authenticated request or exact rejection | use approved secret mechanism; never expose value |
 | worker sandbox | platform binary discovery | runtime sandbox field | ask for supported Linux/macOS host or authorization to install prerequisite |
 | `run_checks` | declared and host availability | pass, fail, or unavailable reason | fix the check runner or record platform limitation |

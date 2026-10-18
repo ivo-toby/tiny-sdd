@@ -852,8 +852,33 @@ resources. The default suite path is `bench`; pass the directory or its
 `suite.json` explicitly when it is elsewhere:
 
 ```sh
-tinysdd bench run --worker qwen --suite bench --repeat 2 --json
+tinysdd worker settings --worker qwen --entry-kind real --json
+# After the operator reviews the report and confirms its settingsDigest:
+tinysdd bench run --worker qwen --suite bench --repeat 2 --entry-kind real \
+  --confirm-settings CONFIRMED_SETTINGS_DIGEST --json
 ```
+
+Before live readiness or benchmarking, show the effective settings and obtain
+operator confirmation. Use the operator's real Pi entry; the setup fixture's
+`reasoning: false` and `maxTokens: 1024` are offline placeholders. `worker
+settings` reports the entry kind (operator-declared), model-file path,
+reasoning/map, requested/default/effective thinking, cap and sources, and context
+window without credentials. `THINKING_CONTROL_MISMATCH` needs explicit operator
+acknowledgement via `--ack-finding THINKING_CONTROL_MISMATCH` on `bench run`.
+A missing/stale settings digest or missing required acknowledgement stops that
+CLI benchmark before inference. Ordinary worker commands retain their current
+contract; setup enforces confirmation through its skill workflow. Do not
+script automatic digest confirmation. Reinspect and reconfirm settings changes.
+
+Optional `--observed-reasoning-tokens N` on inspection/benchmark reports a
+configuration advisory when that operator-supplied count meets/exceeds the
+response cap; there is no universal low-token refusal threshold. `bench qualify`
+reports `response_token_limit` attempts as configuration-limited while retaining
+their actual checks, failures, denominator and qualification result. These stops
+alone do not establish model capability. Known `worker.modelMetadata.quantization`
+and `.server.id`/`.version` can be supplied in config; profile digests are derived
+from configured profiles. Absent metadata stays `UNKNOWN`. See the
+[setup reference](../skills/tinysdd/assets/setup/references/setup-workflow.md) for the confirmation and metadata procedure.
 
 The command creates immutable results under
 `.tinysdd/bench/<suite-id>/<invocation-id>/`: one case result for every

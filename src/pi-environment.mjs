@@ -486,6 +486,23 @@ export async function preflightPiWorker({ worker, profile = null, sourceAgentDir
     ...resolved.preflight,
     effectiveReasoning: resolved.model.reasoning ?? null,
     effectiveCompat: resolved.model.compat ?? null,
+    modelSettings: {
+      provider: worker.provider,
+      model: worker.model,
+      api: resolved.api,
+      source: resolved.modelsPath,
+      reasoning: typeof resolved.model.reasoning === "boolean" ? resolved.model.reasoning : "UNKNOWN",
+      reasoningSource: profile?.runtime?.reasoning !== undefined ? "profile" : typeof resolved.model.reasoning === "boolean" ? "model" : "UNKNOWN",
+      thinkingLevelMap: Object.fromEntries(
+        ["off", "minimal", "low", "medium", "high", "xhigh"]
+          .filter((level) => Object.hasOwn(resolved.model.thinkingLevelMap ?? {}, level))
+          .map((level) => [level, typeof resolved.model.thinkingLevelMap[level] === "string" || resolved.model.thinkingLevelMap[level] === null ? resolved.model.thinkingLevelMap[level] : "UNKNOWN"]),
+      ),
+      thinkingSource: profile?.runtime?.thinking === undefined ? "tinysdd-default" : "profile",
+      thinkingDefault: "off",
+      contextWindow: Number.isFinite(resolved.model.contextWindow) ? resolved.model.contextWindow : "UNKNOWN",
+      contextWindowSource: Number.isFinite(resolved.model.contextWindow) ? "model" : "UNKNOWN",
+    },
   };
 }
 

@@ -110,12 +110,18 @@ the harness's explicit skill mechanism when their workflows are needed.
    `featureIntegration` command only when the operator has chosen a real
    application entrypoint and protected test.
 5. Confirm the exact Pi provider/model route and its credential environment
-   reference without exposing the value. Let `worker start` perform its
+   reference without exposing the value. Before live readiness, run `worker
+   settings --worker NAME --entry-kind real --json`, show the effective thinking,
+   reasoning/map, token limits/sources and context window, and wait for operator
+   confirmation of the current digest and named mismatch acknowledgements.
+   Follow section 6 of the reference; this setup gate does not change ordinary
+   worker invocation requirements. Let `worker start` perform its
    fail-before-detach preflight; it checks the configured Pi model and referenced
    environment values but cannot prove that a server will authenticate.
 6. Run the offline fixture and preflight part of the bounded synthetic
    readiness smoke in a disposable project. With separate authorization for
-   live inference, continue to the live stage, inspect the retained
+   live inference and confirmed effective settings, use the operator's real Pi
+   entry for the live stage (never the offline placeholder model file), inspect the retained
    `runtime.json` and `result.json`, and report discovery and observations
    separately. Do not apply or accept the smoke candidate as part of setup.
 
