@@ -1234,3 +1234,5 @@ examples verify tooling only; real-model effectiveness and #108's live acceptanc
 remain pending. Profiles require explicit review/selection and preserve rollback. The experiment
 regression budget covers correctness and explicitly measured integration losses,
 including integration losses hidden by an existing correctness failure.
+Reports stream-hash retained opaque artifacts, so valid large worker logs remain
+verifiable while structural JSON and text resources retain their existing bound.
