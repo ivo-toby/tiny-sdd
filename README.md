@@ -16,8 +16,7 @@ WDD dependency and no automatic feature acceptance.
 ## Current state
 
 The CLI is [published on npm](https://www.npmjs.com/package/tinysdd).
-This README describes the current `main` branch, including the instruction
-experiment commands introduced in **0.2.0**. Check `tinysdd --version` and the
+This README describes the current `main` branch. Check `tinysdd --version` and the
 [published releases](https://github.com/ivo-toby/tiny-sdd/releases) when using an
 older installation.
 
@@ -32,7 +31,6 @@ or a small model pilot does not establish reliable delivery across projects.
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
-| Instruction optimization | Evidence-linked proposals, controlled A/B execution, reports and reviewed versioned profiles | Real-model discovery/control validation is tracked in [#126](https://github.com/ivo-toby/tiny-sdd/issues/126); shared community profiles in [#123](https://github.com/ivo-toby/tiny-sdd/issues/123). |
 
 Other open work includes [Pi runtime upgrades](https://github.com/ivo-toby/tiny-sdd/issues/100),
 [full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
@@ -238,25 +236,6 @@ tinysdd bench qualification show --record PATH [--suite PATH] [--worker NAME]
 rerunning inference. Qualification is bound to the recorded configuration, not
 just a model name. See [benchmark usage](docs/quickstart.md#run-an-isolated-benchmark).
 
-### Model-specific instruction experiments
-
-```text
-tinysdd bench instructions analyze --request PATH --out PATH
-tinysdd bench instructions plan --request PATH --out PATH --worker NAME --entry-kind real|synthetic
-tinysdd bench instructions run --plan PATH --worker NAME --confirmation PATH
-tinysdd bench instructions report --plan PATH [--out PATH]
-tinysdd bench instructions profile --request PATH --out PATH
-```
-
-The strong agent supplies an evidence-linked before/after instruction proposal.
-The CLI freezes and executes the comparison, reports paired outcomes, and retains
-reviewed profiles. The first version varies the worker profile's `instructions`
-field; it does not automatically rewrite specifications or optimize prompts.
-Discovery and control tasks must remain separate. Both A/B arms require confirmed
-settings for live execution. Profiles are selected deliberately, never promoted
-automatically. See [instruction experiments](docs/instruction-experiments.md)
-for request schemas, criteria and interpretation.
-
 ### Feature acceptance and phase records
 
 ```text
@@ -343,5 +322,5 @@ Historical measurements are retained under `experiments/` and dated result
 reports, including the [bounded feature pilot](experiments/003-idempotent-reservations/README.md)
 and [early CLI pilot](docs/cli-pilot-results-2026-09-06.md). Their outcomes belong
 to those exact fixtures, model configurations and review conditions. Current
-benchmark work must retain unsuccessful runs, distinguish fixture failures from
-model failures, and test instruction changes on separate control tasks.
+benchmark work must retain unsuccessful runs and distinguish fixture failures
+from model failures.

@@ -51,7 +51,6 @@ import {
 import { buildQualificationRecord, rescoreQualificationRecord, summarizeConfigurationCauses } from '../src/qualification.mjs';
 import { CLI_VERSION, runSetup } from '../src/setup.mjs';
 
-import { analyzeInstructionEvidence, createInstructionProfile, planInstructionExperiment, readInstructionJson, readInstructionReport, runInstructionExperiment } from '../src/instruction-experiment-store.mjs';
 
 const VERSION = CLI_VERSION;
 const HELP = `TinySDD ${VERSION}
@@ -74,8 +73,6 @@ Usage:
   tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
-  tinysdd [--json] [--project PATH] bench instructions analyze|plan|profile --request PATH --out PATH [--worker NAME] [--entry-kind real|synthetic]
-  tinysdd [--json] [--project PATH] bench instructions run|report --plan PATH [--worker NAME] [--out PATH] [--confirmation PATH]
   tinysdd [--json] [--project PATH] worker settings --worker NAME --entry-kind real|synthetic [--observed-reasoning-tokens N]
   tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
   tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
@@ -236,20 +233,6 @@ function parseCommand(args) {
     return { command, subcommand, values };
   }
   if (command === 'bench') {
-    if (subcommand === 'instructions') {
-      const [action, ...actionRest] = rest;
-      const flags = {
-        analyze: [['request', 'value'], ['out', 'value']],
-        plan: [['request', 'value'], ['out', 'value'], ['worker', 'value'], ['entry-kind', 'value']],
-        run: [['plan', 'value'], ['worker', 'value'], ['confirmation', 'value']],
-        report: [['plan', 'value'], ['out', 'value']],
-        profile: [['request', 'value'], ['out', 'value']],
-      };
-      if (!flags[action]) throw cliError('bench instructions requires analyze, plan, run, report, or profile');
-      const { values, positional } = parseFlags(actionRest, new Map(flags[action]));
-      if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
-      return { command, subcommand, action, values };
-    }
     if (subcommand === 'qualification') {
       const [action, ...actionRest] = rest;
       if (action !== 'show') throw cliError('bench qualification requires show');
@@ -487,24 +470,6 @@ async function resolveBenchmarkSuite(project, requested) {
     if (error?.code === 'QUALIFICATION_UNAVAILABLE') throw cliError(error.message, 'QUALIFICATION_SUITE_UNAVAILABLE');
     throw error;
   }
-}
-
-async function instructionExperimentCommand(projectRoot, action, options) {
-  for (const field of (['analyze', 'plan', 'profile'].includes(action) ? ['request', 'out'] : ['plan'])) {
-    if (!options[field]) throw cliError(`--${field} requires a value`);
-  }
-  const request = options.request ? (await readInstructionJson(projectRoot, options.request)).value : undefined;
-  const common = { projectRoot, request, output: options.out, planPath: options.plan };
-  if (action === 'analyze') return analyzeInstructionEvidence(common);
-  if (action === 'report') return readInstructionReport(common);
-  if (action === 'profile') return createInstructionProfile(common);
-  if (!options.worker) throw cliError('--worker requires a value');
-  const resolved = await configShow(projectRoot, { worker: options.worker });
-  if (!resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected');
-  if (action === 'plan') return planInstructionExperiment({ ...common, worker: resolved.worker, profile: resolved.profile, entryKind: options['entry-kind'] });
-  const confirmation = options.confirmation ? (await readInstructionJson(projectRoot, options.confirmation)).value : undefined;
-  process.stderr.write('Instruction experiment started; each A/B invocation and failure is retained.\n');
-  return runInstructionExperiment({ ...common, worker: resolved.worker, confirmation });
 }
 
 function observedReasoningTokens(options) {
@@ -919,7 +884,6 @@ async function run(argv) {
   else if (parsed.command === 'worker' && parsed.subcommand === 'start') data = await startWorker(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'status') data = await workerStatus(project, parsed.values);
   else if (parsed.command === 'worker' && parsed.subcommand === 'stop') data = await workerStop(project, { id: parsed.values.id, waitMs: parsed.values['wait-ms'] });
-  else if (parsed.command === 'bench' && parsed.subcommand === 'instructions') data = await instructionExperimentCommand(project, parsed.action, parsed.values);
   else if (parsed.command === 'bench' && parsed.subcommand === 'run') data = await runBenchmarkCommand(project, parsed.values);
   else if (parsed.command === 'bench' && parsed.subcommand === 'qualify') {
     data = await qualifyBenchmarkCommand(project, parsed.values);
