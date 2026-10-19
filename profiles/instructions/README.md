@@ -114,13 +114,16 @@ or held-out answers. Link to retained artifacts by digest instead.
 
 Use a manual pull request. Before opening it:
 
-1. Run the controlled A/B workflow with explicit discovery and control
-   partitions, repetitions, criteria, model identity and effective settings.
+1. For a `proposed` entry, record the hypothesis and exact prepared identity;
+   finished A/B work is not required. For a tested state, run the controlled A/B
+   workflow with explicit discovery and control partitions, repetitions,
+   criteria, model identity and effective settings.
 2. Copy only the intentionally shareable baseline/candidate instruction text and
    the digest-bound evidence card into the entry directory. Keep raw prompts,
    traces, private controls and held-out material local to the experiment.
 3. Validate the card with a JSON Schema 2020-12 validator and run the repository's
-   documentation diff checks. No catalog or index is updated by this scaffold.
+   documentation diff checks. Update the manual table deliberately when entries
+   change; there is no automatic catalog or routing.
 4. Ask an independent reviewer to check the exact profile bytes, every referenced
    digest, the source/suite/settings identity, role applicability, missing-data
    accounting and limitations. The reviewer records references in the card.
@@ -137,15 +140,18 @@ requested thinking, token/context limits, suite/source identity and worker role.
 quantization, server, context limit or thinking setting requires a new experiment;
 it does not inherit the recommendation.
 
-Copy or reference the selected profile through the existing worker's
-`worker.profile` setting. For a project-local entry this is a project-relative
-path, for example:
+Add the selected profile to an existing fully configured worker's `worker.profile`
+setting. Configuration overlays replace a worker as a whole, so retain its
+`type`, `provider` and `model`. For example:
 
 ```json
 {
   "workers": {
     "qwen": {
-      "profile": "profiles/instructions/model/config/implement-slice/v1/candidate-profile.json"
+      "type": "pi",
+      "provider": "litellm",
+      "model": "titan/llamacpp/qwen3.6-35b-a3b-256k",
+      "profile": "profiles/instructions/qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v1/candidate-profile.json"
     }
   }
 }
