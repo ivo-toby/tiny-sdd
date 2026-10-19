@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-source-identity-export",
+  "repository": "ivo-toby/tiny-sdd",
+  "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "sourceArchiveSha256": "dba24c3134fa1e88cc418cda4439bfe2b2f8406e6d9a74aadb5e145d71530c9d",
+  "provenance": {
+    "source": "retained prepared source metadata",
+    "originalArtifactSha256": "dba24c3134fa1e88cc418cda4439bfe2b2f8406e6d9a74aadb5e145d71530c9d",
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "f996081b3ad48736bd458cdbdbcb9827f4fb22db2da4f1431693fc7368258a25"
+  }
+}

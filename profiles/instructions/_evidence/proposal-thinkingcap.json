@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-proposal-export",
+  "modelKey": "thinkingcap",
+  "role": "write-tests",
+  "state": "proposed",
+  "recommendation": "gather-more",
+  "sourceArtifact": {
+    "filename": "candidate-write-tests-frozen-v2.json",
+    "sha256": "2b72b00b3a1ac66495221b00ccd5395b353f05ab28825c5d64410281e439ed62"
+  },
+  "candidateInstructionSha256": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014",
+  "baselineInstructionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "category": "edge-cases",
+  "hypothesis": "Explicitly trace whether each chosen fixture distinguishes the named invariant from a plausible wrong behavior; reduce test witnesses that pass while never exercising their stated contract.",
+  "profileInstructionSha256": {
+    "baseline": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014"
+  },
+  "profileFileSha256": {
+    "baseline": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625",
+    "candidate": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
+  },
+  "runtimeCanonicalSettingsDigest": "924334ef44d3ef1cbb28b6db4ac68623f651289e0b090da39e43e693b360008a",
+  "provenance": {
+    "source": "frozen proposal summary; no efficacy evidence",
+    "originalArtifactSha256": "2b72b00b3a1ac66495221b00ccd5395b353f05ab28825c5d64410281e439ed62",
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "9f10bd7e0bba3d8405c8da288985aa53ef5d7e45c1ab1c492b46b83670ffcf6d"
+  }
+}

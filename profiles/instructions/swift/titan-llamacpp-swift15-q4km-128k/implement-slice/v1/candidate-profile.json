@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-comparison-medium16k-v1",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "instructions": "Use the dependency API exactly as documented. Determine presence from its presence/status flag, separately from its payload. A present payload may be undefined, null, false, zero or an empty string; preserve that value unchanged. Do not use a nullish or truthiness fallback to decide whether a matching result exists."
+}

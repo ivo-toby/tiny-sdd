@@ -10,6 +10,24 @@ recorded as `proposed`, with `evidence: null` in its card, but it cannot recomme
 the candidate as an improvement. Real model entries should be added after the
 controlled discovery/control work described in [instruction experiments](../../docs/instruction-experiments.md).
 
+## Proposed entries
+
+These ten entries are manual research proposals. Their cards contain no A/B
+evidence and make no improvement claim.
+
+| Model | Role | Hypothesis | State |
+| --- | --- | --- | --- |
+| [qwen36](qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
+| [north](north/titan-llamacpp-north-mini-code-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
+| [swift](swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
+| [qwen38q4s](qwen38q4s/titan-llamacpp-qwen3_8-q4s-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
+| [muse](muse/titan-llamacpp-muse-glimmer-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
+| [gemma26](gemma26/titan-llamacpp-gemma4-26b-a4b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Finish after declared checks pass instead of re-deriving the solution. | proposed |
+| [gemma12](gemma12/titan-llamacpp-gemma4-12b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Use a brief action/check loop and stop guessing after an exact-text edit fails. | proposed |
+| [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
+| [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
+| [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
+
 ## Entry layout
 
 Use one directory for one exact identity:
@@ -45,7 +63,8 @@ Use the runtime fields supported by the current worker profile schema. Do not pu
 evidence-card metadata, state, hashes or review notes into these profile files.
 The instruction text is the deliberately selected public content. The worker
 appends it to the built-in system prompt; selecting a profile preserves the
-built-in harness and does not replace it.
+built-in harness and does not replace it. Empty baseline instructions require
+the profile validation fix from #135 (present on the current main branch).
 
 `evidence-card.json` must validate against the local
 [evidence-card schema](./evidence-card.schema.json). It records the exact

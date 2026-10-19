@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-comparison-medium16k-v1",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "instructions": "Once the requested change is implemented and the declared checks pass, finish with a short factual handoff. Do not keep re-deriving an already checked solution. If a check fails or a requirement is missing, follow the existing repair or stop rules; never claim unrun checks passed."
+}

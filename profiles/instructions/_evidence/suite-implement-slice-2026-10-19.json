@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-suite-identity-export",
+  "id": "model-study-implement-v1",
+  "version": "2026-10-19.2",
+  "role": "implement-slice",
+  "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "provenance": {
+    "source": "retained public suite identity metadata",
+    "originalArtifactSha256": "41c809d6693e63c7b52cda95eb71c379a090f1a8a3a258d81ead6e21557bb088",
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "3a0a03c01bbf5b820ce829e45ef6cb8f1c15ab265c6632bb928cbd19c64e822a"
+  }
+}

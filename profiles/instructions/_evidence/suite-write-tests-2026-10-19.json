@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-suite-identity-export",
+  "id": "model-study-write-tests-v1",
+  "version": "2026-10-19.2",
+  "role": "write-tests",
+  "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "provenance": {
+    "source": "retained public suite identity metadata",
+    "originalArtifactSha256": "cc02229770af49e1e39fdea6f4da1695c37ad99107351d2f85a2cd7a01c15e42",
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "18d86697ce2b2aec758d226cd88d993588511d15133ff5eced1e4c222fb34baa"
+  }
+}

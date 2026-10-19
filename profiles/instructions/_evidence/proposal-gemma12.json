@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-proposal-export",
+  "modelKey": "gemma12",
+  "role": "implement-slice",
+  "state": "proposed",
+  "recommendation": "gather-more",
+  "sourceArtifact": {
+    "filename": "candidate-prompts-frozen-v2.json",
+    "sha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0"
+  },
+  "candidateInstructionSha256": "383922ff9646311e700ee46572c9ff0527ff055c8e01b3ae6223bee5c0d5a07a",
+  "baselineInstructionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "category": "structure",
+  "hypothesis": "A short action/check loop may avoid both observed long deliberation to token exhaustion and repeated stale-text edits. This is one bundled model-specific instruction change; effects cannot be attributed to an individual sentence.",
+  "profileInstructionSha256": {
+    "baseline": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate": "383922ff9646311e700ee46572c9ff0527ff055c8e01b3ae6223bee5c0d5a07a"
+  },
+  "profileFileSha256": {
+    "baseline": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625",
+    "candidate": "1ae80ff040491ceb3fc9de3d29046e08f26869862407f30859f7a3d9eccfa3f2"
+  },
+  "runtimeCanonicalSettingsDigest": "2647cc85db30dc8961f1273c2190c31eeed6778ee01d0b52f43fec1848863ebb",
+  "provenance": {
+    "source": "frozen proposal summary; no efficacy evidence",
+    "originalArtifactSha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0",
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "289d5afe138fa34389191cb7d91840365f305fa33a1458674cd8132ff6d97fc0"
+  }
+}

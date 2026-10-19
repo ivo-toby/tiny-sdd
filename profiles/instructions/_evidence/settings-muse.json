@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "muse",
+  "route": "titan/llamacpp/muse-glimmer-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "7c9266cca7bf13ff6972ee03e182ed7717e0b4dcf68cd10d1e296c85d9a72c97",
+  "settingsDigest": "b2ab2b96622cf5d2dfaead2ee503cda92736a6c1244b38869b11828f1e5f7788",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "provenance": {
+    "source": "retained prepared settings metadata",
+    "originalArtifacts": {
+      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
+      "preparedSettings": "3f309efb2196b0254f4e6c58e3f78f4358eed8280f25a560e104984a8bd594f5",
+      "confirmedUpstreamSettings": "d930179b4a1634795c84f180d4ca2d95cc07327bfe8829986b1864c93cad0834",
+      "wireMetadata": "46ebe51ec0866f83f0dc307a33e8aaf7c89c306050076785ebe8469e604b0dcf"
+    },
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "a70fc1263da1746ff35bae0a17aa90f4dcf1080d05272d3c284f1f50b4126207"
+  }
+}

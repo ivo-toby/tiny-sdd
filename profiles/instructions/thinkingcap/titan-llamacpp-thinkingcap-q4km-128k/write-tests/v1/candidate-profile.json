@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-comparison-medium16k-v1",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "instructions": "For each acceptance criterion, choose a concrete counterexample that would fail if that criterion were violated. Trace the event order and the actual value comparisons to confirm the fixture distinguishes correct behavior from a plausible incorrect behavior; test names and comments are not evidence. Assert only behavior promised by the approved contract; do not add identity or side-effect requirements inferred merely from the reference implementation. Assert the exact public outcome, preserve an input snapshot where required, and keep the named witnesses independent. Then use the declared checks and finish with a factual handoff."
+}

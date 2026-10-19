@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-card",
+  "id": "north-implement-slice-titan-medium16k-v1",
+  "version": 1,
+  "state": "proposed",
+  "model": {
+    "id": "titan/llamacpp/north-mini-code-128k",
+    "version": "UNKNOWN",
+    "quantization": "UNKNOWN"
+  },
+  "configuration": "route=titan/llamacpp/north-mini-code-128k;thinking=medium;maxTokens=16384;contextWindow=128000;timeoutMs=600000;maxToolCalls=100;maxCheckRuns=12;fallbacks=disabled",
+  "role": "implement-slice",
+  "synthetic": false,
+  "identities": {
+    "source": {
+      "repository": "ivo-toby/tiny-sdd",
+      "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "path": "profiles/instructions/_evidence/source-02c661d.json",
+      "sha256": "9165877db856014575293a7541ba9047f0998a71d9e6edd5e3e4a86f09d932fa"
+    },
+    "suite": {
+      "id": "model-study-implement-v1",
+      "version": "2026-10-19.2",
+      "path": "profiles/instructions/_evidence/suite-implement-slice-2026-10-19.json",
+      "sha256": "e99e74f6f1367c10a3b571172832781c7abd78afad8ff44f288a7c4a4435c2de"
+    },
+    "profiles": {
+      "baseline": {
+        "path": "profiles/instructions/north/titan-llamacpp-north-mini-code-128k/implement-slice/v1/baseline-profile.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "candidate": {
+        "path": "profiles/instructions/north/titan-llamacpp-north-mini-code-128k/implement-slice/v1/candidate-profile.json",
+        "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+      }
+    },
+    "settings": {
+      "baseline": {
+        "path": "profiles/instructions/_evidence/settings-north.json",
+        "sha256": "7d9cde40b2c3e12631dc317bb9a107fd5fc24505cbdb406deb91071a8b7786d1"
+      },
+      "candidate": {
+        "path": "profiles/instructions/_evidence/settings-north.json",
+        "sha256": "7d9cde40b2c3e12631dc317bb9a107fd5fc24505cbdb406deb91071a8b7786d1"
+      }
+    }
+  },
+  "settings": {
+    "requestedThinking": "medium",
+    "maxTokens": 16384,
+    "contextWindow": 128000,
+    "limits": {
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12,
+      "firstWriteMs": "UNKNOWN"
+    },
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    }
+  },
+  "promptHashes": {
+    "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after": "b17033079cb097f18ca280936ca175a403b5449ccdbadee54295a16000be417d"
+  },
+  "evidence": null,
+  "independentVerification": {
+    "status": "unverified",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/proposal-north.json",
+        "sha256": "78ec8017f8dd3ad62c9afc99c2b3d9be63e86095d5aeb6e81d9c325d03f2e8c2"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "UNKNOWN",
+    "refs": [],
+    "exactBytesMatched": false,
+    "sourceVerified": false
+  },
+  "limitations": [
+    "No controlled A/B evidence has been run or independently verified; this card is a proposal only.",
+    "Model version, quantization and server enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
+    "THINKING_CONTROL_MISMATCH is recorded in the prepared settings metadata; server enforcement remains unverified.",
+    "The candidate instructions are appended to the built-in harness and require an exact-match review before selection."
+  ],
+  "recommendation": "gather-more"
+}

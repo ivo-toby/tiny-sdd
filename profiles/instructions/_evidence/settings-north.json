@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "north",
+  "route": "titan/llamacpp/north-mini-code-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "7c9266cca7bf13ff6972ee03e182ed7717e0b4dcf68cd10d1e296c85d9a72c97",
+  "settingsDigest": "69c3836d1eadf548c0efb6f4c87b47b4a0ba07fef182a50202fccf2efb312f83",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "provenance": {
+    "source": "retained prepared settings metadata",
+    "originalArtifacts": {
+      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
+      "preparedSettings": "b65f788ef025ff860196b928bca5e2ea07d68c28d2dc21e5639e246c2e8a2f9d",
+      "confirmedUpstreamSettings": "cbeee536316df9e736c9c11ee78f8ce81589ad42edfd9431b143ecaaba207ae8",
+      "wireMetadata": "ac602a636f2cdf45cdf6b97f37e46badfd2af257561d9ae25ef962a4789d5d06"
+    },
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "1b3c039915aaa9727d81cdca4e998f9eb3bfd67066c30eef7ccdd2f262c956c1"
+  }
+}

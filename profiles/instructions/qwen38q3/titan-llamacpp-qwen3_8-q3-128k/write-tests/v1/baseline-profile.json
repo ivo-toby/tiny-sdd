@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-comparison-medium16k-v1",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "instructions": ""
+}

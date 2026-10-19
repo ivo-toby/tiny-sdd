@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-proposal-export",
+  "modelKey": "qwen36",
+  "role": "implement-slice",
+  "state": "proposed",
+  "recommendation": "gather-more",
+  "sourceArtifact": {
+    "filename": "candidate-prompts-frozen-v2.json",
+    "sha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0"
+  },
+  "candidateInstructionSha256": "b17033079cb097f18ca280936ca175a403b5449ccdbadee54295a16000be417d",
+  "baselineInstructionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "category": "interfaces-callers",
+  "hypothesis": "Separate presence from payload to preserve nullish and falsy values.",
+  "profileInstructionSha256": {
+    "baseline": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate": "b17033079cb097f18ca280936ca175a403b5449ccdbadee54295a16000be417d"
+  },
+  "profileFileSha256": {
+    "baseline": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625",
+    "candidate": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+  },
+  "runtimeCanonicalSettingsDigest": "834321d07773c4adf10ae4aba9ab563c68af3001714e2fb3558a562f38d4e56a",
+  "provenance": {
+    "source": "frozen proposal summary; no efficacy evidence",
+    "originalArtifactSha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0",
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "a9ba0c1cf46aab014b7b6c1c718e9b8541eae9d4dbef922881a49dcdf68b939d"
+  }
+}

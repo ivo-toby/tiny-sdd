@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-card",
+  "id": "qwen38q3-write-tests-titan-medium16k-v1",
+  "version": 1,
+  "state": "proposed",
+  "model": {
+    "id": "titan/llamacpp/qwen3.8-q3-128k",
+    "version": "UNKNOWN",
+    "quantization": "UNKNOWN"
+  },
+  "configuration": "route=titan/llamacpp/qwen3.8-q3-128k;thinking=medium;maxTokens=16384;contextWindow=128000;timeoutMs=600000;maxToolCalls=100;maxCheckRuns=12;fallbacks=disabled",
+  "role": "write-tests",
+  "synthetic": false,
+  "identities": {
+    "source": {
+      "repository": "ivo-toby/tiny-sdd",
+      "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "path": "profiles/instructions/_evidence/source-02c661d.json",
+      "sha256": "9165877db856014575293a7541ba9047f0998a71d9e6edd5e3e4a86f09d932fa"
+    },
+    "suite": {
+      "id": "model-study-write-tests-v1",
+      "version": "2026-10-19.2",
+      "path": "profiles/instructions/_evidence/suite-write-tests-2026-10-19.json",
+      "sha256": "8c7d81df1617b116d1c2ee66db5b4d93a4f3d60b6192f0947f6563ac849c88eb"
+    },
+    "profiles": {
+      "baseline": {
+        "path": "profiles/instructions/qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/baseline-profile.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "candidate": {
+        "path": "profiles/instructions/qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/candidate-profile.json",
+        "sha256": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
+      }
+    },
+    "settings": {
+      "baseline": {
+        "path": "profiles/instructions/_evidence/settings-qwen38q3.json",
+        "sha256": "f986f0e5ae6a580b62313f0e7bb128abcd329f28fb9a7407936775819c850451"
+      },
+      "candidate": {
+        "path": "profiles/instructions/_evidence/settings-qwen38q3.json",
+        "sha256": "f986f0e5ae6a580b62313f0e7bb128abcd329f28fb9a7407936775819c850451"
+      }
+    }
+  },
+  "settings": {
+    "requestedThinking": "medium",
+    "maxTokens": 16384,
+    "contextWindow": 128000,
+    "limits": {
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12,
+      "firstWriteMs": "UNKNOWN"
+    },
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    }
+  },
+  "promptHashes": {
+    "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014"
+  },
+  "evidence": null,
+  "independentVerification": {
+    "status": "unverified",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/proposal-qwen38q3.json",
+        "sha256": "454f4b426c0b67259464fb7359660fec5053fe27e943a2585133298140313876"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "UNKNOWN",
+    "refs": [],
+    "exactBytesMatched": false,
+    "sourceVerified": false
+  },
+  "limitations": [
+    "No controlled A/B evidence has been run or independently verified; this card is a proposal only.",
+    "Model version, quantization and server enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
+    "THINKING_CONTROL_MISMATCH is recorded in the prepared settings metadata; server enforcement remains unverified.",
+    "The candidate instructions are appended to the built-in harness and require an exact-match review before selection."
+  ],
+  "recommendation": "gather-more"
+}

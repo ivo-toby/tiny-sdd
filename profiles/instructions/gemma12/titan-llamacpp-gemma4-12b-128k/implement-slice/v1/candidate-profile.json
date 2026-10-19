@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-comparison-medium16k-v1",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "instructions": "Keep planning brief: read the documented interface, make the smallest justified change, and use run_checks to resolve uncertainty instead of repeatedly simulating the fix. After passing checks, finish with a short factual handoff. If an exact-text edit fails, read the current file before retrying; do not keep guessing replacements."
+}

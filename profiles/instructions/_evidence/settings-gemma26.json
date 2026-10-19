@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "gemma26",
+  "route": "titan/llamacpp/gemma4-26b-a4b-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "7c9266cca7bf13ff6972ee03e182ed7717e0b4dcf68cd10d1e296c85d9a72c97",
+  "settingsDigest": "f5bd547b7f030c34e0495785b3eae16f370577c06e4f38f23101b361d181cdcc",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "provenance": {
+    "source": "retained prepared settings metadata",
+    "originalArtifacts": {
+      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
+      "preparedSettings": "4322ad2b10c8f913c350483b08d3713b165bdbb23e022e2637a6e1f9eba2ddfe",
+      "confirmedUpstreamSettings": "90579d7dc4af6cf85716f6cf2f63d8756afa39832551d70bacbbd6da535f320d",
+      "wireMetadata": "f010b10c447250cce1c0a0fe172ccc169c42018d684f81971971b0ed847e35ad"
+    },
+    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
+    "exportedSummarySha256": "916defee516cf469db09d930673cef4df2a104570ab2308b3abc9865d97aab35"
+  }
+}
