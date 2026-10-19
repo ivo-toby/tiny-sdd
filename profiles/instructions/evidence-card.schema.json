@@ -131,6 +131,106 @@
             "enum": [
               "tested-improved",
               "no-improvement",
+              "regressed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "independentVerification": {
+            "properties": {
+              "status": {
+                "const": "verified"
+              },
+              "refs": {
+                "minItems": 1
+              }
+            }
+          },
+          "review": {
+            "properties": {
+              "reviewer": {
+                "not": {
+                  "const": "UNKNOWN"
+                }
+              },
+              "refs": {
+                "minItems": 1
+              },
+              "exactBytesMatched": {
+                "const": true
+              },
+              "sourceVerified": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "inconclusive"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "properties": {
+              "partitions": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "discovery"
+                    ],
+                    "properties": {
+                      "discovery": {
+                        "required": [
+                          "missingData"
+                        ],
+                        "properties": {
+                          "missingData": {
+                            "minItems": 1
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "required": [
+                      "control"
+                    ],
+                    "properties": {
+                      "control": {
+                        "required": [
+                          "missingData"
+                        ],
+                        "properties": {
+                          "missingData": {
+                            "minItems": 1
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "tested-improved",
+              "no-improvement",
               "regressed",
               "inconclusive"
             ]
@@ -186,34 +286,6 @@
             "required": [
               "after"
             ]
-          },
-          "independentVerification": {
-            "properties": {
-              "status": {
-                "const": "verified"
-              },
-              "refs": {
-                "minItems": 1
-              }
-            }
-          },
-          "review": {
-            "properties": {
-              "reviewer": {
-                "not": {
-                  "const": "UNKNOWN"
-                }
-              },
-              "refs": {
-                "minItems": 1
-              },
-              "exactBytesMatched": {
-                "const": true
-              },
-              "sourceVerified": {
-                "const": true
-              }
-            }
           }
         }
       }
@@ -230,6 +302,86 @@
         "properties": {
           "recommendation": {
             "const": "consider-candidate"
+          },
+          "evidence": {
+            "properties": {
+              "partitions": {
+                "properties": {
+                  "discovery": {
+                    "properties": {
+                      "state": {
+                        "const": "tested-improved"
+                      },
+                      "pairs": {
+                        "properties": {
+                          "missing": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "A": {
+                        "properties": {
+                          "unknown": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "B": {
+                        "properties": {
+                          "unknown": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "gains": {
+                        "properties": {
+                          "netQualityRate": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "control": {
+                    "properties": {
+                      "state": {
+                        "const": "tested-improved"
+                      },
+                      "pairs": {
+                        "properties": {
+                          "missing": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "A": {
+                        "properties": {
+                          "unknown": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "B": {
+                        "properties": {
+                          "unknown": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "gains": {
+                        "properties": {
+                          "netQualityRate": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -312,7 +464,7 @@
       "const": "UNKNOWN"
     },
     "scalarOrUnknown": {
-      "oneOf": [
+      "anyOf": [
         {
           "$ref": "#/$defs/nonEmptyString"
         },
@@ -358,7 +510,7 @@
     "projectRelativePath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$)).+"
+      "pattern": "^(?!/)(?![A-Za-z]:)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\)(?!.*//)(?!.*\\/$)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
     },
     "reference": {
       "type": "object",

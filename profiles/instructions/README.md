@@ -67,7 +67,9 @@ The card uses exactly these states:
 - `regressed`: the comparison exceeds the declared regression budget or has a
   measured regression; recommendation is `keep-baseline`.
 - `inconclusive`: missing, unavailable or conflicting evidence prevents a safe
-  result; recommendation is `gather-more`.
+  result; record the missing-data reason and use `gather-more`. Independent
+  verification may be `unverified` or `UNKNOWN` when the evidence was not
+  independently checked.
 
 Every completed card retains discovery and control partition summaries with
 scheduled, complete and missing pairs, A/B counts, gains, regressions,
@@ -80,11 +82,13 @@ may use the schema's explicit `null` where applicable.
 The `synthetic` flag is mandatory. Synthetic cards are harness evidence only and
 may be `proposed` or `inconclusive`; they never establish model effectiveness or
 become `tested-improved`, `no-improvement` or `regressed` recommendations.
-Completed cards require independent verification references and a reviewer who
-vouches that the profile bytes match the recorded hashes and that the source and
-evidence were checked. The card must not contain raw prompts, traces, credentials,
-benchmark directories, private controls or held-out answers. Link to retained
-artifacts by digest instead.
+Cards claiming a tested result require independent verification references and a
+reviewer who vouches that the profile bytes match the recorded hashes and that
+the source and evidence were checked. An `inconclusive` card records only the
+byte/source checks that actually happened and keeps unavailable verification as
+`unverified` or `UNKNOWN`; do not fabricate a verified result. The card must not
+contain raw prompts, traces, credentials, benchmark directories, private controls
+or held-out answers. Link to retained artifacts by digest instead.
 
 ## Contributing an entry
 
