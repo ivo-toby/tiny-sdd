@@ -274,7 +274,7 @@
     "preparation": "UNKNOWN",
     "review": "UNKNOWN"
   },
-  "finding": "Both arms repair the Option member name, but all four Ember candidate patches retain the nullish fallback, collapsing a present undefined payload to null. The four Cedar attempts satisfy the finite parser checks. The candidate has no measured quality gain on either partition in this pilot.",
+  "finding": "Both arms repair the Option member name, but all four Ember A/B patches retain the nullish fallback, collapsing a present undefined payload to null. The four Cedar attempts satisfy the finite parser checks. The candidate has no measured quality gain on either partition in this pilot.",
   "reviewDisposition": {
     "state": "inconclusive",
     "recommendation": "gather-more",
@@ -290,7 +290,7 @@
     "Integration, token usage, repair rounds and preparation/review overhead remain UNKNOWN.",
     "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
     "Elapsed time is measured per partition and arm; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN.",
-    "Reference checks and finite mutation checks are reported separately; passing references do not mean every candidate is correct."
+    "Visible-regression and held-out checks are reported separately; a passing visible regression check does not guarantee the held-out checks pass."
   ],
   "provenance": {
     "source": "sanitized retained recovery-1 report and primary review; export hash is distinct from original artifact hashes",

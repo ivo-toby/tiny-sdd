@@ -68,7 +68,7 @@
   "evidence": {
     "report": {
       "path": "profiles/instructions/_evidence/report-qwen36-implement-recovery-1-2026-10-19.json",
-      "sha256": "2da59bd5e4a39ac05fe6f0496c65c1cf8f0413867e1b52c1b70845c361945e75"
+      "sha256": "e7cbc4ee47c9b6fe7552e4e9bf728327f1350d6163fc6e0ad314c9c0f25bc596"
     },
     "protocol": "profiles/instructions/_evidence/protocol-qwen36-implement-recovery-1-2026-10-19.json",
     "partitions": {
@@ -171,11 +171,11 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "3d0e845b92192754e0de36cc7077a7c858a562717d243d3229cb37f20cc061af"
+        "sha256": "1ecdc6c8e5f0034d49b6ff29ba5cf861fe060f1606c1047dbff49f0ef338738a"
       },
       {
         "path": "profiles/instructions/_evidence/report-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "2da59bd5e4a39ac05fe6f0496c65c1cf8f0413867e1b52c1b70845c361945e75"
+        "sha256": "e7cbc4ee47c9b6fe7552e4e9bf728327f1350d6163fc6e0ad314c9c0f25bc596"
       }
     ]
   },
@@ -184,7 +184,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "3d0e845b92192754e0de36cc7077a7c858a562717d243d3229cb37f20cc061af"
+        "sha256": "1ecdc6c8e5f0034d49b6ff29ba5cf861fe060f1606c1047dbff49f0ef338738a"
       }
     ],
     "exactBytesMatched": true,
@@ -199,7 +199,7 @@
     "Integration, token usage, repair rounds and preparation/review overhead remain UNKNOWN.",
     "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
     "Elapsed time is descriptive AB/BA telemetry and does not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN.",
-    "Reference checks and finite mutation checks are reported separately; passing references do not mean every candidate is correct."
+    "Visible-regression and held-out checks are reported separately; a passing visible regression check does not guarantee the held-out checks pass."
   ],
   "recommendation": "gather-more"
 }

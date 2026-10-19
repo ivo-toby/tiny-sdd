@@ -46,7 +46,7 @@
     }
   },
   "publicCandidatePatchReview": {
-    "summary": "Primary reviewed eight discovery patch records spanning five unique patches; both arms repair the Option member name, but all four Ember candidate patches retain the nullish fallback. Cedar attempts satisfy the finite parser checks.",
+    "summary": "Primary reviewed eight discovery patch records spanning five unique patches; both arms repair the Option member name, but all four Ember A/B patches retain the nullish fallback. Cedar attempts satisfy the finite parser checks.",
     "discoveryPatchRecordsRead": 8,
     "uniqueDiscoveryPatchesRead": 5,
     "discoveryChallengesRead": 2,
