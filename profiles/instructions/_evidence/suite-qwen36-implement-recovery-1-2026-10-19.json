@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-suite-identity-export",
+  "modelKey": "qwen36",
+  "role": "implement-slice",
+  "id": "instruction-implement-expanded-v2",
+  "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+  "suiteSha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35",
+  "challengeCount": 7,
+  "discoveryChallengeCount": 2,
+  "controlChallengeCount": 5,
+  "benchTreeSha256": "a36f2e94de8f76b64c6c0e64cb8d50ff059298fa68535e8d514a9409779a10c6",
+  "controlTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+  "controlBenchTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+  "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+  "sourceControlSuiteSha256": "5ee9f62a8487bfcaeb2ea4964b54c1e96b8796858d19854b88cb673f61c009f0",
+  "extraControlTreeSha256": "3b72ff724775e36fd2d03ed447ff62ce0d1f6041834f80fef2491ea7b2ed1254",
+  "controlAuditSha256": "8f100153197ef7beb55572774c96ca779983f0883b1c07ea28d75cf491f43a58",
+  "sparseVisibleEmber": true,
+  "provenance": {
+    "source": "sanitized suite and opaque control-tree identity; challenge and verifier contents are not exported",
+    "originalMetadata": {
+      "suite": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      },
+      "controlAudit": {
+        "namespace": "remote-host",
+        "hostAlias": "strongbad",
+        "relativePath": "control-audit/linux-2026-10-19T075523755Z-3785959/linux-audit-report.json",
+        "sha256": "8f100153197ef7beb55572774c96ca779983f0883b1c07ea28d75cf491f43a58"
+      }
+    }
+  }
+}

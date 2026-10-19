@@ -16,13 +16,13 @@ independent review and the completed-card requirements below.
 
 ## Library entries
 
-Seven entries remain manual research proposals. The qwenpi, thinkingcap and
+Six entries remain manual research proposals. The qwen36, qwenpi, thinkingcap and
 qwen38q3 rows record completed exploratory pilots with inconclusive strict-control
 applicability; their cards retain the measured reports and review boundaries below.
 
 | Model | Role | Hypothesis | State |
 | --- | --- | --- | --- |
-| [qwen36](qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
+| [qwen36](qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v2/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | inconclusive |
 | [north](north/titan-llamacpp-north-mini-code-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
 | [swift](swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
 | [qwen38q4s](qwen38q4s/titan-llamacpp-qwen3_8-q4s-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
@@ -32,6 +32,8 @@ applicability; their cards retain the measured reports and review boundaries bel
 | [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
+
+Qwen36 history: [v2 recovery-1](qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v2/evidence-card.json) is the latest reviewed entry; [v1 proposal](qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v1/evidence-card.json) remains immutable. The v2 pilot measured no quality gain on either partition: all four Ember candidate patches retained the nullish fallback. Its two historical worker-visible Ember tests and prior control-source exposure are disclosed, so the result is exploratory rather than strict blinded transfer validation.
 
 QwenPi history: [v2 blind3](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/evidence-card.json) is the latest reviewed entry; [v1 recovery-1](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) remains immutable. The v2 card preserves raw `0/4` control-wrapper outcomes separately from its unavailable semantic control comparison, so wrapper failures are not scored as semantic quality failures. Follow-up checker repair and validation is tracked in [#140](https://github.com/ivo-toby/tiny-sdd/issues/140).
 

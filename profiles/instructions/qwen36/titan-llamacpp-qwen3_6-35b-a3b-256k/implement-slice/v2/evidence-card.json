@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-card",
+  "id": "qwen36-implement-slice-titan-medium16k-v2",
+  "version": 2,
+  "state": "inconclusive",
+  "model": {
+    "id": "titan/llamacpp/qwen3.6-35b-a3b-256k",
+    "version": "UNKNOWN",
+    "quantization": "UNKNOWN"
+  },
+  "configuration": "route=titan/llamacpp/qwen3.6-35b-a3b-256k;thinking=medium;maxTokens=16384;contextWindow=256000;timeoutMs=600000;maxToolCalls=100;maxCheckRuns=12;fallbacks=disabled",
+  "role": "implement-slice",
+  "synthetic": false,
+  "identities": {
+    "source": {
+      "repository": "ivo-toby/tiny-sdd",
+      "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "path": "profiles/instructions/_evidence/source-qwen36-implement-recovery-1-2026-10-19.json",
+      "sha256": "1ba782a6cd6f3ab23db5125d78bd00541cb61c8b0860d65b9190e6345e3edd5d"
+    },
+    "suite": {
+      "id": "instruction-implement-expanded-v2",
+      "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+      "path": "profiles/instructions/_evidence/suite-qwen36-implement-recovery-1-2026-10-19.json",
+      "sha256": "9737688f70ca5442e4ceceef6d18e6753e0251a83412a810e9dfc888d2c74472"
+    },
+    "profiles": {
+      "baseline": {
+        "path": "profiles/instructions/qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v2/baseline-profile.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "candidate": {
+        "path": "profiles/instructions/qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v2/candidate-profile.json",
+        "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+      }
+    },
+    "settings": {
+      "baseline": {
+        "path": "profiles/instructions/_evidence/settings-qwen36-implement-recovery-1-2026-10-19.json",
+        "sha256": "6a717b992b71790e8e0237aa112e21a64f1c7825d47f2f6a809a2bd6df5d1c16"
+      },
+      "candidate": {
+        "path": "profiles/instructions/_evidence/settings-qwen36-implement-recovery-1-2026-10-19.json",
+        "sha256": "6a717b992b71790e8e0237aa112e21a64f1c7825d47f2f6a809a2bd6df5d1c16"
+      }
+    }
+  },
+  "settings": {
+    "requestedThinking": "medium",
+    "maxTokens": 16384,
+    "contextWindow": 256000,
+    "limits": {
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12,
+      "firstWriteMs": "UNKNOWN"
+    },
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    }
+  },
+  "promptHashes": {
+    "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after": "b17033079cb097f18ca280936ca175a403b5449ccdbadee54295a16000be417d"
+  },
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-qwen36-implement-recovery-1-2026-10-19.json",
+      "sha256": "2da59bd5e4a39ac05fe6f0496c65c1cf8f0413867e1b52c1b70845c361945e75"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-qwen36-implement-recovery-1-2026-10-19.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "state": "no-improvement",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 4,
+          "missing": 0
+        },
+        "A": {
+          "success": 2,
+          "failure": 2,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "B": {
+          "success": 2,
+          "failure": 2,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "gains": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "Primary had inspected existing control source after candidate freeze but before new A/B outcomes; exploratory continuity controls are not strictly untouched or blinded controls for the same analyst."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "state": "no-improvement",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "A": {
+          "success": 10,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "B": {
+          "success": 10,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "gains": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "Primary had inspected existing control source after candidate freeze but before new A/B outcomes; exploratory continuity controls are not strictly untouched or blinded controls for the same analyst."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
+  "independentVerification": {
+    "status": "verified",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-qwen36-implement-recovery-1-2026-10-19.json",
+        "sha256": "3d0e845b92192754e0de36cc7077a7c858a562717d243d3229cb37f20cc061af"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-qwen36-implement-recovery-1-2026-10-19.json",
+        "sha256": "2da59bd5e4a39ac05fe6f0496c65c1cf8f0413867e1b52c1b70845c361945e75"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-qwen36-implement-recovery-1-2026-10-19.json",
+        "sha256": "3d0e845b92192754e0de36cc7077a7c858a562717d243d3229cb37f20cc061af"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
+  },
+  "limitations": [
+    "Two repeated full-suite discovery invocations are correlated and remain descriptive evidence.",
+    "Sparse visible Ember discovery retains two historical worker-visible tests; it is not a production-fixture weakening.",
+    "Primary control-source exposure occurred after candidate freeze but before A/B outcomes; strict same-analyst untouched or blinded qualification is unavailable.",
+    "Both arms had no measured quality gain on discovery or control; the raw experimental state and measured counts remain preserved in the report.",
+    "Backend version, quantization and server-side thinking enforcement remain UNKNOWN.",
+    "Integration, token usage, repair rounds and preparation/review overhead remain UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Elapsed time is descriptive AB/BA telemetry and does not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN.",
+    "Reference checks and finite mutation checks are reported separately; passing references do not mean every candidate is correct."
+  ],
+  "recommendation": "gather-more"
+}

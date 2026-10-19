@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-protocol-export",
+  "modelKey": "qwen36",
+  "role": "implement-slice",
+  "source": {
+    "repository": "ivo-toby/tiny-sdd",
+    "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "sourceArchiveSha256": "20fb8348010269e92c15e05e7e1844f5b5a8438971a52916572c3f8f76073420",
+    "sourceIdentityExport": {
+      "path": "profiles/instructions/_evidence/source-qwen36-implement-recovery-1-2026-10-19.json",
+      "sha256": "1ba782a6cd6f3ab23db5125d78bd00541cb61c8b0860d65b9190e6345e3edd5d"
+    },
+    "sourceAudit": {
+      "path": "recovery-qwen36-1/instruction-evidence/qwen36-implement/source-audit.json",
+      "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+    },
+    "sourceTreeSha256": "eb8dcf1e1f3837dd2c4211ad7bccd02cce9ded53eff9812096cde02f60648e08",
+    "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+    "runtimeCodeRevision": "UNKNOWN"
+  },
+  "suite": {
+    "id": "instruction-implement-expanded-v2",
+    "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+    "suiteSha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35",
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/suite-qwen36-implement-recovery-1-2026-10-19.json",
+      "sha256": "9737688f70ca5442e4ceceef6d18e6753e0251a83412a810e9dfc888d2c74472"
+    },
+    "benchTreeSha256": "a36f2e94de8f76b64c6c0e64cb8d50ff059298fa68535e8d514a9409779a10c6",
+    "controlTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+    "controlBenchTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+    "sourceControlSuiteSha256": "5ee9f62a8487bfcaeb2ea4964b54c1e96b8796858d19854b88cb673f61c009f0",
+    "extraControlTreeSha256": "3b72ff724775e36fd2d03ed447ff62ce0d1f6041834f80fef2491ea7b2ed1254",
+    "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+    "challengeCount": 7,
+    "discoveryChallengeCount": 2,
+    "controlChallengeCount": 5,
+    "sparseVisibleEmber": true
+  },
+  "plan": {
+    "id": "instruction-qwen36-implement-pilot1",
+    "path": "recovery-qwen36-1/instruction-evidence/qwen36-implement/plans/instruction-qwen36-implement-pilot1/plan.json",
+    "sha256": "374ef3f4279ed075525d2d0e09997b0bd10f2b10bb305c17aa1fd9cad4bae46d",
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "partitions": [
+      {
+        "partition": "discovery",
+        "challengeCount": 2,
+        "repetitions": 2
+      },
+      {
+        "partition": "control",
+        "challengeCount": 5,
+        "repetitions": 2
+      }
+    ]
+  },
+  "profiles": {
+    "baseline": {
+      "path": "profiles/instructions/qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v2/baseline-profile.json",
+      "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+    },
+    "candidate": {
+      "path": "profiles/instructions/qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v2/candidate-profile.json",
+      "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+    }
+  },
+  "candidatePromptArtifact": {
+    "sha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0",
+    "contentExported": false
+  },
+  "discovery": {
+    "baselineRuns": 2,
+    "instructions": "",
+    "registerEvidence": false
+  },
+  "experiment": {
+    "repetitions": 2,
+    "schedule": [
+      "A",
+      "B",
+      "B",
+      "A"
+    ],
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "baseline": "A is the empty instruction profile. B may change only profile.instructions after the supported proposal gate."
+  },
+  "authorization": {
+    "entryKind": "real",
+    "acknowledgedFindings": [
+      "THINKING_CONTROL_MISMATCH"
+    ],
+    "route": "configured model route; host identity omitted"
+  },
+  "retainedExposureAttestation": "The retained plan attestation is preserved as provenance only; later primary review found prior control-source exposure before A/B outcomes, so strict same-analyst untouched/blinded qualification is unavailable.",
+  "exposureAttestationStatus": "superseded-by-review",
+  "controlExposure": {
+    "primaryAnalyst": "Primary had inspected existing control source after candidate freeze but before new A/B outcomes; exploratory continuity controls, not strictly untouched controls for the same analyst.",
+    "teamWideBlinding": "not claimed"
+  },
+  "sparseVisibleDisclosure": "Implement discovery Ember retains two historical worker-visible tests; corrected reference fixtures and independent visible/held-out oracles remain from source-02. This is a sparse-visible prompt-generalization probe, not a production-fixture weakening.",
+  "preparedSettingsDigest": "834321d07773c4adf10ae4aba9ab563c68af3001714e2fb3558a562f38d4e56a",
+  "provenance": {
+    "source": "sanitized retained recovery-1 protocol and plan metadata; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/primary-independent-review.json",
+        "sha256": "f54d7627f4fbf78d9e965f24c96613ed6dfedbf26c4576ccd5cab805909ce42b"
+      },
+      "primaryDiscoveryReview": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/primary-discovery-review.json",
+        "sha256": "10e0027795070c4996c1725fa479b136ae4de822a0131841ebfba15d3b93f9d0"
+      },
+      "report": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/run-report.json",
+        "sha256": "55c4e3d6078015fbc0141aed864171d6275a5211a8047136c4cde12c3ad3e0e5"
+      },
+      "protocol": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/protocol.json",
+        "sha256": "1638b084f7a89a6153419d1bf4d386e292b2cee2feab2a0627518bf7664085e4"
+      },
+      "preparedSettings": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/prepared-settings.json",
+        "sha256": "79ac7ca5192f62cb7e18f0268663627f7949e529ea6508774a4daea9f08aaf94"
+      },
+      "mechanicalAudit": {
+        "filename": "instruction-audits/qwen36-implement-20261019T113202373817Z.json",
+        "sha256": "387eef3ec9f9537438cd6a52474438930e6f589123799591bfbb600348cac380"
+      }
+    }
+  }
+}

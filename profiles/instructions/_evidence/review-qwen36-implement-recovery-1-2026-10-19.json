@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-independent-review-export",
+  "modelKey": "qwen36",
+  "role": "implement-slice",
+  "reviewer": "primary",
+  "state": "inconclusive",
+  "recommendation": "gather-more",
+  "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "report": {
+    "path": "recovery-qwen36-1/instruction-evidence/qwen36-implement/run-report.json",
+    "sha256": "55c4e3d6078015fbc0141aed864171d6275a5211a8047136c4cde12c3ad3e0e5",
+    "rederivedLocally": true,
+    "matchesRetainedReport": true
+  },
+  "mechanicalAudit": {
+    "path": "instruction-audits/qwen36-implement-20261019T113202373817Z.json",
+    "sha256": "387eef3ec9f9537438cd6a52474438930e6f589123799591bfbb600348cac380"
+  },
+  "checks": {
+    "newInference": false,
+    "caseCount": 28,
+    "verificationRecordsChecked": 56,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 24,
+      "failed": 4
+    },
+    "mutationChecks": {
+      "scheduled": 28,
+      "passed": 24,
+      "failed": 4
+    },
+    "visiblePass": 24,
+    "visibleFailure": 4,
+    "heldOutPass": 24,
+    "heldOutFailure": 4,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true,
+    "promptBindingReview": {
+      "candidateGuidanceMatches": 14,
+      "candidateGuidanceAbsent": 14,
+      "contentExported": false,
+      "summary": "The frozen candidate guidance matched all 14 B prompts and was absent from all 14 A prompts; prompt text is not exported."
+    }
+  },
+  "publicCandidatePatchReview": {
+    "summary": "Primary reviewed eight discovery patch records spanning five unique patches; both arms repair the Option member name, but all four Ember candidate patches retain the nullish fallback. Cedar attempts satisfy the finite parser checks.",
+    "discoveryPatchRecordsRead": 8,
+    "uniqueDiscoveryPatchesRead": 5,
+    "discoveryChallengesRead": 2,
+    "sparseVisibleHistoricalTests": 2,
+    "productionFixturesUnchanged": true
+  },
+  "finding": "The raw experiment is no-improvement with no measured gain on discovery or control. Exploratory continuity controls cannot establish strict same-analyst untouched or blinded applicability.",
+  "limitations": [
+    "Two AB/BA repetitions within task lineages are correlated; no population inference or universal model claim.",
+    "Sparse visible Ember discovery retains historical two-test exposure and does not describe normal production task preparation.",
+    "Candidate prompt was frozen before current A/B; no post-result tuning or score rewriting.",
+    "Integration, token usage, repair rounds and preparation/review overhead remain UNKNOWN.",
+    "Backend version, quantization and server-side thinking enforcement remain UNKNOWN.",
+    "Observed elapsed time is descriptive; server load is UNKNOWN and no causal speed claim is made."
+  ],
+  "provenance": {
+    "source": "sanitized primary review and local report rederivation; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/primary-independent-review.json",
+        "sha256": "f54d7627f4fbf78d9e965f24c96613ed6dfedbf26c4576ccd5cab805909ce42b"
+      },
+      "primaryDiscoveryReview": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/primary-discovery-review.json",
+        "sha256": "10e0027795070c4996c1725fa479b136ae4de822a0131841ebfba15d3b93f9d0"
+      },
+      "mechanicalAudit": {
+        "filename": "instruction-audits/qwen36-implement-20261019T113202373817Z.json",
+        "sha256": "387eef3ec9f9537438cd6a52474438930e6f589123799591bfbb600348cac380"
+      },
+      "report": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/run-report.json",
+        "sha256": "55c4e3d6078015fbc0141aed864171d6275a5211a8047136c4cde12c3ad3e0e5"
+      },
+      "plan": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/plans/instruction-qwen36-implement-pilot1/plan.json",
+        "sha256": "374ef3f4279ed075525d2d0e09997b0bd10f2b10bb305c17aa1fd9cad4bae46d"
+      },
+      "protocol": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/protocol.json",
+        "sha256": "1638b084f7a89a6153419d1bf4d386e292b2cee2feab2a0627518bf7664085e4"
+      },
+      "sourceAudit": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "preparedSettings": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/prepared-settings.json",
+        "sha256": "79ac7ca5192f62cb7e18f0268663627f7949e529ea6508774a4daea9f08aaf94"
+      },
+      "primaryConfirmation": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/primary-confirmation.json",
+        "sha256": "c91879fcc67420d04f7e63c1265d1aca8094e08b09ca79903dd375189c0ab1a0"
+      },
+      "archive": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement.tar",
+        "sha256": "20fb8348010269e92c15e05e7e1844f5b5a8438971a52916572c3f8f76073420"
+      },
+      "primaryPromptBindingReview": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/primary-prompt-binding-review.json",
+        "sha256": "a258dcea754aa24f3c474ff04f274b9a9db77c554944d9f19841869ebeff3a8f"
+      }
+    }
+  },
+  "experimentalReportState": "no-improvement",
+  "controlQualification": {
+    "state": "inconclusive",
+    "reason": "Primary had inspected existing control source after candidate freeze but before new A/B outcomes; exploratory continuity controls are not strictly untouched or blinded controls for the same analyst.",
+    "followUp": "Fresh blind replication is required before strict applicability validation."
+  }
+}

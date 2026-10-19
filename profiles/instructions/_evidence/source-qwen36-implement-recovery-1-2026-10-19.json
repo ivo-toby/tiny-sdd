@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-source-identity-export",
+  "modelKey": "qwen36",
+  "role": "implement-slice",
+  "repository": "ivo-toby/tiny-sdd",
+  "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "sourceArchiveSha256": "20fb8348010269e92c15e05e7e1844f5b5a8438971a52916572c3f8f76073420",
+  "sourceTreeSha256": "eb8dcf1e1f3837dd2c4211ad7bccd02cce9ded53eff9812096cde02f60648e08",
+  "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+  "sourceAudit": {
+    "path": "recovery-qwen36-1/instruction-evidence/qwen36-implement/source-audit.json",
+    "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+  },
+  "runtimeCodeRevision": "UNKNOWN",
+  "provenance": {
+    "source": "sanitized source and byte-tree identity; source contents are not exported",
+    "originalMetadata": {
+      "sourceArchive": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement.tar",
+        "sha256": "20fb8348010269e92c15e05e7e1844f5b5a8438971a52916572c3f8f76073420"
+      },
+      "sourceAudit": {
+        "filename": "recovery-qwen36-1/instruction-evidence/qwen36-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      }
+    }
+  }
+}
