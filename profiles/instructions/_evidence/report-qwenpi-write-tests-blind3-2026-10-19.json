@@ -1,0 +1,343 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "state": "no-improvement",
+  "recommendation": "keep-baseline",
+  "rawRecommendation": "keep A",
+  "experiment": {
+    "id": "instruction-qwenpi-writetests-blind3-v2",
+    "proposalId": "qwenpi-counterexamples-v1",
+    "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "suite": {
+      "id": "instruction-write-tests-expanded-blind3-v3",
+      "version": "2026-10-19.expanded-blind3-writing-discovery-v3",
+      "suiteSha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d",
+      "identityExport": {
+        "path": "profiles/instructions/_evidence/suite-qwenpi-write-tests-blind3-2026-10-19.json",
+        "sha256": "3870f61e7a08ee257b31f2276ede899d3db93b2ad4cc767f1b6578ca7fb0b84b"
+      },
+      "benchTreeSha256": "b07ea189839b0aae0997b0d705b21c232d0e566c52cf86c9910ec8d1a41d269a",
+      "controlTreeSha256": "aba4da5a4cf9faf4b70941c26acf5c6db3b68bf34dc613152d80e51128350494",
+      "controlBenchTreeSha256": "954925bdab629a05acbf93101dedaf1213e9a8265ed727fd278e3b70a76df5d7"
+    },
+    "plan": {
+      "path": "blind3/instruction-evidence/qwenpi-write-tests/plans/instruction-qwenpi-writetests-pilot1/plan.json",
+      "sha256": "35a3d9ca5322cd95310b3b9ba1ac31adfbd9aa7635aa3fac9c7d23f19f46842f"
+    },
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "retainedExposureAttestation": "Before and during control authoring, the author had prior calibration/rescore knowledge but did not inspect candidate B text or new instruction A/B outcomes; completed A/B data was read afterward for reporting.",
+    "exposureAttestationStatus": "superseded-by-review",
+    "controlExposure": {
+      "primaryAnalyst": "The primary analyst was blind to the new control source, contracts, verifier answers and control results before proposal and plan review.",
+      "controlAuthor": "The control author had prior calibration/rescore knowledge and did not inspect candidate B text or new instruction A/B outcomes before completion.",
+      "independentCorrectnessReviewer": "The independent correctness reviewer had prior candidate and result knowledge and reviewed the fixed pack without adapting candidate B or control content to performance.",
+      "teamWideBlinding": "not claimed"
+    },
+    "integrationChecks": {},
+    "synthetic": false
+  },
+  "partitions": {
+    "discovery": {
+      "partition": "discovery",
+      "state": "tested-improved",
+      "challengeCount": 5,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 10,
+        "complete": 10,
+        "missing": 0
+      },
+      "A": {
+        "success": 6,
+        "failure": 4,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "B": {
+        "success": 8,
+        "failure": 2,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "gains": {
+        "quality": 2,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.2
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        }
+      ]
+    },
+    "control": {
+      "partition": "control",
+      "state": "no-improvement",
+      "challengeCount": 2,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 4,
+        "complete": 4,
+        "missing": 0
+      },
+      "A": {
+        "success": 0,
+        "failure": 4,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "B": {
+        "success": 0,
+        "failure": 4,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "gains": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        }
+      ]
+    }
+  },
+  "reviewedControlInterpretation": {
+    "state": "inconclusive",
+    "pairs": {
+      "scheduled": 4,
+      "complete": 0,
+      "missing": 4
+    },
+    "A": {
+      "success": 0,
+      "failure": 0,
+      "unknown": 4,
+      "scheduled": 4
+    },
+    "B": {
+      "success": 0,
+      "failure": 0,
+      "unknown": 4,
+      "scheduled": 4
+    },
+    "reason": "All eight control reference wrappers rejected exact test-name matching even though 25 executed Node tests passed with zero failures; semantic control quality is unavailable. Raw runner outcomes remain recorded above and are not reclassified as semantic failures."
+  },
+  "independentReviewSummary": {
+    "caseCount": 28,
+    "verificationRecordsChecked": 132,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 20,
+      "failed": 8
+    },
+    "mutationChecks": {
+      "scheduled": 104,
+      "passed": 74,
+      "failed": 30
+    },
+    "visiblePass": 20,
+    "visibleFailure": 8,
+    "heldOutPass": 74,
+    "heldOutFailure": 30,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true,
+    "controlReferenceReview": {
+      "wrappersChecked": 8,
+      "outputDigestsAndTapNamesChecked": 8,
+      "innerNodeTests": {
+        "tests": 25,
+        "passed": 25,
+        "failed": 0
+      },
+      "wrapperChecks": {
+        "passed": 0,
+        "failed": 8
+      },
+      "checkerExactMatch": true
+    }
+  },
+  "telemetry": {
+    "discovery": {
+      "elapsedMs": {
+        "measuredPairs": 10,
+        "scheduledPairs": 10,
+        "A": 334457,
+        "B": 376387,
+        "meanPairedDifference": 4193,
+        "differenceRange": [
+          -6645,
+          11690
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    },
+    "control": {
+      "elapsedMs": {
+        "measuredPairs": 4,
+        "scheduledPairs": 4,
+        "A": 192432,
+        "B": 189713,
+        "meanPairedDifference": -679.75,
+        "differenceRange": [
+          -13985,
+          14544
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    }
+  },
+  "overhead": {
+    "preparation": "UNKNOWN",
+    "review": "UNKNOWN"
+  },
+  "finding": "Known discovery gains appear on the second Birch and Dune repetitions while their first repetitions still miss those finite faults. New controls are unusable for transfer inference because eight reference wrappers reject exact test-name formatting despite 25 passing Node tests. Do not label the raw 0/4 control counts as measured poor semantic quality; preserve the raw no-improvement report and withhold candidate recommendation.",
+  "limitations": [
+    "Two repeated full-suite discovery invocations are correlated and remain descriptive evidence.",
+    "The new control source was unseen by the primary analyst before proposal and plan review, but the control author had prior calibration/rescore knowledge and the independent correctness reviewer had prior candidate/result knowledge; team-wide blinding is not claimed.",
+    "All eight control wrappers reject exact test-name matching despite 25 passing Node tests with zero failures; control semantic quality and transfer comparison are unavailable until the checker protocol is repaired.",
+    "The raw runner recorded A=0/4 and B=0/4 control wrapper failures; those values are retained as raw outcomes and are not semantic quality counts.",
+    "Finite mutation-specific discovery coverage does not prove general contract-test quality or model ability.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
+    "No integration check mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Reference checks and mutation results are reported separately; passing reference checks do not mean every candidate is correct.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
+  ],
+  "provenance": {
+    "source": "sanitized retained blind3 report and independent review; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-independent-review.json",
+        "sha256": "3fb789982ef90db8e74f7f48bad6ad7df042ad36f044cd169366db4131088cdd"
+      },
+      "primaryPlanReview": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-plan-review.json",
+        "sha256": "fd86d3118e9804ce2fd127b7a3b7540ee1d4a9dd6953e4bbd5cc0d3216774fc9"
+      },
+      "report": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/run-report.json",
+        "sha256": "aaa0d1f99e350ec7bcb0f1ec497049c94275ff1e16f2cdb4eacaedfac79ce164"
+      },
+      "protocol": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/protocol.json",
+        "sha256": "12f74ea60b2921451fb01ad90ac067077c06d6e9d8d1dd6a53a80e451699dde7"
+      },
+      "mechanicalAudit": {
+        "filename": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+        "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
+      },
+      "preparedSettings": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/prepared-settings.json",
+        "sha256": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a"
+      }
+    }
+  },
+  "cardDisposition": {
+    "state": "inconclusive",
+    "recommendation": "gather-more",
+    "reason": "The eight control wrapper failures are a checker naming confound, so valid semantic A/B control outcomes are unavailable; retain baseline pending repaired controls and fresh validation."
+  }
+}

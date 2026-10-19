@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-card",
+  "id": "qwenpi-write-tests-titan-medium16k-v2",
+  "version": 2,
+  "state": "inconclusive",
+  "model": {
+    "id": "titan/llamacpp/qwen3.8-pi-q4km-128k",
+    "version": "UNKNOWN",
+    "quantization": "UNKNOWN"
+  },
+  "configuration": "route=titan/llamacpp/qwen3.8-pi-q4km-128k;thinking=medium;maxTokens=16384;contextWindow=128000;timeoutMs=600000;maxToolCalls=100;maxCheckRuns=12;fallbacks=disabled",
+  "role": "write-tests",
+  "synthetic": false,
+  "identities": {
+    "source": {
+      "repository": "ivo-toby/tiny-sdd",
+      "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "path": "profiles/instructions/_evidence/source-qwenpi-write-tests-blind3-2026-10-19.json",
+      "sha256": "7fcba38601871119ad798c5ab3e99331dec615d87b400cbe97443aa77853062f"
+    },
+    "suite": {
+      "id": "instruction-write-tests-expanded-blind3-v3",
+      "version": "2026-10-19.expanded-blind3-writing-discovery-v3",
+      "path": "profiles/instructions/_evidence/suite-qwenpi-write-tests-blind3-2026-10-19.json",
+      "sha256": "3870f61e7a08ee257b31f2276ede899d3db93b2ad4cc767f1b6578ca7fb0b84b"
+    },
+    "profiles": {
+      "baseline": {
+        "path": "profiles/instructions/qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/baseline-profile.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "candidate": {
+        "path": "profiles/instructions/qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/candidate-profile.json",
+        "sha256": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
+      }
+    },
+    "settings": {
+      "baseline": {
+        "path": "profiles/instructions/_evidence/settings-qwenpi-write-tests-blind3-2026-10-19.json",
+        "sha256": "a3f01e9bd47dd8df58386c6707e28efd9a324c448318e897d6eaf661d7f8cc22"
+      },
+      "candidate": {
+        "path": "profiles/instructions/_evidence/settings-qwenpi-write-tests-blind3-2026-10-19.json",
+        "sha256": "a3f01e9bd47dd8df58386c6707e28efd9a324c448318e897d6eaf661d7f8cc22"
+      }
+    }
+  },
+  "settings": {
+    "requestedThinking": "medium",
+    "maxTokens": 16384,
+    "contextWindow": 128000,
+    "limits": {
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12,
+      "firstWriteMs": "UNKNOWN"
+    },
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    }
+  },
+  "promptHashes": {
+    "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014"
+  },
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-qwenpi-write-tests-blind3-2026-10-19.json",
+      "sha256": "be9a518429ac1cc402e51c94470f5a20de1fc5c791091a48302f0af07952c635"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-qwenpi-write-tests-blind3-2026-10-19.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "state": "tested-improved",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "A": {
+          "success": 6,
+          "failure": 4,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "B": {
+          "success": 8,
+          "failure": 2,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "gains": {
+          "quality": 2,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.2
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "state": "inconclusive",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 0,
+          "missing": 4
+        },
+        "A": {
+          "success": 0,
+          "failure": 0,
+          "unknown": 4,
+          "scheduled": 4
+        },
+        "B": {
+          "success": 0,
+          "failure": 0,
+          "unknown": 4,
+          "scheduled": 4
+        },
+        "gains": {
+          "quality": "UNKNOWN",
+          "integration": "UNKNOWN",
+          "netQualityRate": "UNKNOWN"
+        },
+        "regressions": {
+          "quality": "UNKNOWN",
+          "integration": "UNKNOWN",
+          "combined": "UNKNOWN"
+        },
+        "missingData": [
+          {
+            "field": "controlSemanticOutcome",
+            "reason": "All eight control reference wrappers rejected exact test-name matching although 25 executed Node tests passed with zero failures; valid semantic A/B control outcomes are unavailable."
+          },
+          {
+            "field": "rawRecordedOutcomes",
+            "reason": "The raw runner recorded A=0/4 and B=0/4 wrapper failures; retain those raw counts separately and do not treat them as semantic quality failures."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The retained plan attestation records prior calibration/rescore knowledge for the control author and prior candidate/result knowledge for the independent correctness reviewer; team-wide blinding is not claimed."
+          },
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
+  "independentVerification": {
+    "status": "verified",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-qwenpi-write-tests-blind3-2026-10-19.json",
+        "sha256": "a3a7f4d1e74a51dcf3daee890bee5f6a3ffd0e79761d7fe72f6331f56fa8c176"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-qwenpi-write-tests-blind3-2026-10-19.json",
+        "sha256": "be9a518429ac1cc402e51c94470f5a20de1fc5c791091a48302f0af07952c635"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-qwenpi-write-tests-blind3-2026-10-19.json",
+        "sha256": "a3a7f4d1e74a51dcf3daee890bee5f6a3ffd0e79761d7fe72f6331f56fa8c176"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
+  },
+  "limitations": [
+    "The retained experimental report is no-improvement, but this v2 card is inconclusive because all eight control reference wrappers reject exact test-name matching despite 25 passing Node tests with zero failures; semantic control comparison is unavailable.",
+    "The raw runner recorded A=0/4 and B=0/4 control wrapper failures; those raw outcomes are retained in the report and are not semantic quality counts.",
+    "The primary analyst was blind to new control source, contracts, verifier answers and outcomes before proposal and plan review, but the control author had prior calibration/rescore knowledge and the independent correctness reviewer had prior candidate/result knowledge; team-wide blinding is not claimed.",
+    "Two AB/BA repetitions are correlated and remain descriptive evidence.",
+    "Known discovery gains are finite mutation-specific coverage and do not prove general contract-test quality or model ability.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
+    "No integration check mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Reference checks and mutation results are reported separately; passing reference checks do not mean every candidate is correct.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN.",
+    "Follow-up checker and benchmark-validity work is tracked at https://github.com/ivo-toby/tiny-sdd/issues/140.",
+    "The candidate instructions are appended to the built-in harness and require an exact-match review before selection."
+  ],
+  "recommendation": "gather-more"
+}

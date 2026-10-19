@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-protocol-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "source": {
+    "repository": "ivo-toby/tiny-sdd",
+    "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "sourceArchiveSha256": "ca058647b7407964ee57a09868ed0cc961d2e3f08134c979a71791106972ac7b",
+    "sourceIdentityExport": {
+      "path": "profiles/instructions/_evidence/source-qwenpi-write-tests-blind3-2026-10-19.json",
+      "sha256": "7fcba38601871119ad798c5ab3e99331dec615d87b400cbe97443aa77853062f"
+    },
+    "sourceAudit": {
+      "path": "blind3/instruction-evidence/qwenpi-write-tests/source-audit.json",
+      "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+    },
+    "sourceBenchTreeSha256": "1317140633f0fbb775257e34c30e93b04f7a4df481736db9e4fec94070ab8c83",
+    "runtimeCodeRevision": "UNKNOWN"
+  },
+  "suite": {
+    "id": "instruction-write-tests-expanded-blind3-v3",
+    "version": "2026-10-19.expanded-blind3-writing-discovery-v3",
+    "suiteSha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d",
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/suite-qwenpi-write-tests-blind3-2026-10-19.json",
+      "sha256": "3870f61e7a08ee257b31f2276ede899d3db93b2ad4cc767f1b6578ca7fb0b84b"
+    },
+    "benchTreeSha256": "b07ea189839b0aae0997b0d705b21c232d0e566c52cf86c9910ec8d1a41d269a",
+    "controlTreeSha256": "aba4da5a4cf9faf4b70941c26acf5c6db3b68bf34dc613152d80e51128350494",
+    "controlBenchTreeSha256": "954925bdab629a05acbf93101dedaf1213e9a8265ed727fd278e3b70a76df5d7",
+    "sourceBenchTreeSha256": "1317140633f0fbb775257e34c30e93b04f7a4df481736db9e4fec94070ab8c83",
+    "sourceControlSuiteSha256": "91160b4d7e36127f1e3085a0bd380a4cb5c1cc5adfbd5d68da58dc857acf04d2",
+    "controlAuditSha256": "091a7cea37f6ce7a630b2380a284923dd2bc99ff3e7cb9b19741d3c6d8986717"
+  },
+  "plan": {
+    "id": "instruction-qwenpi-writetests-pilot1",
+    "path": "blind3/instruction-evidence/qwenpi-write-tests/plans/instruction-qwenpi-writetests-pilot1/plan.json",
+    "sha256": "35a3d9ca5322cd95310b3b9ba1ac31adfbd9aa7635aa3fac9c7d23f19f46842f",
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "partitions": [
+      {
+        "partition": "discovery",
+        "challengeCount": 5,
+        "repetitions": 2
+      },
+      {
+        "partition": "control",
+        "challengeCount": 2,
+        "repetitions": 2
+      }
+    ]
+  },
+  "profiles": {
+    "baseline": {
+      "path": "profiles/instructions/qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/baseline-profile.json",
+      "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+    },
+    "candidate": {
+      "path": "profiles/instructions/qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/candidate-profile.json",
+      "sha256": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
+    }
+  },
+  "candidatePromptArtifact": {
+    "sha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0",
+    "contentExported": false
+  },
+  "discovery": {
+    "baselineRuns": 2,
+    "instructions": "",
+    "registerEvidence": false
+  },
+  "experiment": {
+    "repetitions": 2,
+    "schedule": [
+      "A",
+      "B",
+      "B",
+      "A"
+    ],
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "baseline": "A is the empty instruction profile. B may change only profile.instructions after the supported proposal gate."
+  },
+  "authorization": {
+    "entryKind": "real",
+    "acknowledgedFindings": [
+      "THINKING_CONTROL_MISMATCH"
+    ],
+    "route": "configured model route; host identity omitted"
+  },
+  "retainedExposureAttestation": "Before and during control authoring, the author had prior calibration/rescore knowledge but did not inspect candidate B text or new instruction A/B outcomes; completed A/B data was read afterward for reporting.",
+  "exposureAttestationStatus": "superseded-by-review",
+  "controlExposure": {
+    "primaryAnalyst": "The primary analyst was blind to the new control source, contracts, verifier answers and control results before proposal and plan review.",
+    "controlAuthor": "The control author had prior calibration/rescore knowledge and did not inspect candidate B text or new instruction A/B outcomes before completion.",
+    "independentCorrectnessReviewer": "The independent correctness reviewer had prior candidate and result knowledge and reviewed the fixed pack without adapting candidate B or control content to performance.",
+    "teamWideBlinding": "not claimed"
+  },
+  "sparseVisibleDisclosure": "Five pre-existing write-tests discovery tasks and two newly authored opaque controls form separate partitions. The primary analyst was blind to new control source, contracts, verifier answers and results before proposal and plan review. The independent correctness reviewer had prior candidate and result knowledge. This is an explicit continuity confound; team-wide blinding is not claimed.",
+  "preparedSettingsDigest": "f34e40aacad5bd23628758df7384f7f4df8b2039cb94e793ba67678d45585df7",
+  "provenance": {
+    "source": "sanitized retained blind3 protocol and plan metadata; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-independent-review.json",
+        "sha256": "3fb789982ef90db8e74f7f48bad6ad7df042ad36f044cd169366db4131088cdd"
+      },
+      "primaryPlanReview": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-plan-review.json",
+        "sha256": "fd86d3118e9804ce2fd127b7a3b7540ee1d4a9dd6953e4bbd5cc0d3216774fc9"
+      },
+      "runReport": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/run-report.json",
+        "sha256": "aaa0d1f99e350ec7bcb0f1ec497049c94275ff1e16f2cdb4eacaedfac79ce164"
+      },
+      "protocol": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/protocol.json",
+        "sha256": "12f74ea60b2921451fb01ad90ac067077c06d6e9d8d1dd6a53a80e451699dde7"
+      },
+      "preparedSettings": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/prepared-settings.json",
+        "sha256": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a"
+      },
+      "mechanicalAudit": {
+        "filename": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+        "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
+      }
+    }
+  }
+}

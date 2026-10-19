@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-independent-review-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "reviewer": "primary",
+  "state": "inconclusive",
+  "recommendation": "gather-more",
+  "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "report": {
+    "path": "blind3/instruction-evidence/qwenpi-write-tests/run-report.json",
+    "sha256": "aaa0d1f99e350ec7bcb0f1ec497049c94275ff1e16f2cdb4eacaedfac79ce164",
+    "rederivedLocally": true,
+    "matchesRetainedReport": true
+  },
+  "mechanicalAudit": {
+    "path": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+    "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
+  },
+  "primaryPlanReview": {
+    "path": "blind3/instruction-evidence/qwenpi-write-tests/primary-plan-review.json",
+    "sha256": "fd86d3118e9804ce2fd127b7a3b7540ee1d4a9dd6953e4bbd5cc0d3216774fc9",
+    "primarySawNewControlContentsBeforePlan": false,
+    "primarySawNewControlContractsBeforePlan": false,
+    "primarySawNewControlAnswersBeforePlan": false,
+    "primarySawNewControlOutcomesBeforePlan": false,
+    "teamWideBlinding": false
+  },
+  "checks": {
+    "newInference": false,
+    "caseCount": 28,
+    "verificationRecordsChecked": 132,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 20,
+      "failed": 8
+    },
+    "mutationChecks": {
+      "scheduled": 104,
+      "passed": 74,
+      "failed": 30
+    },
+    "visiblePass": 20,
+    "visibleFailure": 8,
+    "heldOutPass": 74,
+    "heldOutFailure": 30,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true
+  },
+  "publicCandidatePatchReview": {
+    "discoveryCasesRead": 8,
+    "summary": "Primary checked eight public discovery patch/output records and their digest-bound verifier results; discovery findings remain finite mutation-specific coverage."
+  },
+  "controlReferenceReview": {
+    "wrappersChecked": 8,
+    "outputDigestsAndTapNamesChecked": 8,
+    "innerNodeTests": {
+      "tests": 25,
+      "passed": 25,
+      "failed": 0
+    },
+    "wrapperChecks": {
+      "passed": 0,
+      "failed": 8
+    },
+    "checkerExactMatch": true,
+    "semanticComparison": "unavailable",
+    "summary": "All eight control reference wrappers reject exact test-name matching although the 25 executed Node tests pass with zero failures. The raw 0/4 arm outcomes are wrapper failures, not semantic quality failures."
+  },
+  "finding": "Known discovery gains appear on the second Birch and Dune repetitions while their first repetitions still miss those finite faults. New controls are unusable for transfer inference because eight reference wrappers reject exact test-name formatting despite 25 passing Node tests. Preserve raw no-improvement outcomes and withhold candidate recommendation.",
+  "limitations": [
+    "The primary analyst was blind to new control source, contracts, verifier answers and outcomes before proposal and plan review, but the control author had prior calibration/rescore knowledge and the independent correctness reviewer had prior candidate/result knowledge; team-wide blinding is not claimed.",
+    "All eight control wrappers reject exact test-name matching despite 25 passing Node tests with zero failures; semantic control quality is unavailable until the checker protocol is repaired.",
+    "Two AB/BA repetitions are correlated and remain descriptive evidence.",
+    "Finite mutation-specific discovery coverage does not prove general contract-test quality or model ability.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN; integration remains UNKNOWN.",
+    "Follow-up checker and benchmark-validity work is tracked at https://github.com/ivo-toby/tiny-sdd/issues/140."
+  ],
+  "provenance": {
+    "source": "sanitized primary review and local report rederivation; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-independent-review.json",
+        "sha256": "3fb789982ef90db8e74f7f48bad6ad7df042ad36f044cd169366db4131088cdd"
+      },
+      "primaryPlanReview": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-plan-review.json",
+        "sha256": "fd86d3118e9804ce2fd127b7a3b7540ee1d4a9dd6953e4bbd5cc0d3216774fc9"
+      },
+      "report": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/run-report.json",
+        "sha256": "aaa0d1f99e350ec7bcb0f1ec497049c94275ff1e16f2cdb4eacaedfac79ce164"
+      },
+      "mechanicalAudit": {
+        "filename": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+        "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
+      }
+    }
+  },
+  "experimentalReportState": "no-improvement",
+  "controlQualification": {
+    "state": "inconclusive",
+    "reason": "The checker rejects exact test-name matching for all eight control reference wrappers even though 25 inner Node tests pass with zero failures; valid semantic A/B control outcomes are unavailable.",
+    "rawRecordedOutcomes": "The runner recorded A=0/4 and B=0/4 wrapper failures; these values remain raw and are not semantic quality counts.",
+    "followUp": "Repair the checker naming protocol and run fresh blind validation before comparing candidate transfer; see https://github.com/ivo-toby/tiny-sdd/issues/140."
+  }
+}

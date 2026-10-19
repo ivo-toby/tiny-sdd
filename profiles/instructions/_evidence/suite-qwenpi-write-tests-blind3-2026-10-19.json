@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-suite-identity-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "id": "instruction-write-tests-expanded-blind3-v3",
+  "version": "2026-10-19.expanded-blind3-writing-discovery-v3",
+  "suiteSha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d",
+  "challengeCount": 7,
+  "discoveryChallengeCount": 5,
+  "controlChallengeCount": 2,
+  "benchTreeSha256": "b07ea189839b0aae0997b0d705b21c232d0e566c52cf86c9910ec8d1a41d269a",
+  "controlTreeSha256": "aba4da5a4cf9faf4b70941c26acf5c6db3b68bf34dc613152d80e51128350494",
+  "controlBenchTreeSha256": "954925bdab629a05acbf93101dedaf1213e9a8265ed727fd278e3b70a76df5d7",
+  "sourceBenchTreeSha256": "1317140633f0fbb775257e34c30e93b04f7a4df481736db9e4fec94070ab8c83",
+  "sourceControlSuiteSha256": "91160b4d7e36127f1e3085a0bd380a4cb5c1cc5adfbd5d68da58dc857acf04d2",
+  "controlAuditSha256": "091a7cea37f6ce7a630b2380a284923dd2bc99ff3e7cb9b19741d3c6d8986717",
+  "sparseVisibleEmber": false,
+  "provenance": {
+    "source": "sanitized suite and opaque control-tree identity; challenge and verifier contents are not exported",
+    "originalMetadata": {
+      "suite": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/bench/suite.json",
+        "sha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d"
+      },
+      "controlAudit": {
+        "filename": "blind3/control-audit/linux-2026-10-19T092137839Z-3994633/linux-audit-report.json",
+        "sha256": "091a7cea37f6ce7a630b2380a284923dd2bc99ff3e7cb9b19741d3c6d8986717"
+      }
+    }
+  }
+}

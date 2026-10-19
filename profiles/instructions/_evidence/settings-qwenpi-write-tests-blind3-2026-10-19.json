@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "route": "titan/llamacpp/qwen3.8-pi-q4km-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "UNKNOWN",
+  "settingsDigest": "8d84dbc531345a881c5a5827db32aa769e7329c30efa65a092205f98f42098d9",
+  "preparedSettingsDigest": "f34e40aacad5bd23628758df7384f7f4df8b2039cb94e793ba67678d45585df7",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "runtimeCodeRevision": "UNKNOWN",
+  "provenance": {
+    "source": "retained blind3 effective settings and prepared settings identity",
+    "originalMetadata": {
+      "preparedSettings": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/prepared-settings.json",
+        "sha256": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a"
+      },
+      "protocol": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/protocol.json",
+        "sha256": "12f74ea60b2921451fb01ad90ac067077c06d6e9d8d1dd6a53a80e451699dde7"
+      },
+      "primaryConfirmation": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/primary-confirmation.json",
+        "sha256": "f55a2369dabd5584e5c74260f341e9a6aa2d00117543ddf9ef800a0f06a69822"
+      }
+    }
+  }
+}

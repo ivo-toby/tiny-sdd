@@ -29,9 +29,11 @@ applicability; their cards retain the measured reports and review boundaries bel
 | [muse](muse/titan-llamacpp-muse-glimmer-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
 | [gemma26](gemma26/titan-llamacpp-gemma4-26b-a4b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Finish after declared checks pass instead of re-deriving the solution. | proposed |
 | [gemma12](gemma12/titan-llamacpp-gemma4-12b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Use a brief action/check loop and stop guessing after an exact-text edit fails. | proposed |
-| [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
+| [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
+
+QwenPi history: [v2 blind3](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v2/evidence-card.json) is the latest reviewed entry; [v1 recovery-1](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) remains immutable. The v2 card preserves raw `0/4` control-wrapper outcomes separately from its unavailable semantic control comparison, so wrapper failures are not scored as semantic quality failures. Follow-up checker repair and validation is tracked in [#140](https://github.com/ivo-toby/tiny-sdd/issues/140).
 
 ## Entry layout
 

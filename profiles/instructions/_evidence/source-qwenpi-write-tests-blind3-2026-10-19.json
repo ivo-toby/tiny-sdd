@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-source-identity-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "repository": "ivo-toby/tiny-sdd",
+  "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "sourceArchiveSha256": "ca058647b7407964ee57a09868ed0cc961d2e3f08134c979a71791106972ac7b",
+  "sourceTreeSha256": "eb8dcf1e1f3837dd2c4211ad7bccd02cce9ded53eff9812096cde02f60648e08",
+  "sourceBenchTreeSha256": "1317140633f0fbb775257e34c30e93b04f7a4df481736db9e4fec94070ab8c83",
+  "sourceAudit": {
+    "path": "blind3/instruction-evidence/qwenpi-write-tests/source-audit.json",
+    "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+  },
+  "runtimeCodeRevision": "UNKNOWN",
+  "provenance": {
+    "source": "sanitized source and byte-tree identity; source contents are not exported",
+    "originalMetadata": {
+      "sourceArchive": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests.tar",
+        "sha256": "ca058647b7407964ee57a09868ed0cc961d2e3f08134c979a71791106972ac7b"
+      },
+      "sourceAudit": {
+        "filename": "blind3/instruction-evidence/qwenpi-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      }
+    }
+  }
+}
