@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-independent-review-export",
+  "modelKey": "qwen38q3",
+  "role": "write-tests",
+  "reviewer": "primary",
+  "state": "inconclusive",
+  "recommendation": "gather-more",
+  "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "report": {
+    "path": "instruction-evidence/qwen38q3-write-tests/run-report.json",
+    "sha256": "1055f7cc278616057b728de1e2feae696bc8f7187d367dfd0458dfacd40c8817",
+    "rederivedLocally": true,
+    "matchesRetainedReport": true
+  },
+  "mechanicalAudit": {
+    "path": "instruction-audits/qwen38q3-write-tests-20261019T103628948056Z.json",
+    "sha256": "4fa332a366f198c3d7f192fb1d83b83d2b1835eb538610e5dd693ea4dd6e1437"
+  },
+  "checks": {
+    "newInference": false,
+    "caseCount": 28,
+    "verificationRecordsChecked": 136,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 28
+    },
+    "mutationChecks": {
+      "scheduled": 108,
+      "passed": 101,
+      "failed": 7
+    },
+    "visiblePass": 28,
+    "heldOutPass": 101,
+    "heldOutFailure": 7,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true,
+    "contractValidityProbe": {
+      "status": "reviewed",
+      "sha256": "147037161039a1bcfa89cfc06ace687e9d55603089bad44745d622f5d3fda12e",
+      "contentExported": false
+    }
+  },
+  "publicCandidatePatchReview": {
+    "casesRead": 10,
+    "challenges": [
+      "birch-collection-order",
+      "dune-emitter-edge"
+    ],
+    "summary": "Primary review found a Dune assertion that overspecifies callback identity beyond the public contract; a conforming alternative failed that assertion while the second reviewed comparison passed."
+  },
+  "finding": "Raw fault-coverage gains appear on Birch and Dune discovery and one control comparison, with no measured regressions. Primary manual review found a Dune assertion that overspecifies callback identity beyond the public contract; a conforming alternative failed that assertion. Treat this as finite mutation-specific fault coverage, not general proof of ordering-test quality; the raw experimental state is retained.",
+  "limitations": [
+    "Two repetitions per task are correlated and remain descriptive evidence.",
+    "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable.",
+    "Finite mutation-specific fault coverage does not prove general contract-test quality or model ability.",
+    "Primary manual review found a Dune assertion that overspecifies callback identity beyond the public contract; the retained conformance probe is represented only by its digest.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Reference checks passing does not mean every candidate is correct; mutation results are reported separately.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
+  ],
+  "provenance": {
+    "source": "sanitized primary review and local report rederivation; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/primary-independent-review.json",
+        "sha256": "8b7269d90edd57b18e9010698c865c9dd1816314b9f106148331cfc098dc3f70"
+      },
+      "mechanicalAudit": {
+        "filename": "instruction-audits/qwen38q3-write-tests-20261019T103628948056Z.json",
+        "sha256": "4fa332a366f198c3d7f192fb1d83b83d2b1835eb538610e5dd693ea4dd6e1437"
+      },
+      "report": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/run-report.json",
+        "sha256": "1055f7cc278616057b728de1e2feae696bc8f7187d367dfd0458dfacd40c8817"
+      },
+      "plan": {
+        "filename": "plans/instruction-qwen38q3-writetests-pilot1/plan.json",
+        "sha256": "6df9c8f95adb0abbf5d7dd698ab20680816a21a789743dc4d0449d845c889254"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/protocol.json",
+        "sha256": "bdd124e570a938bcf9e902d42370058a641ca12f9dbc30e6f1f16f4166bb8816"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/prepared-settings.json",
+        "sha256": "8a81134a7182644c187e6ecf1b51b2ca79b1f220c9df4fbd667ec2a3f9813bef"
+      },
+      "primaryConfirmation": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/primary-confirmation.json",
+        "sha256": "08e14c60efc7a4b83c7821b57e9ff3539e28994ab89460afb32e2deaf2094197"
+      },
+      "additionalContractValidityProbeSha256": "147037161039a1bcfa89cfc06ace687e9d55603089bad44745d622f5d3fda12e"
+    }
+  },
+  "experimentalReportState": "tested-improved",
+  "controlQualification": {
+    "state": "inconclusive",
+    "reason": "The analyst saw the old control source after candidate B was frozen; previously inspected controls cannot serve as untouched controls for the same analyst.",
+    "followUp": "Fresh blind replication is required before strict applicability validation."
+  }
+}

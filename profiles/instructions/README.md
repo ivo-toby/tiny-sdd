@@ -16,9 +16,9 @@ independent review and the completed-card requirements below.
 
 ## Library entries
 
-Eight entries remain manual research proposals. The qwenpi and thinkingcap rows
-record completed exploratory pilots with inconclusive strict-control applicability;
-their cards retain the measured reports and review boundaries below.
+Seven entries remain manual research proposals. The qwenpi, thinkingcap and
+qwen38q3 rows record completed exploratory pilots with inconclusive strict-control
+applicability; their cards retain the measured reports and review boundaries below.
 
 | Model | Role | Hypothesis | State |
 | --- | --- | --- | --- |
@@ -31,7 +31,7 @@ their cards retain the measured reports and review boundaries below.
 | [gemma12](gemma12/titan-llamacpp-gemma4-12b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Use a brief action/check loop and stop guessing after an exact-text edit fails. | proposed |
 | [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
-| [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
+| [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 
 ## Entry layout
 
@@ -113,6 +113,12 @@ byte/source checks that actually happened and keeps unavailable verification as
 `unverified` or `UNKNOWN`; do not fabricate a verified result. The card must not
 contain raw prompts, traces, credentials, benchmark directories, private controls
 or held-out answers. Link to retained artifacts by digest instead.
+
+The published profiles and evidence exports are audit summaries, not a
+self-contained replay package. Exact replay requires access to the frozen inputs,
+including retained private held-out controls and raw artifacts, plus a matching
+runtime and model. Community reproduction on new controls is a new experiment;
+it does not inherit this evidence.
 
 ## Contributing an entry
 

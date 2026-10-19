@@ -3,7 +3,7 @@
   "kind": "tinysdd-instruction-evidence-card",
   "id": "qwen38q3-write-tests-titan-medium16k-v1",
   "version": 1,
-  "state": "proposed",
+  "state": "inconclusive",
   "model": {
     "id": "titan/llamacpp/qwen3.8-q3-128k",
     "version": "UNKNOWN",
@@ -37,12 +37,12 @@
     },
     "settings": {
       "baseline": {
-        "path": "profiles/instructions/_evidence/settings-qwen38q3.json",
-        "sha256": "cd9f236a920f91ecebd8d1938783f0d26a48ab737410c57c3f6bfa0451351f0e"
+        "path": "profiles/instructions/_evidence/settings-qwen38q3-write-tests-2026-10-19.json",
+        "sha256": "e6885bac1a245e3e902a728145f116d9b5c6dde27720bc50dfdf92b5f00c60b0"
       },
       "candidate": {
-        "path": "profiles/instructions/_evidence/settings-qwen38q3.json",
-        "sha256": "cd9f236a920f91ecebd8d1938783f0d26a48ab737410c57c3f6bfa0451351f0e"
+        "path": "profiles/instructions/_evidence/settings-qwen38q3-write-tests-2026-10-19.json",
+        "sha256": "e6885bac1a245e3e902a728145f116d9b5c6dde27720bc50dfdf92b5f00c60b0"
       }
     }
   },
@@ -65,27 +65,142 @@
     "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "after": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014"
   },
-  "evidence": null,
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-qwen38q3-write-tests-2026-10-19.json",
+      "sha256": "eaddf997a1e9cd85789c02d66035c95d6758c73a21862af45446a78eb568b3f5"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-qwen38q3-write-tests-2026-10-19.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "state": "tested-improved",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "A": {
+          "success": 6,
+          "failure": 4,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "B": {
+          "success": 10,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "gains": {
+          "quality": 4,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.4
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The analyst saw the old control source after candidate B was frozen; strict same-analyst untouched and blinded control qualification is unavailable."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "state": "tested-improved",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 4,
+          "missing": 0
+        },
+        "A": {
+          "success": 3,
+          "failure": 1,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "B": {
+          "success": 4,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "gains": {
+          "quality": 1,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.25
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The analyst saw the old control source after candidate B was frozen; strict same-analyst untouched and blinded control qualification is unavailable."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
   "independentVerification": {
-    "status": "unverified",
+    "status": "verified",
     "refs": [
       {
-        "path": "profiles/instructions/_evidence/proposal-qwen38q3.json",
-        "sha256": "a2128ebf61a47f732bec22c1663c979ff5802e9424b11a3f90a92a6d34e72a08"
+        "path": "profiles/instructions/_evidence/review-qwen38q3-write-tests-2026-10-19.json",
+        "sha256": "b7ecb0e3ebfe0ca63e5634d1a25f7e7b7b76988068197a8780c3810d8e2e2b73"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-qwen38q3-write-tests-2026-10-19.json",
+        "sha256": "eaddf997a1e9cd85789c02d66035c95d6758c73a21862af45446a78eb568b3f5"
       }
     ]
   },
   "review": {
-    "reviewer": "UNKNOWN",
-    "refs": [],
-    "exactBytesMatched": false,
-    "sourceVerified": false
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-qwen38q3-write-tests-2026-10-19.json",
+        "sha256": "b7ecb0e3ebfe0ca63e5634d1a25f7e7b7b76988068197a8780c3810d8e2e2b73"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
   },
   "limitations": [
-    "No controlled A/B evidence has been run or independently verified; this card is a proposal only.",
-    "Model version, quantization and server enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
-    "THINKING_CONTROL_MISMATCH is recorded in the prepared settings metadata; server enforcement remains unverified.",
-    "The candidate instructions are appended to the built-in harness and require an exact-match review before selection."
+    "Two repetitions per task are correlated and remain descriptive evidence.",
+    "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable.",
+    "Finite mutation-specific fault coverage does not prove general contract-test quality or model ability.",
+    "Primary manual review found a Dune assertion that overspecifies callback identity beyond the public contract; the retained conformance probe is represented only by its digest.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Reference checks passing does not mean every candidate is correct; mutation results are reported separately.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
   ],
   "recommendation": "gather-more"
 }

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "qwen38q3",
+  "role": "write-tests",
+  "route": "titan/llamacpp/qwen3.8-q3-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "8beb2be78f1dfe486fa042da331ce1b40dd567c623afb2f7b5a0fa9be35bdc9d",
+  "settingsDigest": "3d74483eeb6d4f08f4e71294bc30022990c7bb0e235c2953c25a04a67ba37869",
+  "preparedSettingsDigest": "2ff2f15b57d98d4b9fdf3ce986d6b37bc50474c07cdefa3175f54ecbb504a689",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "runtimeCodeRevision": "UNKNOWN",
+  "provenance": {
+    "source": "retained run-plan effective settings; prepared settings identity remains separately referenced",
+    "originalMetadata": {
+      "plan": {
+        "filename": "plans/instruction-qwen38q3-writetests-pilot1/plan.json",
+        "sha256": "6df9c8f95adb0abbf5d7dd698ab20680816a21a789743dc4d0449d845c889254"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/prepared-settings.json",
+        "sha256": "8a81134a7182644c187e6ecf1b51b2ca79b1f220c9df4fbd667ec2a3f9813bef"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/protocol.json",
+        "sha256": "bdd124e570a938bcf9e902d42370058a641ca12f9dbc30e6f1f16f4166bb8816"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "primaryConfirmation": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/primary-confirmation.json",
+        "sha256": "08e14c60efc7a4b83c7821b57e9ff3539e28994ab89460afb32e2deaf2094197"
+      }
+    }
+  }
+}

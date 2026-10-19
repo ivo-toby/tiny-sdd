@@ -1,0 +1,314 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-export",
+  "modelKey": "qwen38q3",
+  "role": "write-tests",
+  "state": "tested-improved",
+  "recommendation": "consider B for the tested configuration",
+  "experiment": {
+    "id": "instruction-qwen38q3-writetests-pilot1",
+    "proposalId": "qwen38q3-counterexamples-v1",
+    "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "suite": {
+      "id": "instruction-write-tests-expanded-v2",
+      "version": "2026-10-19.expanded-v3-writing-discovery",
+      "suiteSha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d",
+      "identityExport": {
+        "path": "profiles/instructions/_evidence/suite-write-tests-2026-10-19.json",
+        "sha256": "68951428441bc019fd78c1c3c1974db77376bb5ea5fd1d5fa60c99a472cacb39"
+      },
+      "suiteTreeSha256": "03d1342541f98f02b0966c021baeec3c3ae4295fc2cd7904a606f7558cbb822c"
+    },
+    "plan": {
+      "path": "plans/instruction-qwen38q3-writetests-pilot1/plan.json",
+      "sha256": "6df9c8f95adb0abbf5d7dd698ab20680816a21a789743dc4d0449d845c889254"
+    },
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "retainedExposureAttestation": "The retained protocol attestation is preserved as provenance only; later review found the analyst had prior control-source exposure, so strict untouched/blinded qualification is unavailable.",
+    "exposureAttestationStatus": "superseded-by-review",
+    "integrationChecks": {},
+    "synthetic": false
+  },
+  "partitions": {
+    "discovery": {
+      "partition": "discovery",
+      "state": "tested-improved",
+      "challengeCount": 5,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 10,
+        "complete": 10,
+        "missing": 0
+      },
+      "A": {
+        "success": 6,
+        "failure": 4,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "B": {
+        "success": 10,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "gains": {
+        "quality": 4,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.4
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "The analyst saw the old control source after candidate B was frozen; strict same-analyst untouched and blinded control qualification is unavailable."
+        }
+      ]
+    },
+    "control": {
+      "partition": "control",
+      "state": "tested-improved",
+      "challengeCount": 2,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 4,
+        "complete": 4,
+        "missing": 0
+      },
+      "A": {
+        "success": 3,
+        "failure": 1,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "B": {
+        "success": 4,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "gains": {
+        "quality": 1,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.25
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "The analyst saw the old control source after candidate B was frozen; strict same-analyst untouched and blinded control qualification is unavailable."
+        }
+      ]
+    }
+  },
+  "independentReviewSummary": {
+    "caseCount": 28,
+    "verificationRecordsChecked": 136,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 28
+    },
+    "mutationChecks": {
+      "scheduled": 108,
+      "passed": 101,
+      "failed": 7
+    },
+    "visiblePass": 28,
+    "heldOutPass": 101,
+    "heldOutFailure": 7,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true
+  },
+  "telemetry": {
+    "discovery": {
+      "elapsedMs": {
+        "measuredPairs": 10,
+        "scheduledPairs": 10,
+        "A": 591738,
+        "B": 731226,
+        "meanPairedDifference": 13948.8,
+        "differenceRange": [
+          -5903,
+          42813
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    },
+    "control": {
+      "elapsedMs": {
+        "measuredPairs": 4,
+        "scheduledPairs": 4,
+        "A": 259093,
+        "B": 257395,
+        "meanPairedDifference": -424.5,
+        "differenceRange": [
+          -15520,
+          10592
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    }
+  },
+  "overhead": {
+    "preparation": "UNKNOWN",
+    "review": "UNKNOWN"
+  },
+  "finding": "Raw fault-coverage gains appear on Birch and Dune discovery and one control comparison, with no measured regressions. Primary manual review found a Dune assertion that overspecifies callback identity beyond the public contract; a conforming alternative failed that assertion. Treat this as finite mutation-specific fault coverage, not general proof of ordering-test quality; the raw experimental state is retained.",
+  "limitations": [
+    "Two repetitions per task are correlated and remain descriptive evidence.",
+    "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable.",
+    "Finite mutation-specific fault coverage does not prove general contract-test quality or model ability.",
+    "Primary manual review found a Dune assertion that overspecifies callback identity beyond the public contract; the retained conformance probe is represented only by its digest.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Reference checks passing does not mean every candidate is correct; mutation results are reported separately.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
+  ],
+  "reviewDisposition": {
+    "state": "inconclusive",
+    "recommendation": "gather-more",
+    "reason": "Old control-source exposure prevents strict same-analyst untouched/blinded qualification, and manual review found an unsupported callback-identity assertion against the public Dune contract.",
+    "followUp": "Fresh blind replication and contract-aligned review are required before considering the candidate."
+  },
+  "provenance": {
+    "source": "sanitized retained report and primary review; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/primary-independent-review.json",
+        "sha256": "8b7269d90edd57b18e9010698c865c9dd1816314b9f106148331cfc098dc3f70"
+      },
+      "mechanicalAudit": {
+        "filename": "instruction-audits/qwen38q3-write-tests-20261019T103628948056Z.json",
+        "sha256": "4fa332a366f198c3d7f192fb1d83b83d2b1835eb538610e5dd693ea4dd6e1437"
+      },
+      "report": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/run-report.json",
+        "sha256": "1055f7cc278616057b728de1e2feae696bc8f7187d367dfd0458dfacd40c8817"
+      },
+      "plan": {
+        "filename": "plans/instruction-qwen38q3-writetests-pilot1/plan.json",
+        "sha256": "6df9c8f95adb0abbf5d7dd698ab20680816a21a789743dc4d0449d845c889254"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/protocol.json",
+        "sha256": "bdd124e570a938bcf9e902d42370058a641ca12f9dbc30e6f1f16f4166bb8816"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/prepared-settings.json",
+        "sha256": "8a81134a7182644c187e6ecf1b51b2ca79b1f220c9df4fbd667ec2a3f9813bef"
+      },
+      "primaryConfirmation": {
+        "filename": "instruction-evidence/qwen38q3-write-tests/primary-confirmation.json",
+        "sha256": "08e14c60efc7a4b83c7821b57e9ff3539e28994ab89460afb32e2deaf2094197"
+      },
+      "additionalContractValidityProbeSha256": "147037161039a1bcfa89cfc06ace687e9d55603089bad44745d622f5d3fda12e"
+    }
+  }
+}
