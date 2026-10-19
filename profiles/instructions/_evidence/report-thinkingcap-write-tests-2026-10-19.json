@@ -142,6 +142,118 @@
     "allVerifiersNetworkNone": true,
     "noHardGateViolations": true
   },
+  "telemetry": {
+    "discovery": {
+      "elapsedMs": {
+        "measuredPairs": 10,
+        "scheduledPairs": 10,
+        "A": 302977,
+        "B": 408316,
+        "meanPairedDifference": 10533.9,
+        "differenceRange": [
+          -634,
+          20780
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    },
+    "control": {
+      "elapsedMs": {
+        "measuredPairs": 4,
+        "scheduledPairs": 4,
+        "A": 157993,
+        "B": 175642,
+        "meanPairedDifference": 4412.25,
+        "differenceRange": [
+          -18025,
+          17328
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    }
+  },
+  "overhead": {
+    "preparation": "UNKNOWN",
+    "review": "UNKNOWN"
+  },
   "finding": "Two discovery gains: B1 uses intentionally unsorted .value data for Birch and an earlier listener removing a later listener for Dune. B2 still misses the .value-specific member-sort fault and removes the currently executing listener. A has four such failures; B two. No regressions; controls are at 4/4 for both arms.",
   "limitations": [
     "Two repetitions per task are correlated and remain descriptive evidence.",
@@ -150,7 +262,9 @@
     "Backend version and server-side thinking enforcement are UNKNOWN.",
     "Both control arms pass 4/4 at ceiling; no transferred gain is established.",
     "No integration metric mapping was supplied; integration remains UNKNOWN.",
-    "Reference and mutation checks are verifier evidence; they do not claim every candidate is correct."
+    "Reference and mutation checks are verifier evidence; they do not claim every candidate is correct.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
   ],
   "provenance": {
     "source": "sanitized retained report and independent review; export hash is distinct from original artifact hashes",

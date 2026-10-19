@@ -68,7 +68,7 @@
   "evidence": {
     "report": {
       "path": "profiles/instructions/_evidence/report-thinkingcap-write-tests-2026-10-19.json",
-      "sha256": "7a88790e1d2ef4d097830ea148248db06ca6d07e879ca20592f8d40388d7279d"
+      "sha256": "e867f76aaae344c679ec6c418181f1de14a4fdbb2a5ae2e09bb0db18219b207f"
     },
     "protocol": "profiles/instructions/_evidence/protocol-thinkingcap-write-tests-2026-10-19.json",
     "partitions": {
@@ -175,7 +175,7 @@
       },
       {
         "path": "profiles/instructions/_evidence/report-thinkingcap-write-tests-2026-10-19.json",
-        "sha256": "7a88790e1d2ef4d097830ea148248db06ca6d07e879ca20592f8d40388d7279d"
+        "sha256": "e867f76aaae344c679ec6c418181f1de14a4fdbb2a5ae2e09bb0db18219b207f"
       }
     ]
   },

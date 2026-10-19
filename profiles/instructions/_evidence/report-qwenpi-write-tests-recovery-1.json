@@ -134,6 +134,118 @@
     "allVerifiersNetworkNone": true,
     "noHardGateViolations": true
   },
+  "telemetry": {
+    "discovery": {
+      "elapsedMs": {
+        "measuredPairs": 10,
+        "scheduledPairs": 10,
+        "A": 304222,
+        "B": 402301,
+        "meanPairedDifference": 9807.9,
+        "differenceRange": [
+          798,
+          34638
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    },
+    "control": {
+      "elapsedMs": {
+        "measuredPairs": 4,
+        "scheduledPairs": 4,
+        "A": 183795,
+        "B": 152544,
+        "meanPairedDifference": -7812.75,
+        "differenceRange": [
+          -21175,
+          4541
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    }
+  },
+  "overhead": {
+    "preparation": "UNKNOWN",
+    "review": "UNKNOWN"
+  },
   "finding": "Three failed tests remove the currently executing listener; the one improved pair has the earlier listener remove a later not-yet-invoked listener. This is one discovery gain; controls are at ceiling for both arms.",
   "limitations": [
     "Two AB/BA repetitions are correlated and remain descriptive pilot evidence.",
@@ -143,7 +255,9 @@
     "Backend version, quantization and server-side thinking enforcement are UNKNOWN.",
     "No integration check mapping was supplied; integration remains UNKNOWN.",
     "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
-    "Reference checks passing does not mean every candidate is correct; mutation results are reported separately."
+    "Reference checks passing does not mean every candidate is correct; mutation results are reported separately.",
+    "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
   ],
   "provenance": {
     "source": "sanitized retained report and independent review; export hash is distinct from original artifact hashes",
