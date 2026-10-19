@@ -1,4 +1,6 @@
-import { copyFile, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
+import { copyFile, lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { assertNoSymlinkPath, digestJson, normalizeProjectRelative, publicError, sha256 } from './fs-utils.mjs';
 import { parseChecksManifest } from './checks-manifest.mjs';
@@ -30,6 +32,47 @@ async function readResource(root, path, expected) {
   const hash = sha256(bytes);
   if (expected !== undefined && expected !== hash) invalidInstruction(`instruction resource digest changed: ${path}`);
   return { path, sha256: hash, text: bytes.toString('utf8') };
+}
+
+function sameResourceStat(left, right) {
+  return left.isFile() && right.isFile()
+    && left.dev === right.dev && left.ino === right.ino && left.size === right.size
+    && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+
+async function verifyResource(root, path, expected) {
+  const target = localPath(root, path);
+  await assertNoSymlinkPath(target, { allowMissing: false, requireDirectory: false });
+  const initial = await lstat(target, { bigint: true });
+  if (!initial.isFile()) invalidInstruction('instruction resource must be a regular file');
+  let handle;
+  try {
+    handle = await open(target, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat({ bigint: true });
+    if (!sameResourceStat(initial, opened)) invalidInstruction(`instruction resource changed while verifying: ${path}`);
+    const hash = createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
+    let position = 0n;
+    while (position < opened.size) {
+      const remaining = opened.size - position;
+      const length = Number(remaining > BigInt(buffer.length) ? BigInt(buffer.length) : remaining);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead === 0) invalidInstruction(`instruction resource changed while verifying: ${path}`);
+      hash.update(buffer.subarray(0, bytesRead));
+      position += BigInt(bytesRead);
+    }
+    if (position !== opened.size) invalidInstruction(`instruction resource changed while verifying: ${path}`);
+    const current = await handle.stat({ bigint: true });
+    const finalPath = await lstat(target, { bigint: true });
+    if (!sameResourceStat(opened, current) || !sameResourceStat(current, finalPath)) {
+      invalidInstruction(`instruction resource changed while verifying: ${path}`);
+    }
+    const sha256 = hash.digest('hex');
+    if (expected !== undefined && expected !== sha256) invalidInstruction(`instruction resource digest changed: ${path}`);
+    return { path, sha256 };
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 export async function readInstructionJson(projectRoot, path) {
@@ -320,10 +363,10 @@ export async function readInstructionReport({ projectRoot, planPath, output, rev
     const invocationRoot = dirname(localPath(root, entry.invocation.path));
     for (const observation of evidence.observations) {
       for (const artifact of Object.values(observation.caseResult.artifacts)) {
-        if (artifact !== U) await readResource(invocationRoot, artifact.path, artifact.sha256);
+        if (artifact !== U) await verifyResource(invocationRoot, artifact.path, artifact.sha256);
       }
       for (const check of [...observation.caseResult.verifier.visible, ...observation.caseResult.verifier.heldOut]) {
-        if (check.output.ref !== U && check.output.sha256 !== U) await readResource(invocationRoot, check.output.ref, check.output.sha256);
+        if (check.output.ref !== U && check.output.sha256 !== U) await verifyResource(invocationRoot, check.output.ref, check.output.sha256);
       }
       outcomes.push({ ...summarizeInstructionCase(observation.caseResult, plan.integrationChecks[observation.caseResult.challenge.id]), ...slot, source: observation.source });
     }
