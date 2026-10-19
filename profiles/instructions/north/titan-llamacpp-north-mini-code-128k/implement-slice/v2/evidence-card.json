@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-card",
+  "id": "north-implement-slice-titan-medium16k-v2",
+  "version": 2,
+  "state": "inconclusive",
+  "model": {
+    "id": "titan/llamacpp/north-mini-code-128k",
+    "version": "UNKNOWN",
+    "quantization": "UNKNOWN"
+  },
+  "configuration": "route=titan/llamacpp/north-mini-code-128k;thinking=medium;maxTokens=16384;contextWindow=128000;timeoutMs=600000;maxToolCalls=100;maxCheckRuns=12;fallbacks=disabled",
+  "role": "implement-slice",
+  "synthetic": false,
+  "identities": {
+    "source": {
+      "repository": "ivo-toby/tiny-sdd",
+      "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "path": "profiles/instructions/_evidence/source-north-implement-recovered-v2.json",
+      "sha256": "36c329344c0fa8845ffd2b46228eceaf7b51fafaae2787b71a90cc191a966293"
+    },
+    "suite": {
+      "id": "instruction-implement-expanded-v2",
+      "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+      "path": "profiles/instructions/_evidence/suite-north-implement-recovered-v2.json",
+      "sha256": "d0ff115f8ff09e6fadc57a0c9ab8733432a6c294c0306cca146fc0a267918a90"
+    },
+    "profiles": {
+      "baseline": {
+        "path": "profiles/instructions/north/titan-llamacpp-north-mini-code-128k/implement-slice/v2/baseline-profile.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "candidate": {
+        "path": "profiles/instructions/north/titan-llamacpp-north-mini-code-128k/implement-slice/v2/candidate-profile.json",
+        "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+      }
+    },
+    "settings": {
+      "baseline": {
+        "path": "profiles/instructions/_evidence/settings-north-implement-recovered-v2.json",
+        "sha256": "2614ced4ffa8ec028fe5ec9e912ccbe0f34f1fdd0e2762901468de7ba3229f7f"
+      },
+      "candidate": {
+        "path": "profiles/instructions/_evidence/settings-north-implement-recovered-v2.json",
+        "sha256": "2614ced4ffa8ec028fe5ec9e912ccbe0f34f1fdd0e2762901468de7ba3229f7f"
+      }
+    }
+  },
+  "settings": {
+    "requestedThinking": "medium",
+    "maxTokens": 16384,
+    "contextWindow": 128000,
+    "limits": {
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12,
+      "firstWriteMs": null
+    },
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    }
+  },
+  "promptHashes": {
+    "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after": "b17033079cb097f18ca280936ca175a403b5449ccdbadee54295a16000be417d"
+  },
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-north-implement-recovered-v2.json",
+      "sha256": "35181bda4658b320353ec05f8300194cdc65be1242eb20d3a4c3cf8818f22a0b"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-north-implement-recovered-v2.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 4,
+          "missing": 0
+        },
+        "state": "tested-improved",
+        "A": {
+          "failure": 2,
+          "scheduled": 4,
+          "success": 2,
+          "unknown": 0
+        },
+        "B": {
+          "failure": 1,
+          "scheduled": 4,
+          "success": 3,
+          "unknown": 0
+        },
+        "gains": {
+          "quality": 1,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.25
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "The recovered implement plan did not map integration checks; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "state": "regressed",
+        "A": {
+          "failure": 0,
+          "scheduled": 10,
+          "success": 10,
+          "unknown": 0
+        },
+        "B": {
+          "failure": 3,
+          "scheduled": 10,
+          "success": 7,
+          "unknown": 0
+        },
+        "gains": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "netQualityRate": -0.3
+        },
+        "regressions": {
+          "quality": 3,
+          "integration": "UNKNOWN",
+          "combined": 3
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "The recovered implement plan did not map integration checks; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "maxRegressions": 0,
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
+  "independentVerification": {
+    "status": "verified",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-north-implement-recovered-v2.json",
+        "sha256": "5cdafac0ec3a09c6cf423c074120d15ae9a6e589ac3ea8df57051915ad43d130"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-north-implement-recovered-v2.json",
+        "sha256": "35181bda4658b320353ec05f8300194cdc65be1242eb20d3a4c3cf8818f22a0b"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-north-implement-recovered-v2.json",
+        "sha256": "5cdafac0ec3a09c6cf423c074120d15ae9a6e589ac3ea8df57051915ad43d130"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
+  },
+  "limitations": [
+    "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim.",
+    "The candidate gained one known-case pair and lost three control pairs. Correlated repeats and small sample do not establish general model behavior.",
+    "Finite frozen verifier coverage misses separately confirmed contract errors; canonical success is not complete correctness.",
+    "Original frozen report generation failed on a 5,792,129-byte stdout artifact. Only the separately identified corrected reader post-processing succeeded; no original report success is fabricated.",
+    "Tokens, repair rounds, preparation and review overhead remain UNKNOWN where not supplied by experiment summary.",
+    "Generated auxiliary scripts were not executed or treated as independent verification.",
+    "No automatic profile activation, acceptance, qualification, or policy change."
+  ],
+  "recommendation": "gather-more"
+}

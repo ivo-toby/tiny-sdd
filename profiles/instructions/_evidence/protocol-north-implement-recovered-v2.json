@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-protocol-export",
+  "modelKey": "north",
+  "role": "implement-slice",
+  "source": {
+    "repository": "ivo-toby/tiny-sdd",
+    "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/source-north-implement-recovered-v2.json",
+      "sha256": "36c329344c0fa8845ffd2b46228eceaf7b51fafaae2787b71a90cc191a966293"
+    },
+    "runtimeCodeRevision": "UNKNOWN",
+    "sourceTreeSha256": "eb8dcf1e1f3837dd2c4211ad7bccd02cce9ded53eff9812096cde02f60648e08",
+    "sourceManifestSha256": "7ec8fb89b94825a70edce833b6888f77d007296bd5791ce427e5edd7219e6512"
+  },
+  "suite": {
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/suite-north-implement-recovered-v2.json",
+      "sha256": "d0ff115f8ff09e6fadc57a0c9ab8733432a6c294c0306cca146fc0a267918a90"
+    },
+    "archivedBenchSuite": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/archive/bench/suite.json",
+      "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+    },
+    "challengeCount": 7,
+    "discoveryChallengeCount": 2,
+    "controlChallengeCount": 5,
+    "repetitions": 2
+  },
+  "plan": {
+    "namespace": "local-research-root",
+    "relativePath": "north-report-recovery-v2/archive/plans/instruction-north-implement-pilot1/plan.json",
+    "sha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4"
+  },
+  "settings": {
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/settings-north-implement-recovered-v2.json",
+      "sha256": "2614ced4ffa8ec028fe5ec9e912ccbe0f34f1fdd0e2762901468de7ba3229f7f"
+    },
+    "actualABSettingsDigest": "a13c165e33486b2ecf082e1b5edf3aebc5f1c6e40502ae0f145c7bf7bdabb99a",
+    "actualABRouteDigest": "1cfebf4df8b3cdd87141c563a5bb2ed755d057247d50a19e6802b42dc4f389e0",
+    "preparedSettingsDigest": "69c3836d1eadf548c0efb6f4c87b47b4a0ba07fef182a50202fccf2efb312f83"
+  },
+  "profiles": {
+    "baseline": {
+      "path": "profiles/instructions/north/titan-llamacpp-north-mini-code-128k/implement-slice/v2/baseline-profile.json",
+      "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+    },
+    "candidate": {
+      "path": "profiles/instructions/north/titan-llamacpp-north-mini-code-128k/implement-slice/v2/candidate-profile.json",
+      "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+    }
+  },
+  "recovery": {
+    "kind": "instruction-recovered-envelope",
+    "report": {
+      "namespace": "local-research-root",
+      "relativePath": "north-corrected-report-v2.json",
+      "sha256": "89613e6bd97fdf96f84b4a0b738e76b18efcd62ab0cb27f8c1fd9edfe1387fb2"
+    },
+    "manifest": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/recovery-manifest.json",
+      "sha256": "9a0c3fc5698ede1699fa80b7fb4dbde9efeb69d0aafebc6471bbb2845cfd0f5a"
+    },
+    "archive": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/north-report-recovery-v2.tar",
+      "sha256": "b2c6e3bfc3cc226aaab06078cda9928c7bc2d60b8ea687503f692afcaa006e14"
+    },
+    "plan": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/archive/plans/instruction-north-implement-pilot1/plan.json",
+      "sha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4"
+    },
+    "primaryReview": {
+      "namespace": "local-research-root",
+      "relativePath": "north-implement-primary-independent-review-v1.json",
+      "sha256": "38a634663a867e419beca79482ee5cd434ca33c0c3a9e44d0919963fb6354aa1"
+    },
+    "gatewayKeyAggregateCorrection": {
+      "namespace": "local-research-root",
+      "relativePath": "north-recovery-safety-metadata-correction-v1.json",
+      "sha256": "1ad0b6acde63902940840e406b1ec0790fcd03382544173a3f137f1fdb44f01a"
+    },
+    "identity": "north-report-recovery-v2",
+    "mode": "corrected-postprocessing",
+    "rawCollectionImmutable": true,
+    "originalReportAvailable": false,
+    "originalRunReport": "missing",
+    "originalRunComplete": "missing",
+    "originalReadInstructionReport": {
+      "attempted": true,
+      "succeeded": false,
+      "successClaim": false,
+      "failureCode": "INSTRUCTION_EXPERIMENT_INVALID",
+      "failureMessage": "instruction resource must be a regular file no larger than 4 MiB"
+    },
+    "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "correctedReader": {
+      "auditorSha256": "82cac2f853aac01868b04a61b547b558fe83362d3e6bb68098c0190d3aa671e5",
+      "storeCommit": "565dd5dd05b484259c3ee350fd52dd6f2c94abad",
+      "storeSha256": "ab6c06c454afdee20b160acc43fc206f5d88cffa9f1d4391a98a940b9b9bd057",
+      "sourceManifestSha256": "7ec8fb89b94825a70edce833b6888f77d007296bd5791ce427e5edd7219e6512"
+    },
+    "gatewayKeyAudit": {
+      "legacyManifestAggregate": true,
+      "underlyingLocalManifestAudit": false,
+      "underlyingRemoteManifestAudit": false,
+      "underlyingArchiveRelayAudit": false,
+      "correctedAggregate": false,
+      "correctionExplanation": "The legacy safety.gatewayKeyPersisted value was an inverted absence-check label; both validated collection audits and both retained relay audit records are false. The original manifest, envelope, and archive remain unchanged.",
+      "correctionLimitation": "The correction resolves this Boolean polarity error. It does not independently prove the absence of secrets beyond the retained audit scope.",
+      "retainedAuditRefs": [
+        {
+          "namespace": "local-research-root",
+          "relativePath": "north-report-recovery-v2/archive/relay-secret-audit.json",
+          "sha256": "16a4c3bc09427651dce237ec09ac8614ff31a9210905f325d975513f32fc6e2b"
+        },
+        {
+          "namespace": "local-research-root",
+          "relativePath": "north-report-recovery-v2/archive/relay-wire-summary.json",
+          "sha256": "425218e22537e8675a8b1f72a2a34fc36ebb8113a32c5ae134b83714ea3dba44"
+        }
+      ]
+    },
+    "planSha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4",
+    "originalFailureProbe": {
+      "code": "INSTRUCTION_EXPERIMENT_INVALID",
+      "exitCode": 2,
+      "inferenceInvoked": false,
+      "storeSha256": "1133450704c33c9ebebbba290231bd3e25634f234aa538b80cdc1afdaa490c6b"
+    },
+    "reviewBoundary": "recovered aggregate compared against retained raw pairs; no retained original report was claimed"
+  },
+  "controlExposure": "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim.",
+  "provenance": {
+    "source": "sanitized recovered protocol identity; no original report is claimed"
+  }
+}

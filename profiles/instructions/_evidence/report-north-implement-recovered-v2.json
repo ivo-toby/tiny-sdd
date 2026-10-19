@@ -1,0 +1,425 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-export",
+  "modelKey": "north",
+  "role": "implement-slice",
+  "state": "regressed",
+  "recommendation": "keep A",
+  "experimentalReportState": "regressed",
+  "experimentalReportRecommendation": "keep A",
+  "experiment": {
+    "id": "instruction-north-implement-pilot1",
+    "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "planSha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4",
+    "repetitions": 2,
+    "recovery": {
+      "kind": "instruction-recovered-envelope",
+      "report": {
+        "namespace": "local-research-root",
+        "relativePath": "north-corrected-report-v2.json",
+        "sha256": "89613e6bd97fdf96f84b4a0b738e76b18efcd62ab0cb27f8c1fd9edfe1387fb2"
+      },
+      "manifest": {
+        "namespace": "local-research-root",
+        "relativePath": "north-report-recovery-v2/recovery-manifest.json",
+        "sha256": "9a0c3fc5698ede1699fa80b7fb4dbde9efeb69d0aafebc6471bbb2845cfd0f5a"
+      },
+      "archive": {
+        "namespace": "local-research-root",
+        "relativePath": "north-report-recovery-v2/north-report-recovery-v2.tar",
+        "sha256": "b2c6e3bfc3cc226aaab06078cda9928c7bc2d60b8ea687503f692afcaa006e14"
+      },
+      "plan": {
+        "namespace": "local-research-root",
+        "relativePath": "north-report-recovery-v2/archive/plans/instruction-north-implement-pilot1/plan.json",
+        "sha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4"
+      },
+      "primaryReview": {
+        "namespace": "local-research-root",
+        "relativePath": "north-implement-primary-independent-review-v1.json",
+        "sha256": "38a634663a867e419beca79482ee5cd434ca33c0c3a9e44d0919963fb6354aa1"
+      },
+      "gatewayKeyAggregateCorrection": {
+        "namespace": "local-research-root",
+        "relativePath": "north-recovery-safety-metadata-correction-v1.json",
+        "sha256": "1ad0b6acde63902940840e406b1ec0790fcd03382544173a3f137f1fdb44f01a"
+      },
+      "identity": "north-report-recovery-v2",
+      "mode": "corrected-postprocessing",
+      "rawCollectionImmutable": true,
+      "originalReportAvailable": false,
+      "originalRunReport": "missing",
+      "originalRunComplete": "missing",
+      "originalReadInstructionReport": {
+        "attempted": true,
+        "succeeded": false,
+        "successClaim": false,
+        "failureCode": "INSTRUCTION_EXPERIMENT_INVALID",
+        "failureMessage": "instruction resource must be a regular file no larger than 4 MiB"
+      },
+      "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "correctedReader": {
+        "auditorSha256": "82cac2f853aac01868b04a61b547b558fe83362d3e6bb68098c0190d3aa671e5",
+        "storeCommit": "565dd5dd05b484259c3ee350fd52dd6f2c94abad",
+        "storeSha256": "ab6c06c454afdee20b160acc43fc206f5d88cffa9f1d4391a98a940b9b9bd057",
+        "sourceManifestSha256": "7ec8fb89b94825a70edce833b6888f77d007296bd5791ce427e5edd7219e6512"
+      },
+      "gatewayKeyAudit": {
+        "legacyManifestAggregate": true,
+        "underlyingLocalManifestAudit": false,
+        "underlyingRemoteManifestAudit": false,
+        "underlyingArchiveRelayAudit": false,
+        "correctedAggregate": false,
+        "correctionExplanation": "The legacy safety.gatewayKeyPersisted value was an inverted absence-check label; both validated collection audits and both retained relay audit records are false. The original manifest, envelope, and archive remain unchanged.",
+        "correctionLimitation": "The correction resolves this Boolean polarity error. It does not independently prove the absence of secrets beyond the retained audit scope.",
+        "retainedAuditRefs": [
+          {
+            "namespace": "local-research-root",
+            "relativePath": "north-report-recovery-v2/archive/relay-secret-audit.json",
+            "sha256": "16a4c3bc09427651dce237ec09ac8614ff31a9210905f325d975513f32fc6e2b"
+          },
+          {
+            "namespace": "local-research-root",
+            "relativePath": "north-report-recovery-v2/archive/relay-wire-summary.json",
+            "sha256": "425218e22537e8675a8b1f72a2a34fc36ebb8113a32c5ae134b83714ea3dba44"
+          }
+        ]
+      },
+      "planSha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4",
+      "originalFailureProbe": {
+        "code": "INSTRUCTION_EXPERIMENT_INVALID",
+        "exitCode": 2,
+        "inferenceInvoked": false,
+        "storeSha256": "1133450704c33c9ebebbba290231bd3e25634f234aa538b80cdc1afdaa490c6b"
+      },
+      "reviewBoundary": "recovered aggregate compared against retained raw pairs; no retained original report was claimed"
+    },
+    "controlExposure": "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim."
+  },
+  "partitions": {
+    "discovery": {
+      "partition": "discovery",
+      "challengeCount": 2,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 4,
+        "complete": 4,
+        "missing": 0
+      },
+      "state": "tested-improved",
+      "A": {
+        "failure": 2,
+        "scheduled": 4,
+        "success": 2,
+        "unknown": 0
+      },
+      "B": {
+        "failure": 1,
+        "scheduled": 4,
+        "success": 3,
+        "unknown": 0
+      },
+      "gains": {
+        "quality": 1,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.25
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "The recovered implement plan did not map integration checks; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim."
+        }
+      ]
+    },
+    "control": {
+      "partition": "control",
+      "challengeCount": 5,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 10,
+        "complete": 10,
+        "missing": 0
+      },
+      "state": "regressed",
+      "A": {
+        "failure": 0,
+        "scheduled": 10,
+        "success": 10,
+        "unknown": 0
+      },
+      "B": {
+        "failure": 3,
+        "scheduled": 10,
+        "success": 7,
+        "unknown": 0
+      },
+      "gains": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "netQualityRate": -0.3
+      },
+      "regressions": {
+        "quality": 3,
+        "integration": "UNKNOWN",
+        "combined": 3
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "The recovered implement plan did not map integration checks; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim."
+        }
+      ]
+    }
+  },
+  "independentReviewSummary": {
+    "caseCount": 28,
+    "verificationRecordsChecked": 56,
+    "visibleCaseChecks": {
+      "scheduled": 28,
+      "passed": 25,
+      "failed": 3
+    },
+    "heldOutChecks": {
+      "scheduled": 28,
+      "passed": 24,
+      "failed": 4
+    },
+    "hardGatesTrue": {
+      "outOfScopeEdit": 2,
+      "protectedFileEdit": 2,
+      "protectedTestEdit": 2,
+      "requiredPatchAbsent": 0
+    },
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "nestedExecutionDisabled": true,
+    "artifactRefsChecked": 308,
+    "invocationSummariesChecked": 4,
+    "noOriginalReportClaim": true
+  },
+  "telemetry": {
+    "discovery": {
+      "elapsedMs": {
+        "A": 135628,
+        "B": 103841,
+        "differenceRange": [
+          -23045,
+          13911
+        ],
+        "meanPairedDifference": -7946.75,
+        "measuredPairs": 4,
+        "scheduledPairs": 4
+      },
+      "inputTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 4
+      },
+      "outputTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 4
+      },
+      "reasoningTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 4
+      },
+      "repairRounds": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 4
+      },
+      "totalTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 4
+      }
+    },
+    "control": {
+      "elapsedMs": {
+        "A": 724960,
+        "B": 966173,
+        "differenceRange": [
+          -126680,
+          239623
+        ],
+        "meanPairedDifference": 24121.3,
+        "measuredPairs": 10,
+        "scheduledPairs": 10
+      },
+      "inputTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 10
+      },
+      "outputTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 10
+      },
+      "reasoningTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 10
+      },
+      "repairRounds": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 10
+      },
+      "totalTokens": {
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "differenceRange": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "measuredPairs": 0,
+        "scheduledPairs": 10
+      }
+    }
+  },
+  "overhead": {
+    "preparation": "UNKNOWN",
+    "review": "UNKNOWN"
+  },
+  "finding": "Baseline retained: the recovered North comparison is regressed; this publication remains inconclusive because prior control exposure and finite oracle coverage limit transfer.",
+  "reviewDisposition": {
+    "state": "inconclusive",
+    "recommendation": "gather-more",
+    "reason": "Primary review supplied the evidence; publication disposition was passed explicitly and does not rewrite raw state."
+  },
+  "limitations": [
+    "Exploratory comparison: primary had seen control source before outcomes; no blind or untouched qualification claim.",
+    "The candidate gained one known-case pair and lost three control pairs. Correlated repeats and small sample do not establish general model behavior.",
+    "Finite frozen verifier coverage misses separately confirmed contract errors; canonical success is not complete correctness.",
+    "Original frozen report generation failed on a 5,792,129-byte stdout artifact. Only the separately identified corrected reader post-processing succeeded; no original report success is fabricated.",
+    "Tokens, repair rounds, preparation and review overhead remain UNKNOWN where not supplied by experiment summary.",
+    "Generated auxiliary scripts were not executed or treated as independent verification.",
+    "No automatic profile activation, acceptance, qualification, or policy change."
+  ],
+  "recovery": {
+    "kind": "instruction-recovered-envelope",
+    "report": {
+      "namespace": "local-research-root",
+      "relativePath": "north-corrected-report-v2.json",
+      "sha256": "89613e6bd97fdf96f84b4a0b738e76b18efcd62ab0cb27f8c1fd9edfe1387fb2"
+    },
+    "manifest": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/recovery-manifest.json",
+      "sha256": "9a0c3fc5698ede1699fa80b7fb4dbde9efeb69d0aafebc6471bbb2845cfd0f5a"
+    },
+    "archive": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/north-report-recovery-v2.tar",
+      "sha256": "b2c6e3bfc3cc226aaab06078cda9928c7bc2d60b8ea687503f692afcaa006e14"
+    },
+    "plan": {
+      "namespace": "local-research-root",
+      "relativePath": "north-report-recovery-v2/archive/plans/instruction-north-implement-pilot1/plan.json",
+      "sha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4"
+    },
+    "primaryReview": {
+      "namespace": "local-research-root",
+      "relativePath": "north-implement-primary-independent-review-v1.json",
+      "sha256": "38a634663a867e419beca79482ee5cd434ca33c0c3a9e44d0919963fb6354aa1"
+    },
+    "gatewayKeyAggregateCorrection": {
+      "namespace": "local-research-root",
+      "relativePath": "north-recovery-safety-metadata-correction-v1.json",
+      "sha256": "1ad0b6acde63902940840e406b1ec0790fcd03382544173a3f137f1fdb44f01a"
+    },
+    "identity": "north-report-recovery-v2",
+    "mode": "corrected-postprocessing",
+    "rawCollectionImmutable": true,
+    "originalReportAvailable": false,
+    "originalRunReport": "missing",
+    "originalRunComplete": "missing",
+    "originalReadInstructionReport": {
+      "attempted": true,
+      "succeeded": false,
+      "successClaim": false,
+      "failureCode": "INSTRUCTION_EXPERIMENT_INVALID",
+      "failureMessage": "instruction resource must be a regular file no larger than 4 MiB"
+    },
+    "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "correctedReader": {
+      "auditorSha256": "82cac2f853aac01868b04a61b547b558fe83362d3e6bb68098c0190d3aa671e5",
+      "storeCommit": "565dd5dd05b484259c3ee350fd52dd6f2c94abad",
+      "storeSha256": "ab6c06c454afdee20b160acc43fc206f5d88cffa9f1d4391a98a940b9b9bd057",
+      "sourceManifestSha256": "7ec8fb89b94825a70edce833b6888f77d007296bd5791ce427e5edd7219e6512"
+    },
+    "gatewayKeyAudit": {
+      "legacyManifestAggregate": true,
+      "underlyingLocalManifestAudit": false,
+      "underlyingRemoteManifestAudit": false,
+      "underlyingArchiveRelayAudit": false,
+      "correctedAggregate": false,
+      "correctionExplanation": "The legacy safety.gatewayKeyPersisted value was an inverted absence-check label; both validated collection audits and both retained relay audit records are false. The original manifest, envelope, and archive remain unchanged.",
+      "correctionLimitation": "The correction resolves this Boolean polarity error. It does not independently prove the absence of secrets beyond the retained audit scope.",
+      "retainedAuditRefs": [
+        {
+          "namespace": "local-research-root",
+          "relativePath": "north-report-recovery-v2/archive/relay-secret-audit.json",
+          "sha256": "16a4c3bc09427651dce237ec09ac8614ff31a9210905f325d975513f32fc6e2b"
+        },
+        {
+          "namespace": "local-research-root",
+          "relativePath": "north-report-recovery-v2/archive/relay-wire-summary.json",
+          "sha256": "425218e22537e8675a8b1f72a2a34fc36ebb8113a32c5ae134b83714ea3dba44"
+        }
+      ]
+    },
+    "planSha256": "52741eae6d5a48381ddce4c4bb96b2777d2714312f4b37e91ae717ea6135e2d4",
+    "originalFailureProbe": {
+      "code": "INSTRUCTION_EXPERIMENT_INVALID",
+      "exitCode": 2,
+      "inferenceInvoked": false,
+      "storeSha256": "1133450704c33c9ebebbba290231bd3e25634f234aa538b80cdc1afdaa490c6b"
+    },
+    "reviewBoundary": "recovered aggregate compared against retained raw pairs; no retained original report was claimed"
+  },
+  "provenance": {
+    "source": "sanitized corrected aggregate and primary publication review; no original run report is claimed"
+  }
+}
