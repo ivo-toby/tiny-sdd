@@ -68,15 +68,25 @@ function summary(output, name) {
 }
 
 function witnessLine(output, prefix, name) {
-  return output.split(/\r?\n/u).some((line) => line.startsWith(`${prefix} `) && line.endsWith(` - ${name}`));
+  return witnessBlock(output, prefix, name).length > 0;
 }
 
 function witnessBlock(output, prefix, name) {
   const lines = output.split(/\r?\n/u);
-  const start = lines.findIndex((line) => line.startsWith(`${prefix} `) && line.endsWith(` - ${name}`));
-  if (start < 0) return '';
-  const end = lines.findIndex((line, index) => index > start && line === '  ...');
-  return lines.slice(start, end < 0 ? lines.length : end + 1).join('\n');
+  for (let start = 0; start < lines.length; start += 1) {
+    const match = lines[start].match(/^(\s*)(ok|not ok) \d+ - (.*)$/u);
+    if (!match || match[2] !== prefix || match[3] !== name) continue;
+    const indent = match[1].length;
+    const prefixText = ' '.repeat(indent);
+    const footer = `${' '.repeat(indent + 2)}...`;
+    const end = lines.findIndex((line, index) => index > start && line === footer);
+    if (end < 0) continue;
+    const block = lines.slice(start, end + 1)
+      .map((line) => line.startsWith(prefixText) ? line.slice(indent) : line)
+      .join('\n');
+    if (!/^  type: 'suite'$/mu.test(block)) return block;
+  }
+  return '';
 }
 
 function firstStackFrame(block) {

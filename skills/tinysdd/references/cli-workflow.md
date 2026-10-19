@@ -690,6 +690,10 @@ mapped named witness count as measurement kills, while empty, skipped,
 syntax/import, setup, timeout, process, and unavailable runs do not. The
 reference pass and killed/declared count are derived from existing records;
 they never qualify a worker or accept a task.
+The `2026-10-19.1` suite version recognizes named child witnesses from nested Node
+`describe`/`it` tests by their own indented TAP diagnostic blocks; sibling or
+parent diagnostics do not satisfy a witness, and evaluator or setup failures
+remain invalid.
 
 Score retained results with the qualification lane:
 

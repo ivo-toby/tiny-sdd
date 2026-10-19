@@ -32,6 +32,12 @@ therefore means that the check confirmed a killed mutant. The measurement is
 `referencePass` plus `killedMutants / declaredMutants`, derived from stable check
 IDs and statuses; it is not a qualification or acceptance decision.
 
+The `2026-10-19.1` suite version also accepts named child witnesses emitted by nested
+Node `describe`/`it` tests. It attributes each witness to its own indented TAP
+diagnostic block, so sibling or parent diagnostics cannot satisfy the name;
+module/setup failures, evaluator syntax errors, skipped or cancelled tests, and
+zero-test output remain invalid.
+
 Production evaluation invokes these verifier commands through the existing
 check-runner sandbox. The focused runner test uses only the explicit
 `runtime.test` verifier injection and a real bounded Node evaluator callback;

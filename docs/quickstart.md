@@ -931,6 +931,10 @@ runs, and records `referencePass` plus killed over declared mutants as
 measurement data only. These values are derived from the existing verifier
 records; they do not change the result shape. Run it with
 `--suite bench/write-tests-suite`.
+The `2026-10-19.1` suite version recognizes named child witnesses from nested Node
+`describe`/`it` tests by their own indented TAP diagnostic blocks; sibling or
+parent diagnostics do not satisfy a witness, and evaluator or setup failures
+remain invalid.
 
 ### Score retained benchmark evidence
 

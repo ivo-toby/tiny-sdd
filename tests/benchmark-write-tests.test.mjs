@@ -119,6 +119,27 @@ function outputPath(outputRoot, record) {
   return join(outputRoot, record.output.ref);
 }
 
+async function runMutantVerifierTest(testSource, expectedWitness) {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-write-tests-nested-'));
+  const candidate = join(root, 'candidate');
+  await mkdir(join(candidate, 'tests'), { recursive: true });
+  await writeFile(join(candidate, 'tests/contract.test.mjs'), testSource);
+  const mutant = resolve(SUITE_ROOT, 'candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs');
+  try {
+    const result = await execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', mutant, expectedWitness], {
+      cwd: candidate,
+      env: childEnvironment(),
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 10000,
+    });
+    return { status: 0, output: `${result.stdout}${result.stderr}` };
+  } catch (error) {
+    return { status: typeof error.code === 'number' ? error.code : 1, output: `${error.stdout ?? ''}${error.stderr ?? ''}` };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 test('write-tests runs the same submitted bytes against reference and all declared mutants', async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-write-tests-runner-'));
   const suiteRoot = join(root, 'suite');
@@ -252,10 +273,10 @@ test('write-tests verifier rejects an evaluator import failure as a mutant kill'
   );
   const expectedWitness = 'C3 enforces the inclusive timeout bounds';
   const referenceTest = await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8');
-  const c3Start = referenceTest.indexOf(`test('${expectedWitness}'`);
-  const c4Start = referenceTest.indexOf("test('C4", c3Start);
+  const c3Start = referenceTest.indexOf(`it('${expectedWitness}'`);
+  const c4Start = referenceTest.indexOf("it('C4", c3Start);
   assert.ok(c3Start >= 0 && c4Start > c3Start);
-  const importFailureWitness = `test('${expectedWitness}', async () => {
+  const importFailureWitness = `it('${expectedWitness}', async () => {
   try {
     normalizeOptions({ timeoutMs: 1 });
   } catch {
@@ -302,8 +323,8 @@ test('write-tests verifier rejects evaluator syntax failures but keeps API Synta
   await mkdir(join(candidate, 'tests'), { recursive: true });
   const expectedWitness = 'C3 enforces the inclusive timeout bounds';
   const referenceTest = `import { Script } from 'node:vm';\n${await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8')}`;
-  const c3Start = referenceTest.indexOf(`test('${expectedWitness}'`);
-  const c4Start = referenceTest.indexOf("test('C4", c3Start);
+  const c3Start = referenceTest.indexOf(`it('${expectedWitness}'`);
+  const c4Start = referenceTest.indexOf("it('C4", c3Start);
   assert.ok(c3Start >= 0 && c4Start > c3Start);
   const syntaxExpressions = [
     "new Function('const invalid = ;');",
@@ -322,7 +343,7 @@ test('write-tests verifier rejects evaluator syntax failures but keeps API Synta
   );
   try {
     for (const expression of syntaxExpressions) {
-      const syntaxFailureTest = `test('${expectedWitness}', () => {
+      const syntaxFailureTest = `it('${expectedWitness}', () => {
   try {
     normalizeOptions({ timeoutMs: 1 });
   } catch {
@@ -358,7 +379,7 @@ test('write-tests verifier rejects evaluator syntax failures but keeps API Synta
     }
 
     await writeFile(join(candidate, 'src/options.mjs'), apiSyntaxErrorSource);
-    await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}test('${expectedWitness}', () => {\n  normalizeOptions({ timeoutMs: 1 });\n});\n\n${referenceTest.slice(c4Start)}`);
+    await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest.slice(0, c3Start)}it('${expectedWitness}', () => {\n  normalizeOptions({ timeoutMs: 1 });\n});\n\n${referenceTest.slice(c4Start)}`);
     const apiSyntaxError = await execFileAsync(process.execPath, [VERIFIER, 'mutant', 'amber-input-validation', 'src/options.mjs', expectedWitness], {
       cwd: candidate,
       env: childEnvironment(),
@@ -384,7 +405,7 @@ test('write-tests verifier accepts extra tests and multiple mapped failures', as
     join(candidate, 'src/options.mjs'),
   );
   const referenceTest = await readFile(resolve(SUITE_ROOT, 'candidates/amber-input-validation/reference/tests/contract.test.mjs'), 'utf8');
-  await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest}\ntest('extra endpoint coverage', () => { assert.equal(normalizeOptions({ timeoutMs: 1 }).timeoutMs, 1); });\n`);
+  await writeFile(join(candidate, 'tests/contract.test.mjs'), `${referenceTest}\nit('extra endpoint coverage', () => { assert.equal(normalizeOptions({ timeoutMs: 1 }).timeoutMs, 1); });\n`);
   const mutant = resolve(SUITE_ROOT, 'candidates/amber-input-validation/wrong-endpoint-timeout/src/options.mjs');
   try {
     const reference = await execFileAsync(process.execPath, [VERIFIER, 'reference', 'amber-input-validation'], {
@@ -408,4 +429,43 @@ test('write-tests verifier accepts extra tests and multiple mapped failures', as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('write-tests verifier attributes nested witness blocks without sibling or parent leakage', async () => {
+  const expectedWitness = 'C3 enforces the inclusive timeout bounds';
+  const nestedSiblingFailure = `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { normalizeOptions } from '../src/options.mjs';
+
+test.describe('contract suite', () => {
+  test('C1 defaults omitted options without dropping explicit values', () => {});
+  test('C2 rejects non-integer timeout values instead of coercing them', async () => {
+    await import('../src/missing-sibling-module.mjs');
+  });
+  test('${expectedWitness}', () => {
+    assert.equal(normalizeOptions({ timeoutMs: 1 }).timeoutMs, 1);
+  });
+  test('C4 canonicalizes header names while retaining their values', () => {});
+});
+`;
+  const killed = await runMutantVerifierTest(nestedSiblingFailure, expectedWitness);
+  assert.equal(killed.status, 0, killed.output);
+  assert.match(killed.output, /# fail 2\b/u);
+  assert.doesNotMatch(killed.output, /write-tests verifier rejected mutant execution/u);
+
+  const parentFailure = `import test from 'node:test';
+import assert from 'node:assert/strict';
+
+test.describe('${expectedWitness}', () => {
+  test('unrelated child failure', () => {
+    assert.equal(1, 2);
+  });
+});
+test('C1 defaults omitted options without dropping explicit values', () => {});
+test('C2 rejects non-integer timeout values instead of coercing them', () => {});
+test('C4 canonicalizes header names while retaining their values', () => {});
+`;
+  const rejected = await runMutantVerifierTest(parentFailure, expectedWitness);
+  assert.notEqual(rejected.status, 0, rejected.output);
+  assert.match(rejected.output, /write-tests verifier rejected mutant execution/u);
 });
