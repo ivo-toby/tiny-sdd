@@ -219,5 +219,5 @@ The script refuses an existing directory and uses only the offline fake runtime.
 See `tests/helpers/instruction-experiment-fixture.mjs` for the fixture contract. The fixture intentionally uses
 a deterministic fake worker; independent Node checks validate the public caller
 on separate greeting and checkout lineages. This proves harness behavior, not a
-model preference. A real model discovery/control experiment remains required to
-complete #108.
+model preference. A real model discovery/control experiment remains required for
+the live validation tracked in #126.
