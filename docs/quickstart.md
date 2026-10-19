@@ -913,7 +913,7 @@ plus one runnable `stop-and-ask` challenge. The tenth writes only
 must leave implementation and protected files unchanged. The current corrected
 version runs Opal's worker check against the protected fixture test and covers
 Cedar's valid zero amount in both visible and independent checks; its
-positive-only audit mutant fails the independent zero-boundary check. The
+positive-only audit mutant fails the independent zero-boundary check.
 Ember's library-API challenge now covers present `undefined`, `false`, `0`, an
 empty string and `null`, first-match order and no match in protected and
 independent checks. Its corrected reference branches on `isSome`, while the
