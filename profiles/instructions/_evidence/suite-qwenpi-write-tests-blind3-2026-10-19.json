@@ -24,7 +24,7 @@
         "sha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d"
       },
       "controlAudit": {
-        "filename": "blind3/control-audit/linux-2026-10-19T092137839Z-3994633/linux-audit-report.json",
+        "filename": "control-audit/linux-2026-10-19T092137839Z-3994633/linux-audit-report.json",
         "sha256": "091a7cea37f6ce7a630b2380a284923dd2bc99ff3e7cb9b19741d3c6d8986717"
       }
     }

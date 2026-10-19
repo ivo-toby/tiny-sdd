@@ -24,7 +24,7 @@
     "suiteSha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d",
     "identityExport": {
       "path": "profiles/instructions/_evidence/suite-qwenpi-write-tests-blind3-2026-10-19.json",
-      "sha256": "3870f61e7a08ee257b31f2276ede899d3db93b2ad4cc767f1b6578ca7fb0b84b"
+      "sha256": "71cde48bf9578b45f727e061fded71256f1536040c3c88ef798adc45d2b1b671"
     },
     "benchTreeSha256": "b07ea189839b0aae0997b0d705b21c232d0e566c52cf86c9910ec8d1a41d269a",
     "controlTreeSha256": "aba4da5a4cf9faf4b70941c26acf5c6db3b68bf34dc613152d80e51128350494",
@@ -133,7 +133,7 @@
         "sha256": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a"
       },
       "mechanicalAudit": {
-        "filename": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+        "filename": "instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
         "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
       }
     }

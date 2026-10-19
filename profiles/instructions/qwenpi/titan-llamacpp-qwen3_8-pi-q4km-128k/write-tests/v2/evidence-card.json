@@ -23,7 +23,7 @@
       "id": "instruction-write-tests-expanded-blind3-v3",
       "version": "2026-10-19.expanded-blind3-writing-discovery-v3",
       "path": "profiles/instructions/_evidence/suite-qwenpi-write-tests-blind3-2026-10-19.json",
-      "sha256": "3870f61e7a08ee257b31f2276ede899d3db93b2ad4cc767f1b6578ca7fb0b84b"
+      "sha256": "71cde48bf9578b45f727e061fded71256f1536040c3c88ef798adc45d2b1b671"
     },
     "profiles": {
       "baseline": {
@@ -68,7 +68,7 @@
   "evidence": {
     "report": {
       "path": "profiles/instructions/_evidence/report-qwenpi-write-tests-blind3-2026-10-19.json",
-      "sha256": "be9a518429ac1cc402e51c94470f5a20de1fc5c791091a48302f0af07952c635"
+      "sha256": "c6b2326697a95d6e999671339128f0a6f9c9d0bff10489506d4374dd58fd6f27"
     },
     "protocol": "profiles/instructions/_evidence/protocol-qwenpi-write-tests-blind3-2026-10-19.json",
     "partitions": {
@@ -175,11 +175,11 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwenpi-write-tests-blind3-2026-10-19.json",
-        "sha256": "a3a7f4d1e74a51dcf3daee890bee5f6a3ffd0e79761d7fe72f6331f56fa8c176"
+        "sha256": "f2e5b5f68298373b11773090b02fddf8f8084b326045384f316eb050c6e786dc"
       },
       {
         "path": "profiles/instructions/_evidence/report-qwenpi-write-tests-blind3-2026-10-19.json",
-        "sha256": "be9a518429ac1cc402e51c94470f5a20de1fc5c791091a48302f0af07952c635"
+        "sha256": "c6b2326697a95d6e999671339128f0a6f9c9d0bff10489506d4374dd58fd6f27"
       }
     ]
   },
@@ -188,7 +188,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwenpi-write-tests-blind3-2026-10-19.json",
-        "sha256": "a3a7f4d1e74a51dcf3daee890bee5f6a3ffd0e79761d7fe72f6331f56fa8c176"
+        "sha256": "f2e5b5f68298373b11773090b02fddf8f8084b326045384f316eb050c6e786dc"
       }
     ],
     "exactBytesMatched": true,

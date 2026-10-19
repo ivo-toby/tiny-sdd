@@ -14,7 +14,7 @@
     "matchesRetainedReport": true
   },
   "mechanicalAudit": {
-    "path": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+    "path": "instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
     "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
   },
   "primaryPlanReview": {
@@ -93,7 +93,7 @@
         "sha256": "aaa0d1f99e350ec7bcb0f1ec497049c94275ff1e16f2cdb4eacaedfac79ce164"
       },
       "mechanicalAudit": {
-        "filename": "blind3/instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
+        "filename": "instruction-audits/qwenpi-write-tests-20261019T111031072301Z.json",
         "sha256": "1afad404f8a990f5120d8c46f1c5ae3e1e699b18661552b00e19a8d59c77e8ae"
       }
     }
