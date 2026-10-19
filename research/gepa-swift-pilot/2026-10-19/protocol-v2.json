@@ -1,0 +1,95 @@
+{
+  "schema": "tinysdd-gepa-external-technical-pilot-v2",
+  "frozen_at": "2026-10-19T16:17:16.103563+00:00",
+  "purpose": "Test actual GEPA instruction optimization through normal TinySDD/Pi against existing SWE-PolyBench tasks; estimate held-out transfer without claiming statistical or population-level proof from this small pilot.",
+  "source_revision": "ac8782e1d6749399c7ad32dd246e24899f3f2560",
+  "source_archive_sha256": "ce6b6acee78731a6bf0205f8d5638746fb428d057ec73b6e386158a2d580587f",
+  "gepa_version": "0.1.4",
+  "dataset": {
+    "name": "AmazonScience/SWE-PolyBench_Verified",
+    "revision": "b3fca77b637379f0c01ad86d18753a7ac1998b53",
+    "csv_sha256": "0c8138e73c34fa29a5276b675b146b72d78ce001fcc4560d76302c908b4808a5"
+  },
+  "development": {
+    "initial_task": "yt-dlp__yt-dlp-5195",
+    "metadata_only_optional_extensions": [
+      "yt-dlp__yt-dlp-10390",
+      "yt-dlp__yt-dlp-4841"
+    ],
+    "selection": "Already shortlisted metadata only, fixed before any Swift result; initialize with first task, add extensions only within declared metric cap. Never use any of these as final held-out cases."
+  },
+  "validation": {
+    "task": "serverless__serverless-7374",
+    "repository": "serverless/serverless",
+    "feedback": "Scores only; no test/source/gold diagnostics to reflector."
+  },
+  "final_test": {
+    "task": "mui__material-ui-12406",
+    "repository": "mui/material-ui",
+    "feedback": "Never fed to optimizer. Baseline and selected frozen profile tested only after GEPA finishes. Task-level pilot evidence only."
+  },
+  "settings": {
+    "target": {
+      "provider": "litellm",
+      "model": "titan/llamacpp/swift15-q4km-128k",
+      "thinking": "medium",
+      "contextWindow": 128000,
+      "maxTokens": 16384,
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12
+    },
+    "reflector": {
+      "provider": "litellm",
+      "model": "titan/llamacpp/qwen3.6-35b-a3b-256k",
+      "thinking": "medium",
+      "contextWindow": 256000,
+      "maxTokens": 16384,
+      "timeoutMs": 600000
+    },
+    "acknowledgedFinding": "THINKING_CONTROL_MISMATCH",
+    "fallback": false,
+    "concurrency": 1
+  },
+  "budget": {
+    "max_gepa_metric_calls": 12,
+    "max_reflection_proposals": 2,
+    "max_total_reflection_requests": 4,
+    "postfreeze_max_validation_runs": 4,
+    "postfreeze_max_final_runs": 4,
+    "initial_baseline_preflight_counts_in_total_model_runs": true,
+    "no_unbounded_retry": true
+  },
+  "only_optimized_component": "instructions",
+  "seed_instructions": "Implement the requested change in the existing codebase. Read the relevant implementation and tests, preserve existing public behavior outside the requested change, and make the smallest coherent fix. Use available checks, inspect failures, and report any unresolved uncertainty. Do not weaken or replace tests to make the result pass.",
+  "scoring": {
+    "official": "Reproduce pinned SWE-PolyBench resolved predicate without silently changing it. Label reproduced rather than source scoring call.",
+    "strict": "All expected F2P/P2P IDs observed, no contradictory IDs, full retained output, valid execution, protected tests unchanged; distinguish test failure from harness unavailable.",
+    "unknown": "Stop or record unavailable; never turn unavailable into candidate success.",
+    "tiny_sdd": "Benchmark qualification NOT_RUN. Normal worker outcome and independent upstream oracle are explicitly separate.",
+    "inference_outcome": "Worker token/tool/time budgets are model-result failures with optimization score0 even if the retained partial patch passes tests; an outer bridge timeout is infrastructure UNKNOWN.",
+    "optimization_metric": "1 only when worker outcome completed AND valid independent official resolved predicate true AND all strict test/artifact gates clear. Otherwise a known model/task failure is 0; infrastructure unavailable is UNKNOWN and stops the optimizer. Preserve unmodified official outcome separately."
+  },
+  "selection": "Use GEPA validation ranking at frozen budget; no manual prompt editing to fit validation/final task; freeze selected candidate bytes and hash before final test.",
+  "interpretation": "Report every paired outcome and discordance. A final task win is a measured pilot result; it is not sufficient to declare a generally superior model profile. No automatic activation or changes to existing evidence-card policy.",
+  "preflight_rule": "Each included task must reproduce original failure and gold-patch passing tests at pinned image. Infrastructure failures are retained and excluded by declared reason, never replaced based on Swift outcomes.",
+  "feedback_boundary": {
+    "worker": "Public issue plus base snapshot; no gold patch, dataset test patch or oracle vault.",
+    "development_reflector": "Public issue, actual candidate patch, bounded development execution diagnostics and labels, no gold patch.",
+    "validation": "Aggregate scores only.",
+    "final": "None until candidate frozen and evaluation complete."
+  },
+  "retention": "Exclusive new artifact directories, exact source/model/settings/dataset/image/instruction/patch hashes; preserve failures; never edit frozen prior research.",
+  "licensing": "External research only; upstream root MIT and evaluator source CC-BY-NC notices remain preserved; no evaluator code copied into product.",
+  "supersedes": {
+    "path": "technical-protocol-v1.json",
+    "sha256": "b622e6d35b088dcc60261e9b1a8e2b305a1090e23cb65cb1d8cb20fdda2bce1c",
+    "reason": "Clarify optimizer metric and Python worker execution path before any model inference, without changing published product policy or dataset tests."
+  },
+  "execution": {
+    "entrypoint": "Normal TinySDD runWorker, external adapter.",
+    "checks": "No TinySDD check manifest for this Python pilot: current runner supports Node or an explicitly mounted dependency executable. No dummy held-out checks are added.",
+    "benchmark_qualification": "NOT_RUN",
+    "quality_oracle": "Separately executed pinned upstream Docker tests, protected fixture read-only, raw output retained."
+  }
+}
