@@ -16,7 +16,7 @@
       "suiteSha256": "39cbd7f5596a06d8e009f33d49ad0fdc2ba62e8109bf66e8673bf89ccdd0750d",
       "identityExport": {
         "path": "profiles/instructions/_evidence/suite-qwenpi-write-tests-blind3-2026-10-19.json",
-        "sha256": "71cde48bf9578b45f727e061fded71256f1536040c3c88ef798adc45d2b1b671"
+        "sha256": "c9838d91c0a472537c0533a77cae4fb393f2f7c972f2b1b5adf6673e1fd12c76"
       },
       "benchTreeSha256": "b07ea189839b0aae0997b0d705b21c232d0e566c52cf86c9910ec8d1a41d269a",
       "controlTreeSha256": "aba4da5a4cf9faf4b70941c26acf5c6db3b68bf34dc613152d80e51128350494",
