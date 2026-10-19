@@ -43,12 +43,13 @@
     }
   },
   "publicCandidatePatchReview": {
-    "casesRead": 10,
-    "challenges": [
+    "summary": "Primary review found a Dune assertion that overspecifies callback identity beyond the public contract; a conforming alternative failed that assertion while the second reviewed comparison passed.",
+    "discoveryCasesRead": 8,
+    "controlCasesRead": 2,
+    "discoveryChallenges": [
       "birch-collection-order",
       "dune-emitter-edge"
-    ],
-    "summary": "Primary review found a Dune assertion that overspecifies callback identity beyond the public contract; a conforming alternative failed that assertion while the second reviewed comparison passed."
+    ]
   },
   "finding": "Raw fault-coverage gains appear on Birch and Dune discovery and one control comparison, with no measured regressions. Primary manual review found a Dune assertion that overspecifies callback identity beyond the public contract; a conforming alternative failed that assertion. Treat this as finite mutation-specific fault coverage, not general proof of ordering-test quality; the raw experimental state is retained.",
   "limitations": [
@@ -61,7 +62,8 @@
     "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
     "Reference checks passing does not mean every candidate is correct; mutation results are reported separately.",
     "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
-    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN.",
+    "Follow-up benchmark-validity work is tracked at https://github.com/ivo-toby/tiny-sdd/issues/138."
   ],
   "provenance": {
     "source": "sanitized primary review and local report rederivation; export hash is distinct from original artifact hashes",

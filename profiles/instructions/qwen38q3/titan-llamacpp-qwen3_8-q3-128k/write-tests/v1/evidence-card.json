@@ -171,7 +171,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwen38q3-write-tests-2026-10-19.json",
-        "sha256": "b7ecb0e3ebfe0ca63e5634d1a25f7e7b7b76988068197a8780c3810d8e2e2b73"
+        "sha256": "9f8d8986ca6a0ab423b92088b6ff81cd01b98ceb8edba4551dbbe3d771936bc1"
       },
       {
         "path": "profiles/instructions/_evidence/report-qwen38q3-write-tests-2026-10-19.json",
@@ -184,7 +184,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwen38q3-write-tests-2026-10-19.json",
-        "sha256": "b7ecb0e3ebfe0ca63e5634d1a25f7e7b7b76988068197a8780c3810d8e2e2b73"
+        "sha256": "9f8d8986ca6a0ab423b92088b6ff81cd01b98ceb8edba4551dbbe3d771936bc1"
       }
     ],
     "exactBytesMatched": true,
@@ -200,7 +200,8 @@
     "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
     "Reference checks passing does not mean every candidate is correct; mutation results are reported separately.",
     "Elapsed time is measured per partition and arm; repair rounds and token usage are UNKNOWN.",
-    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN."
+    "Preparation and review overhead are UNKNOWN; timing differences are descriptive AB/BA observations and do not establish causal speed or net efficiency because repetitions are correlated and server load is UNKNOWN.",
+    "Follow-up benchmark-validity work is tracked at https://github.com/ivo-toby/tiny-sdd/issues/138."
   ],
   "recommendation": "gather-more"
 }
