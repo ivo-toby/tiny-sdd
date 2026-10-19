@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-protocol-export",
+  "modelKey": "thinkingcap",
+  "role": "write-tests",
+  "source": {
+    "repository": "ivo-toby/tiny-sdd",
+    "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "sourceArchiveSha256": "dba24c3134fa1e88cc418cda4439bfe2b2f8406e6d9a74aadb5e145d71530c9d",
+    "sourceAudit": {
+      "path": "instruction-evidence/thinkingcap-write-tests/source-audit.json",
+      "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+    },
+    "runtimeCodeRevision": "UNKNOWN"
+  },
+  "suite": {
+    "id": "instruction-write-tests-expanded-v2",
+    "version": "2026-10-19.expanded-v3-writing-discovery",
+    "suiteSha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d",
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/suite-write-tests-2026-10-19.json",
+      "sha256": "68951428441bc019fd78c1c3c1974db77376bb5ea5fd1d5fa60c99a472cacb39"
+    },
+    "suiteTreeSha256": "03d1342541f98f02b0966c021baeec3c3ae4295fc2cd7904a606f7558cbb822c"
+  },
+  "plan": {
+    "id": "instruction-thinkingcap-writetests-pilot1",
+    "path": "plans/instruction-thinkingcap-writetests-pilot1/plan.json",
+    "sha256": "7595bb6c8901587080c16cfdaf568fd64589a0c38282d30ca0f39d21d73267e7",
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "partitions": [
+      {
+        "challengeId": "amber-input-validation",
+        "lineage": "amber-discovery",
+        "partition": "discovery"
+      },
+      {
+        "challengeId": "birch-collection-order",
+        "lineage": "birch-discovery",
+        "partition": "discovery"
+      },
+      {
+        "challengeId": "cobalt-state-machine",
+        "lineage": "cobalt-discovery",
+        "partition": "discovery"
+      },
+      {
+        "challengeId": "crimson-settlement",
+        "lineage": "crimson-discovery",
+        "partition": "discovery"
+      },
+      {
+        "challengeId": "dune-emitter-edge",
+        "lineage": "dune-discovery",
+        "partition": "discovery"
+      },
+      {
+        "challengeId": "j8p4d2",
+        "lineage": "a7n3q5",
+        "partition": "control"
+      },
+      {
+        "challengeId": "k6m1s9",
+        "lineage": "c9v2r8",
+        "partition": "control"
+      }
+    ],
+    "integrationChecks": {},
+    "synthetic": false
+  },
+  "profiles": {
+    "baseline": {
+      "path": "profiles/instructions/thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/baseline-profile.json",
+      "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+    },
+    "candidate": {
+      "path": "profiles/instructions/thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/candidate-profile.json",
+      "sha256": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
+    }
+  },
+  "retainedExposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+  "exposureAttestationStatus": "superseded-by-review",
+  "limitations": [
+    "Two repetitions per task are correlated and remain descriptive evidence.",
+    "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable.",
+    "The Birch .value comparator is mutation-specific fault coverage because the public contract does not require that member field; it does not establish general inability to write ordering tests.",
+    "Backend version and server-side thinking enforcement are UNKNOWN.",
+    "Both control arms pass 4/4 at ceiling; no transferred gain is established.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN."
+  ],
+  "provenance": {
+    "source": "sanitized retained protocol and plan metadata; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "plan": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/plans/instruction-thinkingcap-writetests-pilot1/plan.json",
+        "sha256": "7595bb6c8901587080c16cfdaf568fd64589a0c38282d30ca0f39d21d73267e7"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/protocol.json",
+        "sha256": "feab797a2d6e2a87bdbb6f4bfdb74d8d8170879ab27aa91bc15aff73c4cece10"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "suite": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/bench/suite.json",
+        "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/prepared-settings.json",
+        "sha256": "38cfefbbb8d789676feaccb7ba894e6a4a54b7383cabdab0cbb7b95b550a1eaa"
+      },
+      "primaryConfirmation": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/primary-confirmation.json",
+        "sha256": "5f50fa394016150f74cc346c18551196855dadc448785b46310c17911c290378"
+      }
+    }
+  },
+  "reviewEligibility": {
+    "state": "inconclusive",
+    "reason": "The analyst saw the old control source after candidate B was frozen; this is exploratory frozen-prompt evidence, not strict untouched/blinded control validation.",
+    "requiredFollowUp": "Fresh blind replication before treating the result as strict applicability evidence."
+  }
+}

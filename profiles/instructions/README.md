@@ -13,9 +13,9 @@ independent review and the completed-card requirements below.
 
 ## Library entries
 
-Nine entries remain manual research proposals. The qwenpi row records a completed
-exploratory pilot with inconclusive strict-control applicability; its card retains
-the measured report and review boundaries below.
+Eight entries remain manual research proposals. The qwenpi and thinkingcap rows
+record completed exploratory pilots with inconclusive strict-control applicability;
+their cards retain the measured reports and review boundaries below.
 
 | Model | Role | Hypothesis | State |
 | --- | --- | --- | --- |
@@ -27,7 +27,7 @@ the measured report and review boundaries below.
 | [gemma26](gemma26/titan-llamacpp-gemma4-26b-a4b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Finish after declared checks pass instead of re-deriving the solution. | proposed |
 | [gemma12](gemma12/titan-llamacpp-gemma4-12b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Use a brief action/check loop and stop guessing after an exact-text edit fails. | proposed |
 | [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
-| [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
+| [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
 
 ## Entry layout

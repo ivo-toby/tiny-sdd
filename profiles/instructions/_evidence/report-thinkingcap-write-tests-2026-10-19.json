@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-export",
+  "modelKey": "thinkingcap",
+  "role": "write-tests",
+  "state": "no-improvement",
+  "recommendation": "keep-baseline",
+  "experiment": {
+    "id": "instruction-thinkingcap-writetests-pilot1",
+    "proposalId": "thinkingcap-counterexamples-v1",
+    "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "suite": {
+      "id": "instruction-write-tests-expanded-v2",
+      "version": "2026-10-19.expanded-v3-writing-discovery",
+      "suiteSha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d",
+      "identityExport": {
+        "path": "profiles/instructions/_evidence/suite-write-tests-2026-10-19.json",
+        "sha256": "68951428441bc019fd78c1c3c1974db77376bb5ea5fd1d5fa60c99a472cacb39"
+      },
+      "suiteTreeSha256": "03d1342541f98f02b0966c021baeec3c3ae4295fc2cd7904a606f7558cbb822c"
+    },
+    "plan": {
+      "path": "plans/instruction-thinkingcap-writetests-pilot1/plan.json",
+      "sha256": "7595bb6c8901587080c16cfdaf568fd64589a0c38282d30ca0f39d21d73267e7"
+    },
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "retainedExposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+    "exposureAttestationStatus": "superseded-by-review",
+    "integrationChecks": {},
+    "synthetic": false
+  },
+  "partitions": {
+    "discovery": {
+      "partition": "discovery",
+      "state": "tested-improved",
+      "challengeCount": 5,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 10,
+        "complete": 10,
+        "missing": 0
+      },
+      "A": {
+        "success": 6,
+        "failure": 4,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "B": {
+        "success": 8,
+        "failure": 2,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "gains": {
+        "quality": 2,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.2
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable."
+        }
+      ]
+    },
+    "control": {
+      "partition": "control",
+      "state": "no-improvement",
+      "challengeCount": 2,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 4,
+        "complete": 4,
+        "missing": 0
+      },
+      "A": {
+        "success": 4,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "B": {
+        "success": 4,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "gains": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable."
+        }
+      ]
+    }
+  },
+  "independentReviewSummary": {
+    "caseCount": 28,
+    "verificationRecordsChecked": 136,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 28
+    },
+    "mutationChecks": {
+      "scheduled": 108,
+      "passed": 102,
+      "failed": 6
+    },
+    "visiblePass": 28,
+    "heldOutPass": 102,
+    "heldOutFailure": 6,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true
+  },
+  "finding": "Two discovery gains: B1 uses intentionally unsorted .value data for Birch and an earlier listener removing a later listener for Dune. B2 still misses the .value-specific member-sort fault and removes the currently executing listener. A has four such failures; B two. No regressions; controls are at 4/4 for both arms.",
+  "limitations": [
+    "Two repetitions per task are correlated and remain descriptive evidence.",
+    "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable.",
+    "The Birch .value comparator is mutation-specific fault coverage because the public contract does not require that member field; it does not establish general inability to write ordering tests.",
+    "Backend version and server-side thinking enforcement are UNKNOWN.",
+    "Both control arms pass 4/4 at ceiling; no transferred gain is established.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN.",
+    "Reference and mutation checks are verifier evidence; they do not claim every candidate is correct."
+  ],
+  "provenance": {
+    "source": "sanitized retained report and independent review; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/primary-independent-review.json",
+        "sha256": "637a309d4510df23750826d9916b989bf4c52f6b4005a291efa9822b9e0b29b7"
+      },
+      "report": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/run-report.json",
+        "sha256": "ef9d4d6749793dd5e8f08284c4c6f0ee4172ae829b96c11770adfefe7be8f5b2"
+      },
+      "plan": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/plans/instruction-thinkingcap-writetests-pilot1/plan.json",
+        "sha256": "7595bb6c8901587080c16cfdaf568fd64589a0c38282d30ca0f39d21d73267e7"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/protocol.json",
+        "sha256": "feab797a2d6e2a87bdbb6f4bfdb74d8d8170879ab27aa91bc15aff73c4cece10"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "mechanicalAudit": {
+        "filename": "instruction-audits/thinkingcap-write-tests-20261019T094349480756Z.json",
+        "sha256": "71c4f0c3b8b60288e10808977e9dee386f3ab5b2d9bcac1dd853e4e74d28b46d"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/prepared-settings.json",
+        "sha256": "38cfefbbb8d789676feaccb7ba894e6a4a54b7383cabdab0cbb7b95b550a1eaa"
+      }
+    }
+  },
+  "cardDisposition": {
+    "state": "inconclusive",
+    "recommendation": "gather-more",
+    "reason": "Previously inspected controls cannot serve as untouched controls for strict same-analyst validation; retain baseline pending fresh blind replication."
+  }
+}

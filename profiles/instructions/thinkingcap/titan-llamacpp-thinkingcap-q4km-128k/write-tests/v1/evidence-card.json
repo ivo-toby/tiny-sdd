@@ -3,7 +3,7 @@
   "kind": "tinysdd-instruction-evidence-card",
   "id": "thinkingcap-write-tests-titan-medium16k-v1",
   "version": 1,
-  "state": "proposed",
+  "state": "inconclusive",
   "model": {
     "id": "titan/llamacpp/thinkingcap-q4km-128k",
     "version": "UNKNOWN",
@@ -37,12 +37,12 @@
     },
     "settings": {
       "baseline": {
-        "path": "profiles/instructions/_evidence/settings-thinkingcap.json",
-        "sha256": "f6acaddee8e3d6a40d9779c2f6dc283ff9455e0405eee412316db0528a190f13"
+        "path": "profiles/instructions/_evidence/settings-thinkingcap-write-tests-2026-10-19.json",
+        "sha256": "c11d3e2110436785948967beb16f17e853c6e1871e8238a9a0adf0efbe7094f6"
       },
       "candidate": {
-        "path": "profiles/instructions/_evidence/settings-thinkingcap.json",
-        "sha256": "f6acaddee8e3d6a40d9779c2f6dc283ff9455e0405eee412316db0528a190f13"
+        "path": "profiles/instructions/_evidence/settings-thinkingcap-write-tests-2026-10-19.json",
+        "sha256": "c11d3e2110436785948967beb16f17e853c6e1871e8238a9a0adf0efbe7094f6"
       }
     }
   },
@@ -65,26 +65,141 @@
     "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "after": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014"
   },
-  "evidence": null,
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-thinkingcap-write-tests-2026-10-19.json",
+      "sha256": "7a88790e1d2ef4d097830ea148248db06ca6d07e879ca20592f8d40388d7279d"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-thinkingcap-write-tests-2026-10-19.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "state": "tested-improved",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "A": {
+          "success": 6,
+          "failure": 4,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "B": {
+          "success": 8,
+          "failure": 2,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "gains": {
+          "quality": 2,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.2
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "state": "no-improvement",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 4,
+          "missing": 0
+        },
+        "A": {
+          "success": 4,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "B": {
+          "success": 4,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "gains": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
   "independentVerification": {
-    "status": "unverified",
+    "status": "verified",
     "refs": [
       {
-        "path": "profiles/instructions/_evidence/proposal-thinkingcap.json",
-        "sha256": "c81580787ba079a9ebb9c4c095a73dba0f05ccdb09c3088ad01a9cd3fc6fb953"
+        "path": "profiles/instructions/_evidence/review-thinkingcap-write-tests-2026-10-19.json",
+        "sha256": "422122a90b2a233d1ca6ea3176384caff2b0f24c27dc5876564f82c6aa691253"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-thinkingcap-write-tests-2026-10-19.json",
+        "sha256": "7a88790e1d2ef4d097830ea148248db06ca6d07e879ca20592f8d40388d7279d"
       }
     ]
   },
   "review": {
-    "reviewer": "UNKNOWN",
-    "refs": [],
-    "exactBytesMatched": false,
-    "sourceVerified": false
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-thinkingcap-write-tests-2026-10-19.json",
+        "sha256": "422122a90b2a233d1ca6ea3176384caff2b0f24c27dc5876564f82c6aa691253"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
   },
   "limitations": [
-    "No controlled A/B evidence has been run or independently verified; this card is a proposal only.",
-    "Model version, quantization and server enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
-    "THINKING_CONTROL_MISMATCH is recorded in the prepared settings metadata; server enforcement remains unverified.",
+    "The retained experimental report is no-improvement, but this card is inconclusive for strict applicability validation because the analyst saw the old control source after candidate B was frozen.",
+    "Previously inspected controls cannot serve as untouched controls for the same analyst; retain the baseline pending a fresh blind replication.",
+    "The Birch .value comparator is mutation-specific fault coverage because the public contract does not require that member field; it does not establish general inability to write ordering tests.",
+    "This is exploratory frozen-prompt evidence; two AB/BA repetitions are correlated and do not establish population effectiveness.",
+    "Both control arms pass 4/4 at ceiling; no transferred gain is established.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN.",
+    "Primary review checked 28 reference cases and 108 mutation checks: 28 reference checks passed, 102 mutation checks passed and 6 failed. This is verifier evidence, not a claim that every candidate is correct.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
     "The candidate instructions are appended to the built-in harness and require an exact-match review before selection."
   ],
   "recommendation": "gather-more"

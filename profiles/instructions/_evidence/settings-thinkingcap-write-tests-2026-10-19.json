@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "thinkingcap",
+  "route": "titan/llamacpp/thinkingcap-q4km-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "43ef6212e5835687b7092b4790f7cdda9841bb5deda44bd756fbb04a182ea9ec",
+  "settingsDigest": "e0ff13ef7d8cab6ea24e823865f4c542a4986e8932eb262abb4b814231f2f0f2",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "provenance": {
+    "source": "retained primary run settings metadata; backend identity and server enforcement remain UNKNOWN",
+    "originalMetadata": {
+      "primaryConfirmation": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/primary-confirmation.json",
+        "sha256": "5f50fa394016150f74cc346c18551196855dadc448785b46310c17911c290378"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/prepared-settings.json",
+        "sha256": "38cfefbbb8d789676feaccb7ba894e6a4a54b7383cabdab0cbb7b95b550a1eaa"
+      },
+      "runComplete": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/run-complete.json",
+        "sha256": "cdb21877db5c7240ce5223b9b06398478d3f964db39b4ee2bd621534eeb377d6"
+      }
+    }
+  }
+}

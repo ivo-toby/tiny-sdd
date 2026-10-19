@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-independent-review-export",
+  "modelKey": "thinkingcap",
+  "role": "write-tests",
+  "reviewer": "primary",
+  "state": "inconclusive",
+  "recommendation": "gather-more",
+  "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "report": {
+    "path": "run-report.json",
+    "sha256": "ef9d4d6749793dd5e8f08284c4c6f0ee4172ae829b96c11770adfefe7be8f5b2",
+    "rederivedLocally": true,
+    "matchesRetainedReport": true
+  },
+  "checks": {
+    "newInference": false,
+    "caseCount": 28,
+    "verificationRecordsChecked": 136,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 28
+    },
+    "mutationChecks": {
+      "scheduled": 108,
+      "passed": 102,
+      "failed": 6
+    },
+    "visiblePass": 28,
+    "heldOutPass": 102,
+    "heldOutFailure": 6,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true
+  },
+  "publicCandidatePatchReview": {
+    "casesRead": 8,
+    "challenges": [
+      "birch-collection-order",
+      "dune-emitter-edge"
+    ],
+    "summary": "Two discovery gains distinguish unsorted .value data for Birch and an earlier listener removing a later listener for Dune; repeat 2 still misses both mutation-specific witnesses."
+  },
+  "limitations": [
+    "This review is evidence that retained verifier records and digests were checked; it does not claim every candidate is correct.",
+    "The candidate was frozen before the primary static control audit, but the analyst was not blinded to the old control source; strict same-analyst untouched control qualification is unavailable.",
+    "The Birch .value comparator is mutation-specific fault coverage because the public contract does not require that member field; it does not establish general inability to write ordering tests.",
+    "Two AB/BA repetitions are correlated; controls are at the 4/4 ceiling for both arms.",
+    "Backend version and server-side thinking enforcement are UNKNOWN.",
+    "No integration metric mapping was supplied; integration remains UNKNOWN."
+  ],
+  "provenance": {
+    "source": "sanitized primary review and local report rederivation; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/primary-independent-review.json",
+        "sha256": "637a309d4510df23750826d9916b989bf4c52f6b4005a291efa9822b9e0b29b7"
+      },
+      "report": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/run-report.json",
+        "sha256": "ef9d4d6749793dd5e8f08284c4c6f0ee4172ae829b96c11770adfefe7be8f5b2"
+      },
+      "plan": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/plans/instruction-thinkingcap-writetests-pilot1/plan.json",
+        "sha256": "7595bb6c8901587080c16cfdaf568fd64589a0c38282d30ca0f39d21d73267e7"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/protocol.json",
+        "sha256": "feab797a2d6e2a87bdbb6f4bfdb74d8d8170879ab27aa91bc15aff73c4cece10"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/thinkingcap-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "mechanicalAudit": {
+        "filename": "instruction-audits/thinkingcap-write-tests-20261019T094349480756Z.json",
+        "sha256": "71c4f0c3b8b60288e10808977e9dee386f3ab5b2d9bcac1dd853e4e74d28b46d"
+      }
+    }
+  },
+  "experimentalReportState": "no-improvement",
+  "controlQualification": {
+    "state": "inconclusive",
+    "reason": "The analyst saw the old control source after candidate B was frozen; previously inspected controls cannot serve as untouched controls for the same analyst.",
+    "followUp": "Fresh blind replication is required before strict applicability validation."
+  }
+}
