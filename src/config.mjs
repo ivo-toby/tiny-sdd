@@ -46,6 +46,11 @@ function assertString(value, label) {
   return value;
 }
 
+function assertStringAllowEmpty(value, label) {
+  if (typeof value !== 'string') return assertString(value, label);
+  return value;
+}
+
 function assertSafeName(value, label) {
   assertString(value, label);
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(value)) {
@@ -246,7 +251,7 @@ function validateProfileDocument(raw, path) {
   assertExactKeys(raw, PROFILE_KEYS, 'PROFILE_INVALID', `profile ${path}`);
   if (raw.schemaVersion !== CONFIG_SCHEMA_VERSION) throw tinyError('PROFILE_INVALID', `profile ${path} schemaVersion must be ${CONFIG_SCHEMA_VERSION}`);
   const profile = { schemaVersion: CONFIG_SCHEMA_VERSION, id: assertString(raw.id, `profile ${path}.id`) };
-  if (raw.instructions !== undefined) profile.instructions = assertString(raw.instructions, `profile ${path}.instructions`);
+  if (raw.instructions !== undefined) profile.instructions = assertStringAllowEmpty(raw.instructions, `profile ${path}.instructions`);
   if (raw.runtime !== undefined) {
     assertPlainObject(raw.runtime, 'PROFILE_INVALID', `profile ${path}.runtime`);
     assertExactKeys(raw.runtime, RUNTIME_KEYS, 'PROFILE_INVALID', `profile ${path}.runtime`);

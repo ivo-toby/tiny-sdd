@@ -728,6 +728,8 @@ re-running init does not replace it. A configuration with two named workers:
 Copy [the exploratory Titan Qwen profile](../profiles/qwen36-titan.json) into
 the project's `tinysdd-profiles/qwen36.json` before using this configuration.
 It controls Pi's request-level thinking flag; it is not a promise of code quality.
+Profile `instructions` may be an explicitly empty string when the baseline needs
+to preserve an empty instruction value; non-string values remain invalid.
 Other machines must use their own exact configured IDs. No fallback is automatic.
 
 Before a launch, TinySDD compares the requested thinking level with what Pi will
