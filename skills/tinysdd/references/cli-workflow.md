@@ -946,6 +946,9 @@ improvement; synthetic runs establish no real-model effectiveness. The declared
 regression budget counts a paired correctness or explicit integration regression,
 including integration regressions on already-failing candidates; an overlapping
 regression counts once.
+Report verification streams retained opaque artifacts, so valid large worker
+logs remain hash-verifiable while structural JSON and text resources keep their
+existing bound.
 
 `bench instructions profile --request PATH --out NEW_FILE` retains reviewed,
 versioned guidance with explicit A/B choice, provenance and previous-version

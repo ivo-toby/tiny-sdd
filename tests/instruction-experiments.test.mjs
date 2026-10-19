@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { QUALIFICATION_EVIDENCE_INDEX_PATH } from '../src/qualification-store.mjs';
 import { runBenchmark } from '../src/benchmark-runner.mjs';
-import { digestJson } from '../src/fs-utils.mjs';
+import { digestJson, sha256 } from '../src/fs-utils.mjs';
 import { readQualificationEvidence } from '../src/qualification-reader.mjs';
 import { buildQualificationRecord } from '../src/qualification.mjs';
 import { analyzeInstructionObservations, instructionSchedule, reportInstructionPairs, summarizeInstructionCase, validateInstructionPartitions } from '../src/instruction-experiments.mjs';
@@ -38,6 +38,58 @@ async function planned(t, options = {}) {
   const analysis = await analyzeInstructionEvidence({ projectRoot: fixture.root, request, output: 'analysis.json' });
   const planned = await planInstructionExperiment({ ...fixture, ...options, projectRoot: fixture.root, output: 'experiment', request: { id: 'caller-pilot', analysis: analysis.ref, proposalId: 'wire-callers', repetitions: 2, criteria, integrationChecks: { greeting: [{ visibility: 'heldOut', checkId: 'integration' }], checkout: [{ visibility: 'heldOut', checkId: 'integration' }] }, confounds: ['Synthetic worker implements a deterministic response to instruction text.'], preparation: 'UNKNOWN', exposureAttestation: 'Control fixture answers are not inputs to the proposal generator.' } });
   return { ...fixture, analysis, planned };
+}
+
+async function replaceRetainedEvidence(root, slotName, text) {
+  const experimentRoot = join(root, 'experiment');
+  const slotPath = join(experimentRoot, 'run', `${slotName}.json`);
+  const slot = JSON.parse(await readFile(slotPath, 'utf8'));
+  const invocationPath = join(experimentRoot, slot.invocation.path);
+  const invocation = JSON.parse(await readFile(invocationPath, 'utf8'));
+  const invocationRoot = join(experimentRoot, 'run', slotName);
+  const caseRef = invocation.caseResults[0];
+  const casePath = join(invocationRoot, caseRef.path);
+  const caseResult = JSON.parse(await readFile(casePath, 'utf8'));
+  const artifactPath = join(invocationRoot, caseResult.artifacts.stdout.path);
+  const outputPath = join(invocationRoot, caseResult.verifier.heldOut[0].output.ref);
+  await writeFile(artifactPath, text);
+  await writeFile(outputPath, text);
+  caseResult.artifacts.stdout.sha256 = sha256(text);
+  caseResult.verifier.heldOut[0].output.sha256 = sha256(text);
+  const caseText = `${JSON.stringify(caseResult, null, 2)}\n`;
+  await writeFile(casePath, caseText);
+  caseRef.sha256 = sha256(caseText);
+  const summaryPath = join(invocationRoot, invocation.summary.path);
+  const summary = JSON.parse(await readFile(summaryPath, 'utf8'));
+  const summaryRef = summary.groups.flatMap(({ caseResults }) => caseResults).find(({ path }) => path === caseRef.path);
+  assert.ok(summaryRef, `summary must retain ${caseRef.path}`);
+  summaryRef.sha256 = caseRef.sha256;
+  const summaryText = `${JSON.stringify(summary, null, 2)}\n`;
+  await writeFile(summaryPath, summaryText);
+  invocation.summary.sha256 = sha256(summaryText);
+  const invocationText = `${JSON.stringify(invocation, null, 2)}\n`;
+  await writeFile(invocationPath, invocationText);
+  slot.invocation.sha256 = sha256(invocationText);
+  const slotText = `${JSON.stringify(slot, null, 2)}\n`;
+  await writeFile(slotPath, slotText);
+  const completePath = join(experimentRoot, 'run', 'complete.json');
+  const complete = JSON.parse(await readFile(completePath, 'utf8'));
+  const completeRef = complete.slots.find(({ path }) => path === `run/${slotName}.json`);
+  assert.ok(completeRef, `completion must retain run/${slotName}.json`);
+  completeRef.sha256 = sha256(slotText);
+  await writeFile(completePath, `${JSON.stringify(complete, null, 2)}\n`);
+  return { artifactPath, outputPath };
+}
+
+function reportScore(report) {
+  return {
+    state: report.state,
+    recommendation: report.recommendation,
+    partitions: Object.fromEntries(Object.entries(report.partitions).map(([name, value]) => [name, {
+      A: value.A, B: value.B, integration: value.integration, completePairs: value.completePairs,
+      improved: value.improved, regressed: value.regressed, regressionPairs: value.regressionPairs,
+    }])),
+  };
 }
 
 test('offline A/B retains instructions, executes integration checks, and keeps control/hidden answers out of analysis', async (t) => {
@@ -88,6 +140,49 @@ test('offline A/B retains instructions, executes integration checks, and keeps c
   const logPath = join(fixture.root, 'experiment/run/1-B/cases/greeting-repeat-1/verifier-output-held-out-0.txt');
   await writeFile(logPath, 'fabricated green log');
   await assert.rejects(readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' }), /digest changed/u);
+});
+
+test('report verification streams large retained artifacts and outputs without changing scores', async (t) => {
+  const fixture = await planned(t);
+  await runInstructionExperiment({ ...fixture, projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  const before = await readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  const largeText = 'x'.repeat(5 * 1024 * 1024);
+  await replaceRetainedEvidence(fixture.root, '1-B', largeText);
+  const large = await readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  assert.deepEqual(reportScore(large.report), reportScore(before.report));
+});
+
+test('report verification rejects a changed large retained artifact digest', async (t) => {
+  const fixture = await planned(t);
+  await runInstructionExperiment({ ...fixture, projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  const largeText = 'x'.repeat(5 * 1024 * 1024);
+  const { artifactPath } = await replaceRetainedEvidence(fixture.root, '1-B', largeText);
+  await writeFile(artifactPath, 'y'.repeat(largeText.length));
+  await assert.rejects(readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' }), /digest changed/u);
+});
+
+test('report verification rejects symlinked retained artifacts', async (t) => {
+  const fixture = await planned(t);
+  await runInstructionExperiment({ ...fixture, projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  const largeText = 'x'.repeat(5 * 1024 * 1024);
+  const { artifactPath } = await replaceRetainedEvidence(fixture.root, '1-B', largeText);
+  const symlinkTarget = join(fixture.root, 'large-output-target.txt');
+  await writeFile(symlinkTarget, largeText);
+  try {
+    await unlink(artifactPath);
+    await symlink(symlinkTarget, artifactPath);
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.message}`);
+    return;
+  }
+  await assert.rejects(readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' }), { code: 'SYMLINK_PATH' });
+});
+
+test('structural instruction resources remain bounded', async (t) => {
+  const fixture = await planned(t);
+  await runInstructionExperiment({ ...fixture, projectRoot: fixture.root, planPath: 'experiment/plan.json' });
+  await writeFile(join(fixture.root, 'experiment/run/start.json'), 'x'.repeat(4 * 1024 * 1024 + 1));
+  await assert.rejects(readInstructionReport({ projectRoot: fixture.root, planPath: 'experiment/plan.json' }), /4 MiB/u);
 });
 
 test('analysis separates configurations and refuses sparse, contradictory, setup, duplicated and leaked evidence', async (t) => {

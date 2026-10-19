@@ -1246,3 +1246,6 @@ path such as `preparation-profiles/qwen36-v1.json`, set the existing
 `worker.profile` explicitly. Profile paths resolve against the target project;
 inspect `config show` and `worker settings`, and keep the baseline available for
 rollback. The library does not auto-install, route or activate profiles.
+
+Reports stream-hash retained opaque artifacts, so valid large worker logs remain
+verifiable while structural JSON and text resources retain their existing bound.
