@@ -8,7 +8,7 @@
       "category": "input-validation",
       "referenceTest": {
         "path": "candidates/amber-input-validation/reference/tests/contract.test.mjs",
-        "sha256": "bc2475b4ac1208c7be89a443e3f4726ac232b14e95bcb5880eab3d025c399a2e"
+        "sha256": "ebbd11a68b82fd8e765a1f9f9bfcc8abce0e2c1e18be922d37baf5b42083c732"
       },
       "witnesses": [
         { "id": "C1", "testName": "C1 defaults omitted options without dropping explicit values", "invariant": "omitted fields use defaults and explicit values remain explicit" },

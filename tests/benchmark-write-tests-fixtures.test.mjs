@@ -77,6 +77,7 @@ test('write-tests suite manifests, resources, and audit map are complete and iso
   const suiteText = await readFile(join(SUITE_ROOT, 'suite.json'), 'utf8');
   const suite = parseBenchmarkSuite(suiteText);
   assert.equal(suite.id, 'write-tests-v1');
+  assert.equal(suite.version, '2026-10-19.1');
   assert.equal(suite.challenges.length, 5);
   const audit = await readJson(join(SUITE_ROOT, 'challenge-audit.json'));
   assert.equal(audit.schemaVersion, 1);
@@ -167,7 +168,7 @@ test('reference tests pass and every declared mutant kills its named witness', a
       const result = await runTestCandidate(join(SUITE_ROOT, mutant.path), referenceTest);
       assert.notEqual(result.status, 0, `${challenge.id}/${mutant.id} was not killed`);
       const witness = witnessById(challenge, mutant.kills[0]);
-      const witnessFailure = result.output.split('\n').find((line) => line.startsWith('not ok ') && line.includes(witness.testName));
+      const witnessFailure = result.output.split('\n').find((line) => /^\s*not ok \d+ - /u.test(line) && line.includes(witness.testName));
       assert.ok(witnessFailure, `${challenge.id}/${mutant.id} did not fail named witness`);
       assert.match(result.output, /# fail [1-9]\d*\b/u, `${challenge.id}/${mutant.id} did not report a substantive failed test`);
     }
