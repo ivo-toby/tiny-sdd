@@ -1,0 +1,20 @@
+// Union of the dependencies of every Exercism Java exercise in the pinned dataset.
+plugins {
+    id "java"
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform("org.junit:junit-bom:5.10.0")
+    testImplementation "org.junit.jupiter:junit-jupiter"
+    testImplementation "org.assertj:assertj-core:3.25.1"
+    implementation "io.reactivex.rxjava2:rxjava:2.2.12"
+    implementation "org.json:json:20190722"
+}
+
+test {
+    useJUnitPlatform()
+}

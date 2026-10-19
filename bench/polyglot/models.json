@@ -1,0 +1,14 @@
+{
+  "models": [
+    {"key":"qwen38q3","route":"titan/llamacpp/qwen3.8-q3-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"qwen38q4s","route":"titan/llamacpp/qwen3.8-q4s-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"qwen38pi","route":"titan/llamacpp/qwen3.8-pi-q4km-128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"titan"},
+    {"key":"qwen36","route":"titan/llamacpp/qwen3.6-35b-a3b-2x128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"gemma26","route":"titan/llamacpp/gemma4-26b-a4b-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"north","route":"titan/llamacpp/north-mini-code-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"muse","route":"titan/llamacpp/muse-glimmer-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"swift15","route":"titan/llamacpp/swift15-q4km-128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"titan"},
+    {"key":"thinkingcap","route":"titan/llamacpp/thinkingcap-q4km-128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"titan"},
+    {"key":"qwen38nextflash","route":"randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"randal","note":"Route name says Qwen3.6 but serves Qwen3.8-Next-Flash (LiteLLM name is wrong)."}
+  ]
+}
