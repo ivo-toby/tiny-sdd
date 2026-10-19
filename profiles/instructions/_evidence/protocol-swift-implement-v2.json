@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-protocol-export",
+  "modelKey": "swift",
+  "role": "implement-slice",
+  "source": {
+    "repository": "ivo-toby/tiny-sdd",
+    "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "sourceArchiveSha256": "0b2168049ddee78725221b5ef9a9ee2ec9474d5da86b2401ff2fcd91bc21aa7c",
+    "sourceIdentityExport": {
+      "path": "profiles/instructions/_evidence/source-swift-implement-v2.json",
+      "sha256": "1117883a578c267990c2ba550a00bc4f9eb22ac7c140312be6c28448f3791937"
+    },
+    "sourceAudit": {
+      "path": "instruction-evidence/swift-implement/source-audit.json",
+      "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc",
+      "namespace": "local-research-root"
+    },
+    "sourceTreeSha256": "eb8dcf1e1f3837dd2c4211ad7bccd02cce9ded53eff9812096cde02f60648e08",
+    "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+    "runtimeCodeRevision": "UNKNOWN when the source archive has no .git; no artificial revision is injected into plan identity."
+  },
+  "suite": {
+    "id": "instruction-implement-expanded-v2",
+    "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+    "suiteSha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35",
+    "identityExport": {
+      "path": "profiles/instructions/_evidence/suite-swift-implement-v2.json",
+      "sha256": "0d2955bda6826730a921ec5204603840db2a8e38d226cf2650c0489f1dedb80e"
+    },
+    "benchTreeSha256": "a36f2e94de8f76b64c6c0e64cb8d50ff059298fa68535e8d514a9409779a10c6",
+    "controlTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+    "controlBenchTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+    "sourceControlSuiteSha256": "5ee9f62a8487bfcaeb2ea4964b54c1e96b8796858d19854b88cb673f61c009f0",
+    "extraControlTreeSha256": "3b72ff724775e36fd2d03ed447ff62ce0d1f6041834f80fef2491ea7b2ed1254",
+    "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+    "challengeCount": 7,
+    "discoveryChallengeCount": 2,
+    "controlChallengeCount": 5,
+    "sparseVisibleEmber": true
+  },
+  "plan": {
+    "path": "instruction-evidence/swift-implement/plans/instruction-swift-implement-pilot1/plan.json",
+    "sha256": "3aabea1c05875e295f6015d3a042a1d1ff34938f127ad743fe7bc8e18160de32",
+    "namespace": "local-research-root",
+    "id": "instruction-swift-implement-pilot1"
+  },
+  "repetitions": 2,
+  "criteria": {
+    "minPairsPerPartition": 4,
+    "minQualityGain": 0.1,
+    "maxRegressions": 0,
+    "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+  },
+  "profiles": {
+    "baseline": {
+      "path": "profiles/instructions/swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v2/baseline-profile.json",
+      "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+    },
+    "candidate": {
+      "path": "profiles/instructions/swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v2/candidate-profile.json",
+      "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+    }
+  },
+  "candidatePromptArtifact": {
+    "sha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0",
+    "contentExported": false
+  },
+  "authorization": {
+    "entryKind": "real",
+    "acknowledgedFindings": [
+      "THINKING_CONTROL_MISMATCH"
+    ],
+    "route": "configured model route; host identity omitted"
+  },
+  "retainedExposureAttestation": "UNKNOWN",
+  "exposureAttestationStatus": "superseded-by-review",
+  "controlExposure": {
+    "primaryAnalyst": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification.",
+    "teamWideBlinding": "not claimed"
+  },
+  "sparseVisibleDisclosure": "Implement discovery Ember retains the two historical worker-visible tests from commit 1d657535; corrected reference fixture and independent visible/held-out oracles remain from 02c661dd8f851e16235ecdf5d730b2a9f678d3b8. This is a sparse-visible prompt-generalization probe, not the expanded calibration suite and not a production-fixture weakening.",
+  "preparedSettingsDigest": "a49bcb1483ead810e939d6984952ca21beeb6ce35a8b71e710ff9243befe5ccb",
+  "provenance": {
+    "source": "sanitized retained protocol and plan metadata; export hashes are distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "namespace": "local-research-root",
+        "relativePath": "swift-implement-primary-independent-review-v1.json",
+        "sha256": "2d4849142500f4a2d1e453da48324969521e7126b547a225db045974a9b04a3d"
+      },
+      "report": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/run-report.json",
+        "sha256": "6449042044bc7bb09b3884e849e614e999048cd5f8568b5a926011cdd0984886"
+      },
+      "protocol": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/protocol.json",
+        "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+      },
+      "plan": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/plans/instruction-swift-implement-pilot1/plan.json",
+        "sha256": "3aabea1c05875e295f6015d3a042a1d1ff34938f127ad743fe7bc8e18160de32"
+      },
+      "sourceAudit": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "preparedSettings": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/prepared-settings.json",
+        "sha256": "c42ed0d43bc63f52d49a0fcca350616914c7fb929eb5a2001d886d92728285bc"
+      },
+      "primaryConfirmation": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/primary-confirmation.json",
+        "sha256": "f80c1a674c876870d5d39eca7e1e58ce5cdbd21832d57715f06080af04abfc08"
+      },
+      "archive": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement.tar",
+        "sha256": "0b2168049ddee78725221b5ef9a9ee2ec9474d5da86b2401ff2fcd91bc21aa7c"
+      },
+      "mechanicalAudit": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-audits/swift-implement-20261019T135016124705Z.json",
+        "sha256": "7fe8db32659646cd7b5f77317f6fc3f7d632af56843e3aa75af4c9c480eb3683"
+      }
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-independent-review-export",
+  "modelKey": "swift",
+  "role": "implement-slice",
+  "reviewer": "primary",
+  "state": "inconclusive",
+  "recommendation": "gather-more",
+  "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "report": {
+    "path": "instruction-evidence/swift-implement/run-report.json",
+    "sha256": "6449042044bc7bb09b3884e849e614e999048cd5f8568b5a926011cdd0984886",
+    "namespace": "local-research-root"
+  },
+  "mechanicalAudit": {
+    "namespace": "local-research-root",
+    "relativePath": "instruction-audits/swift-implement-20261019T135016124705Z.json",
+    "sha256": "7fe8db32659646cd7b5f77317f6fc3f7d632af56843e3aa75af4c9c480eb3683"
+  },
+  "checks": {
+    "newInference": false,
+    "caseCount": 28,
+    "verificationRecordsChecked": 56,
+    "visiblePass": 26,
+    "visibleFailure": 2,
+    "heldOutPass": 26,
+    "heldOutFailure": 2,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true,
+    "visibleCaseChecks": {
+      "scheduled": 28,
+      "passed": 26,
+      "failed": 2
+    },
+    "heldOutChecks": {
+      "scheduled": 28,
+      "passed": 26,
+      "failed": 2
+    }
+  },
+  "publicCandidatePatchReview": {
+    "discoveryPatchRecordsRead": 8,
+    "uniqueDiscoveryPatchesRead": 7,
+    "discoveryChallengesRead": 2
+  },
+  "finding": "Swift's completed implement-slice comparison improved recorded discovery quality from 2/4 to 4/4 and aggregate quality from 12/14 to 14/14. Both control arms were already 10/10, leaving no room for a control-partition gain under the predeclared criterion, so the raw state remains `no-improvement` with recommendation `keep A`. A corrected independent probe of the actual Swift workspace-after confirmed a separate valid array-backed-store contract gap: reference checks passed 15/15, outputs 1-A and 2-B passed 15/15 each, and outputs 1-B and 2-A failed 15/15 each with array rejection. This is tracked in [#146](https://github.com/ivo-toby/tiny-sdd/issues/146). This narrow discovery improvement does not establish broad transfer; the public disposition is inconclusive with the baseline retained pending strict-control qualification.",
+  "limitations": [
+    "Exploratory comparison: the primary analyst had prior control-source exposure; no blinded or untouched transfer claim is made.",
+    "The measured discovery benefit is narrow and does not establish general model behavior; repeated paired runs are correlated and the control partition reached a ceiling.",
+    "A corrected independent probe of the actual Swift workspace-after found the valid array-backed-store contract gap tracked in #146: reference checks passed 15/15, outputs 1-A and 2-B passed 15/15 each, and outputs 1-B and 2-A failed 15/15 each with array rejection. The digest-bound retained result is `local-research-root:swift-array-store-posthoc-probe-v3-results.json` (sha256 `b5098fc192d588ee3c6641a6674340cfe2c55c4c851637f7af0652708a69b3be`). This is a contract and finite oracle-coverage limitation, not a model-effectiveness result.",
+    "Backend version, server enforcement and integration transfer remain UNKNOWN.",
+    "The local SSH observer exited 255 at 13:40:35 before remote completion at 2026-10-19T13:43:55.031Z; remote execution completed independently, relay stop was recorded at 2026-10-19T13:43:56.541Z, and later read-only collection recovered all 28 cases, the report and relay-stop artifacts. No rerun was performed.",
+    "An earlier posthoc v1 probe was excluded from model evidence after identity review found it used seeded benchmark candidates rather than the retained Swift workspace-after; its raw artifacts remain preserved separately. A v2 probe pack was refused before checks during metadata validation, so it also contributed no model evidence.",
+    "No automatic profile activation, acceptance, qualification or policy change."
+  ],
+  "provenance": {
+    "source": "sanitized primary review and local report rederivation; export hashes are distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "namespace": "local-research-root",
+        "relativePath": "swift-implement-primary-independent-review-v1.json",
+        "sha256": "2d4849142500f4a2d1e453da48324969521e7126b547a225db045974a9b04a3d"
+      },
+      "report": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/run-report.json",
+        "sha256": "6449042044bc7bb09b3884e849e614e999048cd5f8568b5a926011cdd0984886"
+      },
+      "protocol": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/protocol.json",
+        "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+      },
+      "plan": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/plans/instruction-swift-implement-pilot1/plan.json",
+        "sha256": "3aabea1c05875e295f6015d3a042a1d1ff34938f127ad743fe7bc8e18160de32"
+      },
+      "sourceAudit": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "preparedSettings": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/prepared-settings.json",
+        "sha256": "c42ed0d43bc63f52d49a0fcca350616914c7fb929eb5a2001d886d92728285bc"
+      },
+      "primaryConfirmation": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/primary-confirmation.json",
+        "sha256": "f80c1a674c876870d5d39eca7e1e58ce5cdbd21832d57715f06080af04abfc08"
+      },
+      "archive": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement.tar",
+        "sha256": "0b2168049ddee78725221b5ef9a9ee2ec9474d5da86b2401ff2fcd91bc21aa7c"
+      },
+      "mechanicalAudit": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-audits/swift-implement-20261019T135016124705Z.json",
+        "sha256": "7fe8db32659646cd7b5f77317f6fc3f7d632af56843e3aa75af4c9c480eb3683"
+      }
+    }
+  },
+  "experimentalReportState": "no-improvement",
+  "experimentalReportRecommendation": "keep-baseline",
+  "controlQualification": {
+    "state": "inconclusive",
+    "reason": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification.",
+    "followUp": "Retain the baseline; extend and version oracle coverage under [#146](https://github.com/ivo-toby/tiny-sdd/issues/146) and collect fresh independent control comparisons under [#126](https://github.com/ivo-toby/tiny-sdd/issues/126) before making a broad transfer recommendation."
+  }
+}

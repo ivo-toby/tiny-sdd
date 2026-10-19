@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-card",
+  "id": "swift-implement-slice-titan-llamacpp-swift15-q4km-128k-v2",
+  "version": 2,
+  "state": "inconclusive",
+  "model": {
+    "id": "titan/llamacpp/swift15-q4km-128k",
+    "version": "UNKNOWN",
+    "quantization": "UNKNOWN"
+  },
+  "configuration": "route=titan/llamacpp/swift15-q4km-128k;thinking=medium;maxTokens=16384;contextWindow=128000;timeoutMs=600000;maxToolCalls=100;maxCheckRuns=12;fallbacks=disabled",
+  "role": "implement-slice",
+  "synthetic": false,
+  "identities": {
+    "source": {
+      "repository": "ivo-toby/tiny-sdd",
+      "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+      "path": "profiles/instructions/_evidence/source-swift-implement-v2.json",
+      "sha256": "1117883a578c267990c2ba550a00bc4f9eb22ac7c140312be6c28448f3791937"
+    },
+    "suite": {
+      "id": "instruction-implement-expanded-v2",
+      "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+      "path": "profiles/instructions/_evidence/suite-swift-implement-v2.json",
+      "sha256": "0d2955bda6826730a921ec5204603840db2a8e38d226cf2650c0489f1dedb80e"
+    },
+    "profiles": {
+      "baseline": {
+        "path": "profiles/instructions/swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v2/baseline-profile.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "candidate": {
+        "path": "profiles/instructions/swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v2/candidate-profile.json",
+        "sha256": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
+      }
+    },
+    "settings": {
+      "baseline": {
+        "path": "profiles/instructions/_evidence/settings-swift-implement-v2.json",
+        "sha256": "dee617ed333f5af946e4cfecbe4e15fa8507c08290b2efed29f3462620b995b5"
+      },
+      "candidate": {
+        "path": "profiles/instructions/_evidence/settings-swift-implement-v2.json",
+        "sha256": "dee617ed333f5af946e4cfecbe4e15fa8507c08290b2efed29f3462620b995b5"
+      }
+    }
+  },
+  "settings": {
+    "requestedThinking": "medium",
+    "maxTokens": 16384,
+    "contextWindow": 128000,
+    "limits": {
+      "timeoutMs": 600000,
+      "maxToolCalls": 100,
+      "maxCheckRuns": 12,
+      "firstWriteMs": "UNKNOWN"
+    },
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    }
+  },
+  "promptHashes": {
+    "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "after": "b17033079cb097f18ca280936ca175a403b5449ccdbadee54295a16000be417d"
+  },
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-swift-implement-v2.json",
+      "sha256": "4837255cd6a3a059d72d6762b5e719918ee8e784244848f2e723dcedf229710c"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-swift-implement-v2.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "state": "tested-improved",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 4,
+          "missing": 0
+        },
+        "A": {
+          "success": 2,
+          "failure": 2,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "B": {
+          "success": 4,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "gains": {
+          "quality": 2,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.5
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "state": "no-improvement",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "A": {
+          "success": 10,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "B": {
+          "success": 10,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "gains": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.0
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
+  "independentVerification": {
+    "status": "verified",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-swift-implement-v2.json",
+        "sha256": "25a4456266eba844a488b219adf5f8dc44f08a178f9bc7c202d2fffa8f5d4919"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-swift-implement-v2.json",
+        "sha256": "4837255cd6a3a059d72d6762b5e719918ee8e784244848f2e723dcedf229710c"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-swift-implement-v2.json",
+        "sha256": "25a4456266eba844a488b219adf5f8dc44f08a178f9bc7c202d2fffa8f5d4919"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
+  },
+  "limitations": [
+    "Exploratory comparison: the primary analyst had prior control-source exposure; no blinded or untouched transfer claim is made.",
+    "The measured discovery benefit is narrow and does not establish general model behavior; repeated paired runs are correlated and the control partition reached a ceiling.",
+    "A corrected independent probe of the actual Swift workspace-after found the valid array-backed-store contract gap tracked in #146: reference checks passed 15/15, outputs 1-A and 2-B passed 15/15 each, and outputs 1-B and 2-A failed 15/15 each with array rejection. The digest-bound retained result is `local-research-root:swift-array-store-posthoc-probe-v3-results.json` (sha256 `b5098fc192d588ee3c6641a6674340cfe2c55c4c851637f7af0652708a69b3be`). This is a contract and finite oracle-coverage limitation, not a model-effectiveness result.",
+    "Backend version, server enforcement and integration transfer remain UNKNOWN.",
+    "The local SSH observer exited 255 at 13:40:35 before remote completion at 2026-10-19T13:43:55.031Z; remote execution completed independently, relay stop was recorded at 2026-10-19T13:43:56.541Z, and later read-only collection recovered all 28 cases, the report and relay-stop artifacts. No rerun was performed.",
+    "An earlier posthoc v1 probe was excluded from model evidence after identity review found it used seeded benchmark candidates rather than the retained Swift workspace-after; its raw artifacts remain preserved separately. A v2 probe pack was refused before checks during metadata validation, so it also contributed no model evidence.",
+    "No automatic profile activation, acceptance, qualification or policy change."
+  ],
+  "recommendation": "gather-more"
+}

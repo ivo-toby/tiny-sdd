@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-settings-identity-export",
+  "modelKey": "swift",
+  "role": "implement-slice",
+  "route": "titan/llamacpp/swift15-q4km-128k",
+  "provider": "litellm",
+  "api": "openai-completions",
+  "entryKind": "real",
+  "requestedThinking": "medium",
+  "effectiveThinking": "medium",
+  "effectiveThinkingControl": "unverified",
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "maxTokens": 16384,
+  "contextWindow": 128000,
+  "limits": {
+    "timeoutMs": 600000,
+    "maxToolCalls": 100,
+    "maxCheckRuns": 12
+  },
+  "fallbacksDisabled": true,
+  "routeDigest": "cf8a2600caa5142c48fdbf47f90dda566f5efb610225c26d6cee47ef15160e75",
+  "settingsDigest": "347da7db89dcc5ef4e7fde714f85775718a99eb02a201e9a7b3d0e55eca545ec",
+  "preparedSettingsDigest": "a49bcb1483ead810e939d6984952ca21beeb6ce35a8b71e710ff9243befe5ccb",
+  "server": {
+    "id": "UNKNOWN",
+    "version": "UNKNOWN"
+  },
+  "runtimeCodeRevision": "UNKNOWN when the source archive has no .git; no artificial revision is injected into plan identity.",
+  "provenance": {
+    "source": "sanitized actual A/B plan settings and separate prepared-settings identity",
+    "originalMetadata": {
+      "preparedSettings": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/prepared-settings.json",
+        "sha256": "c42ed0d43bc63f52d49a0fcca350616914c7fb929eb5a2001d886d92728285bc"
+      },
+      "protocol": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/protocol.json",
+        "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+      },
+      "primaryConfirmation": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/primary-confirmation.json",
+        "sha256": "f80c1a674c876870d5d39eca7e1e58ce5cdbd21832d57715f06080af04abfc08"
+      },
+      "plan": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/plans/instruction-swift-implement-pilot1/plan.json",
+        "sha256": "3aabea1c05875e295f6015d3a042a1d1ff34938f127ad743fe7bc8e18160de32"
+      }
+    }
+  }
+}

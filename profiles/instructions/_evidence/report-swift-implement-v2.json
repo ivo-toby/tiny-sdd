@@ -1,0 +1,339 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-export",
+  "modelKey": "swift",
+  "role": "implement-slice",
+  "state": "no-improvement",
+  "recommendation": "keep-baseline",
+  "experiment": {
+    "id": "instruction-swift-implement-pilot1",
+    "proposalId": "frozen-swift-implement",
+    "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "suite": {
+      "id": "instruction-implement-expanded-v2",
+      "version": "2026-10-19.sparse-visible-presence-transfer-v2",
+      "suiteSha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35",
+      "identityExport": {
+        "path": "profiles/instructions/_evidence/suite-swift-implement-v2.json",
+        "sha256": "0d2955bda6826730a921ec5204603840db2a8e38d226cf2650c0489f1dedb80e"
+      },
+      "benchTreeSha256": "a36f2e94de8f76b64c6c0e64cb8d50ff059298fa68535e8d514a9409779a10c6",
+      "controlTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+      "controlBenchTreeSha256": "cf859f2ada7995c77bbf2cd2702a340f8c6a2316a7dead9d33463687e8194f2c",
+      "sourceControlSuiteSha256": "5ee9f62a8487bfcaeb2ea4964b54c1e96b8796858d19854b88cb673f61c009f0",
+      "extraControlTreeSha256": "3b72ff724775e36fd2d03ed447ff62ce0d1f6041834f80fef2491ea7b2ed1254",
+      "sourceBenchTreeSha256": "ead7fd01c648fb62e97aa0465404c870a2c774759c6e7ea7fdb2bfbc98841ce7",
+      "challengeCount": 7,
+      "discoveryChallengeCount": 2,
+      "controlChallengeCount": 5,
+      "sparseVisibleEmber": true
+    },
+    "plan": {
+      "path": "instruction-evidence/swift-implement/plans/instruction-swift-implement-pilot1/plan.json",
+      "sha256": "3aabea1c05875e295f6015d3a042a1d1ff34938f127ad743fe7bc8e18160de32",
+      "namespace": "local-research-root"
+    },
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "retainedExposureAttestation": "UNKNOWN",
+    "exposureAttestationStatus": "superseded-by-review",
+    "controlExposure": {
+      "primaryAnalyst": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification.",
+      "teamWideBlinding": "not claimed"
+    },
+    "integrationChecks": {},
+    "synthetic": false
+  },
+  "partitions": {
+    "discovery": {
+      "partition": "discovery",
+      "state": "tested-improved",
+      "challengeCount": 2,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 4,
+        "complete": 4,
+        "missing": 0
+      },
+      "A": {
+        "success": 2,
+        "failure": 2,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "B": {
+        "success": 4,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "gains": {
+        "quality": 2,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.5
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification."
+        }
+      ]
+    },
+    "control": {
+      "partition": "control",
+      "state": "no-improvement",
+      "challengeCount": 5,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 10,
+        "complete": 10,
+        "missing": 0
+      },
+      "A": {
+        "success": 10,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "B": {
+        "success": 10,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "gains": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.0
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        },
+        {
+          "field": "controlQualification",
+          "reason": "Primary saw existing control source before A/B, including known coverage limitations; candidate remained frozen. Exploratory, not blinded or untouched qualification."
+        }
+      ]
+    }
+  },
+  "independentReviewSummary": {
+    "caseCount": 28,
+    "verificationRecordsChecked": 56,
+    "visiblePass": 26,
+    "visibleFailure": 2,
+    "heldOutPass": 26,
+    "heldOutFailure": 2,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true,
+    "visibleCaseChecks": {
+      "scheduled": 28,
+      "passed": 26,
+      "failed": 2
+    },
+    "heldOutChecks": {
+      "scheduled": 28,
+      "passed": 26,
+      "failed": 2
+    }
+  },
+  "telemetry": {
+    "discovery": {
+      "elapsedMs": {
+        "measuredPairs": 4,
+        "scheduledPairs": 4,
+        "A": 109771,
+        "B": 124456,
+        "meanPairedDifference": 3671.25,
+        "differenceRange": [
+          -7364,
+          16179
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 4,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    },
+    "control": {
+      "elapsedMs": {
+        "measuredPairs": 10,
+        "scheduledPairs": 10,
+        "A": 461298,
+        "B": 435641,
+        "meanPairedDifference": -2565.7,
+        "differenceRange": [
+          -35466,
+          13123
+        ]
+      },
+      "repairRounds": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "inputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "outputTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "reasoningTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      },
+      "totalTokens": {
+        "measuredPairs": 0,
+        "scheduledPairs": 10,
+        "A": "UNKNOWN",
+        "B": "UNKNOWN",
+        "meanPairedDifference": "UNKNOWN",
+        "differenceRange": "UNKNOWN"
+      }
+    }
+  },
+  "overhead": {
+    "preparation": "UNKNOWN",
+    "review": "UNKNOWN"
+  },
+  "finding": "Swift's completed implement-slice comparison improved recorded discovery quality from 2/4 to 4/4 and aggregate quality from 12/14 to 14/14. Both control arms were already 10/10, leaving no room for a control-partition gain under the predeclared criterion, so the raw state remains `no-improvement` with recommendation `keep A`. A corrected independent probe of the actual Swift workspace-after confirmed a separate valid array-backed-store contract gap: reference checks passed 15/15, outputs 1-A and 2-B passed 15/15 each, and outputs 1-B and 2-A failed 15/15 each with array rejection. This is tracked in [#146](https://github.com/ivo-toby/tiny-sdd/issues/146). This narrow discovery improvement does not establish broad transfer; the public disposition is inconclusive with the baseline retained pending strict-control qualification.",
+  "reviewDisposition": {
+    "state": "inconclusive",
+    "recommendation": "gather-more",
+    "reason": "Operator-supplied conservative publication disposition; raw experimental state remains preserved.",
+    "followUp": "Retain the baseline; extend and version oracle coverage under [#146](https://github.com/ivo-toby/tiny-sdd/issues/146) and collect fresh independent control comparisons under [#126](https://github.com/ivo-toby/tiny-sdd/issues/126) before making a broad transfer recommendation."
+  },
+  "limitations": [
+    "Exploratory comparison: the primary analyst had prior control-source exposure; no blinded or untouched transfer claim is made.",
+    "The measured discovery benefit is narrow and does not establish general model behavior; repeated paired runs are correlated and the control partition reached a ceiling.",
+    "A corrected independent probe of the actual Swift workspace-after found the valid array-backed-store contract gap tracked in #146: reference checks passed 15/15, outputs 1-A and 2-B passed 15/15 each, and outputs 1-B and 2-A failed 15/15 each with array rejection. The digest-bound retained result is `local-research-root:swift-array-store-posthoc-probe-v3-results.json` (sha256 `b5098fc192d588ee3c6641a6674340cfe2c55c4c851637f7af0652708a69b3be`). This is a contract and finite oracle-coverage limitation, not a model-effectiveness result.",
+    "Backend version, server enforcement and integration transfer remain UNKNOWN.",
+    "The local SSH observer exited 255 at 13:40:35 before remote completion at 2026-10-19T13:43:55.031Z; remote execution completed independently, relay stop was recorded at 2026-10-19T13:43:56.541Z, and later read-only collection recovered all 28 cases, the report and relay-stop artifacts. No rerun was performed.",
+    "An earlier posthoc v1 probe was excluded from model evidence after identity review found it used seeded benchmark candidates rather than the retained Swift workspace-after; its raw artifacts remain preserved separately. A v2 probe pack was refused before checks during metadata validation, so it also contributed no model evidence.",
+    "No automatic profile activation, acceptance, qualification or policy change."
+  ],
+  "provenance": {
+    "source": "sanitized retained report and primary review; export hashes are distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "namespace": "local-research-root",
+        "relativePath": "swift-implement-primary-independent-review-v1.json",
+        "sha256": "2d4849142500f4a2d1e453da48324969521e7126b547a225db045974a9b04a3d"
+      },
+      "report": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/run-report.json",
+        "sha256": "6449042044bc7bb09b3884e849e614e999048cd5f8568b5a926011cdd0984886"
+      },
+      "protocol": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/protocol.json",
+        "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+      },
+      "plan": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/plans/instruction-swift-implement-pilot1/plan.json",
+        "sha256": "3aabea1c05875e295f6015d3a042a1d1ff34938f127ad743fe7bc8e18160de32"
+      },
+      "sourceAudit": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "preparedSettings": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/prepared-settings.json",
+        "sha256": "c42ed0d43bc63f52d49a0fcca350616914c7fb929eb5a2001d886d92728285bc"
+      },
+      "primaryConfirmation": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement/primary-confirmation.json",
+        "sha256": "f80c1a674c876870d5d39eca7e1e58ce5cdbd21832d57715f06080af04abfc08"
+      },
+      "archive": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-evidence/swift-implement.tar",
+        "sha256": "0b2168049ddee78725221b5ef9a9ee2ec9474d5da86b2401ff2fcd91bc21aa7c"
+      },
+      "mechanicalAudit": {
+        "namespace": "local-research-root",
+        "relativePath": "instruction-audits/swift-implement-20261019T135016124705Z.json",
+        "sha256": "7fe8db32659646cd7b5f77317f6fc3f7d632af56843e3aa75af4c9c480eb3683"
+      }
+    }
+  }
+}
