@@ -84,7 +84,8 @@
       "sha256": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
     }
   },
-  "exposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+  "retainedExposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+  "exposureAttestationStatus": "superseded-by-review",
   "limitations": [
     "This was a retained source-02 external binding, not a blinded analyst study.",
     "The two repetitions per task are correlated.",

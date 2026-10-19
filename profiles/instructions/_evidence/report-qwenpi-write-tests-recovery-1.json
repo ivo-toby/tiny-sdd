@@ -30,7 +30,8 @@
       "maxRegressions": 0,
       "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
     },
-    "exposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+    "retainedExposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+    "exposureAttestationStatus": "superseded-by-review",
     "integrationChecks": {},
     "synthetic": false
   },
