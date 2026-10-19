@@ -45,6 +45,8 @@ Swift history: [v2 exploratory pilot](swift/titan-llamacpp-swift15-q4km-128k/imp
 
 Qwen38Q4S baseline: [standalone baseline evidence](_evidence/baseline-qwen38q4s-implement-v2.json) records 14 cases across two empty-instruction invocations: 13 passed and 1 failed under both visible and held-out checks. Only one matching Ember failure was observed, fewer than the required two; A/B was not run, candidate v1 remains proposed and untested, and the baseline is kept.
 
+Muse baseline: [standalone baseline evidence](_evidence/baseline-muse-implement-v2.json) records 14 total cases across two empty-instruction baseline invocations: visible 13/14 passed and held-out 12/14 passed. Only one matching Ember failure was observed, fewer than the required two; A/B was not run, candidate v1 remains proposed and untested, and the baseline is kept.
+
 ## Entry layout
 
 Use one directory for one exact identity:

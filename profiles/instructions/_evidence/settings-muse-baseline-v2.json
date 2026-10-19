@@ -1,0 +1,44 @@
+{
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "actualDiscovery": {
+    "artifact": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/muse-implement/discovery/relay-settings.json",
+      "sha256": "4a9db4926d199535dc6caa013a64739a538e8be7098082197d44d7272a61827e"
+    },
+    "invocations": 2,
+    "settingsDigest": "02a2fd59afd0e9b2858ec327d8d67235824ce9a93505348302fb2c9fe75961a3"
+  },
+  "kind": "tinysdd-instruction-settings-identity-export",
+  "modelKey": "muse",
+  "preparedSettings": {
+    "artifact": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/muse-implement/prepared-settings.json",
+      "sha256": "3f309efb2196b0254f4e6c58e3f78f4358eed8280f25a560e104984a8bd594f5"
+    },
+    "isActualDiscoveryIdentity": false,
+    "settingsDigest": "b2ab2b96622cf5d2dfaead2ee503cda92736a6c1244b38869b11828f1e5f7788"
+  },
+  "role": "implement-slice",
+  "schemaVersion": 1,
+  "settings": {
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "effectiveThinking": "medium",
+    "effectiveThinkingControl": "unverified",
+    "maxCheckRuns": 12,
+    "maxTokens": 16384,
+    "maxToolCalls": 100,
+    "model": "titan/llamacpp/muse-glimmer-128k",
+    "provider": "litellm",
+    "requestedThinking": "medium",
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    },
+    "timeoutMs": 600000
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "baseline": {
+    "cases": 14,
+    "heldOutStatuses": {
+      "failed": 2,
+      "passed": 12
+    },
+    "instructionsEmpty": true,
+    "invocations": 2,
+    "outcomes": {
+      "completed": 12,
+      "failed": 2
+    },
+    "sameSuiteAndSettings": true,
+    "visibleStatuses": {
+      "failed": 1,
+      "passed": 13
+    }
+  },
+  "comparison": {
+    "candidateEfficacyClaim": false,
+    "reason": "The preregistered matching-failure gate was not met.",
+    "status": "not-run"
+  },
+  "identities": {
+    "settings": {
+      "path": "profiles/instructions/_evidence/settings-muse-baseline-v2.json",
+      "sha256": "48235c1ac6fea07e95bc5833ba52f9d60c73d1ccc496b084c96dd8474cf0b180"
+    },
+    "source": {
+      "path": "profiles/instructions/_evidence/source-muse-baseline-v2.json",
+      "sha256": "629b89148dfbc4f9fe72c3757434302635ef6d7147c1c6f5d73168d81351e927"
+    },
+    "suite": {
+      "path": "profiles/instructions/_evidence/suite-muse-baseline-v2.json",
+      "sha256": "c595a79ed665d62bbbcf0b50f339fe3a8dde30247f6b7fc296478224206ae0f5"
+    }
+  },
+  "kind": "tinysdd-instruction-baseline-evidence",
+  "limitations": [
+    "This standalone report contains baseline discovery evidence only; it is not an evidence card and does not promote the candidate.",
+    "The single named Ember failure is below the required two matching failures, so the decision remains inconclusive and baseline is retained.",
+    "No paired comparison, gain, regression, or candidate efficacy result was produced.",
+    "Results are finite frozen-oracle and fixture evidence and do not establish complete implementation correctness.",
+    "Primary review included exploratory exposure to control material; this is not blind or untouched qualification evidence.",
+    "Server metadata and thinking enforcement remain UNKNOWN; THINKING_CONTROL_MISMATCH is acknowledged.",
+    "Task, verifier, control, prompt, trace and credential material remains outside this package."
+  ],
+  "matchingFailureGate": {
+    "failureClass": "Ember",
+    "observed": 1,
+    "required": 2,
+    "supported": false
+  },
+  "modelKey": "muse",
+  "recommendation": "keep-baseline",
+  "refs": {
+    "analysis": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/muse-implement/discovery/analysis.json",
+      "sha256": "b771a3a2065b4b6ee28077569e6dab6b13ae4d52352b3734760066de9f935f93"
+    },
+    "discoveryComplete": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/muse-implement/discovery/complete.json",
+      "sha256": "bc721fe04ae5f5283675ee6c6fe1b816a9fd6e75635ab8a451bf8a887dd0a701"
+    },
+    "frozenV1Proposal": {
+      "path": "profiles/instructions/_evidence/proposal-muse.json",
+      "sha256": "a065da2f2b1ef4de43b2634e0b367bdbd7dd12679cc2a8726fee9d002a44bb9d"
+    },
+    "mechanicalAudit": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-audits/baseline-muse-implement-20261019T145357553252Z.json",
+      "sha256": "dad8505bd566220290fb2647b4a9f8777747111c38b029d6f45a4c73db6a1568"
+    },
+    "primarySourceReview": {
+      "namespace": "local-research-root",
+      "relativePath": "muse-discovery-primary-source-review-v1.json",
+      "sha256": "7e7b76fd8f9d5a9fbf57369698bcd8da3fa9e8ee1a603e4b166c265dc4dd36f0"
+    },
+    "proposalDecision": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/muse-implement/proposal-decision.json",
+      "sha256": "f74281c2fd72f31613b95c8cb8aa91d8c96c6b168f10f9e443d1ecd3d3274bbf"
+    },
+    "retainedRunArchive": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/muse-implement.tar",
+      "sha256": "eec5f481076a5bbb042f9410fd19ec24873238212ce19bc68b30143d0a346b81"
+    }
+  },
+  "review": {
+    "noInference": true,
+    "noScoreMutation": true,
+    "scope": "retained baseline evidence only",
+    "sourceCasePatchesRead": 14,
+    "syntaxChecks": 21,
+    "syntaxPassed": 21
+  },
+  "role": "implement-slice",
+  "schemaVersion": 1,
+  "state": "inconclusive"
+}
