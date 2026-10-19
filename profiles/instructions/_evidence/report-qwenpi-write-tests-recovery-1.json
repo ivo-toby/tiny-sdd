@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-evidence-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "state": "no-improvement",
+  "recommendation": "keep-baseline",
+  "experiment": {
+    "id": "instruction-qwenpi-writetests-pilot1",
+    "proposalId": "qwenpi-counterexamples-v1",
+    "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+    "suite": {
+      "id": "instruction-write-tests-expanded-v2",
+      "version": "2026-10-19.expanded-v3-writing-discovery",
+      "suiteSha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d",
+      "identityExport": {
+        "path": "profiles/instructions/_evidence/suite-write-tests-2026-10-19.json",
+        "sha256": "68951428441bc019fd78c1c3c1974db77376bb5ea5fd1d5fa60c99a472cacb39"
+      },
+      "suiteTreeSha256": "03d1342541f98f02b0966c021baeec3c3ae4295fc2cd7904a606f7558cbb822c"
+    },
+    "plan": {
+      "path": "plans/instruction-qwenpi-writetests-pilot1/plan.json",
+      "sha256": "7699b9c847945c906aba09f0c31f8f525e2aa9b99f4336c969a0b282a0ac09c8"
+    },
+    "repetitions": 2,
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    },
+    "exposureAttestation": "Fresh control tasks were assembled before discovery and remain an untouched control partition. The proposal and plan use only safe discovery exports; no control answer or hidden verifier content is used.",
+    "integrationChecks": {},
+    "synthetic": false
+  },
+  "partitions": {
+    "discovery": {
+      "partition": "discovery",
+      "state": "tested-improved",
+      "challengeCount": 5,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 10,
+        "complete": 10,
+        "missing": 0
+      },
+      "A": {
+        "success": 8,
+        "failure": 2,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "B": {
+        "success": 9,
+        "failure": 1,
+        "unknown": 0,
+        "scheduled": 10
+      },
+      "gains": {
+        "quality": 1,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0.1
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        }
+      ]
+    },
+    "control": {
+      "partition": "control",
+      "state": "no-improvement",
+      "challengeCount": 2,
+      "repetitions": 2,
+      "pairs": {
+        "scheduled": 4,
+        "complete": 4,
+        "missing": 0
+      },
+      "A": {
+        "success": 4,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "B": {
+        "success": 4,
+        "failure": 0,
+        "unknown": 0,
+        "scheduled": 4
+      },
+      "gains": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "netQualityRate": 0
+      },
+      "regressions": {
+        "quality": 0,
+        "integration": "UNKNOWN",
+        "combined": 0
+      },
+      "missingData": [
+        {
+          "field": "integration",
+          "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+        }
+      ]
+    }
+  },
+  "independentReviewSummary": {
+    "caseCount": 28,
+    "verificationRecordsChecked": 136,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 28
+    },
+    "mutationChecks": {
+      "scheduled": 108,
+      "passed": 105,
+      "failed": 3
+    },
+    "visiblePass": 28,
+    "heldOutPass": 105,
+    "heldOutFailure": 3,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true
+  },
+  "finding": "Three failed tests remove the currently executing listener; the one improved pair has the earlier listener remove a later not-yet-invoked listener. This is one discovery gain; controls are at ceiling for both arms.",
+  "limitations": [
+    "Two AB/BA repetitions are correlated and remain descriptive pilot evidence.",
+    "The candidate was frozen before the primary static control audit, and the analyst was not blinded to the control source.",
+    "Previously inspected controls cannot serve as untouched controls for the same analyst; strict untouched/blinded control qualification is unavailable.",
+    "Control A and B both pass 4/4; the control ceiling does not establish that the prompts are universally ineffective.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN.",
+    "No integration check mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
+    "Reference checks passing does not mean every candidate is correct; mutation results are reported separately."
+  ],
+  "provenance": {
+    "source": "sanitized retained report and independent review; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "plan": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/plans/instruction-qwenpi-writetests-pilot1/plan.json",
+        "sha256": "7699b9c847945c906aba09f0c31f8f525e2aa9b99f4336c969a0b282a0ac09c8"
+      },
+      "report": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/run-report.json",
+        "sha256": "f147bf29184640c10fb9936960918300ac6cedf823241f978f6da22023e310cd"
+      },
+      "primaryReportRederivation": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/primary-report-rederivation.json",
+        "sha256": "3f9dad318701d1ae37b6e0c0689c944ca52bfc73f2bcec0aff5e9ce0e1eba95f"
+      },
+      "primaryIndependentReview": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/primary-independent-review.json",
+        "sha256": "55db1991bb93d1b8c217831f4ae912e2007d593be5c3aab50801695f016673a8"
+      },
+      "protocol": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/protocol.json",
+        "sha256": "2abf229d7d2474b6336b8adb1d14a10d8e27531f90e8247336b7e32c74cbb9cb"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "suite": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/bench/suite.json",
+        "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+      },
+      "preparedSettings": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/prepared-settings.json",
+        "sha256": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a"
+      }
+    }
+  },
+  "cardDisposition": {
+    "state": "inconclusive",
+    "recommendation": "gather-more",
+    "reason": "Previously inspected controls cannot serve as untouched controls for strict same-analyst validation; retain baseline pending fresh blind replication."
+  }
+}

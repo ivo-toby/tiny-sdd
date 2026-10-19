@@ -3,7 +3,7 @@
   "kind": "tinysdd-instruction-evidence-card",
   "id": "qwenpi-write-tests-titan-medium16k-v1",
   "version": 1,
-  "state": "proposed",
+  "state": "inconclusive",
   "model": {
     "id": "titan/llamacpp/qwen3.8-pi-q4km-128k",
     "version": "UNKNOWN",
@@ -37,12 +37,12 @@
     },
     "settings": {
       "baseline": {
-        "path": "profiles/instructions/_evidence/settings-qwenpi.json",
-        "sha256": "61b58ccf0b67d6f092f4a90b16a8e191e78572ab49174979f6c4d377d49ae206"
+        "path": "profiles/instructions/_evidence/settings-qwenpi-write-tests-recovery-1.json",
+        "sha256": "add4864fc3e87f9538c30cd748fbc6e467510118b23d2978814043a38aedd9b4"
       },
       "candidate": {
-        "path": "profiles/instructions/_evidence/settings-qwenpi.json",
-        "sha256": "61b58ccf0b67d6f092f4a90b16a8e191e78572ab49174979f6c4d377d49ae206"
+        "path": "profiles/instructions/_evidence/settings-qwenpi-write-tests-recovery-1.json",
+        "sha256": "add4864fc3e87f9538c30cd748fbc6e467510118b23d2978814043a38aedd9b4"
       }
     }
   },
@@ -65,26 +65,140 @@
     "before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "after": "e3c34fcb5b672dfd429e3a29bf3f8598735adb715b0e5994526aba6f4d69c014"
   },
-  "evidence": null,
+  "evidence": {
+    "report": {
+      "path": "profiles/instructions/_evidence/report-qwenpi-write-tests-recovery-1.json",
+      "sha256": "759d86efb953323bd07db9f8bfe9cfe176be2cc6f23ede22a97beb85a60a9809"
+    },
+    "protocol": "profiles/instructions/_evidence/protocol-qwenpi-write-tests-recovery-1.json",
+    "partitions": {
+      "discovery": {
+        "partition": "discovery",
+        "state": "tested-improved",
+        "challengeCount": 5,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 10,
+          "complete": 10,
+          "missing": 0
+        },
+        "A": {
+          "success": 8,
+          "failure": 2,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "B": {
+          "success": 9,
+          "failure": 1,
+          "unknown": 0,
+          "scheduled": 10
+        },
+        "gains": {
+          "quality": 1,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0.1
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The analyst saw the control source after candidate B was frozen; same-analyst untouched and blinded control validation is unavailable."
+          }
+        ]
+      },
+      "control": {
+        "partition": "control",
+        "state": "no-improvement",
+        "challengeCount": 2,
+        "repetitions": 2,
+        "pairs": {
+          "scheduled": 4,
+          "complete": 4,
+          "missing": 0
+        },
+        "A": {
+          "success": 4,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "B": {
+          "success": 4,
+          "failure": 0,
+          "unknown": 0,
+          "scheduled": 4
+        },
+        "gains": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "netQualityRate": 0
+        },
+        "regressions": {
+          "quality": 0,
+          "integration": "UNKNOWN",
+          "combined": 0
+        },
+        "missingData": [
+          {
+            "field": "integration",
+            "reason": "No integration checks were mapped in the plan; integration remains UNKNOWN."
+          },
+          {
+            "field": "controlQualification",
+            "reason": "The analyst saw the control source after candidate B was frozen; same-analyst untouched and blinded control validation is unavailable."
+          }
+        ]
+      }
+    },
+    "criteria": {
+      "minPairsPerPartition": 4,
+      "minQualityGain": 0.1,
+      "maxRegressions": 0,
+      "rationale": "Predeclared descriptive pilot; not population proof or acceptance."
+    }
+  },
   "independentVerification": {
-    "status": "unverified",
+    "status": "verified",
     "refs": [
       {
-        "path": "profiles/instructions/_evidence/proposal-qwenpi.json",
-        "sha256": "3e082aff2a950d7930a777f4a1b6f4879956700552e79facd3e9e9a87581d091"
+        "path": "profiles/instructions/_evidence/review-qwenpi-write-tests-recovery-1.json",
+        "sha256": "650cffb339136b93b5b840956d567e16f4f6f1dbe7152f6fd617300edbea0205"
+      },
+      {
+        "path": "profiles/instructions/_evidence/report-qwenpi-write-tests-recovery-1.json",
+        "sha256": "759d86efb953323bd07db9f8bfe9cfe176be2cc6f23ede22a97beb85a60a9809"
       }
     ]
   },
   "review": {
-    "reviewer": "UNKNOWN",
-    "refs": [],
-    "exactBytesMatched": false,
-    "sourceVerified": false
+    "reviewer": "primary",
+    "refs": [
+      {
+        "path": "profiles/instructions/_evidence/review-qwenpi-write-tests-recovery-1.json",
+        "sha256": "650cffb339136b93b5b840956d567e16f4f6f1dbe7152f6fd617300edbea0205"
+      }
+    ],
+    "exactBytesMatched": true,
+    "sourceVerified": true
   },
   "limitations": [
-    "No controlled A/B evidence has been run or independently verified; this card is a proposal only.",
-    "Model version, quantization and server enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
-    "THINKING_CONTROL_MISMATCH is recorded in the prepared settings metadata; server enforcement remains unverified.",
+    "The retained experimental report is no-improvement, but this card is inconclusive for strict applicability validation because the analyst saw the control source after candidate B was frozen.",
+    "Previously inspected controls cannot serve as untouched controls for the same analyst; retain the baseline pending a fresh blind replication.",
+    "This is exploratory frozen-prompt evidence; two AB/BA repetitions are correlated and do not establish population effectiveness.",
+    "Control A and B both pass 4/4; the control ceiling does not establish that the prompts are universally ineffective.",
+    "Primary review checked 28 reference cases and 108 mutation checks: 28 reference checks passed, 105 mutation checks passed and 3 failed. This is verifier evidence, not a claim that every candidate is correct.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN; the route alias and requested settings do not establish backend identity.",
+    "No integration check mapping was supplied; integration remains UNKNOWN.",
+    "The source archive is externally byte-bound to source commit 02c661dd8f851e16235ecdf5d730b2a9f678d3b8; runtime tinySdd codeRevision remains UNKNOWN.",
     "The candidate instructions are appended to the built-in harness and require an exact-match review before selection."
   ],
   "recommendation": "gather-more"

@@ -11,10 +11,11 @@ work is complete. A tested result requires the controlled discovery/control work
 described in [instruction experiments](../../docs/instruction-experiments.md),
 independent review and the completed-card requirements below.
 
-## Proposed entries
+## Library entries
 
-These ten entries are manual research proposals. Their cards contain no A/B
-evidence and make no improvement claim.
+Nine entries remain manual research proposals. The qwenpi row records a completed
+exploratory pilot with inconclusive strict-control applicability; its card retains
+the measured report and review boundaries below.
 
 | Model | Role | Hypothesis | State |
 | --- | --- | --- | --- |
@@ -25,7 +26,7 @@ evidence and make no improvement claim.
 | [muse](muse/titan-llamacpp-muse-glimmer-128k/implement-slice/v1/evidence-card.json) | implement-slice | Separate presence from payload, preserving nullish and falsy values. | proposed |
 | [gemma26](gemma26/titan-llamacpp-gemma4-26b-a4b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Finish after declared checks pass instead of re-deriving the solution. | proposed |
 | [gemma12](gemma12/titan-llamacpp-gemma4-12b-128k/implement-slice/v1/evidence-card.json) | implement-slice | Use a brief action/check loop and stop guessing after an exact-text edit fails. | proposed |
-| [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
+| [qwenpi](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | inconclusive |
 | [thinkingcap](thinkingcap/titan-llamacpp-thinkingcap-q4km-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
 | [qwen38q3](qwen38q3/titan-llamacpp-qwen3_8-q3-128k/write-tests/v1/evidence-card.json) | write-tests | Choose counterexamples that distinguish each contract invariant from plausible wrong behavior. | proposed |
 

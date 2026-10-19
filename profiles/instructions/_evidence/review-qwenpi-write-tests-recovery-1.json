@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "kind": "tinysdd-instruction-independent-review-export",
+  "modelKey": "qwenpi",
+  "role": "write-tests",
+  "reviewer": "primary",
+  "state": "inconclusive",
+  "recommendation": "gather-more",
+  "sourceCommit": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "report": {
+    "path": "run-report.json",
+    "sha256": "f147bf29184640c10fb9936960918300ac6cedf823241f978f6da22023e310cd",
+    "rederivedLocally": true,
+    "matchesRetainedReport": true
+  },
+  "checks": {
+    "newInference": false,
+    "caseCount": 28,
+    "verificationRecordsChecked": 136,
+    "referenceCaseChecks": {
+      "scheduled": 28,
+      "passed": 28
+    },
+    "mutationChecks": {
+      "scheduled": 108,
+      "passed": 105,
+      "failed": 3
+    },
+    "visiblePass": 28,
+    "heldOutPass": 105,
+    "heldOutFailure": 3,
+    "allVerifierOutputsMatchDigests": true,
+    "allVerifiersNetworkNone": true,
+    "noHardGateViolations": true
+  },
+  "publicCandidatePatchReview": {
+    "casesRead": 4,
+    "challenge": "dune-emitter-edge",
+    "summary": "Three failed tests remove the currently executing listener; one improved pair has the earlier listener remove a later not-yet-invoked listener."
+  },
+  "limitations": [
+    "This review is evidence that the retained verifier records and digests were checked; it does not claim every candidate is correct.",
+    "The primary review verifies retained bytes and verifier records, but cannot certify strict untouched/blinded control qualification for this study.",
+    "Two AB/BA repetitions are correlated; controls are at the 4/4 ceiling for both arms.",
+    "The candidate was frozen before the primary static control audit, and the analyst was not blinded to the control source.",
+    "Backend version, quantization and server-side thinking enforcement are UNKNOWN; integration remains UNKNOWN."
+  ],
+  "provenance": {
+    "source": "sanitized primary review and local report rederivation; export hash is distinct from original artifact hashes",
+    "originalMetadata": {
+      "primaryIndependentReview": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/primary-independent-review.json",
+        "sha256": "55db1991bb93d1b8c217831f4ae912e2007d593be5c3aab50801695f016673a8"
+      },
+      "primaryReportRederivation": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/primary-report-rederivation.json",
+        "sha256": "3f9dad318701d1ae37b6e0c0689c944ca52bfc73f2bcec0aff5e9ce0e1eba95f"
+      },
+      "report": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/run-report.json",
+        "sha256": "f147bf29184640c10fb9936960918300ac6cedf823241f978f6da22023e310cd"
+      },
+      "plan": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/plans/instruction-qwenpi-writetests-pilot1/plan.json",
+        "sha256": "7699b9c847945c906aba09f0c31f8f525e2aa9b99f4336c969a0b282a0ac09c8"
+      },
+      "sourceAudit": {
+        "filename": "instruction-evidence/qwenpi-write-tests-recovery-1/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      }
+    }
+  },
+  "experimentalReportState": "no-improvement",
+  "controlQualification": {
+    "state": "inconclusive",
+    "reason": "The analyst saw the control source after candidate B was frozen; previously inspected controls cannot serve as untouched controls for the same analyst.",
+    "followUp": "Fresh blind replication is required before strict applicability validation."
+  }
+}
