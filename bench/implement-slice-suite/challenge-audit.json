@@ -142,13 +142,21 @@
       "category": "library-api-trap",
       "reference": {
         "path": "candidates/ember-option-api/reference",
-        "sha256": "b011dcd84b2ea152b68762dad724634c42938d1591c3cb38e5e2607312d760ef"
+        "sha256": "a9b9d93b7aff17d24cf9069f509bd5225d39f865c6d3c841ef5b42566ee28712"
       },
       "wrong": [
         {
           "id": "wrong-value-property",
           "path": "candidates/ember-option-api/wrong-value-property",
           "sha256": "1b88bdeda1f88e56a1ce4f34e52e60bee0fadb5c63d784085596e2cf9c90ad28",
+          "heldOutFailures": [
+            "held-out-value"
+          ]
+        },
+        {
+          "id": "wrong-nullish-fallback",
+          "path": "candidates/ember-option-api/wrong-nullish-fallback",
+          "sha256": "b011dcd84b2ea152b68762dad724634c42938d1591c3cb38e5e2607312d760ef",
           "heldOutFailures": [
             "held-out-value"
           ]

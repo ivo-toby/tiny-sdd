@@ -16,9 +16,14 @@ The current suite version keeps Opal's worker check inside its fixture by
 running the protected `tests/visible.test.mjs`; its independent held-out
 verifier remains outside the fixture. Cedar's visible and independent checks
 cover the valid `r-0|0` boundary, and the audit retains a positive-only mutant
-that must fail that held-out check. These corrections bump the affected
-challenge versions and suite version, so prior retained results remain bound
-to their original identities.
+that must fail that held-out check. Ember's protected and independent checks
+cover matching `undefined`, `false`, `0`, an empty string and `null`, along
+with first-match order and no-match behavior. Its reference uses `isSome` to
+preserve a present `undefined`; the audit retains both the wrong-property and
+nullish-fallback mutants, with the latter failing the named `held-out-value`
+check. The earlier Ember pilot used the old oracle, so these corrections bump
+the affected challenge and suite versions and keep retained results bound to
+their original identities.
 
 The `stop-and-ask` challenge writes only `questions/report.json`, whose exact
 fields are `missingInputs` and `question`. Its verifier requires the known

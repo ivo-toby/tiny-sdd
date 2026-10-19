@@ -35,7 +35,7 @@ const EXPECTED_VISIBLE_TESTS = new Map([
   ['maple-queue-fix', 1],
   ['cedar-receipt-fix', 4],
   ['ripple-batch-async', 1],
-  ['ember-option-api', 2],
+  ['ember-option-api', 4],
   ['linen-retry-lint', 2],
   ['opal-missing-inputs', 2],
 ]);
@@ -378,6 +378,25 @@ test('reference candidates pass visible and held-out checks, wrong candidates fa
     }
   } finally {
     await Promise.all(wrongRuns.map((wrong) => rm(wrong.root, { recursive: true, force: true })));
+  }
+});
+
+test('Ember reference preserves undefined and nullish fallback mutant fails its held-out check', async () => {
+  const reference = await runSuite('reference');
+  const mutant = await runSuite('wrong', { wrongIndex: 1 });
+  try {
+    const referenceCase = (await caseResults(reference)).find(({ value }) => value.challenge.id === 'ember-option-api').value;
+    const mutantCase = (await caseResults(mutant)).find(({ value }) => value.challenge.id === 'ember-option-api').value;
+    assert.equal(referenceCase.verifier.visible[0].status, 'passed');
+    assert.equal(referenceCase.verifier.heldOut[0].status, 'passed');
+    assert.equal(mutantCase.verifier.heldOut[0].checkId, 'held-out-value');
+    assert.equal(mutantCase.verifier.heldOut[0].status, 'failed');
+    assert.equal(mutantCase.failure.category, 'verifier_failed');
+  } finally {
+    await Promise.all([
+      rm(reference.root, { recursive: true, force: true }),
+      rm(mutant.root, { recursive: true, force: true }),
+    ]);
   }
 });
 
