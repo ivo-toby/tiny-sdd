@@ -1,6 +1,6 @@
 # GEPA + Swift technical pilot — 19 October 2026
 
-Status: preparation verified; the first Swift attempt stopped on an inference request timeout and is excluded from model-quality comparisons. No valid Swift quality result or Qwen reflection result exists yet. This report is a progress record, not evidence of a better profile.
+Status: preparation verified; the first Swift attempt stopped on an inference request timeout and is excluded from model-quality comparisons. The GEPA retry is running through a reviewed streaming relay; no valid Swift quality result or Qwen reflection result has been reviewed yet. This report is a progress record, not evidence of a better profile.
 
 This experiment uses [GEPA](https://github.com/gepa-ai/gepa) 0.1.4 as an external Python research tool and existing [SWE-PolyBench Verified](https://github.com/amazon-science/SWE-PolyBench) tasks. GEPA changes only the `instructions` component. Swift implements; Titan Qwen3.6-35B proposes instruction changes. Normal TinySDD users acquire no Python or GEPA dependency.
 
@@ -35,7 +35,7 @@ This Python pilot calls normal TinySDD `runWorker` and independently evaluates i
 
 The optimization metric requires both a completed worker and a valid strict oracle pass. A worker token/tool/time limit is a model-result failure even if a partial patch passes tests. An unavailable harness is unknown and stops optimization. The original dataset outcome remains separate. Worker output never becomes feature acceptance.
 
-The relay serializes Titan calls and buffers each response; this pilot therefore makes no streaming latency or direct speed-comparison claim. The backend build and actual weight identity remain unverified beyond the provider's route metadata.
+The first relay buffered complete responses. Its replacement streams responses while retaining serialization until consumption or cancellation; actual Swift tool activity has resumed. This does not establish buffering as the sole cause of the previous timeout. This pilot makes no direct speed-comparison claim. The backend build and actual weight identity remain unverified beyond the provider's route metadata.
 
 The upstream repository has an MIT root license, while evaluator source headers carry CC-BY-NC-4.0 notices. Evaluation code remains external research tooling with notices preserved; it is not copied into the TinySDD product or relicensed here. Redistribution/product-use licensing remains unresolved.
 
@@ -54,4 +54,12 @@ Raw evaluator artifacts are retained in the operator's research workspace, not b
 
 The [retained validity record](../research/gepa-swift-pilot/2026-10-19/initial-attempt-validity-v1.json) identifies the first real Swift attempt. One inference request completed and the following request timed out; the worker made no writes. The external adapter originally emitted a numeric zero after testing the empty patch. Primary review excludes that zero from model-quality comparison and GEPA feedback: a transport failure does not establish implementation failure. Original artifacts remain unchanged.
 
-The attempt conservatively consumes one of the twelve allowed worker attempts, leaving eleven. The relay and unavailable-result handling must be corrected and reviewed before another attempt. The independent fixture still reports 10/11 tests on the empty patch; this is a fixture check, not a Swift quality measurement.
+The attempt conservatively consumed one of the twelve allowed worker attempts, leaving eleven at the start of the retry. The relay and unavailable-result handling were subsequently corrected and reviewed before that retry. The independent fixture still reports 10/11 tests on the empty patch; this is a fixture check, not a Swift quality measurement.
+
+## Validation fixture verified
+
+The separate [Serverless validation fixture](../research/gepa-swift-pilot/2026-10-19/validation-fixture-readiness-v1.json) now reproduces the original failure (5/6 tests) and the reference repair (6/6). Primary review independently matched all six declared IDs against raw Mocha JSON and the pinned parser output, checked complete output and exact exit statuses, and verified read-only source mounts and disabled networking. These are fixture controls with no model. Validation contributes only aggregate scores to GEPA.
+
+The first fixture attempt was unavailable because its trusted tests create transient symlinks in the current directory. The new variant keeps the source fixture read-only and uses a writable tmpfs working directory linked to that fixture, with the original test command unchanged. The pinned parser receives a separate envelope with the actual upstream exit marker; raw command output remains unchanged. Both original failures and new executions remain retained.
+
+The public Serverless export contains 1,320 files and no Git history or reference patch. Native TinySDD filename filtering copies 1,310 of those files; the ten omissions are recorded and identical across both instruction arms. The independent oracle retains the full fixture.

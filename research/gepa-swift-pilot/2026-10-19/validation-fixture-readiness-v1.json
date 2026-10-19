@@ -1,0 +1,66 @@
+{
+  "schema": "tinysdd-gepa-validation-fixture-readiness-v1",
+  "task": "serverless__serverless-7374",
+  "split": "validation",
+  "status": "fixture_controls_verified",
+  "model_runs_in_controls": 0,
+  "reference_patch_exposed_to_worker_or_optimizer": false,
+  "optimizer_feedback": "aggregate_scores_only",
+  "image": "ghcr.io/timesler/swe-polybench.eval.x86_64.serverless__serverless-7374:v1.1@sha256:e90cf48cd682adb31f54d061ce6865f56688a2876ad8424c91d6664b1d3ae122",
+  "test_command": ". /usr/local/nvm/nvm.sh && npx mocha lib/utils/fs/fileExistsSync.test.js --reporter json",
+  "test_command_unchanged": true,
+  "fixture_readonly": true,
+  "network": "none",
+  "test_cwd": "/run/gepa-cwd",
+  "cwd_variant": "Trusted test creates transient symlinks in writable tmpfs cwd with fixed links to the read-only source fixture. Base and reference use the identical variant.",
+  "parser_envelope": "Exact raw Mocha output plus upstream Container exited marker carrying the actual process exit status; raw bytes retained separately.",
+  "controls": [
+    {
+      "control": "empty-baseline",
+      "result_sha256": "f19bfc348ed978230edf0d7ce0dbef37b9c0e7460ed6d3652486dc5298a54b5f",
+      "raw_output_sha256": "8e9dd21887dfda655a32aac9410b73a10084539431a03998933ccbd7d6f235b1",
+      "passed": 5,
+      "failed": 1,
+      "expected_test_ids_observed": 6,
+      "protected_changes": 0,
+      "fixture_readonly": true,
+      "network": "none",
+      "cwd": "/run/gepa-cwd",
+      "actual_exit": 1
+    },
+    {
+      "control": "reference",
+      "result_sha256": "770e238c9e88ae7bb9fa9925c6dabc19464f5001afd10362b8f2857a57a84fbb",
+      "raw_output_sha256": "53f80ecb89f7c42afc3bb87820e31eaa4d3d2217eba362169662d291ea85c784",
+      "passed": 6,
+      "failed": 0,
+      "expected_test_ids_observed": 6,
+      "protected_changes": 0,
+      "fixture_readonly": true,
+      "network": "none",
+      "cwd": "/run/gepa-cwd",
+      "actual_exit": 0
+    }
+  ],
+  "harness_sha256": "74983b38c5ed799fe5b96bc35e111fb3e81f1fcfea4ae681f7a6a4dc6ac9a7d8",
+  "primary_audit_sha256": "a9a0aacd77a3597bfb186b8f1cf733de14d0c15ae49ed5c3501ad36cda6b4843",
+  "public_export": {
+    "source_base": "8518000d4fbf3a6cf0a6e2f81bd6421e017a1b5f",
+    "files": 1320,
+    "tree_sha256": "b83dd8cd060fce47f0fc1948386130588b38ea7c770dc44993f2a48eb40d39f7",
+    "history_or_gold_patch_in_worker_export": false,
+    "worker_copy_files": 1310,
+    "native_exclusions": 10,
+    "native_copy_audit_sha256": "5a851af9e819942a8a1c894d753306124cccad4b62ea646abba8898a86b6de59",
+    "caveat": "Native worker filename filtering omits ten public files; both A/B arms use the same copied set. The independent oracle retains the full fixture."
+  },
+  "prior_controls": {
+    "status": "infrastructure_unknown",
+    "quality_results_excluded": true,
+    "reason": "Read-only original cwd prevented trusted symlink setup; parser also needed the original harness exit marker.",
+    "baseline_result_sha256": "4b7d42bc5d30f217d569afa75d98f6de3b71d461b4b1cdcfc20ddcf53fc360e3",
+    "reference_result_sha256": "d30588e6f84531930c190fc972123b5d657fe6a5cf71e8605925e3de2a3a9362"
+  },
+  "raw_artifacts_public": false,
+  "claims": []
+}
