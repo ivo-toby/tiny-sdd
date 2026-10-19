@@ -141,9 +141,14 @@ requested thinking, token/context limits, suite/source identity and worker role.
 quantization, server, context limit or thinking setting requires a new experiment;
 it does not inherit the recommendation.
 
-Add the selected profile to an existing fully configured worker's `worker.profile`
-setting. Configuration overlays replace a worker as a whole, so retain its
-`type`, `provider` and `model`. For example:
+After reviewing the card and matching its recorded profile SHA-256, copy the
+selected runtime-profile JSON from this library into a fresh path in the target
+project, such as `preparation-profiles/qwen36-v1.json`. Profile paths resolve
+against the target project; the library path is documentation source material
+and is not installed automatically. Set that copied profile on an existing
+fully configured worker's `worker.profile` setting. Configuration overlays
+replace a worker as a whole, so retain its `type`, `provider` and `model`. For
+example:
 
 ```json
 {
@@ -152,7 +157,7 @@ setting. Configuration overlays replace a worker as a whole, so retain its
       "type": "pi",
       "provider": "litellm",
       "model": "titan/llamacpp/qwen3.6-35b-a3b-256k",
-      "profile": "profiles/instructions/qwen36/titan-llamacpp-qwen3_6-35b-a3b-256k/implement-slice/v1/candidate-profile.json"
+      "profile": "preparation-profiles/qwen36-v1.json"
     }
   }
 }

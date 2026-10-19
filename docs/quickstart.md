@@ -1240,6 +1240,9 @@ Reviewed, shareable instruction profiles are documented in the
 [evidence-card schema](../profiles/instructions/evidence-card.schema.json).
 Before selecting one, read its card and match the exact model/version,
 quantization, server, worker role, thinking and token/context limits, plus the
-recorded suite/source identities. Set the existing `worker.profile` explicitly,
+recorded suite/source identities. After copying the selected runtime-profile
+JSON, matched by its recorded profile SHA-256, into a fresh project-relative
+path such as `preparation-profiles/qwen36-v1.json`, set the existing
+`worker.profile` explicitly. Profile paths resolve against the target project;
 inspect `config show` and `worker settings`, and keep the baseline available for
-rollback; the library does not auto-route or activate profiles.
+rollback. The library does not auto-install, route or activate profiles.

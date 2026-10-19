@@ -201,10 +201,14 @@ does not publish prompts, traces, credentials or held-out answers.
 
 Read the card before selecting an entry. Match the model version or `UNKNOWN`,
 quantization, server, thinking and token/context limits, suite/source identity
-and worker role exactly. Select the existing worker `profile` explicitly, inspect
-`config show` and `worker settings`, and keep the reviewed baseline or preceding
-version available for rollback. The library has no catalog, automatic routing,
-activation or promotion; a different configuration requires a new experiment.
+and worker role exactly. After matching the recorded profile SHA-256, copy the
+selected runtime-profile JSON into a fresh project-relative path such as
+`preparation-profiles/qwen36-v1.json`, then select that path on the existing
+worker's `profile` explicitly. Inspect `config show` and `worker settings`, and
+keep the reviewed baseline or preceding version available for rollback. The
+library path is not installed automatically; it has no catalog, automatic
+routing, activation or promotion. A different configuration requires a new
+experiment.
 
 Run `node scripts/run-instruction-example.mjs --out /absolute/new-directory`
 to retain a complete synthetic example, including exact requests, prompts,
