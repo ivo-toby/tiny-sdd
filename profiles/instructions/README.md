@@ -2,8 +2,11 @@
 
 This directory is a manually curated library of model-specific `profile.instructions`
 variants. It has no catalog or automatic routing. An entry is shareable only after
-an operator has reviewed the exact model, serving configuration, role, runtime
-settings and A/B evidence that the entry names.
+manual review of its provenance and profile metadata. Proposed entries are
+explicitly untested hypotheses. A tested recommendation requires independent
+review of the exact model, serving configuration, role, runtime settings and
+completed A/B evidence that it names; primary review or an inconclusive card is
+not operator acceptance. Profile selection remains explicit and operator-owned.
 
 Do not add an entry for an unrun idea as if it were a result. A hypothesis may be
 recorded as `proposed`, with `evidence: null` in its card, before controlled A/B
