@@ -1234,3 +1234,12 @@ examples verify tooling only; real-model effectiveness and #108's live acceptanc
 remain pending. Profiles require explicit review/selection and preserve rollback. The experiment
 regression budget covers correctness and explicitly measured integration losses,
 including integration losses hidden by an existing correctness failure.
+
+Reviewed, shareable instruction profiles are documented in the
+[model-instruction library](../profiles/instructions/README.md), with the
+[evidence-card schema](../profiles/instructions/evidence-card.schema.json).
+Before selecting one, read its card and match the exact model/version,
+quantization, server, worker role, thinking and token/context limits, plus the
+recorded suite/source identities. Set the existing `worker.profile` explicitly,
+inspect `config show` and `worker settings`, and keep the baseline available for
+rollback; the library does not auto-route or activate profiles.

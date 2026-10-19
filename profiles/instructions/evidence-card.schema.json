@@ -1,0 +1,908 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ivo-toby/tiny-sdd/blob/main/profiles/instructions/evidence-card.schema.json",
+  "title": "TinySDD shareable instruction evidence card",
+  "description": "A digest-bound, manually reviewed record for one model/configuration/role instruction comparison. It contains no prompt text, traces, or hidden verifier answers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "id",
+    "version",
+    "state",
+    "model",
+    "configuration",
+    "role",
+    "synthetic",
+    "identities",
+    "settings",
+    "promptHashes",
+    "evidence",
+    "independentVerification",
+    "review",
+    "limitations",
+    "recommendation"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "tinysdd-instruction-evidence-card"
+    },
+    "id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "enum": [
+        "proposed",
+        "tested-improved",
+        "no-improvement",
+        "regressed",
+        "inconclusive"
+      ]
+    },
+    "model": {
+      "$ref": "#/$defs/model"
+    },
+    "configuration": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "identities": {
+      "$ref": "#/$defs/identities"
+    },
+    "settings": {
+      "$ref": "#/$defs/settings"
+    },
+    "promptHashes": {
+      "$ref": "#/$defs/promptHashes"
+    },
+    "evidence": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/evidence"
+        }
+      ]
+    },
+    "independentVerification": {
+      "$ref": "#/$defs/verification"
+    },
+    "review": {
+      "$ref": "#/$defs/review"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "recommendation": {
+      "enum": [
+        "keep-baseline",
+        "consider-candidate",
+        "gather-more"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "proposed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recommendation": {
+            "enum": [
+              "keep-baseline",
+              "gather-more"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "tested-improved",
+              "no-improvement",
+              "regressed",
+              "inconclusive"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "evidence"
+        ],
+        "properties": {
+          "evidence": {
+            "$ref": "#/$defs/evidence",
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "required": [
+              "report"
+            ]
+          },
+          "identities": {
+            "properties": {
+              "profiles": {
+                "properties": {
+                  "candidate": {
+                    "$ref": "#/$defs/reference"
+                  }
+                },
+                "required": [
+                  "candidate"
+                ]
+              },
+              "settings": {
+                "properties": {
+                  "candidate": {
+                    "$ref": "#/$defs/reference"
+                  }
+                },
+                "required": [
+                  "candidate"
+                ]
+              }
+            }
+          },
+          "promptHashes": {
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "required": [
+              "after"
+            ]
+          },
+          "independentVerification": {
+            "properties": {
+              "status": {
+                "const": "verified"
+              },
+              "refs": {
+                "minItems": 1
+              }
+            }
+          },
+          "review": {
+            "properties": {
+              "reviewer": {
+                "not": {
+                  "const": "UNKNOWN"
+                }
+              },
+              "refs": {
+                "minItems": 1
+              },
+              "exactBytesMatched": {
+                "const": true
+              },
+              "sourceVerified": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "tested-improved"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recommendation": {
+            "const": "consider-candidate"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "no-improvement",
+              "regressed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recommendation": {
+            "const": "keep-baseline"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "inconclusive"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recommendation": {
+            "const": "gather-more"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "synthetic": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "enum": [
+              "proposed",
+              "inconclusive"
+            ]
+          },
+          "recommendation": {
+            "enum": [
+              "keep-baseline",
+              "gather-more"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "unknown": {
+      "const": "UNKNOWN"
+    },
+    "scalarOrUnknown": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        {
+          "$ref": "#/$defs/unknown"
+        }
+      ]
+    },
+    "positiveIntegerOrUnknown": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "$ref": "#/$defs/unknown"
+        }
+      ]
+    },
+    "countOrUnknown": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/unknown"
+        }
+      ]
+    },
+    "rateOrUnknown": {
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        {
+          "$ref": "#/$defs/unknown"
+        }
+      ]
+    },
+    "projectRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$)).+"
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/projectRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "quantization"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/scalarOrUnknown"
+        },
+        "quantization": {
+          "$ref": "#/$defs/scalarOrUnknown"
+        }
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "revision",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "revision": {
+          "$ref": "#/$defs/scalarOrUnknown"
+        },
+        "path": {
+          "$ref": "#/$defs/projectRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "suiteIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "path": {
+          "$ref": "#/$defs/projectRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "identities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "suite",
+        "profiles",
+        "settings"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/sourceIdentity"
+        },
+        "suite": {
+          "$ref": "#/$defs/suiteIdentity"
+        },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseline",
+            "candidate"
+          ],
+          "properties": {
+            "baseline": {
+              "$ref": "#/$defs/reference"
+            },
+            "candidate": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/reference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "settings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseline",
+            "candidate"
+          ],
+          "properties": {
+            "baseline": {
+              "$ref": "#/$defs/reference"
+            },
+            "candidate": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/reference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestedThinking",
+        "maxTokens",
+        "contextWindow",
+        "limits",
+        "server"
+      ],
+      "properties": {
+        "requestedThinking": {
+          "oneOf": [
+            {
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
+            },
+            {
+              "$ref": "#/$defs/unknown"
+            }
+          ]
+        },
+        "maxTokens": {
+          "$ref": "#/$defs/positiveIntegerOrUnknown"
+        },
+        "contextWindow": {
+          "$ref": "#/$defs/positiveIntegerOrUnknown"
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "timeoutMs",
+            "maxToolCalls",
+            "maxCheckRuns",
+            "firstWriteMs"
+          ],
+          "properties": {
+            "timeoutMs": {
+              "$ref": "#/$defs/positiveIntegerOrUnknown"
+            },
+            "maxToolCalls": {
+              "$ref": "#/$defs/positiveIntegerOrUnknown"
+            },
+            "maxCheckRuns": {
+              "$ref": "#/$defs/positiveIntegerOrUnknown"
+            },
+            "firstWriteMs": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/unknown"
+                }
+              ]
+            }
+          }
+        },
+        "server": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "version"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/scalarOrUnknown"
+            },
+            "version": {
+              "$ref": "#/$defs/scalarOrUnknown"
+            }
+          }
+        }
+      }
+    },
+    "promptHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before",
+        "after"
+      ],
+      "properties": {
+        "before": {
+          "$ref": "#/$defs/digest"
+        },
+        "after": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "pairCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scheduled",
+        "complete",
+        "missing"
+      ],
+      "properties": {
+        "scheduled": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "armCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "success",
+        "failure",
+        "unknown",
+        "scheduled"
+      ],
+      "properties": {
+        "success": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scheduled": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "missingData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "reason"
+      ],
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "reason": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "partitionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partition",
+        "state",
+        "challengeCount",
+        "repetitions",
+        "pairs",
+        "A",
+        "B",
+        "gains",
+        "regressions",
+        "missingData"
+      ],
+      "properties": {
+        "partition": {
+          "enum": [
+            "discovery",
+            "control"
+          ]
+        },
+        "state": {
+          "enum": [
+            "tested-improved",
+            "no-improvement",
+            "regressed",
+            "inconclusive"
+          ]
+        },
+        "challengeCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repetitions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pairs": {
+          "$ref": "#/$defs/pairCounts"
+        },
+        "A": {
+          "$ref": "#/$defs/armCounts"
+        },
+        "B": {
+          "$ref": "#/$defs/armCounts"
+        },
+        "gains": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "quality",
+            "integration",
+            "netQualityRate"
+          ],
+          "properties": {
+            "quality": {
+              "$ref": "#/$defs/countOrUnknown"
+            },
+            "integration": {
+              "$ref": "#/$defs/countOrUnknown"
+            },
+            "netQualityRate": {
+              "$ref": "#/$defs/rateOrUnknown"
+            }
+          }
+        },
+        "regressions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "quality",
+            "integration",
+            "combined"
+          ],
+          "properties": {
+            "quality": {
+              "$ref": "#/$defs/countOrUnknown"
+            },
+            "integration": {
+              "$ref": "#/$defs/countOrUnknown"
+            },
+            "combined": {
+              "$ref": "#/$defs/countOrUnknown"
+            }
+          }
+        },
+        "missingData": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/missingData"
+          }
+        }
+      }
+    },
+    "criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minPairsPerPartition",
+        "minQualityGain",
+        "maxRegressions",
+        "rationale"
+      ],
+      "properties": {
+        "minPairsPerPartition": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minQualityGain": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "maxRegressions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rationale": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report",
+        "protocol",
+        "partitions",
+        "criteria"
+      ],
+      "properties": {
+        "report": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "partitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "discovery",
+            "control"
+          ],
+          "properties": {
+            "discovery": {
+              "$ref": "#/$defs/partitionSummary"
+            },
+            "control": {
+              "$ref": "#/$defs/partitionSummary"
+            }
+          }
+        },
+        "criteria": {
+          "$ref": "#/$defs/criteria"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "refs"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "verified",
+            "unverified",
+            "UNKNOWN"
+          ]
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewer",
+        "refs",
+        "exactBytesMatched",
+        "sourceVerified"
+      ],
+      "properties": {
+        "reviewer": {
+          "$ref": "#/$defs/scalarOrUnknown"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "exactBytesMatched": {
+          "type": "boolean"
+        },
+        "sourceVerified": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

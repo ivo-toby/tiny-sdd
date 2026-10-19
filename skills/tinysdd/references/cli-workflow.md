@@ -956,3 +956,14 @@ selected worker profile instructions field. Moving the guidance into a brief is
 a different, untested intervention. Do not feed its control results back into preparation or worker
 prompts. Approval, independent review, qualification and feature acceptance keep
 their existing meaning. Full contracts: `docs/instruction-experiments.md`.
+
+The [shareable model-instruction library](../../../profiles/instructions/README.md)
+contains manually reviewed, versioned entries scoped to an exact model,
+configuration, role and settings identity. Read the entry's
+[evidence card](../../../profiles/instructions/evidence-card.schema.json),
+match model/version or `UNKNOWN`, quantization, server, thinking and
+token/context limits, suite/source identity and worker role, then select the
+existing `worker.profile` deliberately. Inspect `config show` and `worker
+settings` before the run and retain the baseline or previous version for
+rollback. There is no catalog, automatic routing, activation or promotion; a
+different configuration needs a new controlled experiment.

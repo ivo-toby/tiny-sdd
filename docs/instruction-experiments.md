@@ -189,6 +189,23 @@ control report or hidden evidence into a worker prompt. A later version requires
 the earlier version or baseline A. No automatic installation, promotion or
 historical rewrite occurs.
 
+## Shareable instruction-profile entries
+
+The repository's [shareable profile library](../profiles/instructions/README.md)
+contains manually reviewed entries only. Each entry is scoped to one exact
+model, serving configuration, worker role and version, and contains a baseline,
+an optional candidate and a digest-bound
+[evidence card](../profiles/instructions/evidence-card.schema.json). The card
+records the exact instruction hashes and settings/source/suite identities; it
+does not publish prompts, traces, credentials or held-out answers.
+
+Read the card before selecting an entry. Match the model version or `UNKNOWN`,
+quantization, server, thinking and token/context limits, suite/source identity
+and worker role exactly. Select the existing worker `profile` explicitly, inspect
+`config show` and `worker settings`, and keep the reviewed baseline or preceding
+version available for rollback. The library has no catalog, automatic routing,
+activation or promotion; a different configuration requires a new experiment.
+
 Run `node scripts/run-instruction-example.mjs --out /absolute/new-directory`
 to retain a complete synthetic example, including exact requests, prompts,
 patches, independently executed verifier logs, plan, report and reviewed profile.
