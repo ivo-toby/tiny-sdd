@@ -199,9 +199,11 @@ an optional candidate and a digest-bound
 records the exact instruction hashes and settings/source/suite identities; it
 does not publish prompts, traces, credentials or held-out answers.
 
-Read the card before selecting an entry. Match the model version or `UNKNOWN`,
-quantization, server, thinking and token/context limits, suite/source identity
-and worker role exactly. After matching the recorded profile SHA-256, copy the
+Read the card before selecting an entry. Match the model version, quantization,
+server, thinking and token/context limits, suite/source identity and worker role
+exactly. An `UNKNOWN` model or server field is missing identity and remains an
+applicability confound; it does not establish a backend match. After matching
+the recorded profile SHA-256, copy the
 selected runtime-profile JSON into a fresh project-relative path such as
 `preparation-profiles/qwen36-v1.json`, then select that path on the existing
 worker's `profile` explicitly. Inspect `config show` and `worker settings`, and
