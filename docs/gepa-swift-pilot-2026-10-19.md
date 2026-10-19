@@ -1,6 +1,6 @@
 # GEPA + Swift technical pilot — 19 October 2026
 
-Status: preparation verified; the first Swift attempt stopped on an inference request timeout and is excluded from model-quality comparisons. The GEPA retry is running through a reviewed streaming relay; no valid Swift quality result or Qwen reflection result has been reviewed yet. This report is a progress record, not evidence of a better profile.
+Status at 17:13 UTC: optimization is stopped. Swift produced one independently verified baseline repair with 4/6 tests passing; Qwen has made no instruction proposal and there is no A/B or final-task result. See the [raw baseline evidence](../research/gepa-swift-pilot/2026-10-19/swift-validation-baseline-v1/manifest.json). No better profile has been demonstrated.
 
 This experiment uses [GEPA](https://github.com/gepa-ai/gepa) 0.1.4 as an external Python research tool and existing [SWE-PolyBench Verified](https://github.com/amazon-science/SWE-PolyBench) tasks. GEPA changes only the `instructions` component. Swift implements; Titan Qwen3.6-35B proposes instruction changes. Normal TinySDD users acquire no Python or GEPA dependency.
 
@@ -63,3 +63,11 @@ The separate [Serverless validation fixture](../research/gepa-swift-pilot/2026-1
 The first fixture attempt was unavailable because its trusted tests create transient symlinks in the current directory. The new variant keeps the source fixture read-only and uses a writable tmpfs working directory linked to that fixture, with the original test command unchanged. The pinned parser receives a separate envelope with the actual upstream exit marker; raw command output remains unchanged. Both original failures and new executions remain retained.
 
 The public Serverless export contains 1,320 files and no Git history or reference patch. Native TinySDD filename filtering copies 1,310 of those files; the ten omissions are recorded and identical across both instruction arms. The independent oracle retains the full fixture.
+
+## First valid model baseline
+
+Swift completed the Serverless task in 142,074 ms and changed one implementation file. Its [exact patch](../research/gepa-swift-pilot/2026-10-19/swift-validation-baseline-v1/patch.diff) accepts every symbolic link as a file. The [raw test output](../research/gepa-swift-pilot/2026-10-19/swift-validation-baseline-v1/test-output.log) records four passes and two failures: dangling links and links to directories are incorrectly accepted. The strict task score is zero. This is one valid baseline attempt, not an instruction improvement.
+
+The first oracle invocation did not run because its helper lacked executable permission. The permission was corrected without changing helper bytes, and the identical retained patch was evaluated in a new directory without another model call. The original unavailable record remains unchanged. The [primary audit](../research/gepa-swift-pilot/2026-10-19/swift-validation-baseline-v1/primary-audit.json) binds the original worker result, patch and new oracle output; the published patch and test log are exact raw copies.
+
+The host relay also marked three streaming requests as failed, while the native worker recorded normal completion and a patch. That inconsistency is retained, rather than described as clean transport. It does not change the independently observed 4/6 test result. No Qwen reflection, optimized profile, A/B result or final evaluation existed at this checkpoint. The optimization process stopped at the unavailable oracle and must resume with the reviewed recovered score.

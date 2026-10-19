@@ -1,0 +1,43 @@
+{
+  "schema": "tinysdd-swift-validation-baseline-public-evidence-v1",
+  "role": "validation",
+  "candidate": "original generic instructions",
+  "candidate_sha256": "f69ad3c587e2c34dfb625aaadff1155737630c792bfa534b5a0f1bc2143e82fd",
+  "worker_outcome": "completed",
+  "passed": 4,
+  "failed": 2,
+  "joint_quality_score": 0,
+  "quality": "not_verified",
+  "valid_model_baseline": true,
+  "model_runs": 1,
+  "oracle_recovery_model_requests": 0,
+  "qwen_requests_so_far": 0,
+  "optimized_profiles_so_far": 0,
+  "ab_results_so_far": 0,
+  "final_evaluations_so_far": 0,
+  "original_oracle_failure": "Helper lacked executable permission; original unavailable record preserved. Same exact worker patch evaluated after permission-only correction.",
+  "transport_caveat": "Host relay recorded gateway-request-failed on three streamed requests although native worker completed. Do not infer clean transport or a causal latency improvement from this run.",
+  "raw_artifact_caveat": "Patch, raw Mocha output and primary audit are byte-identical copies. Worker evidence is an explicitly reduced view; full original result retained privately with its hash.",
+  "files": [
+    {
+      "path": "patch.diff",
+      "bytes": 498,
+      "sha256": "4e1a4227754a847c9aee4d0c9e4b835e602fa8e8b650a8af4ddbdf7729385c81"
+    },
+    {
+      "path": "primary-audit.json",
+      "bytes": 1313,
+      "sha256": "8a4bcc4d9d8bfffdd392373e3cc26c703e071b514b775a1542503d8302d8d132"
+    },
+    {
+      "path": "test-output.log",
+      "bytes": 4818,
+      "sha256": "37467b3bdf5fbe13ddc650f5ea5ea943b1b1b2da2970a0464c2602d99c10ca6f"
+    },
+    {
+      "path": "worker-evidence-view.json",
+      "bytes": 1972,
+      "sha256": "2ac67e3e2ffa5937ea09b0580619de6b392cb00d7df73c56a45ddcc134545976"
+    }
+  ]
+}

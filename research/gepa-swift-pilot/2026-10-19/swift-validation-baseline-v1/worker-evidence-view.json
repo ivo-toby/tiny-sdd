@@ -1,0 +1,83 @@
+{
+  "schema": "tinysdd-public-worker-evidence-view-v1",
+  "task": "serverless__serverless-7374",
+  "outcome": "completed",
+  "model": {
+    "provider": "litellm",
+    "id": "titan/llamacpp/swift15-q4km-128k"
+  },
+  "observed": {
+    "processTermination": {
+      "exitCode": 0,
+      "signal": null,
+      "spawnError": null,
+      "elapsedMs": 142074,
+      "directTestRuntime": false,
+      "stopRequested": false
+    },
+    "assistantTermination": {
+      "observed": true,
+      "stopReason": "stop",
+      "errorMessage": null
+    },
+    "usage": {
+      "input": 34,
+      "output": 557,
+      "cacheRead": 11255,
+      "cacheWrite": 0,
+      "reasoning": 140,
+      "totalTokens": 11846,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "usageScope": "final-assistant-message",
+    "cumulativeUsage": {
+      "assistantMessages": 5,
+      "input": 8435,
+      "output": 3415,
+      "reasoning": 2331,
+      "totalTokens": 46106
+    },
+    "toolCalls": 8,
+    "toolCallsByName": {
+      "read": 7,
+      "edit": 1
+    },
+    "writeCalls": 1,
+    "firstWriteAtMs": 120356,
+    "reads": 7,
+    "citedRereads": 0,
+    "repeatedReads": {},
+    "compactions": [],
+    "rawOutputBytes": 1027915
+  },
+  "changedPaths": [
+    {
+      "path": "lib/utils/fs/fileExistsSync.js",
+      "change": "modified",
+      "before": {
+        "kind": "file",
+        "sha256": "c6c0c13c63ef61fb41d5b4a04108276b7fc76bbc06bd0d5d5016ab1120c310dd",
+        "size": 234
+      },
+      "after": {
+        "kind": "file",
+        "sha256": "a4ed5a4d79fd7e169bc7c7336a161ae44606a187a7865fedea7b338f86a3b6e7",
+        "size": 260
+      }
+    }
+  ],
+  "scopeViolations": [],
+  "source_raw_result_sha256": "3084b18f0150e21b0b894f2fde99f11976bea017e983be629998385f2fa0bd34",
+  "view_omits": [
+    "absolute artifactPaths",
+    "model claims",
+    "routine warnings"
+  ],
+  "operator_acceptance": false
+}

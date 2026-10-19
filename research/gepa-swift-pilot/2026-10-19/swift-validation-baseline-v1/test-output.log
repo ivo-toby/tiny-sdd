@@ -1,0 +1,131 @@
+{
+  "stats": {
+    "suites": 3,
+    "tests": 6,
+    "passes": 4,
+    "pending": 0,
+    "failures": 2,
+    "start": "2026-10-19T17:08:03.804Z",
+    "end": "2026-10-19T17:08:03.820Z",
+    "duration": 16
+  },
+  "tests": [
+    {
+      "title": "should detect if a file exists",
+      "fullTitle": "#fileExistsSync() When reading a file should detect if a file exists",
+      "duration": 2,
+      "currentRetry": 0,
+      "err": {}
+    },
+    {
+      "title": "should detect if a file doesn't exist",
+      "fullTitle": "#fileExistsSync() When reading a file should detect if a file doesn't exist",
+      "duration": 0,
+      "currentRetry": 0,
+      "err": {}
+    },
+    {
+      "title": "should detect if the file exists",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file exists",
+      "duration": 1,
+      "currentRetry": 0,
+      "err": {}
+    },
+    {
+      "title": "should detect if the file doesn't exist w/ bad symlink",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file doesn't exist w/ bad symlink",
+      "duration": 2,
+      "currentRetry": 0,
+      "err": {
+        "message": "expected true to equal false",
+        "showDiff": true,
+        "actual": "true",
+        "expected": "false",
+        "operator": "strictEqual",
+        "stack": "AssertionError: expected true to equal false\n    at Context.<anonymous> (/testbed/lib/utils/fs/fileExistsSync.test.js:32:24)\n    at processTicksAndRejections (node:internal/process/task_queues:78:11)"
+      }
+    },
+    {
+      "title": "should detect if the file doesn't exist w/ symlink to dir",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file doesn't exist w/ symlink to dir",
+      "duration": 0,
+      "currentRetry": 0,
+      "err": {
+        "message": "expected true to equal false",
+        "showDiff": true,
+        "actual": "true",
+        "expected": "false",
+        "operator": "strictEqual",
+        "stack": "AssertionError: expected true to equal false\n    at Context.<anonymous> (/testbed/lib/utils/fs/fileExistsSync.test.js:39:24)\n    at processTicksAndRejections (node:internal/process/task_queues:78:11)"
+      }
+    },
+    {
+      "title": "should detect if the file doesn't exist",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file doesn't exist",
+      "duration": 0,
+      "currentRetry": 0,
+      "err": {}
+    }
+  ],
+  "pending": [],
+  "failures": [
+    {
+      "title": "should detect if the file doesn't exist w/ bad symlink",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file doesn't exist w/ bad symlink",
+      "duration": 2,
+      "currentRetry": 0,
+      "err": {
+        "message": "expected true to equal false",
+        "showDiff": true,
+        "actual": "true",
+        "expected": "false",
+        "operator": "strictEqual",
+        "stack": "AssertionError: expected true to equal false\n    at Context.<anonymous> (/testbed/lib/utils/fs/fileExistsSync.test.js:32:24)\n    at processTicksAndRejections (node:internal/process/task_queues:78:11)"
+      }
+    },
+    {
+      "title": "should detect if the file doesn't exist w/ symlink to dir",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file doesn't exist w/ symlink to dir",
+      "duration": 0,
+      "currentRetry": 0,
+      "err": {
+        "message": "expected true to equal false",
+        "showDiff": true,
+        "actual": "true",
+        "expected": "false",
+        "operator": "strictEqual",
+        "stack": "AssertionError: expected true to equal false\n    at Context.<anonymous> (/testbed/lib/utils/fs/fileExistsSync.test.js:39:24)\n    at processTicksAndRejections (node:internal/process/task_queues:78:11)"
+      }
+    }
+  ],
+  "passes": [
+    {
+      "title": "should detect if a file exists",
+      "fullTitle": "#fileExistsSync() When reading a file should detect if a file exists",
+      "duration": 2,
+      "currentRetry": 0,
+      "err": {}
+    },
+    {
+      "title": "should detect if a file doesn't exist",
+      "fullTitle": "#fileExistsSync() When reading a file should detect if a file doesn't exist",
+      "duration": 0,
+      "currentRetry": 0,
+      "err": {}
+    },
+    {
+      "title": "should detect if the file exists",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file exists",
+      "duration": 1,
+      "currentRetry": 0,
+      "err": {}
+    },
+    {
+      "title": "should detect if the file doesn't exist",
+      "fullTitle": "#fileExistsSync() When reading a symlink to a file should detect if the file doesn't exist",
+      "duration": 0,
+      "currentRetry": 0,
+      "err": {}
+    }
+  ]
+}

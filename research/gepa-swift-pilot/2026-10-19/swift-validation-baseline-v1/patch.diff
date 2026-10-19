@@ -1,0 +1,13 @@
+diff --git workspace-before/lib/utils/fs/fileExistsSync.js workspace-after/lib/utils/fs/fileExistsSync.js
+index 147300e..648f4e5 100644
+--- workspace-before/lib/utils/fs/fileExistsSync.js
++++ workspace-after/lib/utils/fs/fileExistsSync.js
+@@ -5,7 +5,7 @@ const fse = require('./fse');
+ function fileExistsSync(filePath) {
+   try {
+     const stats = fse.lstatSync(filePath);
+-    return stats.isFile();
++    return stats.isFile() || stats.isSymbolicLink();
+   } catch (e) {
+     return false;
+   }
