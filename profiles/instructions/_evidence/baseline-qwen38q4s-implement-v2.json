@@ -1,0 +1,104 @@
+{
+  "baseline": {
+    "cases": 14,
+    "heldOutStatuses": {
+      "failed": 1,
+      "passed": 13
+    },
+    "instructionsEmpty": true,
+    "invocations": 2,
+    "outcomes": {
+      "completed": 13,
+      "failed": 1
+    },
+    "sameSuiteAndSettings": true,
+    "visibleStatuses": {
+      "failed": 1,
+      "passed": 13
+    }
+  },
+  "comparison": {
+    "candidateEfficacyClaim": false,
+    "reason": "The preregistered matching-failure gate was not met.",
+    "status": "not-run"
+  },
+  "identities": {
+    "settings": {
+      "path": "profiles/instructions/_evidence/settings-qwen38q4s-baseline-v2.json",
+      "sha256": "22d2fc4d6b38ba927163135221c65c9397db55bffba2eda30b668f6052b4cd68"
+    },
+    "source": {
+      "path": "profiles/instructions/_evidence/source-qwen38q4s-baseline-v2.json",
+      "sha256": "e73d4efc310dca77d01e78752308255c15b68053120989bc018e8bbd3b448c34"
+    },
+    "suite": {
+      "path": "profiles/instructions/_evidence/suite-qwen38q4s-baseline-v2.json",
+      "sha256": "5cd61afbff6292c3fc07720ebc952ffd0651f10acbb763c9d6550956bb27ac38"
+    }
+  },
+  "kind": "tinysdd-instruction-baseline-evidence",
+  "limitations": [
+    "This standalone report contains baseline discovery evidence only; it is not an evidence card and does not promote the candidate.",
+    "The single named Ember failure is below the required two matching failures, so the decision remains inconclusive and baseline is retained.",
+    "No paired comparison, gain, regression, or candidate efficacy result was produced.",
+    "Results are finite frozen-oracle and fixture evidence and do not establish complete implementation correctness.",
+    "Primary review included exploratory exposure to control material; this is not blind or untouched qualification evidence.",
+    "Server metadata and thinking enforcement remain UNKNOWN; THINKING_CONTROL_MISMATCH is acknowledged.",
+    "Task, verifier, control, prompt, trace and credential material remains outside this package."
+  ],
+  "matchingFailureGate": {
+    "failureClass": "Ember",
+    "observed": 1,
+    "required": 2,
+    "supported": false
+  },
+  "modelKey": "qwen38q4s",
+  "recommendation": "keep-baseline",
+  "refs": {
+    "analysis": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/qwen38q4s-implement/discovery/analysis.json",
+      "sha256": "600142b26ccc13d50842dd7fa38a5486d62202f39aa516fa4ef8792bb4296305"
+    },
+    "discoveryComplete": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/qwen38q4s-implement/discovery/complete.json",
+      "sha256": "06786bf2ab062b7dc25801da3c60a2536b5b3e763882f176b89e09a558625c28"
+    },
+    "frozenV1Proposal": {
+      "path": "profiles/instructions/_evidence/proposal-qwen38q4s.json",
+      "sha256": "3abe9e7b16d82cdf0e1a41f8a33c100fdf45745236d64ccf78525ce0e064190f"
+    },
+    "mechanicalAudit": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-audits/baseline-qwen38q4s-implement-20261019T140449477434Z.json",
+      "sha256": "8d4c4445949877190f3ee3dae6498f268fc22b7a464a7ddbdc371e7b35ea879b"
+    },
+    "primarySourceReview": {
+      "namespace": "local-research-root",
+      "relativePath": "qwen38q4s-discovery-primary-source-review-v1.json",
+      "sha256": "200b7c12cf48e13c67b91ccc16c1f48c3c9fb2c659b47fcd16477555a3d3d2c4"
+    },
+    "proposalDecision": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/qwen38q4s-implement/proposal-decision.json",
+      "sha256": "3ba709d38a3c59ff800459aec995f440b0f58dfd93be4ab9f13a5ffbc2f93ace"
+    },
+    "retainedRunArchive": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/qwen38q4s-implement.tar",
+      "sha256": "23289dd3f6654fc9f2272db3cb7731b265786446c2b33cf74ae5945ec41059c9"
+    }
+  },
+  "review": {
+    "noInference": true,
+    "noScoreMutation": true,
+    "scope": "retained baseline evidence only",
+    "sourceCasePatchesRead": 14,
+    "syntaxChecks": 25,
+    "syntaxPassed": 25
+  },
+  "role": "implement-slice",
+  "schemaVersion": 1,
+  "state": "inconclusive"
+}

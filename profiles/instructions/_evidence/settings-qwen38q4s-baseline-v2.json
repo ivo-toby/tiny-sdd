@@ -1,0 +1,44 @@
+{
+  "acknowledgedFindings": [
+    "THINKING_CONTROL_MISMATCH"
+  ],
+  "actualDiscovery": {
+    "artifact": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/qwen38q4s-implement/discovery/relay-settings.json",
+      "sha256": "84dccf5c850eb0dda6548f6df1763d4221616ab1d2d94fffdb80e415d7b87def"
+    },
+    "invocations": 2,
+    "settingsDigest": "13e0bf71cd6c70f1ab4376e724a2a12c4267810c655196be776f94ed85915baa"
+  },
+  "kind": "tinysdd-instruction-settings-identity-export",
+  "modelKey": "qwen38q4s",
+  "preparedSettings": {
+    "artifact": {
+      "namespace": "local-research-root",
+      "relativePath": "instruction-evidence/qwen38q4s-implement/prepared-settings.json",
+      "sha256": "e9ac497ebf32f07ebcd9a3fd7cb8a01704a7d76b0369a08c153dbe6ceea895c1"
+    },
+    "isActualDiscoveryIdentity": false,
+    "settingsDigest": "4dcb623c0618ca39504854f1b051d7914947387dbcc3a463bf37a6b8b5b56df4"
+  },
+  "role": "implement-slice",
+  "schemaVersion": 1,
+  "settings": {
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "effectiveThinking": "medium",
+    "effectiveThinkingControl": "unverified",
+    "maxCheckRuns": 12,
+    "maxTokens": 16384,
+    "maxToolCalls": 100,
+    "model": "titan/llamacpp/qwen3.8-q4s-128k",
+    "provider": "litellm",
+    "requestedThinking": "medium",
+    "server": {
+      "id": "UNKNOWN",
+      "version": "UNKNOWN"
+    },
+    "timeoutMs": 600000
+  }
+}

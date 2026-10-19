@@ -18,7 +18,7 @@ independent review and the completed-card requirements below.
 
 The library currently contains 14 evidence cards and 28 runtime profiles. Seven
 proposal cards remain, including historical versions; four current model entries
-await results. The qwen36, north, swift, qwenpi, thinkingcap and qwen38q3 rows
+await candidate-comparison results. The qwen36, north, swift, qwenpi, thinkingcap and qwen38q3 rows
 record completed exploratory pilots with inconclusive strict-control applicability;
 their cards retain the measured reports and review boundaries below.
 
@@ -42,6 +42,8 @@ QwenPi history: [v2 blind3](qwenpi/titan-llamacpp-qwen3_8-pi-q4km-128k/write-tes
 North history: [v2 recovered pilot](north/titan-llamacpp-north-mini-code-128k/implement-slice/v2/evidence-card.json) is the latest reviewed entry; [v1 proposal](north/titan-llamacpp-north-mini-code-128k/implement-slice/v1/evidence-card.json) remains immutable. The raw comparison state is `regressed` with recommendation `keep A`; the published card is `inconclusive` with `gather-more` because prior control exposure makes this an exploratory comparison. The baseline is retained. Finite oracle coverage follow-ups are tracked in [#145](https://github.com/ivo-toby/tiny-sdd/issues/145) and [#141](https://github.com/ivo-toby/tiny-sdd/issues/141).
 
 Swift history: [v2 exploratory pilot](swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v2/evidence-card.json) is the latest reviewed entry; [v1 proposal](swift/titan-llamacpp-swift15-q4km-128k/implement-slice/v1/evidence-card.json) remains immutable. The raw comparison improved recorded discovery quality from 2/4 to 4/4 and aggregate quality from 12/14 to 14/14, while both control partitions were already 10/10, so the predeclared control-gain criterion was not met; the raw state remains `no-improvement` with recommendation `keep A`, and the baseline is retained. The published card is `inconclusive` with `gather-more` because prior control-source exposure prevents a strict blinded transfer claim. A corrected posthoc probe found a valid array-backed-store contract gap; oracle coverage and fresh independent controls are tracked in [#146](https://github.com/ivo-toby/tiny-sdd/issues/146) and [#126](https://github.com/ivo-toby/tiny-sdd/issues/126).
+
+Qwen38Q4S baseline: [standalone baseline evidence](_evidence/baseline-qwen38q4s-implement-v2.json) records 14 cases across two empty-instruction invocations: 13 passed and 1 failed under both visible and held-out checks. Only one matching Ember failure was observed, fewer than the required two; A/B was not run, candidate v1 remains proposed and untested, and the baseline is kept.
 
 ## Entry layout
 

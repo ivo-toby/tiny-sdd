@@ -1,0 +1,16 @@
+{
+  "kind": "tinysdd-instruction-source-identity-export",
+  "modelKey": "qwen38q4s",
+  "provenance": "sanitized source identity; source contents are not exported",
+  "repository": "ivo-toby/tiny-sdd",
+  "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "role": "implement-slice",
+  "schemaVersion": 1,
+  "sourceAudit": {
+    "namespace": "local-research-root",
+    "relativePath": "instruction-evidence/qwen38q4s-implement/source-audit.json",
+    "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+  },
+  "sourceTreeEntries": 53,
+  "sourceTreeSha256": "eb8dcf1e1f3837dd2c4211ad7bccd02cce9ded53eff9812096cde02f60648e08"
+}
