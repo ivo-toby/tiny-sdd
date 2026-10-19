@@ -28,6 +28,10 @@ B='node bench/polyglot/cli.mjs'
 inject_keys "$B status --run main" HOMELAB_AI_GATEWAY_API_KEY JEV_API_KEY
 ```
 
+**Before starting anything, check what is already running:**
+`pgrep -af "cli.mjs run"`. Never start a second process for a host that
+already has one.
+
 Long runs go in the background with a log, one process per host (Titan and
 randal are different machines, so they run at the same time):
 
@@ -47,10 +51,10 @@ reference solution fails are excluded automatically.
 
 ## Phase 1 — baseline (all models, 1 repeat)
 
-```sh
-$B init --run main --models all --repeats 1
-# start the two background runs (see above)
-```
+Run `main` was initialized and both host processes were started on
+2026-10-19 by the operator's setup session. Do **not** run `init` again. Only
+monitor; restart a host process (see above) if `pgrep` shows it is gone and
+`status` still has open entries for that host.
 
 When `status` shows every baseline entry done: `$B report --run main` and read
 `<run>/report.md`. Write a short ranking (pass@2 per model, per language) in
