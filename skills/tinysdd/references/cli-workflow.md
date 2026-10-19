@@ -480,7 +480,9 @@ Existing config is preserved: edit it deliberately to add named workers.
 Optional `.tinysdd/config.local.json` replaces entire workers by name; it does
 not deep-merge partial worker fields. Inspect effective configuration before
 dispatch. Copy a suitable profile into the project and set its relative path
-on the selected worker when needed. Profiles do not include credentials.
+on the selected worker when needed. Profile `instructions` may be an explicitly
+empty string for an empty baseline; non-string values remain invalid. Profiles
+do not include credentials.
 
 If a worker omits `limits.timeoutMs` or `limits.maxToolCalls`, the effective
 defaults are 600000 ms (10 minutes) and 100 tool calls. `limits.maxCheckRuns`

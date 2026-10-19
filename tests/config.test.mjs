@@ -138,6 +138,33 @@ test('local config replaces named workers as a whole and records sources', async
   }
 });
 
+test('profiles retain an explicitly empty instructions baseline', async () => {
+  const root = await project();
+  const writeProfile = (instructions) => writeFile(join(root, 'profile.json'), JSON.stringify({
+    schemaVersion: 1,
+    id: 'empty-baseline',
+    instructions,
+  }));
+  try {
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'qwen',
+      workers: { qwen: { type: 'pi', provider: 'titan', model: 'qwen', profile: 'profile.json' } },
+    }));
+    await writeProfile('');
+    const resolved = await resolveConfig(root);
+    assert.deepEqual(resolved.profile, { schemaVersion: 1, id: 'empty-baseline', instructions: '' });
+    assert.equal(Object.hasOwn(resolved.profile, 'instructions'), true);
+
+    for (const instructions of [null, 42, [], {}]) {
+      await writeProfile(instructions);
+      await assert.rejects(resolveConfig(root), { code: 'CONFIG_INVALID' });
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('rejects unknown, null, unsupported, and out-of-range config values', () => {
   assert.throws(() => validateConfigDocument({ schemaVersion: 1, workers: {}, extra: true }), { code: 'CONFIG_INVALID' });
   assert.throws(() => validateConfigDocument({ schemaVersion: 1, workers: null }), { code: 'CONFIG_INVALID' });
