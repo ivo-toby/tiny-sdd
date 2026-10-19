@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "implement-slice-v1",
-  "version": "2026-10-18.1",
+  "version": "2026-10-19.1",
   "challenges": [
     {
       "path": "challenges/copper-tokenize.json",
@@ -33,7 +33,7 @@
     },
     {
       "path": "challenges/ember-option-api.json",
-      "sha256": "450574d9d8cb16f507621b6d95d09c161fc94036f757ff0b37917a7cf3709284"
+      "sha256": "c9e0c35d9468d3af08f9b643b2c99a1d9e82f97587c33744e3be72bbc3a99da8"
     },
     {
       "path": "challenges/linen-retry-lint.json",

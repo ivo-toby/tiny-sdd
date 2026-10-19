@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "ember-option-api",
-  "version": "1",
+  "version": "2",
   "role": "implement-slice",
   "difficultyTags": [
     "library-api-trap",
@@ -9,7 +9,7 @@
   ],
   "fixture": {
     "path": "fixtures/ember-option-api",
-    "sha256": "7d4b50a85726badf544c29f77ce7dba4be46deed68e7c4c96754d1725132aa8b"
+    "sha256": "4983f70dabd06b07c273e3b13e4d2f8cd1c5a54544ad17fd45dd035f1b32c0a6"
   },
   "packet": {
     "brief": {

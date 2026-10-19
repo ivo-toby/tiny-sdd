@@ -675,7 +675,12 @@ held-out verifier material outside the fixture, and covers Cedar's valid zero
 amount in visible and independent checks. Its positive-only Cedar audit mutant
 must fail the independent zero-boundary check; the affected challenge and
 suite versions and digests therefore identify a new benchmark identity, while
-historical results stay attached to the old identity.
+historical results stay attached to the old identity. Ember's protected and
+independent checks cover present `undefined`, `false`, `0`, an empty string and
+`null`, first-match order and no match. Its reference branches on `isSome` so
+the retained nullish-fallback mutant fails the named independent
+`held-out-value` check. Earlier Ember pilot results used the old oracle and
+remain historical evidence for that prior identity.
 
 The write-tests suite at `bench/write-tests-suite` runs five contract-test
 challenges. Its visible check evaluates the submitted bytes against the
