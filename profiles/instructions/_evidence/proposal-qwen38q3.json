@@ -21,11 +21,12 @@
     "baseline": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625",
     "candidate": "a38b6fd18e65066b09c2e2f3912e1bc6275e9942dfb8770ea7c31b2ba944eacf"
   },
-  "runtimeCanonicalSettingsDigest": "2ff2f15b57d98d4b9fdf3ce986d6b37bc50474c07cdefa3175f54ecbb504a689",
+  "preparedSettingsDigest": "2ff2f15b57d98d4b9fdf3ce986d6b37bc50474c07cdefa3175f54ecbb504a689",
   "provenance": {
     "source": "frozen proposal summary; no efficacy evidence",
-    "originalArtifactSha256": "2b72b00b3a1ac66495221b00ccd5395b353f05ab28825c5d64410281e439ed62",
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "9a2608a7d5a9a7a3f9658a4f917cf5fced6fc39431a3488756f561660f0483cd"
+    "originalMetadata": {
+      "filename": "candidate-write-tests-frozen-v2.json",
+      "sha256": "2b72b00b3a1ac66495221b00ccd5395b353f05ab28825c5d64410281e439ed62"
+    }
   }
 }

@@ -27,14 +27,25 @@
     "version": "UNKNOWN"
   },
   "provenance": {
-    "source": "retained prepared settings metadata",
-    "originalArtifacts": {
-      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
-      "preparedSettings": "79ac7ca5192f62cb7e18f0268663627f7949e529ea6508774a4daea9f08aaf94",
-      "confirmedUpstreamSettings": "15b408ea9a67767818e9d21c7e8eeeadfcf291f3c5d378c764085f62ceb87578",
-      "wireMetadata": "63596a35674a52a69ca3b64b9d0788f8620c2f3f00d432f3939dee5f2180a753"
-    },
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "c8c0c906afe252a7e5ed0f28dccecab2b839be32ed79c50707c478734ad2be1f"
+    "source": "retained source-02 prepared research metadata",
+    "originalMetadata": {
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/protocol.json",
+        "sha256": "1638b084f7a89a6153419d1bf4d386e292b2cee2feab2a0627518bf7664085e4"
+      },
+      "sourceAudit": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "profile": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/profile-medium.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "preparedSettings": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/prepared-settings.json",
+        "sha256": "79ac7ca5192f62cb7e18f0268663627f7949e529ea6508774a4daea9f08aaf94"
+      }
+    }
   }
 }

@@ -27,14 +27,25 @@
     "version": "UNKNOWN"
   },
   "provenance": {
-    "source": "retained prepared settings metadata",
-    "originalArtifacts": {
-      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
-      "preparedSettings": "8a81134a7182644c187e6ecf1b51b2ca79b1f220c9df4fbd667ec2a3f9813bef",
-      "confirmedUpstreamSettings": "6bc2759fe2782d969bbbbebc841945410c7b8b1e9be10406432fb5d3182317d6",
-      "wireMetadata": "d216ffc91e5234fcd91b07b5d213fc04b0330e46280cd7dda15cfd2ddbb44ade"
-    },
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "78558476d9c077eeb990f0ac6a77bc9acee7d2e919ea8b32c373a59054dbeb49"
+    "source": "retained source-02 prepared research metadata",
+    "originalMetadata": {
+      "researchRoot": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests",
+      "protocol": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/protocol.json",
+        "sha256": "bdd124e570a938bcf9e902d42370058a641ca12f9dbc30e6f1f16f4166bb8816"
+      },
+      "sourceAudit": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "profile": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/profile-medium.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "preparedSettings": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/prepared-settings.json",
+        "sha256": "8a81134a7182644c187e6ecf1b51b2ca79b1f220c9df4fbd667ec2a3f9813bef"
+      }
+    }
   }
 }

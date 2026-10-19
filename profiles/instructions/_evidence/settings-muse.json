@@ -27,14 +27,25 @@
     "version": "UNKNOWN"
   },
   "provenance": {
-    "source": "retained prepared settings metadata",
-    "originalArtifacts": {
-      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
-      "preparedSettings": "3f309efb2196b0254f4e6c58e3f78f4358eed8280f25a560e104984a8bd594f5",
-      "confirmedUpstreamSettings": "d930179b4a1634795c84f180d4ca2d95cc07327bfe8829986b1864c93cad0834",
-      "wireMetadata": "46ebe51ec0866f83f0dc307a33e8aaf7c89c306050076785ebe8469e604b0dcf"
-    },
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "a70fc1263da1746ff35bae0a17aa90f4dcf1080d05272d3c284f1f50b4126207"
+    "source": "retained source-02 prepared research metadata",
+    "originalMetadata": {
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/protocol.json",
+        "sha256": "ed465bf069584533897878d8ab61dcbb8352c01928b1c521412c355a1c31d041"
+      },
+      "sourceAudit": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "profile": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/profile-medium.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "preparedSettings": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/prepared-settings.json",
+        "sha256": "3f309efb2196b0254f4e6c58e3f78f4358eed8280f25a560e104984a8bd594f5"
+      }
+    }
   }
 }

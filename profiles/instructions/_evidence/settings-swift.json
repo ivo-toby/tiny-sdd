@@ -27,14 +27,25 @@
     "version": "UNKNOWN"
   },
   "provenance": {
-    "source": "retained prepared settings metadata",
-    "originalArtifacts": {
-      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
-      "preparedSettings": "c42ed0d43bc63f52d49a0fcca350616914c7fb929eb5a2001d886d92728285bc",
-      "confirmedUpstreamSettings": "cb61528a3cb7f9c2c7f9f7bbf2173bbc593d8108be996c9a2012ec6422421a29",
-      "wireMetadata": "a49e060b8def100d0fb790454cad9531345d2910dc46e48c0ffdca78d68c96f1"
-    },
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "c15620e47a64ab60027167cd99e1662f66543ecfb5e9cf543be998db7f545a80"
+    "source": "retained source-02 prepared research metadata",
+    "originalMetadata": {
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/protocol.json",
+        "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+      },
+      "sourceAudit": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "profile": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/profile-medium.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "preparedSettings": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/prepared-settings.json",
+        "sha256": "c42ed0d43bc63f52d49a0fcca350616914c7fb929eb5a2001d886d92728285bc"
+      }
+    }
   }
 }

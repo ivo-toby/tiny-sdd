@@ -17,13 +17,13 @@
       "repository": "ivo-toby/tiny-sdd",
       "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
       "path": "profiles/instructions/_evidence/source-02c661d.json",
-      "sha256": "9165877db856014575293a7541ba9047f0998a71d9e6edd5e3e4a86f09d932fa"
+      "sha256": "e6c23a3d98bf34d3055a2e8c5823095106746ce9563590980c9d70ca3bbef9bf"
     },
     "suite": {
-      "id": "model-study-write-tests-v1",
-      "version": "2026-10-19.2",
+      "id": "instruction-write-tests-expanded-v2",
+      "version": "2026-10-19.expanded-v3-writing-discovery",
       "path": "profiles/instructions/_evidence/suite-write-tests-2026-10-19.json",
-      "sha256": "8c7d81df1617b116d1c2ee66db5b4d93a4f3d60b6192f0947f6563ac849c88eb"
+      "sha256": "68951428441bc019fd78c1c3c1974db77376bb5ea5fd1d5fa60c99a472cacb39"
     },
     "profiles": {
       "baseline": {
@@ -38,11 +38,11 @@
     "settings": {
       "baseline": {
         "path": "profiles/instructions/_evidence/settings-qwenpi.json",
-        "sha256": "4b73be099ed967a4186ac653babc27e0f0855af9beb276223ee054dd39512cf0"
+        "sha256": "61b58ccf0b67d6f092f4a90b16a8e191e78572ab49174979f6c4d377d49ae206"
       },
       "candidate": {
         "path": "profiles/instructions/_evidence/settings-qwenpi.json",
-        "sha256": "4b73be099ed967a4186ac653babc27e0f0855af9beb276223ee054dd39512cf0"
+        "sha256": "61b58ccf0b67d6f092f4a90b16a8e191e78572ab49174979f6c4d377d49ae206"
       }
     }
   },
@@ -71,7 +71,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/proposal-qwenpi.json",
-        "sha256": "80ce6b387241871ec1263a662fbf4aae65c0c960615ee65cec072894f17d7277"
+        "sha256": "3e082aff2a950d7930a777f4a1b6f4879956700552e79facd3e9e9a87581d091"
       }
     ]
   },

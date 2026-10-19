@@ -1,14 +1,88 @@
 {
   "schemaVersion": 1,
   "kind": "tinysdd-suite-identity-export",
-  "id": "model-study-write-tests-v1",
-  "version": "2026-10-19.2",
+  "id": "instruction-write-tests-expanded-v2",
+  "version": "2026-10-19.expanded-v3-writing-discovery",
   "role": "write-tests",
   "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "suiteSha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d",
+  "preparedMetadata": [
+    {
+      "modelKey": "qwenpi",
+      "researchRoot": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests",
+      "protocol": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/protocol.json",
+        "sha256": "2abf229d7d2474b6336b8adb1d14a10d8e27531f90e8247336b7e32c74cbb9cb"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+      }
+    },
+    {
+      "modelKey": "thinkingcap",
+      "researchRoot": "instruction-research-02-20261019T082213Z/instruction-thinkingcap-write-tests",
+      "protocol": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-thinkingcap-write-tests/protocol.json",
+        "sha256": "feab797a2d6e2a87bdbb6f4bfdb74d8d8170879ab27aa91bc15aff73c4cece10"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+      }
+    },
+    {
+      "modelKey": "qwen38q3",
+      "researchRoot": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests",
+      "protocol": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/protocol.json",
+        "sha256": "bdd124e570a938bcf9e902d42370058a641ca12f9dbc30e6f1f16f4166bb8816"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+      }
+    }
+  ],
   "provenance": {
-    "source": "retained public suite identity metadata",
-    "originalArtifactSha256": "cc02229770af49e1e39fdea6f4da1695c37ad99107351d2f85a2cd7a01c15e42",
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "18d86697ce2b2aec758d226cd88d993588511d15133ff5eced1e4c222fb34baa"
+    "source": "retained source-02 prepared protocol metadata",
+    "originalMetadata": [
+      {
+        "modelKey": "qwenpi",
+        "researchRoot": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests",
+        "protocol": {
+          "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/protocol.json",
+          "sha256": "2abf229d7d2474b6336b8adb1d14a10d8e27531f90e8247336b7e32c74cbb9cb"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+        }
+      },
+      {
+        "modelKey": "thinkingcap",
+        "researchRoot": "instruction-research-02-20261019T082213Z/instruction-thinkingcap-write-tests",
+        "protocol": {
+          "filename": "instruction-research-02-20261019T082213Z/instruction-thinkingcap-write-tests/protocol.json",
+          "sha256": "feab797a2d6e2a87bdbb6f4bfdb74d8d8170879ab27aa91bc15aff73c4cece10"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+        }
+      },
+      {
+        "modelKey": "qwen38q3",
+        "researchRoot": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests",
+        "protocol": {
+          "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/protocol.json",
+          "sha256": "bdd124e570a938bcf9e902d42370058a641ca12f9dbc30e6f1f16f4166bb8816"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "1c342b79883c36e92f03a41981fe30942af4aefdb54c2d4f0bfe8d7afef0065d"
+        }
+      }
+    ]
   }
 }

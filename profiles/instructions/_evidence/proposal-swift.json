@@ -21,11 +21,12 @@
     "baseline": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625",
     "candidate": "ec262e77077d8d49172746504cd12eb2c9754b730a3bdca6439af5e01a6f9971"
   },
-  "runtimeCanonicalSettingsDigest": "a49bcb1483ead810e939d6984952ca21beeb6ce35a8b71e710ff9243befe5ccb",
+  "preparedSettingsDigest": "a49bcb1483ead810e939d6984952ca21beeb6ce35a8b71e710ff9243befe5ccb",
   "provenance": {
     "source": "frozen proposal summary; no efficacy evidence",
-    "originalArtifactSha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0",
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "679c1728cdd64b3e09adcbc7ff4bf86714e241a464756f2d0974277933d8b4dd"
+    "originalMetadata": {
+      "filename": "candidate-prompts-frozen-v2.json",
+      "sha256": "711452d860e419234423c1167c9f8c53e09f1114035ffde5acf3b45cc7c8f5d0"
+    }
   }
 }

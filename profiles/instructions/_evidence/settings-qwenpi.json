@@ -27,14 +27,25 @@
     "version": "UNKNOWN"
   },
   "provenance": {
-    "source": "retained prepared settings metadata",
-    "originalArtifacts": {
-      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
-      "preparedSettings": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a",
-      "confirmedUpstreamSettings": "149005a450d8cf291cb2473422aab3e48c10921a093648c0337bb1d97d639078",
-      "wireMetadata": "05df75b14113de728b4ed1c7bb4c222dbdb11371df67c673c6082e00966e34a4"
-    },
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "232ba54dddce7bc16ad9df71918990c230f48ad1d0d67f1b471e80d2522e10ed"
+    "source": "retained source-02 prepared research metadata",
+    "originalMetadata": {
+      "researchRoot": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests",
+      "protocol": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/protocol.json",
+        "sha256": "2abf229d7d2474b6336b8adb1d14a10d8e27531f90e8247336b7e32c74cbb9cb"
+      },
+      "sourceAudit": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "profile": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/profile-medium.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "preparedSettings": {
+        "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/prepared-settings.json",
+        "sha256": "f0167251c156895bc2113ce9bd8199d393399c97712e27ac8097e028ba28d23a"
+      }
+    }
   }
 }

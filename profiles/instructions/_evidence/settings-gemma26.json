@@ -27,14 +27,25 @@
     "version": "UNKNOWN"
   },
   "provenance": {
-    "source": "retained prepared settings metadata",
-    "originalArtifacts": {
-      "profileMedium": "9a43bf107db659fc75fdbbd6845a18e9957b64820055560cbed1d9935d0fd361",
-      "preparedSettings": "4322ad2b10c8f913c350483b08d3713b165bdbb23e022e2637a6e1f9eba2ddfe",
-      "confirmedUpstreamSettings": "90579d7dc4af6cf85716f6cf2f63d8756afa39832551d70bacbbd6da535f320d",
-      "wireMetadata": "f010b10c447250cce1c0a0fe172ccc169c42018d684f81971971b0ed847e35ad"
-    },
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "916defee516cf469db09d930673cef4df2a104570ab2308b3abc9865d97aab35"
+    "source": "retained source-02 prepared research metadata",
+    "originalMetadata": {
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/protocol.json",
+        "sha256": "74c8fec6946cbd61bec6036af99fef9b597a76f2506809ba3a5adf590b6c53df"
+      },
+      "sourceAudit": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/source-audit.json",
+        "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+      },
+      "profile": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/profile-medium.json",
+        "sha256": "74830e939af5eeabfac408119ab258e0f3c87ececcdd3c04d84a95718791e625"
+      },
+      "preparedSettings": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/prepared-settings.json",
+        "sha256": "4322ad2b10c8f913c350483b08d3713b165bdbb23e022e2637a6e1f9eba2ddfe"
+      }
+    }
   }
 }

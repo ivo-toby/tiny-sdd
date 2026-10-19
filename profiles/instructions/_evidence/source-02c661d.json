@@ -5,9 +5,64 @@
   "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
   "sourceArchiveSha256": "dba24c3134fa1e88cc418cda4439bfe2b2f8406e6d9a74aadb5e145d71530c9d",
   "provenance": {
-    "source": "retained prepared source metadata",
-    "originalArtifactSha256": "dba24c3134fa1e88cc418cda4439bfe2b2f8406e6d9a74aadb5e145d71530c9d",
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "f996081b3ad48736bd458cdbdbcb9827f4fb22db2da4f1431693fc7368258a25"
+    "source": "retained source-02 prepared metadata",
+    "originalMetadata": {
+      "sourceArchive": {
+        "filename": "source-02c661d.tar",
+        "sha256": "dba24c3134fa1e88cc418cda4439bfe2b2f8406e6d9a74aadb5e145d71530c9d"
+      },
+      "sourceAudits": [
+        {
+          "modelKey": "qwen36",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "north",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-north-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "swift",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "qwen38q4s",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen38q4s-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "muse",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "gemma26",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "gemma12",
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma12-implement/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "qwenpi",
+          "filename": "instruction-research-02-20261019T082213Z/instruction-qwenpi-write-tests/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "thinkingcap",
+          "filename": "instruction-research-02-20261019T082213Z/instruction-thinkingcap-write-tests/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        },
+        {
+          "modelKey": "qwen38q3",
+          "filename": "instruction-research-02-20261019T082213Z/instruction-qwen38q3-write-tests/source-audit.json",
+          "sha256": "3e1f5cb3d70641a9f9905c4e7230fd99a4df2462c547bca3aa476b952eead3cc"
+        }
+      ]
+    }
   }
 }

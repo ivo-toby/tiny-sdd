@@ -1,14 +1,184 @@
 {
   "schemaVersion": 1,
   "kind": "tinysdd-suite-identity-export",
-  "id": "model-study-implement-v1",
-  "version": "2026-10-19.2",
+  "id": "instruction-implement-expanded-v2",
+  "version": "2026-10-19.sparse-visible-presence-transfer-v2",
   "role": "implement-slice",
   "sourceRevision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
+  "suiteSha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35",
+  "preparedMetadata": [
+    {
+      "modelKey": "qwen36",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/protocol.json",
+        "sha256": "1638b084f7a89a6153419d1bf4d386e292b2cee2feab2a0627518bf7664085e4"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    },
+    {
+      "modelKey": "north",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-north-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-north-implement/protocol.json",
+        "sha256": "5c31daa6aeeea01fe6143b058716368b483c7ae6f06a3c010e8931f7c1b49e1a"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    },
+    {
+      "modelKey": "swift",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/protocol.json",
+        "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    },
+    {
+      "modelKey": "qwen38q4s",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen38q4s-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen38q4s-implement/protocol.json",
+        "sha256": "835b838a5c53cc8c1ac9d5b795a0e051115266074024028e45c12c94673e4106"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    },
+    {
+      "modelKey": "muse",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/protocol.json",
+        "sha256": "ed465bf069584533897878d8ab61dcbb8352c01928b1c521412c355a1c31d041"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    },
+    {
+      "modelKey": "gemma26",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/protocol.json",
+        "sha256": "74c8fec6946cbd61bec6036af99fef9b597a76f2506809ba3a5adf590b6c53df"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    },
+    {
+      "modelKey": "gemma12",
+      "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma12-implement",
+      "protocol": {
+        "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma12-implement/protocol.json",
+        "sha256": "44e5e096fe80986b2b9cc1499b7356b659cd9ced0e03e43bce3fa2bc1571ec37"
+      },
+      "suiteRef": {
+        "filename": "bench/suite.json",
+        "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+      }
+    }
+  ],
   "provenance": {
-    "source": "retained public suite identity metadata",
-    "originalArtifactSha256": "41c809d6693e63c7b52cda95eb71c379a090f1a8a3a258d81ead6e21557bb088",
-    "hashDefinition": "SHA-256 of this JSON with provenance.exportedSummarySha256 omitted.",
-    "exportedSummarySha256": "3a0a03c01bbf5b820ce829e45ef6cb8f1c15ab265c6632bb928cbd19c64e822a"
+    "source": "retained source-02 prepared protocol metadata",
+    "originalMetadata": [
+      {
+        "modelKey": "qwen36",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen36-implement/protocol.json",
+          "sha256": "1638b084f7a89a6153419d1bf4d386e292b2cee2feab2a0627518bf7664085e4"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      },
+      {
+        "modelKey": "north",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-north-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-north-implement/protocol.json",
+          "sha256": "5c31daa6aeeea01fe6143b058716368b483c7ae6f06a3c010e8931f7c1b49e1a"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      },
+      {
+        "modelKey": "swift",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-swift-implement/protocol.json",
+          "sha256": "2a8c1dd77870279ae328cc7bae51f6ca89eb8a429efcc84112ea7f74902b6bcb"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      },
+      {
+        "modelKey": "qwen38q4s",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen38q4s-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-qwen38q4s-implement/protocol.json",
+          "sha256": "835b838a5c53cc8c1ac9d5b795a0e051115266074024028e45c12c94673e4106"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      },
+      {
+        "modelKey": "muse",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-muse-implement/protocol.json",
+          "sha256": "ed465bf069584533897878d8ab61dcbb8352c01928b1c521412c355a1c31d041"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      },
+      {
+        "modelKey": "gemma26",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma26-implement/protocol.json",
+          "sha256": "74c8fec6946cbd61bec6036af99fef9b597a76f2506809ba3a5adf590b6c53df"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      },
+      {
+        "modelKey": "gemma12",
+        "researchRoot": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma12-implement",
+        "protocol": {
+          "filename": "instruction-research-02-implement-v3-20261019T084507Z/instruction-gemma12-implement/protocol.json",
+          "sha256": "44e5e096fe80986b2b9cc1499b7356b659cd9ced0e03e43bce3fa2bc1571ec37"
+        },
+        "suiteRef": {
+          "filename": "bench/suite.json",
+          "sha256": "bf3415b4f4a7c8ded1f67f79ee0f94ae9e79d5947ddae28ed878f13fa9d91b35"
+        }
+      }
+    ]
   }
 }

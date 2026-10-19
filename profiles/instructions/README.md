@@ -6,9 +6,10 @@ an operator has reviewed the exact model, serving configuration, role, runtime
 settings and A/B evidence that the entry names.
 
 Do not add an entry for an unrun idea as if it were a result. A hypothesis may be
-recorded as `proposed`, with `evidence: null` in its card, but it cannot recommend
-the candidate as an improvement. Real model entries should be added after the
-controlled discovery/control work described in [instruction experiments](../../docs/instruction-experiments.md).
+recorded as `proposed`, with `evidence: null` in its card, before controlled A/B
+work is complete. A tested result requires the controlled discovery/control work
+described in [instruction experiments](../../docs/instruction-experiments.md),
+independent review and the completed-card requirements below.
 
 ## Proposed entries
 

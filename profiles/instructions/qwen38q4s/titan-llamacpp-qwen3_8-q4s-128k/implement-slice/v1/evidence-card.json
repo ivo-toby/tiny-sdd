@@ -17,13 +17,13 @@
       "repository": "ivo-toby/tiny-sdd",
       "revision": "02c661dd8f851e16235ecdf5d730b2a9f678d3b8",
       "path": "profiles/instructions/_evidence/source-02c661d.json",
-      "sha256": "9165877db856014575293a7541ba9047f0998a71d9e6edd5e3e4a86f09d932fa"
+      "sha256": "e6c23a3d98bf34d3055a2e8c5823095106746ce9563590980c9d70ca3bbef9bf"
     },
     "suite": {
-      "id": "model-study-implement-v1",
-      "version": "2026-10-19.2",
+      "id": "instruction-implement-expanded-v2",
+      "version": "2026-10-19.sparse-visible-presence-transfer-v2",
       "path": "profiles/instructions/_evidence/suite-implement-slice-2026-10-19.json",
-      "sha256": "e99e74f6f1367c10a3b571172832781c7abd78afad8ff44f288a7c4a4435c2de"
+      "sha256": "7b54994acc6fe6c7c2e10810eac64bcfb328d32e92c41b8df2ac74e375433936"
     },
     "profiles": {
       "baseline": {
@@ -38,11 +38,11 @@
     "settings": {
       "baseline": {
         "path": "profiles/instructions/_evidence/settings-qwen38q4s.json",
-        "sha256": "ba1ef2e75799f11c7b626c6f57491b0c610cb20d85a26aa379bd253c7dd71165"
+        "sha256": "bbdfc77490df9f737ffb5b07c443076a6b29992c78ae91dfe4a2c379b10f73e0"
       },
       "candidate": {
         "path": "profiles/instructions/_evidence/settings-qwen38q4s.json",
-        "sha256": "ba1ef2e75799f11c7b626c6f57491b0c610cb20d85a26aa379bd253c7dd71165"
+        "sha256": "bbdfc77490df9f737ffb5b07c443076a6b29992c78ae91dfe4a2c379b10f73e0"
       }
     }
   },
@@ -71,7 +71,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/proposal-qwen38q4s.json",
-        "sha256": "a658b5cb424712c875cef16ce71d8691c39fc2e0572dc99b084d2f187b450a40"
+        "sha256": "3abe9e7b16d82cdf0e1a41f8a33c100fdf45745236d64ccf78525ce0e064190f"
       }
     ]
   },
