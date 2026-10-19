@@ -1,0 +1,45 @@
+{
+  "schema": "tinysdd-gepa-pilot-attempt-validity-v1",
+  "task": "yt-dlp__yt-dlp-5195",
+  "role": "development",
+  "target": "titan/llamacpp/swift15-q4km-128k",
+  "attempt": "initial-baseline-transport-v1",
+  "started_at": "2026-10-19T16:42:32.564Z",
+  "completed_at": "2026-10-19T16:45:47.581Z",
+  "protocol_sha256": "7dc1102a6b1e060362581e5337fe852522d98d673da31ae8dd1e728b493f8df2",
+  "valid_for_model_quality": false,
+  "model_quality_score": null,
+  "original_adapter_score": 0,
+  "original_adapter_score_excluded": true,
+  "reason": "Inference request timed out; the adapter numeric zero is not evidence of model correctness.",
+  "worker_outcome": "failed",
+  "assistant_termination": {
+    "observed": true,
+    "stopReason": "error",
+    "errorMessage": "Request timed out."
+  },
+  "inference_requests": 2,
+  "successful_inference_requests": 1,
+  "write_calls": 0,
+  "original_artifacts_unchanged": true,
+  "oracle_on_empty_patch": {
+    "passed": 10,
+    "total": 11,
+    "quality_interpretation": "Fixture result only; excluded as a model-quality result because inference did not complete."
+  },
+  "attempt_budget": {
+    "total": 12,
+    "consumed_worker_attempts": 1,
+    "remaining_worker_attempts": 11,
+    "conservative_count_includes_invalid_attempts": true
+  },
+  "retained_evidence": {
+    "public_raw_artifacts_available": false,
+    "archive_sha256": "d5f1ace18a4dc6b7d9e355086f1143a8ee9c8787b95b700de6b3e7081f3dffcb",
+    "primary_audit_sha256": "98ea68e820ef591e6bc4e2c38221c541d12f7d3bf504cf5263467304b13c8733",
+    "host_report_sha256": "a93c7bf6cd8de49bb3004bebc114369c54f81c3a1374c2500569b6cb81684784",
+    "worker_result_sha256": "704037bb90b049d22104442b72f2e45d20a81f832bd041e57fb9ec00d9dd2ead",
+    "artifact_count": 38
+  },
+  "claims": []
+}

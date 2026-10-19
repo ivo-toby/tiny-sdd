@@ -1,6 +1,6 @@
 # GEPA + Swift technical pilot — 19 October 2026
 
-Status: preparation verified; no Swift or Qwen inference result yet. This report is a progress record, not evidence of a better profile.
+Status: preparation verified; the first Swift attempt stopped on an inference request timeout and is excluded from model-quality comparisons. No valid Swift quality result or Qwen reflection result exists yet. This report is a progress record, not evidence of a better profile.
 
 This experiment uses [GEPA](https://github.com/gepa-ai/gepa) 0.1.4 as an external Python research tool and existing [SWE-PolyBench Verified](https://github.com/amazon-science/SWE-PolyBench) tasks. GEPA changes only the `instructions` component. Swift implements; Titan Qwen3.6-35B proposes instruction changes. Normal TinySDD users acquire no Python or GEPA dependency.
 
@@ -49,3 +49,9 @@ The upstream repository has an MIT root license, while evaluator source headers 
 - Reference-control result SHA-256: `b4e0c7ad5675d7acb74884778afbe2104cdf587f379af2bb45069d03865ffc69`.
 
 Raw evaluator artifacts are retained in the operator's research workspace, not bundled here. Publishing these hashes does not make the full raw execution evidence available in this repository. Later model results must identify the exact candidate, patch, settings and verifier artifacts before any improvement is reported.
+
+## First inference attempt: unavailable
+
+The [retained validity record](../research/gepa-swift-pilot/2026-10-19/initial-attempt-validity-v1.json) identifies the first real Swift attempt. One inference request completed and the following request timed out; the worker made no writes. The external adapter originally emitted a numeric zero after testing the empty patch. Primary review excludes that zero from model-quality comparison and GEPA feedback: a transport failure does not establish implementation failure. Original artifacts remain unchanged.
+
+The attempt conservatively consumes one of the twelve allowed worker attempts, leaving eleven. The relay and unavailable-result handling must be corrected and reviewed before another attempt. The independent fixture still reports 10/11 tests on the empty patch; this is a fixture check, not a Swift quality measurement.
