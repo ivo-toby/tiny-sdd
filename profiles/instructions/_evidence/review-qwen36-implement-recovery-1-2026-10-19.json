@@ -21,16 +21,6 @@
     "newInference": false,
     "caseCount": 28,
     "verificationRecordsChecked": 56,
-    "referenceCaseChecks": {
-      "scheduled": 28,
-      "passed": 24,
-      "failed": 4
-    },
-    "mutationChecks": {
-      "scheduled": 28,
-      "passed": 24,
-      "failed": 4
-    },
     "visiblePass": 24,
     "visibleFailure": 4,
     "heldOutPass": 24,
@@ -43,6 +33,16 @@
       "candidateGuidanceAbsent": 14,
       "contentExported": false,
       "summary": "The frozen candidate guidance matched all 14 B prompts and was absent from all 14 A prompts; prompt text is not exported."
+    },
+    "visibleCaseChecks": {
+      "scheduled": 28,
+      "passed": 24,
+      "failed": 4
+    },
+    "heldOutChecks": {
+      "scheduled": 28,
+      "passed": 24,
+      "failed": 4
     }
   },
   "publicCandidatePatchReview": {
@@ -116,5 +116,6 @@
     "state": "inconclusive",
     "reason": "Primary had inspected existing control source after candidate freeze but before new A/B outcomes; exploratory continuity controls are not strictly untouched or blinded controls for the same analyst.",
     "followUp": "Fresh blind replication is required before strict applicability validation."
-  }
+  },
+  "experimentalReportRecommendation": "keep-baseline"
 }

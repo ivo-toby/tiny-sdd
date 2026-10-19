@@ -38,11 +38,11 @@
     "settings": {
       "baseline": {
         "path": "profiles/instructions/_evidence/settings-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "6a717b992b71790e8e0237aa112e21a64f1c7825d47f2f6a809a2bd6df5d1c16"
+        "sha256": "5d9717632699f3de5fd74527b6be68759f070e3f9b915830f75a9a30e28aa9dd"
       },
       "candidate": {
         "path": "profiles/instructions/_evidence/settings-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "6a717b992b71790e8e0237aa112e21a64f1c7825d47f2f6a809a2bd6df5d1c16"
+        "sha256": "5d9717632699f3de5fd74527b6be68759f070e3f9b915830f75a9a30e28aa9dd"
       }
     }
   },
@@ -68,7 +68,7 @@
   "evidence": {
     "report": {
       "path": "profiles/instructions/_evidence/report-qwen36-implement-recovery-1-2026-10-19.json",
-      "sha256": "e7cbc4ee47c9b6fe7552e4e9bf728327f1350d6163fc6e0ad314c9c0f25bc596"
+      "sha256": "e3c28ccec3f17ddb4b68fbc8903225b8e667924c8c9633ae1ab4da34e58e6e4c"
     },
     "protocol": "profiles/instructions/_evidence/protocol-qwen36-implement-recovery-1-2026-10-19.json",
     "partitions": {
@@ -171,11 +171,11 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "1ecdc6c8e5f0034d49b6ff29ba5cf861fe060f1606c1047dbff49f0ef338738a"
+        "sha256": "07e4f98ff9361ccd79d80617d41ede06789182564be2f2233a19df7fe6c94021"
       },
       {
         "path": "profiles/instructions/_evidence/report-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "e7cbc4ee47c9b6fe7552e4e9bf728327f1350d6163fc6e0ad314c9c0f25bc596"
+        "sha256": "e3c28ccec3f17ddb4b68fbc8903225b8e667924c8c9633ae1ab4da34e58e6e4c"
       }
     ]
   },
@@ -184,7 +184,7 @@
     "refs": [
       {
         "path": "profiles/instructions/_evidence/review-qwen36-implement-recovery-1-2026-10-19.json",
-        "sha256": "1ecdc6c8e5f0034d49b6ff29ba5cf861fe060f1606c1047dbff49f0ef338738a"
+        "sha256": "07e4f98ff9361ccd79d80617d41ede06789182564be2f2233a19df7fe6c94021"
       }
     ],
     "exactBytesMatched": true,
