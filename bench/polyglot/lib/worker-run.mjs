@@ -141,12 +141,14 @@ export async function runAttempt({
     const artifacts = result.artifactPaths ?? {};
     const assistant = result.observed?.assistantTermination ?? {};
     const toolCalls = result.observed?.toolCalls ?? 0;
-    // Pi exited without any model message or tool call, or the gateway rejected the
-    // first request (HTTP error before any tool call, e.g. an unknown route): this is
-    // infrastructure, not the model. Retried by the driver; no result written.
-    const gatewayRejected = assistant.stopReason === 'error' && /^\d{3}\b/.test(assistant.errorMessage ?? '');
-    if (result.outcome === 'failed' && toolCalls === 0 && (!assistant.observed || gatewayRejected)) {
-      throw new RunHarnessError(`worker produced no model output for ${exercise.id}: ${assistant.errorMessage ?? 'no error message'}`, { code: 'NO_MODEL_OUTPUT' });
+    // Infrastructure, not the model (retried by the driver, no result written):
+    // - Pi exited without any model message, or the request errored before any tool call
+    //   (unknown route, gateway down, context rejected);
+    // - a transport error at any point (the connection dropped mid-run).
+    const errored = assistant.stopReason === 'error';
+    const transportError = errored && /connection error|econn|etimedout|enotfound|fetch failed|socket hang up|network|^5\d\d\b|^429\b/i.test(assistant.errorMessage ?? '');
+    if (result.outcome === 'failed' && ((toolCalls === 0 && (!assistant.observed || errored)) || transportError)) {
+      throw new RunHarnessError(`infrastructure error in worker run for ${exercise.id}: ${assistant.errorMessage ?? 'no model output'}`, { code: 'NO_MODEL_OUTPUT' });
     }
     const changed = (result.changedPaths ?? []).map((change) => change.path);
     const solutionChanged = changed.some((path) => exercise.solutionFiles.includes(path));
