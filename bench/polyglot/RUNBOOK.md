@@ -46,6 +46,12 @@ stops by itself after 3 entries in a row hit infrastructure errors
 (`harness-errors.jsonl`); check that Titan/randal are up, then restart.
 Do not start two processes for the same host.
 
+**Sanity check every check-in.** Look at the last ~20 lines of each host log.
+Report `ATTENTION` (do not "fix" it yourself) when a model finishes entries
+much faster than usual (under ~20 s each), shows 0/0 on many entries in a row,
+or completes a whole model in under an hour. That pattern means the model was
+never really called (wrong route, gateway error), not that it is bad.
+
 Setup is already done (manifest, Docker image, oracle check). Exercises whose
 reference solution fails are excluded automatically.
 
