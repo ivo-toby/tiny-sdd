@@ -170,7 +170,7 @@ test('buildReport contains overview, language, feature and paired comparison row
   const { markdown, csv } = buildReport(results);
   assert.match(markdown, /\| m1 \| baseline \| 3 \| 66\.7% \| 66\.7% \|/);
   assert.match(markdown, /\| m1 \| cand-a \| python \| 3 \|/);
-  assert.match(markdown, /\| m1 \| cand-a \| baseline-rerun \| 3 \| 66\.7% \| 33\.3% \| \+33\.3pp \| 0 \| 1 \| 1\.000 \|/);
+  assert.match(markdown, /\| m1 \| cand-a \| baseline-rerun \| 3 \| 66\.7% \| 33\.3% \| \+33\.3pp \| 1\.000 \| 66\.7% \| 33\.3% \| \+33\.3pp \| 1\.000 \|/);
   assert.doesNotMatch(markdown, /\| m1 \| cand-a \| baseline \|/);
   assert.match(markdown, /\| m1 \| baseline \| tests_failed \| 1 \|/);
   assert.match(csv, /^model,profile,scope,language,n,pass1,pass2,pass1_rate,pass2_rate\n/);
@@ -260,10 +260,34 @@ test('decide keeps when delta > 0.05 and no language drops by more than 0.10', (
   const verdict = decide({ results: holdoutResults(spec), model: 'm1', candidate: 'cand-a' });
   assert.equal(verdict.keep, true);
   assert.equal(verdict.n, 10);
-  assert.ok(Math.abs(verdict.deltaPass2 - 0.3) < 1e-12);
-  assert.equal(verdict.baselinePass2, 0.5);
-  assert.equal(verdict.candidatePass2, 0.8);
+  assert.ok(Math.abs(verdict.delta - 0.3) < 1e-12);
+  assert.equal(verdict.baselineRate, 0.5);
+  assert.equal(verdict.candidateRate, 0.8);
   assert.equal(verdict.perLanguage.python.veto, false);
+});
+
+test('decide with metric pass1 compares first-attempt passes, not pass@2', () => {
+  // pass@2 identical (all pass); pass@1 improves from 5/10 to 8/10.
+  const results = [];
+  for (let i = 0; i < 10; i += 1) {
+    results.push(res({ exercise: `python/m${i}`, split: 'holdout', profile: 'baseline', pass2: true, pass1: i < 5 }));
+    results.push(res({ exercise: `python/m${i}`, split: 'holdout', profile: 'cand-a', pass2: true, pass1: i < 8 }));
+  }
+  assert.equal(decide({ results, model: 'm1', candidate: 'cand-a' }).keep, false);
+  const verdict = decide({ results, model: 'm1', candidate: 'cand-a', metric: 'pass1' });
+  assert.equal(verdict.keep, true);
+  assert.equal(verdict.metric, 'pass1');
+  assert.ok(Math.abs(verdict.delta - 0.3) < 1e-12);
+  assert.throws(() => decide({ results, model: 'm1', candidate: 'cand-a', metric: 'pass3' }));
+});
+
+test('screenSelection with metric pass1 selects first-attempt failures', () => {
+  const results = [
+    res({ exercise: 'python/a', pass2: true, pass1: false }),
+    res({ exercise: 'python/b', pass2: true, pass1: true }),
+  ];
+  assert.deepEqual(screenSelection({ results, model: 'm1', passSample: 0, seed: 1 }).failed, []);
+  assert.deepEqual(screenSelection({ results, model: 'm1', passSample: 0, seed: 1, metric: 'pass1' }).failed, ['python/a']);
 });
 
 test('decide rejects when the delta is not above 0.05 (boundary is exclusive)', () => {
@@ -286,7 +310,7 @@ test('decide vetoes when a language drops by more than 0.10 even if the overall 
   assert.ok(verdict.reasons.includes('language_drop:python'));
   assert.equal(verdict.perLanguage.python.veto, true);
   assert.equal(verdict.perLanguage.go.veto, false);
-  assert.ok(Math.abs(verdict.deltaPass2 - 0.2) < 1e-12);
+  assert.ok(Math.abs(verdict.delta - 0.2) < 1e-12);
 });
 
 test('decide allows a language drop of exactly 0.10', () => {

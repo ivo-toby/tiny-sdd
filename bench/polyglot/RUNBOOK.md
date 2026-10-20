@@ -55,34 +55,45 @@ never really called (wrong route, gateway error), not that it is bad.
 Setup is already done (manifest, Docker image, oracle check). Exercises whose
 reference solution fails are excluded automatically.
 
+## Plan (operator decision, 2026-10-20 — fixed before any candidate results)
+
+- **Primary metric is pass@1** (passes on the first attempt). Always pass
+  `--metric pass1` to `plan-screen` and `decide`. pass@2 is reported but does
+  not decide (it is near the ceiling: 85–97%).
+- **Confirm on 1 holdout repeat:** `plan-confirm ... --repeats 1`. Phase 2
+  (second baseline repeat) is skipped for now.
+- **Order of work:**
+  1. **randal, now:** Phase 3 for `qwen38nextflash` (its baseline is done).
+     Run with `--host randal`.
+  2. **Titan:** let the running process finish the `qwen38pi` baseline. Do
+     not interrupt it before that. When `status` shows `qwen38pi baseline`
+     207/207 done, stop the Titan process gracefully (`kill -INT <pid>`, wait
+     until `pgrep` no longer shows it; in-flight entries finish first). Then
+     do Phase 3 for `qwen38pi`, running only that model:
+     `run --run main --models qwen38pi` (NOT `--host titan`, which would also
+     pick up the other models' baseline).
+  3. When `qwen38pi` Phase 3 has ended (kept, or 3 rounds without a keep),
+     restart `run --run main --host titan` to finish the baseline of the six
+     remaining models.
+- Log each transition in NOTES.md.
+
 ## Phase 1 — baseline (all models, 1 repeat)
 
 Run `main` was initialized and both host processes were started on
 2026-10-19 by the operator's setup session. Do **not** run `init` again. Only
 monitor; restart a host process (see above) if `pgrep` shows it is gone and
-`status` still has open entries for that host.
+`status` still has open entries for that host — except during the planned
+Titan pause in the Plan above.
 
-When `status` shows every baseline entry done: `$B report --run main` and read
-`<run>/report.md`. Write a short ranking (pass@2 per model, per language) in
-`<run>/NOTES.md`.
+## Phase 3 — proposal rounds (per model, max 3 rounds)
 
-## Phase 2 — second repeat for the top models
-
-Pick the 3 models with the highest pass@2 (or what the operator asked for in
-NOTES.md). Then:
-
-```sh
-$B add-repeat --run main --models K1,K2,K3 --repeats 2
-# restart the background run(s) for the hosts involved
-```
-
-## Phase 3 — proposal rounds (per top model, max 3 rounds)
-
-For model `K`, round `r`:
+For model `K`, round `R` (1, 2 or 3):
 
 1. `inject_keys "$B triage --run main --model K" JEV_API_KEY` (optional Jev labels;
    they are hints, not truth — check a few against the export).
 2. `$B export --run main --model K` and read `export/K-baseline/failures.md`.
+   Focus on first-attempt failures (pass@1 is the metric): what made the first
+   attempt fail even when the second one passed?
 3. Group the failures by cause (Jev labels and `features` help). For the 2–3
    biggest groups, write one candidate instruction each, as a plain text file:
    - general behavior, not about any specific exercise; no code;
@@ -93,23 +104,24 @@ For model `K`, round `r`:
      raising/returning exactly what the tests expect."
    Save as `<run>/candidates/K-rR-<slug>.txt` and register:
    `$B profile --run main --id K-rR-<slug> --file <that file> --note "<group it targets>"`
-4. Screen: `$B plan-screen --run main --model K --candidates ID1,ID2,ID3 --seed R`
-   then run the host's background process. This reruns discovery failures plus a
-   sample of passes for each candidate **and** for `baseline-rerun`.
-5. `$B report --run main`. In the screen section compare each candidate with
-   `baseline-rerun`. Pick the best candidate only if it has more pass@2 than
-   `baseline-rerun` on the screen set. If none is better, go to the next round
-   with new ideas (or stop after round 3).
+4. Screen: `$B plan-screen --run main --model K --candidates ID1,ID2,ID3 --seed R --metric pass1`
+   then start the run for that model (see Plan for which command). This
+   reruns discovery first-attempt failures plus a sample of passes for each
+   candidate **and** for `baseline-rerun`.
+5. When the screen entries are done: `$B report --run main`. In "Candidate vs
+   baseline" compare each candidate with `baseline-rerun` on **pass@1**. Pick
+   the best candidate only if its pass@1 is higher than `baseline-rerun`'s. If
+   none is better, start the next round with new ideas (stop after round 3).
 6. Confirm the pick once on holdout:
-   `$B plan-confirm --run main --model K --candidate ID --repeats 2`, run, then
-   `$B decide --run main --model K --candidate ID`.
-   `keep: true` → the profile is a winner for K; stop rounds for K.
+   `$B plan-confirm --run main --model K --candidate ID --repeats 1`, run, then
+   `$B decide --run main --model K --candidate ID --metric pass1`.
+   `keep: true` → winner for K; stop rounds for K.
    `keep: false` → note the reasons; next round (max 3).
 
 ## Phase 4 — wrap up
 
 `$B report --run main`, then write `<run>/SUMMARY.md`:
-models ranked by baseline pass@2; for each top model the candidates tried,
-screen numbers, holdout decision (paste `decide` output), and the winning
-profile text if any. Mention anything unusual (harness errors, restarts,
-skipped exercises). The operator decides what goes into the product.
+models ranked by baseline pass@1 and pass@2; for each optimized model the
+candidates tried, screen numbers, holdout decision (paste `decide` output), and
+the winning profile text if any. Mention anything unusual (harness errors,
+restarts, skipped exercises). The operator decides what goes into the product.

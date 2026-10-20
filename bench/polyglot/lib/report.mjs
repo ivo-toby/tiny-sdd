@@ -44,26 +44,27 @@ function comparePair(results, model, candidate, reference) {
     if (result.profile === reference) refByKey.set(pairKey(result), result);
     if (result.profile === candidate) candByKey.set(pairKey(result), result);
   }
-  const pairs = [];
+  const pairs1 = [];
+  const pairs2 = [];
   for (const [key, cand] of candByKey) {
     const ref = refByKey.get(key);
-    if (ref) pairs.push({ x: Boolean(ref.pass2), y: Boolean(cand.pass2) });
+    if (!ref) continue;
+    pairs1.push({ x: Boolean(ref.pass1), y: Boolean(cand.pass1) });
+    pairs2.push({ x: Boolean(ref.pass2), y: Boolean(cand.pass2) });
   }
-  const n = pairs.length;
-  const refPasses = pairs.filter((pair) => pair.x).length;
-  const candPasses = pairs.filter((pair) => pair.y).length;
-  const test = mcnemar(pairs);
+  const n = pairs2.length;
+  const side = (pairs) => {
+    const refPasses = pairs.filter((pair) => pair.x).length;
+    const candPasses = pairs.filter((pair) => pair.y).length;
+    const test = mcnemar(pairs);
+    return { candidate: rate(candPasses, n), reference: rate(refPasses, n), delta: n > 0 ? (candPasses - refPasses) / n : null, p: test.p };
+  };
+  const one = side(pairs1);
+  const two = side(pairs2);
   return {
-    model,
-    candidate,
-    reference,
-    n,
-    candidatePass2: rate(candPasses, n),
-    referencePass2: rate(refPasses, n),
-    delta: n > 0 ? (candPasses - refPasses) / n : null,
-    b: test.b,
-    c: test.c,
-    p: test.p,
+    model, candidate, reference, n,
+    candidatePass1: one.candidate, referencePass1: one.reference, deltaPass1: one.delta, pPass1: one.p,
+    candidatePass2: two.candidate, referencePass2: two.reference, delta: two.delta, p: two.p,
   };
 }
 
@@ -123,11 +124,11 @@ export function buildReport(results) {
   sections.push('## Candidate vs baseline (paired on exercise, split, repeat)', '');
   sections.push(comparisons.length
     ? markdownTable(
-      ['model', 'candidate', 'reference', 'n', 'candidate pass@2', 'reference pass@2', 'delta pass@2', 'b', 'c', 'McNemar p'],
+      ['model', 'candidate', 'reference', 'n', 'cand pass@1', 'ref pass@1', 'delta pass@1', 'p pass@1', 'cand pass@2', 'ref pass@2', 'delta pass@2', 'p pass@2'],
       comparisons.map((row) => [
         row.model, row.candidate, row.reference, row.n,
-        pct(row.candidatePass2), pct(row.referencePass2), signedPct(row.delta),
-        row.b, row.c, pValue(row.p),
+        pct(row.candidatePass1), pct(row.referencePass1), signedPct(row.deltaPass1), pValue(row.pPass1),
+        pct(row.candidatePass2), pct(row.referencePass2), signedPct(row.delta), pValue(row.p),
       ]),
     )
     : '_No paired candidate results._', '');

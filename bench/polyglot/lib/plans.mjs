@@ -36,26 +36,33 @@ export function baselinePlan({ models, manifest, excluded = [], repeats = 2 }) {
   return entries;
 }
 
+const METRICS = ['pass1', 'pass2'];
+function metricOf(metric) {
+  if (!METRICS.includes(metric)) throw new Error(`metric must be one of ${METRICS.join(', ')}`);
+  return metric;
+}
+
 // Discovery-only selection from the model's baseline results: exercises that failed
-// pass@2 in any repeat, plus a seeded sample of exercises that passed in every repeat.
-export function screenSelection({ results, model, passSample = 20, seed }) {
+// the metric (pass@1 or pass@2) in any repeat, plus a seeded sample of exercises that passed in every repeat.
+export function screenSelection({ results, model, passSample = 20, seed, metric = 'pass2' }) {
+  const field = metricOf(metric);
   const modelKey = keyOf(model);
   const outcomes = new Map();
   for (const result of results) {
     if (result.model !== modelKey || result.profile !== 'baseline' || result.split !== 'discovery') continue;
     if (!outcomes.has(result.exercise)) outcomes.set(result.exercise, true);
-    if (!result.pass2) outcomes.set(result.exercise, false);
+    if (!result[field]) outcomes.set(result.exercise, false);
   }
   const failed = [...outcomes].filter(([, allPassed]) => !allPassed).map(([id]) => id).sort();
   const eligible = [...outcomes].filter(([, allPassed]) => allPassed).map(([id]) => id).sort();
   const rng = mulberry32(seed);
   const sample = shuffle(eligible, rng).slice(0, passSample).sort();
-  return { seed, failed, passSample: sample };
+  return { seed, metric: field, failed, passSample: sample };
 }
 
-export function screenPlan({ results, model, candidates, passSample = 20, seed }) {
+export function screenPlan({ results, model, candidates, passSample = 20, seed, metric = 'pass2' }) {
   const modelKey = keyOf(model);
-  const selection = screenSelection({ results, model: modelKey, passSample, seed });
+  const selection = screenSelection({ results, model: modelKey, passSample, seed, metric });
   const exercises = [...new Set([...selection.failed, ...selection.passSample])].sort();
   const profiles = ['baseline-rerun', ...candidates.map(profileIdOf)];
   const entries = [];
@@ -80,7 +87,8 @@ export function confirmPlan({ model, candidate, manifest, excluded = [], repeats
 // keep iff candidate - baseline > 0.05 and no language drops by more than 0.10.
 // Comparisons are done on integer counts so exact boundary values are not
 // decided by floating-point error.
-export function decide({ results, model, candidate }) {
+export function decide({ results, model, candidate, metric = 'pass2' }) {
+  const field = metricOf(metric);
   const modelKey = keyOf(model);
   const profile = profileIdOf(candidate);
   const holdout = results.filter((result) => result.model === modelKey && result.split === 'holdout');
@@ -97,8 +105,8 @@ export function decide({ results, model, candidate }) {
   for (const [key, cand] of candidateByKey) {
     const base = baselineByKey.get(key);
     if (!base) continue;
-    const x = Boolean(base.pass2);
-    const y = Boolean(cand.pass2);
+    const x = Boolean(base[field]);
+    const y = Boolean(cand[field]);
     pairs.push({ x, y });
     const lang = cand.language ?? base.language;
     if (!byLanguage.has(lang)) byLanguage.set(lang, { n: 0, baseline: 0, candidate: 0 });
@@ -125,8 +133,8 @@ export function decide({ results, model, candidate }) {
     if (veto) reasons.push(`language_drop:${lang}`);
     perLanguage[lang] = {
       n: counts.n,
-      baselinePass2: counts.baseline / counts.n,
-      candidatePass2: counts.candidate / counts.n,
+      baselineRate: counts.baseline / counts.n,
+      candidateRate: counts.candidate / counts.n,
       delta: (counts.candidate - counts.baseline) / counts.n,
       veto,
     };
@@ -137,10 +145,11 @@ export function decide({ results, model, candidate }) {
     keep: reasons.length === 0,
     reasons,
     n,
-    deltaPass2: n > 0 ? (candidatePasses - baselinePasses) / n : null,
+    metric: field,
+    delta: n > 0 ? (candidatePasses - baselinePasses) / n : null,
     p: test.p,
-    baselinePass2: n > 0 ? baselinePasses / n : null,
-    candidatePass2: n > 0 ? candidatePasses / n : null,
+    baselineRate: n > 0 ? baselinePasses / n : null,
+    candidateRate: n > 0 ? candidatePasses / n : null,
     perLanguage,
   };
 }

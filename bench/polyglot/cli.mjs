@@ -25,14 +25,14 @@ Runs:
   init --run NAME --models K,K|all [--repeats N]   new run with baseline queue
   add-repeat --run NAME --models K,K --repeats N   extend baseline to N repeats
   profile --run NAME --id ID --file PATH [--note TEXT]   add a candidate profile (instructions text file)
-  plan-screen --run NAME --model K --candidates ID,ID [--seed N] [--pass-sample N]
+  plan-screen --run NAME --model K --candidates ID,ID [--seed N] [--pass-sample N] [--metric pass1|pass2]
   plan-confirm --run NAME --model K --candidate ID [--repeats N]
   run --run NAME [--models K,K | --host titan|randal]   execute the queue (resumable)
   status --run NAME
   report --run NAME              write report.md / report.csv in the run dir
   triage --run NAME --model K [--profile ID]   Jev failure labels (discovery only)
   export --run NAME --model K [--profile ID]   discovery failures for the proposer
-  decide --run NAME --model K --candidate ID   pre-registered keep/reject on holdout
+  decide --run NAME --model K --candidate ID [--metric pass1|pass2]   pre-registered keep/reject on holdout
 `;
 
 const options = {
@@ -40,7 +40,7 @@ const options = {
   host: { type: 'string' }, repeats: { type: 'string' }, id: { type: 'string' }, file: { type: 'string' },
   note: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' }, seed: { type: 'string' },
   'pass-sample': { type: 'string' }, profile: { type: 'string' }, concurrency: { type: 'string' },
-  json: { type: 'boolean' }, help: { type: 'boolean' },
+  metric: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' },
 };
 
 function fail(message) {
@@ -186,12 +186,13 @@ const commands = {
     for (const id of candidates) if (!existsSync(join(runDir, 'profiles', `${id}.json`))) fail(`profile ${id} not found; add it with "profile" first`);
     const seed = int(values.seed, 1, 'seed');
     const passSample = int(values['pass-sample'], 20, 'pass-sample');
+    const metric = values.metric ?? 'pass2';
     const results = await readResults(runDir);
-    const selection = screenSelection({ results, model, passSample, seed });
-    if (selection.failed.length === 0) fail(`no failed discovery baseline results for ${model}; run the baseline first`);
+    const selection = screenSelection({ results, model, passSample, seed, metric });
+    if (selection.failed.length === 0) fail(`no discovery baseline results failing ${metric} for ${model}; run the baseline first`);
     await writeJson(join(runDir, 'plans', `screen-${model}-seed${seed}-${candidates.join('+')}.json`), { model, candidates, ...selection });
-    const queued = await appendQueue(runDir, screenPlan({ results, model, candidates, passSample, seed }));
-    return { model, candidates, seed, failed: selection.failed.length, passSample: selection.passSample.length, ...queued };
+    const queued = await appendQueue(runDir, screenPlan({ results, model, candidates, passSample, seed, metric }));
+    return { model, candidates, seed, metric, failed: selection.failed.length, passSample: selection.passSample.length, ...queued };
   },
 
   async 'plan-confirm'(values, p) {
@@ -258,8 +259,8 @@ const commands = {
 
   async decide(values, p) {
     const runDir = requireRun(p);
-    const result = decide({ results: await readResults(runDir), model: required(values, 'model'), candidate: required(values, 'candidate') });
-    await writeJson(join(runDir, 'decisions', `${values.model}-${values.candidate}.json`), { ...result, decidedAt: new Date().toISOString() });
+    const result = decide({ results: await readResults(runDir), model: required(values, 'model'), candidate: required(values, 'candidate'), metric: values.metric ?? 'pass2' });
+    await writeJson(join(runDir, 'decisions', `${values.model}-${values.candidate}-${result.metric}.json`), { ...result, decidedAt: new Date().toISOString() });
     return result;
   },
 };
