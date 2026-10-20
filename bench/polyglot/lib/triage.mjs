@@ -101,6 +101,7 @@ export async function triage({
   model,
   profile,
   split = 'discovery',
+  metric = 'pass1',
   manifest,
   fetch: fetchImpl = globalThis.fetch,
   env = process.env,
@@ -115,7 +116,7 @@ export async function triage({
   const failures = results.filter((result) => result.model === model
     && result.profile === profile
     && result.split === split
-    && !result.pass2);
+    && !result[metric]);
   const triageDir = join(root, 'triage');
   const summary = { failures: failures.length, called: 0, unavailable: 0, skipped: 0 };
 
@@ -135,7 +136,7 @@ export async function triage({
       continue;
     }
 
-    const attempt = result.attempts.at(-1);
+    const attempt = metric === 'pass1' ? result.attempts[0] : result.attempts.at(-1);
     const exercise = exercises.get(result.exercise);
     const caseDir = join(root, 'cases', result.id, `attempt-${attempt.n}`);
     const state = {

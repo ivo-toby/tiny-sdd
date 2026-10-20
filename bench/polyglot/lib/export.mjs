@@ -129,7 +129,9 @@ export async function exportFailures({
   out = join(runDir, 'export'),
   manifest,
   checkoutDir,
+  metric = 'pass1',
 }) {
+  if (!['pass1', 'pass2'].includes(metric)) throw new Error('metric must be pass1 or pass2');
   if (split !== 'discovery') throw new Error('export covers discovery exercises only');
   const root = resolve(runDir);
   const dataRoot = dirname(dirname(root));
@@ -142,14 +144,15 @@ export async function exportFailures({
 
   const results = await readJsonl(join(root, 'results.jsonl'));
   const failures = results
-    .filter((result) => result.model === model && result.profile === profile && result.split === split && !result.pass2)
+    .filter((result) => result.model === model && result.profile === profile && result.split === split && !result[metric])
     .filter((result) => exercises.has(result.exercise))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const items = [];
   for (const result of failures) {
     const exercise = exercises.get(result.exercise);
-    const attempt = result.attempts.at(-1);
+    // For pass@1 the first attempt is what an instruction must fix, even if the revision recovered.
+    const attempt = metric === 'pass1' ? result.attempts[0] : result.attempts.at(-1);
     const retainedDir = join(root, 'cases', result.id, `attempt-${attempt.n}`, 'solution');
     const triageRecord = await readJson(join(root, 'triage', `${result.id}.json`));
     const labels = triageRecord?.answers
@@ -160,6 +163,8 @@ export async function exportFailures({
       exercise: result.exercise,
       language: result.language,
       repeat: result.repeat,
+      shownAttempt: attempt.n,
+      recoveredOnAttempt2: metric === 'pass1' ? Boolean(result.pass2) : false,
       features: featuresFor(result),
       instructions: headOf(exercise.instructions ?? '', INSTRUCTIONS_LIMIT),
       diff: await solutionDiff(checkout, exercise, retainedDir),
@@ -168,10 +173,10 @@ export async function exportFailures({
     });
   }
 
-  const lines = [`# Failures: ${model} / ${profile} (${split})`, '', `Count: ${items.length}`, ''];
+  const lines = [`# Failures: ${model} / ${profile} (${split}, ${metric})`, '', `Count: ${items.length}`, metric === 'pass1' ? 'Each item shows the first attempt (what failed before any test feedback).' : 'Each item shows the last attempt.', ''];
   for (const item of items) {
     lines.push(`## ${item.id}`, '');
-    lines.push(`- exercise: ${item.exercise}`, `- language: ${item.language}`, `- repeat: ${item.repeat}`);
+    lines.push(`- exercise: ${item.exercise}`, `- language: ${item.language}`, `- repeat: ${item.repeat}`, `- shown attempt: ${item.shownAttempt}${item.recoveredOnAttempt2 ? ' (attempt 2 passed after seeing the test output)' : ''}`);
     lines.push(`- features: ${item.features.join(', ') || 'none'}`);
     if (item.triage) {
       const labelled = Object.entries(item.triage).filter(([, value]) => value.label).map(([id]) => id);
@@ -186,6 +191,6 @@ export async function exportFailures({
   const markdownPath = join(out, 'failures.md');
   const jsonPath = join(out, 'failures.json');
   await writeFile(markdownPath, `${lines.join('\n')}\n`);
-  await writeFile(jsonPath, `${JSON.stringify({ model, profile, split, items }, null, 2)}\n`);
+  await writeFile(jsonPath, `${JSON.stringify({ model, profile, split, metric, items }, null, 2)}\n`);
   return { count: items.length, markdownPath, jsonPath };
 }

@@ -381,6 +381,7 @@ test('exportFailures includes discovery failures only and never .meta or holdout
       out,
       manifest: fixture.manifest,
       checkoutDir: fixture.checkoutDir,
+      metric: 'pass2',
     });
     assert.equal(result.count, 1);
     const markdown = await readFile(result.markdownPath, 'utf8');
@@ -396,6 +397,23 @@ test('exportFailures includes discovery failures only and never .meta or holdout
     assert.deepEqual(json.items[0].triage.signature, { noul: 0.9, label: true });
     assert.equal(json.items[0].triage.env.label, false);
     assert.ok(json.items[0].features.includes('compile_error'));
+  } finally {
+    await rm(fixture.dataRoot, { recursive: true, force: true });
+  }
+});
+
+test('exportFailures with pass1 shows first-attempt failures even when attempt 2 recovered', async () => {
+  const fixture = await exportFixture();
+  try {
+    const recovered = res({ exercise: 'python/disc', repeat: 2, pass2: true, pass1: false });
+    recovered.attempts = [attempt(1, { outputTail: 'FIRST_ATTEMPT_OUTPUT' }), attempt(2, { outputTail: 'passed' })];
+    await writeFile(join(fixture.runDir, 'results.jsonl'), JSON.stringify(recovered) + '\n');
+    const result = await exportFailures({ runDir: fixture.runDir, model: 'm1', out: join(fixture.dataRoot, 'export1'), manifest: fixture.manifest, checkoutDir: fixture.checkoutDir });
+    assert.equal(result.count, 1);
+    const markdown = await readFile(result.markdownPath, 'utf8');
+    assert.match(markdown, /FIRST_ATTEMPT_OUTPUT/);
+    assert.match(markdown, /attempt 2 passed after seeing the test output/);
+    assert.equal((await exportFailures({ runDir: fixture.runDir, model: 'm1', out: join(fixture.dataRoot, 'export2'), manifest: fixture.manifest, checkoutDir: fixture.checkoutDir, metric: 'pass2' })).count, 0);
   } finally {
     await rm(fixture.dataRoot, { recursive: true, force: true });
   }

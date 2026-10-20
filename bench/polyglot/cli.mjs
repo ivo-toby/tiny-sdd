@@ -245,7 +245,7 @@ const commands = {
 
   async triage(values, p) {
     const runDir = requireRun(p);
-    return triage({ runDir, model: required(values, 'model'), profile: values.profile ?? 'baseline', split: 'discovery', manifest: await loadManifest(p) });
+    return triage({ runDir, model: required(values, 'model'), profile: values.profile ?? 'baseline', split: 'discovery', metric: values.metric ?? 'pass1', manifest: await loadManifest(p) });
   },
 
   async export(values, p) {
@@ -253,7 +253,7 @@ const commands = {
     const model = required(values, 'model');
     const profile = values.profile ?? 'baseline';
     const out = join(runDir, 'export', `${model}-${profile}`);
-    await exportFailures({ runDir, model, profile, split: 'discovery', out, manifest: await loadManifest(p), checkoutDir: p.checkout });
+    await exportFailures({ runDir, model, profile, split: 'discovery', out, manifest: await loadManifest(p), checkoutDir: p.checkout, metric: values.metric ?? 'pass1' });
     return { export: out, files: [join(out, 'failures.md'), join(out, 'failures.json')] };
   },
 
