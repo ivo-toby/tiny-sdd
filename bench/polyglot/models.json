@@ -1,7 +1,7 @@
 {
   "models": [
     {"key":"qwen38q3","route":"titan/llamacpp/qwen3.8-q3-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
-    {"key":"qwen38q4s","route":"titan/llamacpp/qwen3.8-q4s-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
+    {"key":"qwen38q4s","route":"titan/llamacpp/qwen3.8-q4s-2x128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
     {"key":"qwen38pi","route":"titan/llamacpp/qwen3.8-pi-q4km-128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"titan"},
     {"key":"qwen36","route":"titan/llamacpp/qwen3.6-35b-a3b-2x128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
     {"key":"gemma26","route":"titan/llamacpp/gemma4-26b-a4b-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},

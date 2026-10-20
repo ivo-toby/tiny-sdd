@@ -78,7 +78,7 @@ function fakeWorker(script, calls = []) {
       scopeViolations: spec.scopeViolations ?? [],
       fileScope: { extraPaths: [] },
       observed: {
-        assistantTermination: { observed: spec.assistantObserved ?? true, errorMessage: spec.errorMessage ?? null },
+        assistantTermination: { observed: spec.assistantObserved ?? true, stopReason: spec.stopReason ?? null, errorMessage: spec.errorMessage ?? null },
         toolCalls: spec.toolCalls ?? 3,
         cumulativeUsage: { input: 10, output: 5 },
         processTermination: { elapsedMs: 42 },
@@ -194,6 +194,7 @@ describe('runAttempt', () => {
     const base = { checkoutDir: '/unused', exercise: exerciseFor('python/x'), model, profile, attempt: 1, caseDir: await freshDir('case4') };
     await assert.rejects(runAttempt({ ...base, deps: { runWorker: async () => { throw new Error('pi missing'); }, prepareWorkspace: fakePrepare(), runTests: fakeTests() } }), (error) => error.harness === true);
     await assert.rejects(runAttempt({ ...base, deps: { runWorker: fakeWorker({ outcome: 'failed', assistantObserved: false, toolCalls: 0, errorMessage: 'connect ECONNREFUSED' }), prepareWorkspace: fakePrepare(), runTests: fakeTests() } }), (error) => error instanceof RunHarnessError && /ECONNREFUSED|no model output/.test(error.message));
+    await assert.rejects(runAttempt({ ...base, deps: { runWorker: fakeWorker({ outcome: 'failed', assistantObserved: true, stopReason: 'error', toolCalls: 0, errorMessage: '400: Invalid model name passed in model=titan/x' }), prepareWorkspace: fakePrepare(), runTests: fakeTests() } }), (error) => error instanceof RunHarnessError && /Invalid model name/.test(error.message));
     const docker = Object.assign(new Error('daemon down'), { name: 'HarnessError' });
     await assert.rejects(runAttempt({ ...base, deps: { runWorker: fakeWorker({ files: { 'affine_cipher.py': 'SOLVED' }, changes: ['affine_cipher.py'] }), prepareWorkspace: fakePrepare(), runTests: async () => { throw docker; } } }), (error) => error.harness === true || error.name === 'HarnessError');
   });

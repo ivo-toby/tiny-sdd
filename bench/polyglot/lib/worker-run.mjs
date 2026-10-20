@@ -141,9 +141,11 @@ export async function runAttempt({
     const artifacts = result.artifactPaths ?? {};
     const assistant = result.observed?.assistantTermination ?? {};
     const toolCalls = result.observed?.toolCalls ?? 0;
-    // Pi exited without any model message or tool call: this is the gateway or
-    // runtime failing, not the model. Retried by the driver; no result written.
-    if (result.outcome === 'failed' && !assistant.observed && toolCalls === 0) {
+    // Pi exited without any model message or tool call, or the gateway rejected the
+    // first request (HTTP error before any tool call, e.g. an unknown route): this is
+    // infrastructure, not the model. Retried by the driver; no result written.
+    const gatewayRejected = assistant.stopReason === 'error' && /^\d{3}\b/.test(assistant.errorMessage ?? '');
+    if (result.outcome === 'failed' && toolCalls === 0 && (!assistant.observed || gatewayRejected)) {
       throw new RunHarnessError(`worker produced no model output for ${exercise.id}: ${assistant.errorMessage ?? 'no error message'}`, { code: 'NO_MODEL_OUTPUT' });
     }
     const changed = (result.changedPaths ?? []).map((change) => change.path);
