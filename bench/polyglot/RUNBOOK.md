@@ -73,8 +73,9 @@ reference solution fails are excluded automatically.
      `--host titan` (it would run north twice). If it died with north entries
      open, restart exactly that command.
   4. When `north baseline` is 207/207: start `run --run main --host titan` to
-     finish the baseline of the remaining models (qwen36, gemma26, muse, swift15,
-     thinkingcap). No Phase 3 for any model unless the operator asks in NOTES.md.
+     finish the baseline of the remaining models (qwen36, gemma26, muse).
+     swift15 and thinkingcap were removed from the run by the operator; do not
+     re-add them. No Phase 3 for any model unless the operator asks in NOTES.md.
 - Log each transition in NOTES.md.
 
 ## Phase 1 — baseline (all models, 1 repeat)
