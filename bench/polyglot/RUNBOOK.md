@@ -62,19 +62,19 @@ reference solution fails are excluded automatically.
   not decide (it is near the ceiling: 85–97%).
 - **Confirm on 1 holdout repeat:** `plan-confirm ... --repeats 1`. Phase 2
   (second baseline repeat) is skipped for now.
-- **Order of work:**
-  1. **randal, now:** Phase 3 for `qwen38nextflash` (its baseline is done).
-     Run with `--host randal`.
-  2. **Titan:** let the running process finish the `qwen38pi` baseline. Do
-     not interrupt it before that. When `status` shows `qwen38pi baseline`
-     207/207 done, stop the Titan process gracefully (`kill -INT <pid>`, wait
-     until `pgrep` no longer shows it; in-flight entries finish first). Then
-     do Phase 3 for `qwen38pi`, running only that model:
-     `run --run main --models qwen38pi` (NOT `--host titan`, which would also
-     pick up the other models' baseline).
-  3. When `qwen38pi` Phase 3 has ended (kept, or 3 rounds without a keep),
-     restart `run --run main --host titan` to finish the baseline of the six
-     remaining models.
+- **Status and order of work (updated 2026-10-21 by the operator):**
+  1. Done: `qwen38nextflash` Phase 3 (3 rounds, no keep). randal is idle; do
+     not start anything on randal.
+  2. Done: `qwen38pi` Phase 3 stopped by the operator after round 2 (2 rounds,
+     no keep). Its round-3 entries were removed from the queue. Do **not** start
+     new rounds for qwen38pi.
+  3. **Now:** Titan runs only the `north` baseline:
+     `run --run main --models north`. While that process runs, do **not** start
+     `--host titan` (it would run north twice). If it died with north entries
+     open, restart exactly that command.
+  4. When `north baseline` is 207/207: start `run --run main --host titan` to
+     finish the baseline of the remaining models (qwen36, gemma26, muse, swift15,
+     thinkingcap). No Phase 3 for any model unless the operator asks in NOTES.md.
 - Log each transition in NOTES.md.
 
 ## Phase 1 — baseline (all models, 1 repeat)
