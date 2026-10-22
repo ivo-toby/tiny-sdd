@@ -9,6 +9,7 @@
     {"key":"muse","route":"titan/llamacpp/muse-glimmer-2x64k","provider":"litellm","contextWindow":64000,"maxTokens":16384,"thinking":"medium","parallel":2,"host":"titan"},
     {"key":"swift15","route":"titan/llamacpp/swift15-q4km-128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"titan"},
     {"key":"thinkingcap","route":"titan/llamacpp/thinkingcap-q4km-128k","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"titan"},
+    {"key":"flint","route":"titan/llamacpp/flint-ud-q3-256k","provider":"litellm","contextWindow":256000,"maxTokens":32768,"thinking":"medium","parallel":1,"host":"titan","note":"Recursive Flint 40B-A2.5B, unsloth UD-Q3_K_XL. maxTokens 32k per model card."},
     {"key":"qwen38nextflash","route":"randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf","provider":"litellm","contextWindow":128000,"maxTokens":16384,"thinking":"medium","parallel":1,"host":"randal","note":"Route name says Qwen3.6 but serves Qwen3.8-Next-Flash (LiteLLM name is wrong)."}
   ]
 }
