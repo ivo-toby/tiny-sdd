@@ -370,7 +370,7 @@ reconstruction with UNKNOWN historical approval and run evidence. Its protected
 feature check enters through the real fixture entrypoint; it is offline evidence
 for the descriptor tooling, not a Talon, Pi, provider or foreign-harness run.
 
-For an approved slice consumed by Claude Code or interactive Pi, follow the
+For an approved slice consumed by Claude Code, OpenCode or interactive Pi, follow the
 [foreign harness adapter guide](harness-adapters.md). The exported bundle and
 candidate parent stay outside the source project; the host-managed begin step
 retains the exact packet and bundle under `.tinysdd/runs/worker-*` evidence
@@ -762,9 +762,42 @@ records one exact configuration and its measured results:
   candidates). Cards never hold prompts, traces or test output.
 
 All registry fields are optional and strictly validated; older profiles stay
-valid. In this version TinySDD only validates these fields. It does not yet
-apply `limits` or `responseBudget` to a worker run, so set `maxTokens` in the Pi
-model entry and `limits.timeoutMs` on the worker to the profile's values yourself.
+valid.
+
+**The profile is the configuration.** For each worker run TinySDD applies the
+selected profile:
+
+- `model.contextWindow` and `responseBudget.maxTokens` replace the Pi entry's
+  values in the worker's temporary Pi state. Your own Pi `models.json` is not
+  changed; when its values differ, preflight shows a warning. Make sure the
+  server really serves that context window.
+- `limits` replace the worker's limits. A worker that sets the same limit to a
+  different value fails with `PROFILE_LIMIT_CONFLICT`; remove one of the two or
+  select another profile.
+- `model.route` must equal `worker.model`; otherwise the run fails before any
+  model call.
+
+Select a profile by path or by id:
+
+```json
+"workers": { "gemma": { "type": "pi", "provider": "litellm", "model": "titan/llamacpp/gemma4-26b-a4b-2x64k", "profile": "titan-gemma4-26b-a4b-2x64k-v1" } }
+```
+
+An id is looked up, most specific first, in `.tinysdd/profiles/`,
+`~/.config/tiny-sdd/profiles/` (your own), `~/.config/tiny-sdd/registry/` and the
+profiles shipped with TinySDD. `TINYSDD_CONFIG_DIR` (or `XDG_CONFIG_HOME`)
+moves the `~/.config/tiny-sdd` part. The same id with different content in two
+places fails with `PROFILE_AMBIGUOUS`; an unknown id fails with
+`PROFILE_NOT_FOUND`. There is no fallback.
+
+To use another profile for one command, pass `--profile ID|PATH` to `config
+show`, `worker run`, `worker start`, `worker settings` or `bench run`. The
+result's `provenance.workers.<name>.profile` shows where the profile came from
+and whether config or the argument selected it.
+
+`status` and `benchmarks[]` are not part of the profile identity, so adding
+benchmark evidence keeps existing qualification records current. Changing a
+setting or the instructions does change it.
 
 Before a launch, TinySDD compares the requested thinking level with what Pi will
 actually send for that model entry (rules read from pi-ai 0.84.4). A thinking

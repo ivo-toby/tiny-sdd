@@ -30,6 +30,7 @@ import {
   writeCompactionBundle,
 } from "./compaction-runtime.mjs";
 import { createApprovedPacketAnchor, stableStringify as compactionStableStringify } from "./deterministic-compaction.mjs";
+import { profileIdentityDigest } from "./model-registry.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -1034,7 +1035,7 @@ function runChecksMetadata({ declared, availability, maxCheckRuns, checkChannel,
 
 function qualificationRuntimeFacts({ prepared, worker, profile, runtimeChoice, limits, runChecks, piVersion }) {
   const preflight = prepared.metadata.preflight;
-  const profileDigest = profile === undefined || profile === null ? UNKNOWN : digestJson(profile);
+  const profileDigest = profile === undefined || profile === null ? UNKNOWN : profileIdentityDigest(profile);
   const modelMetadata = worker.modelMetadata && typeof worker.modelMetadata === "object" && !Array.isArray(worker.modelMetadata)
     ? worker.modelMetadata
     : {};

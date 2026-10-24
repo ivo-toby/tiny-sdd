@@ -50,6 +50,7 @@ import {
 } from '../src/qualification-store.mjs';
 import { buildQualificationRecord, rescoreQualificationRecord, summarizeConfigurationCauses } from '../src/qualification.mjs';
 import { CLI_VERSION, runSetup } from '../src/setup.mjs';
+import { isProfileId } from '../src/model-registry.mjs';
 
 
 const VERSION = CLI_VERSION;
@@ -58,7 +59,7 @@ const HELP = `TinySDD ${VERSION}
 Usage:
   tinysdd setup
   tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID]
-  tinysdd [--json] [--project PATH] config show|validate [--worker NAME]
+  tinysdd [--json] [--project PATH] config show|validate [--worker NAME] [--profile ID|PATH]
   tinysdd [--json] [--project PATH] status [--feature NAME]
   tinysdd [--json] [--project PATH] next
   tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME]
@@ -69,12 +70,12 @@ Usage:
   tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL [--candidate-paths FILE[,FILE]]
   tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
-  tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
-  tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
+  tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID]
+  tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
-  tinysdd [--json] [--project PATH] worker settings --worker NAME --entry-kind real|synthetic [--observed-reasoning-tokens N]
-  tinysdd [--json] [--project PATH] bench run --worker NAME [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
+  tinysdd [--json] [--project PATH] worker settings --worker NAME [--profile ID|PATH] --entry-kind real|synthetic [--observed-reasoning-tokens N]
+  tinysdd [--json] [--project PATH] bench run --worker NAME [--profile ID|PATH] [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
   tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
   tinysdd [--json] [--project PATH] bench rescore --record PATH [--target ROLE=NUMBER,...]
   tinysdd [--json] [--project PATH] bench qualification show --record PATH [--suite PATH] [--worker NAME]
@@ -197,7 +198,7 @@ function parseCommand(args) {
   }
   if (command === 'config') {
     if (!['show', 'validate'].includes(subcommand)) throw cliError('config requires show or validate');
-    const { values, positional } = parseFlags(rest, new Map([['worker', 'value']]));
+    const { values, positional } = parseFlags(rest, new Map([['worker', 'value'], ['profile', 'value']]));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -221,12 +222,12 @@ function parseCommand(args) {
   if (command === 'worker') {
     if (!['run', 'start', 'status', 'stop', 'settings'].includes(subcommand)) throw cliError('worker requires run, start, status, stop, or settings');
     const allowedBySubcommand = {
-      settings: new Map([['worker', 'value'], ['entry-kind', 'value'], ['observed-reasoning-tokens', 'value']]),
+      settings: new Map([['worker', 'value'], ['profile', 'value'], ['entry-kind', 'value'], ['observed-reasoning-tokens', 'value']]),
       status: new Map([['id', 'value']]),
       stop: new Map([['id', 'value'], ['wait-ms', 'value']]),
     };
     const allowed = allowedBySubcommand[subcommand]
-      ?? new Map([['task', 'value'], ['worker', 'value'], ['base-run', 'value'], ['baseline-run', 'value']]);
+      ?? new Map([['task', 'value'], ['worker', 'value'], ['profile', 'value'], ['base-run', 'value'], ['baseline-run', 'value']]);
     const { values, positional } = parseFlags(rest, allowed);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     if (subcommand === 'stop') values['wait-ms'] = parseWaitMs(values['wait-ms']);
@@ -244,7 +245,7 @@ function parseCommand(args) {
     }
     if (!['run', 'qualify', 'rescore'].includes(subcommand)) throw cliError('bench requires run, qualify, or rescore');
     const allowedBySubcommand = {
-      run: new Map([['worker', 'value'], ['suite', 'value'], ['repeat', 'value'], ['entry-kind', 'value'], ['confirm-settings', 'value'], ['ack-finding', 'list'], ['observed-reasoning-tokens', 'value']]),
+      run: new Map([['worker', 'value'], ['profile', 'value'], ['suite', 'value'], ['repeat', 'value'], ['entry-kind', 'value'], ['confirm-settings', 'value'], ['ack-finding', 'list'], ['observed-reasoning-tokens', 'value']]),
       qualify: new Map([['results', 'list'], ['suite', 'value'], ['worker', 'value'], ['target', 'list']]),
       rescore: new Map([['record', 'value'], ['target', 'list']]),
     };
@@ -340,7 +341,7 @@ async function launchDirectory(project, id, { allowMissing = true } = {}) {
 
 async function startWorker(project, options) {
   if (!options.task) throw cliError('--task requires a value');
-  const resolved = await configShow(project, { worker: options.worker });
+  const resolved = await configShow(project, { worker: options.worker, profile: options.profile });
   if (!resolved.workerName) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; configure defaultWorker or pass --worker');
   // Fail before detaching when Pi cannot honor the configured request, so an
   // agent does not poll a launch that was never going to run as configured.
@@ -377,7 +378,7 @@ async function startWorker(project, options) {
     status: 'starting',
   });
   const launcher = fileURLToPath(new URL('../src/worker-launcher.mjs', import.meta.url));
-  const child = spawn(process.execPath, [launcher, location.root, options.task, resolved.workerName, location.directory, options['base-run'] ?? '', options['baseline-run'] ?? ''], {
+  const child = spawn(process.execPath, [launcher, location.root, options.task, resolved.workerName, location.directory, options['base-run'] ?? '', options['baseline-run'] ?? '', options.profile ?? ''], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -390,6 +391,7 @@ async function startWorker(project, options) {
     worker: resolved.workerName,
     ...(options['base-run'] ? { baseRun: options['base-run'] } : {}),
     ...(options['baseline-run'] ? { baselineRun: options['baseline-run'] } : {}),
+    ...(options.profile ? { profile: options.profile } : {}),
     requestedAt: new Date().toISOString(),
     status: 'running',
     pid: child.pid,
@@ -426,6 +428,7 @@ async function runWorkerCommand(project, options) {
     const data = await dispatchWorker(project, {
       taskId: options.task,
       worker: options.worker,
+      profile: options.profile,
       baseRunId: options['base-run'],
       baselineRunId: options['baseline-run'],
     });
@@ -480,7 +483,7 @@ function observedReasoningTokens(options) {
 }
 
 async function workerSettingsCommand(project, options) {
-  const resolved = await configShow(project, { worker: options.worker });
+  const resolved = await configShow(project, { worker: options.worker, profile: options.profile });
   if (!resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
   return inspectEffectiveModelSettings({ worker: resolved.worker, profile: resolved.profile, entryKind: options['entry-kind'], observedReasoningTokens: observedReasoningTokens(options) });
 }
@@ -488,7 +491,7 @@ async function workerSettingsCommand(project, options) {
 async function runBenchmarkCommand(project, options) {
   if (!options.worker) throw cliError('--worker requires a value');
   const repeat = parseBenchmarkRepeat(options.repeat);
-  const resolved = await configShow(project, { worker: options.worker });
+  const resolved = await configShow(project, { worker: options.worker, profile: options.profile });
   if (!resolved.workerName || !resolved.worker) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; pass --worker');
   const suite = await resolveBenchmarkSuite(resolved.projectRoot, options.suite ?? resolved.config?.qualification?.suite ?? 'bench');
   const settingsConfirmation = { entryKind: options['entry-kind'], settingsDigest: options['confirm-settings'], acknowledgedFindings: options['ack-finding'] ?? [], observedReasoningTokens: observedReasoningTokens(options) };
@@ -573,11 +576,16 @@ async function qualifyBenchmarkCommand(project, options) {
     ? qualificationApplicabilityUnavailable()
     : compareQualificationApplicability(built, current.current);
   const stored = await accumulateQualificationRecord(project, built, {
-    ...(current.resolved?.workerName ? {
+    // A registry profile chosen by id lives outside the project, so the store
+    // cannot re-read it; the config identity in the record still binds it.
+    ...(current.resolved?.workerName ? (isProfileId(current.resolved.worker.profile) ? {
+      profilePath: null,
+      workerName: current.resolved.workerName,
+    } : {
       profilePath: current.resolved.worker.profile ?? null,
       profile: current.resolved.profile,
       workerName: current.resolved.workerName,
-    } : {}),
+    }) : {}),
     targets,
   });
   return {
@@ -820,8 +828,8 @@ async function run(argv) {
   }
   else if (parsed.command === 'init') data = await initProject(project, parsed.values);
   else if (parsed.command === 'config') data = parsed.subcommand === 'show'
-    ? await configShow(project, { worker: parsed.values.worker })
-    : await configValidate(project, { worker: parsed.values.worker });
+    ? await configShow(project, { worker: parsed.values.worker, profile: parsed.values.profile })
+    : await configValidate(project, { worker: parsed.values.worker, profile: parsed.values.profile });
   else if (parsed.command === 'status') {
     data = await controllerStatus(project, { feature: parsed.values.feature });
     return { ok: true, data, presentation: 'status' };

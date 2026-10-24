@@ -54,7 +54,7 @@ async function adapterCli(args) {
   }
 }
 
-for (const harness of ['claude-code', 'pi']) {
+for (const harness of ['claude-code', 'opencode', 'pi']) {
   test(`${harness} capture returns through normal apply and explicit review`, async () => {
     const fixture = await fixtureProject();
     const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
@@ -91,6 +91,35 @@ for (const harness of ['claude-code', 'pi']) {
     }
   });
 }
+
+test('standalone adapter begin accepts --harness opencode and records it through finalize', async () => {
+  const fixture = await fixtureProject();
+  const external = await mkdtemp(join(CANONICAL_TMP, 'tinysdd-harness-output-'));
+  try {
+    const bundle = await exportSliceBundle({ projectRoot: fixture.root, changePath: CHANGE_PATH, sliceId: fixture.plan.id, outputDir: join(external, 'bundle') });
+    const begun = await adapterCli([
+      'begin', '--project', fixture.root, '--bundle', bundle.outputDir,
+      '--harness', 'opencode', '--model', 'synthetic/opencode', '--candidate-parent', external, '--json',
+    ]);
+    assert.equal(begun.error, undefined, begun.error?.stdout);
+    const begin = JSON.parse(begun.result.stdout);
+    assert.equal(begin.harness, 'opencode');
+    assert.equal(begin.model.observedId, 'UNKNOWN');
+    const runtime = JSON.parse(await readFile(join(begin.artifactDir, 'runtime.json'), 'utf8'));
+    const capture = JSON.parse(await readFile(join(begin.artifactDir, 'capture.json'), 'utf8'));
+    assert.deepEqual(runtime.harness, { id: 'opencode', source: 'caller-declared' });
+    assert.deepEqual(capture.harness, { id: 'opencode', source: 'caller-declared' });
+
+    const finalized = await adapterCli(['finalize', '--project', fixture.root, '--run', begin.runId, '--completed', 'true', '--json']);
+    assert.equal(finalized.error, undefined, finalized.error?.stdout);
+    const result = JSON.parse(await readFile(join(begin.artifactDir, 'result.json'), 'utf8'));
+    assert.deepEqual(result.harness, { id: 'opencode', source: 'caller-declared' });
+    assert.equal(result.model.observedId, 'UNKNOWN');
+  } finally {
+    await cleanup(fixture.root);
+    await cleanup(external);
+  }
+});
 
 test('begin requires an explicit foreign harness and model', async () => {
   const fixture = await fixtureProject();

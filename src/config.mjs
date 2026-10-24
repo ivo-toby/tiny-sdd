@@ -13,7 +13,7 @@ import {
 } from './fs-utils.mjs';
 import { validatePhasePolicy, validateTestReviewPolicy } from './phase-gates.mjs';
 import { validateFeatureIntegrationConfig } from './feature-integration.mjs';
-import { REGISTRY_PROFILE_KEYS, validateRegistryFields } from './model-registry.mjs';
+import { REGISTRY_PROFILE_KEYS, applyProfileLimits, findProfileById, isProfileId, validateRegistryFields } from './model-registry.mjs';
 
 export const CONFIG_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 600_000;
@@ -131,15 +131,20 @@ function validateWorker(raw, name, label = `workers.${name}`) {
     model: assertString(raw.model, `${label}.model`),
     limits: validateLimits(raw.limits, `${label}.limits`),
   };
-  if (raw.profile !== undefined) {
-    const profile = validatePathValue(raw.profile, `${label}.profile`);
-    if (!profile.toLowerCase().endsWith('.json')) throw tinyError('CONFIG_INVALID', `${label}.profile must be a JSON path`);
-    worker.profile = profile;
-  }
+  if (raw.profile !== undefined) worker.profile = validateProfileReference(raw.profile, `${label}.profile`);
   if (raw.skills !== undefined) worker.skills = validateStringArray(raw.skills, `${label}.skills`, 'SKILL.md');
   if (raw.instructions !== undefined) worker.instructions = validateStringArray(raw.instructions, `${label}.instructions`);
   if (raw.modelMetadata !== undefined) worker.modelMetadata = validateModelMetadata(raw.modelMetadata, `${label}.modelMetadata`);
   return worker;
+}
+
+// A profile is either a project-relative JSON path or a registry profile id.
+export function validateProfileReference(value, label) {
+  assertString(value, label);
+  if (isProfileId(value)) return value;
+  const profile = validatePathValue(value, label);
+  if (!profile.toLowerCase().endsWith('.json')) throw tinyError('CONFIG_INVALID', `${label} must be a JSON path or a profile id`);
+  return profile;
 }
 
 function validateWorkers(value, label) {
@@ -324,15 +329,30 @@ async function sourceInfo(absolutePath, relativePath, exists) {
   return { path: relativePath, exists: true, bytes: Buffer.byteLength(content), sha256: sha256(content) };
 }
 
-async function validateReferencedPaths(projectRoot, workers) {
+async function loadProfile(projectRoot, reference) {
+  if (isProfileId(reference)) {
+    const found = await findProfileById(projectRoot, reference);
+    return { data: validateProfileDocument(found.value, found.path), source: { id: reference, location: found.location, path: found.path } };
+  }
+  const raw = await readProjectFile(projectRoot, reference);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    if (error instanceof SyntaxError) throw tinyError('PROFILE_INVALID', `malformed profile JSON: ${reference}`);
+    throw error;
+  }
+  return { data: validateProfileDocument(parsed, reference), source: { location: 'project', path: reference } };
+}
+
+async function validateReferencedPaths(projectRoot, workers, explicitLimits = {}) {
   for (const [name, worker] of Object.entries(workers)) {
     if (worker.profile !== undefined) {
-      const raw = await readProjectFile(projectRoot, worker.profile);
-      try {
-        worker.profileData = validateProfileDocument(JSON.parse(raw), worker.profile);
-      } catch (error) {
-        if (error instanceof SyntaxError) throw tinyError('PROFILE_INVALID', `malformed profile JSON: ${worker.profile}`);
-        throw error;
+      const loaded = await loadProfile(projectRoot, worker.profile);
+      worker.profileData = loaded.data;
+      worker.profileSource = loaded.source;
+      if (loaded.data.limits) {
+        worker.limits = applyProfileLimits(worker.limits, loaded.data.limits, explicitLimits[name] ?? [], { worker: name, profile: loaded.data.id });
       }
     }
     for (const skill of worker.skills ?? []) {
@@ -341,12 +361,17 @@ async function validateReferencedPaths(projectRoot, workers) {
     for (const instruction of worker.instructions ?? []) {
       await readProjectFile(projectRoot, instruction);
     }
-    // Keep a deterministic worker object without duplicating profile contents
-    // under the persisted effective config.
-    if (worker.profileData === undefined) continue;
-    worker.profile = worker.profile;
   }
   return workers;
+}
+
+function explicitLimitKeys(document) {
+  const workers = document?.workers;
+  if (!workers || typeof workers !== 'object') return {};
+  return Object.fromEntries(Object.entries(workers).map(([name, worker]) => [
+    name,
+    worker?.limits && typeof worker.limits === 'object' ? Object.keys(worker.limits) : [],
+  ]));
 }
 
 export function defaultConfig() {
@@ -380,7 +405,13 @@ export async function resolveConfig(projectRoot, options = {}) {
     assertSafeName(selectedName, 'worker');
     if (!Object.hasOwn(workers, selectedName)) throw tinyError('WORKER_NOT_FOUND', `unknown worker: ${selectedName}`);
   }
-  const effectiveWorkers = await validateReferencedPaths(root, workers);
+  const selectedWorkerName = selectedName ?? defaultWorker;
+  if (options.profile !== undefined) {
+    if (selectedWorkerName === undefined) throw tinyError('WORKER_NOT_SELECTED', '--profile needs a selected worker; configure defaultWorker or pass --worker');
+    workers[selectedWorkerName] = { ...workers[selectedWorkerName], profile: validateProfileReference(options.profile, '--profile') };
+  }
+  const explicitLimits = { ...explicitLimitKeys(configFile.value), ...explicitLimitKeys(localFile?.value) };
+  const effectiveWorkers = await validateReferencedPaths(root, workers, explicitLimits);
   const effective = {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
@@ -391,7 +422,6 @@ export async function resolveConfig(projectRoot, options = {}) {
     ...(local.featureIntegration === undefined && base.featureIntegration === undefined ? {} : { featureIntegration: local.featureIntegration ?? base.featureIntegration }),
     workers: effectiveWorkers,
   };
-  const selectedWorkerName = selectedName ?? defaultWorker;
   const selectedWorker = selectedWorkerName === undefined ? undefined : effectiveWorkers[selectedWorkerName];
   const provenance = {
     config: await sourceInfo(configPath, configRelative, true),
@@ -400,15 +430,24 @@ export async function resolveConfig(projectRoot, options = {}) {
       value: defaultWorker,
       source: local.defaultWorker === undefined ? 'config.json' : 'config.local.json',
     },
-    workers: Object.fromEntries(Object.keys(effectiveWorkers).map((name) => [name, { source: workerSources[name] ?? 'config.local.json' }])),
+    workers: Object.fromEntries(Object.keys(effectiveWorkers).map((name) => [name, {
+      source: workerSources[name] ?? 'config.local.json',
+      ...(effectiveWorkers[name].profileSource ? {
+        profile: { ...effectiveWorkers[name].profileSource, selectedBy: name === selectedWorkerName && options.profile !== undefined ? 'argument' : 'config' },
+      } : {}),
+    }])),
   };
   const publicWorkers = Object.fromEntries(Object.entries(effectiveWorkers).map(([name, worker]) => {
     const copy = { ...worker };
     delete copy.profileData;
+    delete copy.profileSource;
     return [name, copy];
   }));
   const selectedPublic = selectedWorker ? { ...selectedWorker } : undefined;
-  if (selectedPublic) delete selectedPublic.profileData;
+  if (selectedPublic) {
+    delete selectedPublic.profileData;
+    delete selectedPublic.profileSource;
+  }
   return {
     projectRoot: root,
     configPath,
