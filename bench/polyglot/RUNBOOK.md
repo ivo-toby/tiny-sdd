@@ -62,20 +62,16 @@ reference solution fails are excluded automatically.
   not decide (it is near the ceiling: 85–97%).
 - **Confirm on 1 holdout repeat:** `plan-confirm ... --repeats 1`. Phase 2
   (second baseline repeat) is skipped for now.
-- **Status and order of work (updated 2026-10-21 by the operator):**
-  1. Done: `qwen38nextflash` Phase 3 (3 rounds, no keep). randal is idle; do
-     not start anything on randal.
-  2. Done: `qwen38pi` Phase 3 stopped by the operator after round 2 (2 rounds,
-     no keep). Its round-3 entries were removed from the queue. Do **not** start
-     new rounds for qwen38pi.
-  3. **Now:** Titan runs only the `north` baseline:
-     `run --run main --models north`. While that process runs, do **not** start
-     `--host titan` (it would run north twice). If it died with north entries
-     open, restart exactly that command.
-  4. When `north baseline` is 207/207: start `run --run main --host titan` to
-     finish the baseline of the remaining models (qwen36, gemma26).
-     muse, swift15 and thinkingcap were removed from the run by the operator; do not
-     re-add them. No Phase 3 for any model unless the operator asks in NOTES.md.
+- **Status (updated 2026-10-24 by the operator):**
+  1. Baselines are done for qwen38nextflash, gemma26, muse, qwen38pi,
+     qwen38q4s, qwen38q3, qwen36 and north (207/207 each) and flint (stopped by
+     the operator at 188/207, no Rust). swift15 and thinkingcap are not run.
+  2. Phase 3 done: qwen38nextflash (3 rounds) and qwen38pi (2 rounds), no keep.
+  3. Every result is recorded in the registry profiles in `profiles/` with
+     `card` (see Phase 3 step 6 and Phase 4).
+  4. **Paused.** Do not start runs until the operator asks. Planned next:
+     qwen36 with maxTokens 32768 as a settings variant, then Opus-written
+     candidates for qwen36, gemma26 and muse (north skipped).
 - Log each transition in NOTES.md.
 
 ## Phase 1 — baseline (all models, 1 repeat)
@@ -124,7 +120,8 @@ For model `K`, round `R` (1, 2 or 3):
 ## Phase 4 — wrap up
 
 `$B report --run main`, then write `<run>/SUMMARY.md`:
-models ranked by baseline pass@1 and pass@2; for each optimized model the
+models ranked by baseline pass@1 and pass@2 (and a `card --into` per model to
+update its registry profile); for each optimized model the
 candidates tried, screen numbers, holdout decision (paste `decide` output), and
 the winning profile text if any. Mention anything unusual (harness errors,
 restarts, skipped exercises). The operator decides what goes into the product.
