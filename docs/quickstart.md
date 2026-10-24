@@ -1008,10 +1008,9 @@ not authorize dispatch or acceptance.
 
 A settings or runtime drift can stop an invocation between cases. The runner
 retains every declared visible and held-out check as either its executed record
-or an explicit `not_run` record, so qualification and instruction reports can
+or an explicit `not_run` record, so qualification can
 read the retained invocation and expose the incomplete case. `not_run` checks
-never count as passes: qualification cannot qualify from them and instruction
-reports remain inconclusive until the paired evidence is complete. The reader
+never count as passes: qualification cannot qualify from them. The reader
 still requires exact challenge/repetition coverage, check IDs, definition
 digests, config identity and artifact hashes; edited or missing roster records
 are rejected.
@@ -1214,25 +1213,3 @@ and runners are synthetic, and whole-slice labels do not label each criterion.
 The export requires an explicit partition and existing reviews. Reported
 calibration, direct-strong comparison and total feature cost remain UNKNOWN
 without the corresponding measurements. Live model evaluation remains unverified.
-
-### Controlled instruction experiments
-
-`bench instructions analyze`, `plan`, `run`, `report`, and `profile` provide an
-explicit evidence-to-guidance workflow over the existing benchmark results.
-The first version compares only a worker profile's `instructions` field, with
-frozen fixtures/runtime and AB/BA repetitions on separate discovery/control
-lineages. Supply the exact before/after hypothesis and reporting criteria;
-no advice or qualification threshold is invented. Preparation uses only the
-safe discovery export. Plan with `--entry-kind real`, then show both arms'
-`effectiveModelSettings` reports to the operator. Live inference requires explicit
-confirmation in `run --confirmation PATH`: a JSON file with `A` and `B` entries,
-each containing its reviewed `settingsDigest`, `entryKind`, and
-`acknowledgedFindings`. Missing/stale confirmations or unacknowledged named
-findings stop before inference. Settings are rechecked for every invocation.
-See [the request contracts and workflow](instruction-experiments.md). Synthetic
-examples verify tooling only; real-model effectiveness and #108's live acceptance
-remain pending. Profiles require explicit review/selection and preserve rollback. The experiment
-regression budget covers correctness and explicitly measured integration losses,
-including integration losses hidden by an existing correctness failure.
-Reports stream-hash retained opaque artifacts, so valid large worker logs remain
-verifiable while structural JSON and text resources retain their existing bound.
