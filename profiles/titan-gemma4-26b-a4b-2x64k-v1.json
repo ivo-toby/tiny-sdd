@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-gemma4-26b-a4b-2x64k-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/gemma4-26b-a4b-2x64k",
+    "family": "gemma4-26b-a4b",
+    "server": {
+      "id": "llama.cpp"
+    },
+    "contextWindow": 64000,
+    "parallel": 2
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 16384
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-22",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/gemma4-26b-a4b-2x64k",
+        "contextWindow": 64000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 2
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.758,
+      "pass2": 0.884,
+      "minutesPerTask": 6,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.769,
+          "pass2": 0.962
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.611,
+          "pass2": 0.778
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.821,
+          "pass2": 0.923
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.917,
+          "pass2": 0.979
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.706,
+          "pass2": 0.824
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.625,
+          "pass2": 0.792
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Measured on one benchmark (Aider polyglot, single-file exercises) with the TinySDD worker; not a guarantee for multi-file project tasks."
+  ]
+}

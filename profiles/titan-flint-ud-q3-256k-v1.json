@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-flint-ud-q3-256k-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/flint-ud-q3-256k",
+    "family": "recursive-flint-40b-a2.5b",
+    "quantization": "UD-Q3_K_XL",
+    "server": {
+      "id": "llama.cpp"
+    },
+    "contextWindow": 256000,
+    "parallel": 1,
+    "note": "Recursive Flint 40B-A2.5B, unsloth UD-Q3_K_XL. maxTokens 32k per model card."
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 32768
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-23",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/flint-ud-q3-256k",
+        "contextWindow": 256000,
+        "maxTokens": 32768,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 1
+      },
+      "exercises": 188,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.697,
+      "pass2": 0.878,
+      "minutesPerTask": 6.2,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.769,
+          "pass2": 0.923
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.5,
+          "pass2": 0.778
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.769,
+          "pass2": 0.897
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.813,
+          "pass2": 0.917
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.676,
+          "pass2": 0.882
+        },
+        "rust": {
+          "n": 5,
+          "pass1": 0.2,
+          "pass2": 0.8
+        }
+      },
+      "note": "Stopped by the operator at 188/207 exercises; Rust was not run."
+    }
+  ],
+  "limitations": [
+    "Measured on one benchmark (Aider polyglot, single-file exercises) with the TinySDD worker; not a guarantee for multi-file project tasks."
+  ]
+}

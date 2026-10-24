@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "id": "randal-qwen38-next-flash-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "tested-inconclusive",
+  "model": {
+    "route": "randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+    "family": "qwen3.8-next-flash",
+    "server": {
+      "id": "llama.cpp"
+    },
+    "contextWindow": 128000,
+    "parallel": 1,
+    "note": "Route name says Qwen3.6 but serves Qwen3.8-Next-Flash (LiteLLM name is wrong)."
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 16384
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-20",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 1
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.865,
+      "pass2": 0.971,
+      "minutesPerTask": 2,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.885,
+          "pass2": 1
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.861,
+          "pass2": 0.972
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.846,
+          "pass2": 0.949
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.979,
+          "pass2": 1
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.794,
+          "pass2": 0.971
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.75,
+          "pass2": 0.917
+        }
+      }
+    },
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-20",
+      "variant": "qwen38nextflash-r2-library-api",
+      "split": "holdout",
+      "run": "main",
+      "settings": {
+        "route": "randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 1
+      },
+      "exercises": 104,
+      "repeats": 1,
+      "pass1": 0.856,
+      "pass2": 0.981,
+      "minutesPerTask": 1.5,
+      "perLanguage": {
+        "cpp": {
+          "n": 13,
+          "pass1": 0.923,
+          "pass2": 1
+        },
+        "go": {
+          "n": 17,
+          "pass1": 0.588,
+          "pass2": 0.941
+        },
+        "java": {
+          "n": 22,
+          "pass1": 0.909,
+          "pass2": 0.955
+        },
+        "javascript": {
+          "n": 24,
+          "pass1": 1,
+          "pass2": 1
+        },
+        "python": {
+          "n": 17,
+          "pass1": 0.941,
+          "pass2": 1
+        },
+        "rust": {
+          "n": 11,
+          "pass1": 0.636,
+          "pass2": 1
+        }
+      },
+      "decision": {
+        "metric": "pass1",
+        "keep": false,
+        "n": 104,
+        "delta": 0.038,
+        "reasons": [
+          "delta_not_above_0.05",
+          "language_drop:go"
+        ]
+      }
+    },
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-21",
+      "variant": "qwen38nextflash-r3-lifetimes",
+      "split": "holdout",
+      "run": "main",
+      "settings": {
+        "route": "randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 1
+      },
+      "exercises": 104,
+      "repeats": 1,
+      "pass1": 0.846,
+      "pass2": 0.981,
+      "minutesPerTask": 1.5,
+      "perLanguage": {
+        "cpp": {
+          "n": 13,
+          "pass1": 0.846,
+          "pass2": 1
+        },
+        "go": {
+          "n": 17,
+          "pass1": 0.588,
+          "pass2": 0.941
+        },
+        "java": {
+          "n": 22,
+          "pass1": 1,
+          "pass2": 1
+        },
+        "javascript": {
+          "n": 24,
+          "pass1": 0.958,
+          "pass2": 1
+        },
+        "python": {
+          "n": 17,
+          "pass1": 0.765,
+          "pass2": 1
+        },
+        "rust": {
+          "n": 11,
+          "pass1": 0.818,
+          "pass2": 0.909
+        }
+      },
+      "decision": {
+        "metric": "pass1",
+        "keep": false,
+        "n": 104,
+        "delta": 0.029,
+        "reasons": [
+          "delta_not_above_0.05",
+          "language_drop:go"
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "Measured on one benchmark (Aider polyglot, single-file exercises) with the TinySDD worker; not a guarantee for multi-file project tasks."
+  ]
+}
