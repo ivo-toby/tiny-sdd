@@ -1,12 +1,14 @@
 import { spawn as childProcessSpawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readlink, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { validateProfileDocument } from './config.mjs';
 import { tinyError } from './fs-utils.mjs';
+import { REGISTRY_MANIFEST, tinysddConfigDir } from './model-registry.mjs';
 
 const PACKAGE_PATH = fileURLToPath(new URL('../package.json', import.meta.url));
 const PACKAGE = JSON.parse(await readFile(PACKAGE_PATH, 'utf8'));
@@ -904,12 +906,12 @@ function parseTarGzip(bytes) {
     const prefix = readTarString(header.slice(345, 500));
     const path = safeArchivePath(pax?.path ?? longPath ?? (prefix ? `${prefix}/${base}` : base));
     const rootName = path.split('/')[0];
-    const payload = path === rootName || path === `${rootName}/` || path === `${rootName}/package.json` || path.startsWith(`${rootName}/skills/`) || path.startsWith(`${rootName}/docs/`);
+    const payload = path === rootName || path === `${rootName}/` || path === `${rootName}/package.json` || path.startsWith(`${rootName}/skills/`) || path.startsWith(`${rootName}/docs/`) || path.startsWith(`${rootName}/profiles/`);
     pax = null;
     longPath = null;
     // GitHub source archives include native repository links such as .agents
     // and .claude. They are outside the install payload and must not be
-    // followed or materialized. Links inside skills/docs remain invalid.
+    // followed or materialized. Links inside skills/docs/profiles remain invalid.
     if (!payload) continue;
     if (type === '1' || type === '2' || type === '3' || type === '4' || type === '6') {
       throw setupError('SETUP_ARCHIVE_INVALID', `archive contains a link or special filesystem entry in the install payload: ${path}`);
@@ -1127,22 +1129,132 @@ function setupInstructions(checks) {
   return instructions;
 }
 
-export async function runSetup({ version = CLI_VERSION, homeDir = homedir(), nodeVersion = process.versions.node, nodeExecutable = process.execPath, platform = process.platform, sourceAgentDir, sourceEnv = process.env, sandbox = {}, archiveBytes, fetchImpl = globalThis.fetch } = {}) {
+async function releaseArchive({ version, archiveBytes, fetchImpl }) {
   if (version !== CLI_VERSION) throw setupError('SETUP_VERSION_MISMATCH', `this CLI supports setup archive version ${CLI_VERSION}; requested ${version}`);
-  const checks = await inspectPrerequisites({ nodeVersion, nodeExecutable, platform, homeDir, sourceAgentDir, sourceEnv, sandbox });
   const archive = archiveBytes === undefined ? await downloadReleaseArchive({ version, fetchImpl }) : { version, url: null, bytes: Buffer.from(archiveBytes), sha256: createHash('sha256').update(archiveBytes).digest('hex') };
   if (archive.bytes.length === 0 || archive.bytes.length > MAX_ARCHIVE_BYTES) throw setupError('SETUP_ARCHIVE_INVALID', 'release archive size is outside the supported range');
+  return archive;
+}
+
+// Downloads (or takes) the versioned archive, extracts it to a temporary
+// directory and passes the validated source root to `use`.
+async function withReleaseSource({ version, archiveBytes, fetchImpl }, use) {
+  const archive = await releaseArchive({ version, archiveBytes, fetchImpl });
   const extraction = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-setup-'));
   try {
     const sourceRoot = await extractReleaseArchive(archive.bytes, extraction);
+    await validateBundle(sourceRoot, { expectedVersion: version });
+    return await use(sourceRoot, { ...(archive.url ? { url: archive.url } : {}), sha256: archive.sha256 });
+  } finally {
+    await rm(extraction, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function releaseProfiles(sourceRoot) {
+  const dir = join(sourceRoot, 'profiles');
+  const info = await lstatIfPresent(dir);
+  if (!info || info.isSymbolicLink() || !info.isDirectory()) throw setupError('SETUP_ARCHIVE_INVALID', 'release is missing the profiles/ registry');
+  const profiles = [];
+  const ids = new Set();
+  for (const name of (await readdir(dir)).filter((entry) => entry.endsWith('.json')).sort()) {
+    const path = await assertRegularFile(sourceRoot, `profiles/${name}`);
+    const bytes = await readFile(path);
+    let profile;
+    try {
+      profile = validateProfileDocument(JSON.parse(bytes.toString('utf8')), `profiles/${name}`);
+    } catch (error) {
+      throw setupError('SETUP_ARCHIVE_INVALID', `release profile profiles/${name} is invalid: ${error.message}`);
+    }
+    if (ids.has(profile.id)) throw setupError('SETUP_ARCHIVE_INVALID', `release has two profiles with id ${profile.id}`);
+    ids.add(profile.id);
+    profiles.push({ name, id: profile.id, bytes });
+  }
+  if (profiles.length === 0) throw setupError('SETUP_ARCHIVE_INVALID', 'release profiles/ registry is empty');
+  return profiles;
+}
+
+async function installedRegistryFiles(registryDir) {
+  const files = new Map();
+  for (const name of (await readdir(registryDir)).sort()) {
+    if (name === REGISTRY_MANIFEST) continue;
+    const info = await lstat(join(registryDir, name));
+    files.set(name, info.isFile() ? await readFile(join(registryDir, name)) : null);
+  }
+  return files;
+}
+
+async function readRegistryManifest(registryDir) {
+  try {
+    return JSON.parse(await readFile(join(registryDir, REGISTRY_MANIFEST), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Checks what installing the release registry would do, without writing.
+// Without `replace`, an installed registry that differs is a conflict: setup
+// never overwrites it; `profiles update` does.
+async function planRegistry({ sourceRoot, configDir, replace }) {
+  const profiles = await releaseProfiles(sourceRoot);
+  const registryDir = join(configDir, 'registry');
+  const existing = await lstatIfPresent(registryDir);
+  if (existing && (existing.isSymbolicLink() || !existing.isDirectory())) throw setupError('SETUP_CONFLICT', `registry path is not a directory: ${registryDir}`);
+  let action = existing ? 'replace' : 'install';
+  let previousVersion = null;
+  if (existing) {
+    previousVersion = (await readRegistryManifest(registryDir))?.version ?? null;
+    const installed = await installedRegistryFiles(registryDir);
+    const same = installed.size === profiles.length && profiles.every((profile) => installed.get(profile.name)?.equals(profile.bytes));
+    if (same) action = 'preserve';
+    else if (!replace) throw setupError('SETUP_CONFLICT', `installed profile registry differs from this release: ${registryDir}. Run tinysdd profiles update to replace it`);
+  }
+  return { configDir, registryDir, profiles, action, previousVersion };
+}
+
+async function applyRegistry(plan, { version, archive }) {
+  const { configDir, registryDir, profiles, action } = plan;
+  if (action !== 'preserve') {
+    await mkdir(configDir, { recursive: true });
+    const staging = await mkdtemp(join(configDir, '.registry-'));
+    try {
+      for (const profile of profiles) await writeFile(join(staging, profile.name), profile.bytes, { flag: 'wx', mode: 0o644 });
+      await writeFile(join(staging, REGISTRY_MANIFEST), `${JSON.stringify({ schemaVersion: 1, version, ...(archive?.sha256 ? { sha256: archive.sha256 } : {}), profiles: profiles.map((profile) => profile.id) }, null, 2)}\n`, { flag: 'wx', mode: 0o644 });
+      if (action === 'replace') {
+        const old = `${staging}-old`;
+        await rename(registryDir, old);
+        await rename(staging, registryDir);
+        await rm(old, { recursive: true, force: true });
+      } else {
+        await rename(staging, registryDir);
+      }
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+  return { registryDir, version, action, previousVersion: plan.previousVersion, profiles: profiles.map((profile) => profile.id) };
+}
+
+export async function installRegistry({ sourceRoot, configDir = tinysddConfigDir(), version = CLI_VERSION, replace = false, archive } = {}) {
+  const plan = await planRegistry({ sourceRoot, configDir, replace });
+  return applyRegistry(plan, { version, archive });
+}
+
+export async function runSetup({ version = CLI_VERSION, homeDir = homedir(), configDir = tinysddConfigDir(), nodeVersion = process.versions.node, nodeExecutable = process.execPath, platform = process.platform, sourceAgentDir, sourceEnv = process.env, sandbox = {}, archiveBytes, fetchImpl = globalThis.fetch } = {}) {
+  if (version !== CLI_VERSION) throw setupError('SETUP_VERSION_MISMATCH', `this CLI supports setup archive version ${CLI_VERSION}; requested ${version}`);
+  const checks = await inspectPrerequisites({ nodeVersion, nodeExecutable, platform, homeDir, sourceAgentDir, sourceEnv, sandbox });
+  return withReleaseSource({ version, archiveBytes, fetchImpl }, async (sourceRoot, archive) => {
+    // Check the registry first so a conflict stops setup before anything is written.
+    const registryPlan = await planRegistry({ sourceRoot, configDir, replace: false });
     const installation = await installBundle({ sourceRoot, homeDir, expectedVersion: version });
+    const registry = await applyRegistry(registryPlan, { version, archive });
     return {
       schemaVersion: 1,
       version,
       ready: checks.ready,
       checks,
-      archive: { ...(archive.url ? { url: archive.url } : {}), sha256: archive.sha256 },
+      archive,
       installation,
+      registry,
       warnings: [
         ...(checks.ready ? [] : ['setup installed the skills, but prerequisites are not ready for a TinySDD worker']),
         ...(checks.sandbox.platform === 'linux' && !checks.sandbox.worker.supported && checks.sandbox.worker.probe
@@ -1152,9 +1264,72 @@ export async function runSetup({ version = CLI_VERSION, homeDir = homedir(), nod
       ],
       nextSteps: setupInstructions(checks),
     };
-  } finally {
-    await rm(extraction, { recursive: true, force: true }).catch(() => {});
+  });
+}
+
+// Replaces the installed profile registry with the one from this CLI version's
+// release archive. Local profiles in ~/.config/tiny-sdd/profiles/ are untouched.
+export async function updateProfiles({ version = CLI_VERSION, configDir = tinysddConfigDir(), archiveBytes, fetchImpl = globalThis.fetch } = {}) {
+  return withReleaseSource({ version, archiveBytes, fetchImpl }, async (sourceRoot, archive) => {
+    const registry = await installRegistry({ sourceRoot, configDir, version, replace: true, archive });
+    return { schemaVersion: 1, version, archive, registry };
+  });
+}
+
+async function copyBundle(sourceRoot, destination) {
+  const paths = [];
+  for (const path of ['package.json', 'skills', 'docs']) paths.push(...await collectFiles(sourceRoot, path));
+  for (const path of paths) {
+    const target = join(destination, ...path.split('/'));
+    await mkdir(dirname(target), { recursive: true });
+    const mode = (await lstat(join(sourceRoot, ...path.split('/')))).mode & 0o777;
+    await writeFile(target, await readFile(join(sourceRoot, ...path.split('/'))), { flag: 'wx', mode: mode || 0o644 });
   }
+  return paths;
+}
+
+// Replaces the installed skills bundle with this CLI version's release. Skill
+// links that point elsewhere are still a conflict, as in setup.
+export async function updateSkills({ version = CLI_VERSION, homeDir = homedir(), archiveBytes, fetchImpl = globalThis.fetch } = {}) {
+  return withReleaseSource({ version, archiveBytes, fetchImpl }, async (sourceRoot, archive) => {
+    const layout = globalLayout(homeDir);
+    await ensureDirectoryTree(layout.agentsRoot, 'global agents directory');
+    await ensureDirectoryTree(layout.codexSkills, 'Codex skills directory');
+    await ensureDirectoryTree(layout.claudeSkills, 'Claude skills directory');
+    const existing = await lstatIfPresent(layout.bundleRoot);
+    if (existing?.isSymbolicLink() || (existing && !existing.isDirectory())) throw setupError('SETUP_CONFLICT', `global TinySDD bundle path conflicts: ${layout.bundleRoot}`);
+    let previousVersion = null;
+    if (existing) {
+      try { previousVersion = JSON.parse(await readFile(join(layout.bundleRoot, 'package.json'), 'utf8')).version ?? null; } catch {}
+    }
+    const linkActions = await checkLinkPlan(layout.links);
+    const staging = await mkdtemp(join(layout.agentsRoot, `.${INSTALL_ROOT_NAME}-`));
+    try {
+      const files = await copyBundle(sourceRoot, staging);
+      if (existing) {
+        const old = `${staging}-old`;
+        await rename(layout.bundleRoot, old);
+        await rename(staging, layout.bundleRoot);
+        await rm(old, { recursive: true, force: true });
+      } else {
+        await rename(staging, layout.bundleRoot);
+      }
+      for (const action of linkActions) {
+        if (action.action === 'create') await symlink(action.target, action.path, 'dir');
+      }
+      return {
+        schemaVersion: 1,
+        version,
+        previousVersion,
+        archive,
+        bundleRoot: layout.bundleRoot,
+        files: files.length,
+        linksCreated: linkActions.filter((action) => action.action === 'create').map((action) => ({ agent: action.agent, name: action.name, path: action.path })),
+      };
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 }
 
 export const setupLayoutForHome = globalLayout;

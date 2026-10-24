@@ -49,7 +49,8 @@ import {
   replaceQualificationRecord,
 } from '../src/qualification-store.mjs';
 import { buildQualificationRecord, rescoreQualificationRecord, summarizeConfigurationCauses } from '../src/qualification.mjs';
-import { CLI_VERSION, runSetup } from '../src/setup.mjs';
+import { CLI_VERSION, runSetup, updateProfiles, updateSkills } from '../src/setup.mjs';
+import { THINKING_LEVELS, buildLocalProfile, defaultProfileId, listProfiles, readRegistryInfo, writeLocalProfile } from '../src/profile-catalog.mjs';
 import { isProfileId } from '../src/model-registry.mjs';
 
 
@@ -58,7 +59,11 @@ const HELP = `TinySDD ${VERSION}
 
 Usage:
   tinysdd setup
-  tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID]
+  tinysdd [--json] skills update
+  tinysdd [--json] profiles update
+  tinysdd [--json] profiles new [--route MODEL] [--id ID] [--context-window N] [--parallel N] [--max-tokens N] [--timeout-ms N] [--thinking LEVEL] [--family NAME] [--quantization NAME] [--server NAME]
+  tinysdd [--json] [--project PATH] models [--route MODEL]
+  tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID [--profile ID|PATH]]
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME] [--profile ID|PATH]
   tinysdd [--json] [--project PATH] status [--feature NAME]
   tinysdd [--json] [--project PATH] next
@@ -113,8 +118,14 @@ Feature acceptance requires featureIntegration in .tinysdd/config.json; TinySDD
 executes that typed command through the host check runner before recording an event.
 
 \`setup\` checks the supported Node/Pi/sandbox layout, downloads the matching
-versioned skills archive, and installs global Codex and Claude skill links. It
-does not install prerequisites, inspect credentials, start services or run a model.
+versioned release archive, installs global Codex and Claude skill links and the
+profile registry (~/.config/tiny-sdd/registry/). It does not install
+prerequisites, inspect credentials, start services or run a model.
+\`skills update\` and \`profiles update\` replace the installed skills or registry
+with this CLI version's release; run them after upgrading the CLI.
+\`init --model\` selects the profile measured on that exact route; with several
+matches, pass --profile. \`profiles new\` writes a configuration-only profile to
+~/.config/tiny-sdd/profiles/ and asks for missing values on a terminal.
 `;
 
 function cliError(message, code = 'INVALID_ARGUMENT') {
@@ -186,7 +197,7 @@ function parseCommand(args) {
   const [command, subcommand, ...rest] = args;
   if (command === 'init') {
     const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([
-      ['worker', 'value'], ['provider', 'value'], ['model', 'value'],
+      ['worker', 'value'], ['provider', 'value'], ['model', 'value'], ['profile', 'value'],
     ]));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
@@ -195,6 +206,26 @@ function parseCommand(args) {
     const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map());
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
+  }
+  if (command === 'models') {
+    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['route', 'value']]));
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, values };
+  }
+  if (command === 'skills') {
+    if (subcommand !== 'update') throw cliError('skills requires update');
+    const { positional } = parseFlags(rest, new Map());
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values: {} };
+  }
+  if (command === 'profiles') {
+    if (!['new', 'update'].includes(subcommand)) throw cliError('profiles requires new or update');
+    const allowed = subcommand === 'new'
+      ? new Map(PROFILE_WIZARD_FIELDS.map((field) => [field.flag, 'value']))
+      : new Map();
+    const { values, positional } = parseFlags(rest, allowed);
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
   }
   if (command === 'config') {
     if (!['show', 'validate'].includes(subcommand)) throw cliError('config requires show or validate');
@@ -814,6 +845,61 @@ function renderQualification(data) {
   for (const duplicate of data.duplicateInputs ?? []) process.stdout.write(`Duplicate input ignored: ${duplicate}\n`);
 }
 
+// Configuration questions only; instructions are added to the JSON by hand.
+const PROFILE_WIZARD_FIELDS = [
+  { flag: 'route', key: 'route', required: true, question: 'Worker model id (the exact Pi model / route)' },
+  { flag: 'id', key: 'id', question: 'Profile id', defaultFrom: (answers) => defaultProfileId(answers.route) },
+  { flag: 'context-window', key: 'contextWindow', question: 'Context window in tokens (per request slot)' },
+  { flag: 'parallel', key: 'parallel', question: 'Parallel server slots' },
+  { flag: 'max-tokens', key: 'maxTokens', question: 'Max response tokens (Pi maxTokens)' },
+  { flag: 'timeout-ms', key: 'timeoutMs', question: 'Worker timeout in ms' },
+  { flag: 'thinking', key: 'thinking', question: `Thinking level (${THINKING_LEVELS.join(', ')})` },
+  { flag: 'family', key: 'family', question: 'Model family, e.g. gemma4-26b-a4b' },
+  { flag: 'quantization', key: 'quantization', question: 'Quantization, e.g. Q4_K_M' },
+  { flag: 'server', key: 'server', question: 'Inference server, e.g. llama.cpp' },
+];
+
+async function profileWizardAnswers(values, interactive) {
+  const answers = {};
+  for (const field of PROFILE_WIZARD_FIELDS) if (values[field.flag] !== undefined) answers[field.key] = values[field.flag];
+  if (!interactive) return answers;
+  const { createInterface } = await import('node:readline');
+  // Reading lines through the iterator keeps answers that arrive before their
+  // question is printed (pasted or piped input).
+  const prompt = createInterface({ input: process.stdin, terminal: false });
+  const lines = prompt[Symbol.asyncIterator]();
+  try {
+    for (const field of PROFILE_WIZARD_FIELDS) {
+      if (answers[field.key] !== undefined) continue;
+      const fallback = field.defaultFrom && answers.route ? field.defaultFrom(answers) : undefined;
+      process.stderr.write(`${field.question}${fallback ? ` [${fallback}]` : field.required ? '' : ' (empty to skip)'}: `);
+      const next = await lines.next();
+      const reply = next.done ? '' : next.value.trim();
+      if (reply) answers[field.key] = reply;
+      else if (fallback) answers[field.key] = fallback;
+      if (next.done) break;
+    }
+  } finally {
+    prompt.close();
+  }
+  return answers;
+}
+
+function renderModels(data) {
+  if (data.profiles.length === 0) process.stdout.write('No profiles found.\n');
+  for (const profile of data.profiles) {
+    const numbers = profile.headline
+      ? `pass@1 ${Math.round(profile.headline.pass1 * 100)}% pass@2 ${Math.round(profile.headline.pass2 * 100)}%${profile.headline.minutesPerTask === undefined ? '' : ` ${profile.headline.minutesPerTask} min/task`}`
+      : 'no benchmark';
+    const settings = [
+      profile.contextWindow ? `ctx ${profile.contextWindow}` : null,
+      profile.maxTokens ? `maxTokens ${profile.maxTokens}` : null,
+    ].filter(Boolean).join(', ');
+    process.stdout.write(`${profile.id} [${profile.status ?? 'unrated'}, ${profile.location}]${profile.conflict ? ' CONFLICT' : ''}\n`);
+    process.stdout.write(`  route: ${profile.route ?? 'not recorded'}${settings ? `; ${settings}` : ''}; ${numbers}\n`);
+  }
+}
+
 async function run(argv) {
   const { args, json, help, version, project, projectSpecified } = extractGlobals(argv);
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
@@ -826,7 +912,31 @@ async function run(argv) {
     data = await runSetup({ version: VERSION });
     presentation = 'setup';
   }
-  else if (parsed.command === 'init') data = await initProject(project, parsed.values);
+  else if (parsed.command === 'skills' || (parsed.command === 'profiles' && parsed.subcommand === 'update')) {
+    if (projectSpecified) throw tinyError('SETUP_PROJECT_UNSUPPORTED', `${parsed.command} update is global and cannot be combined with --project`);
+    data = parsed.command === 'skills' ? await updateSkills({ version: VERSION }) : await updateProfiles({ version: VERSION });
+    presentation = `${parsed.command}-update`;
+  }
+  else if (parsed.command === 'profiles') {
+    const answers = await profileWizardAnswers(parsed.values, !json && process.stdin.isTTY === true && process.stderr.isTTY === true);
+    data = await writeLocalProfile(project, buildLocalProfile(answers));
+    presentation = 'profiles-new';
+  }
+  else if (parsed.command === 'models') {
+    const listed = await listProfiles(project);
+    const registry = await readRegistryInfo();
+    const profiles = parsed.values.route === undefined ? listed.profiles : listed.profiles.filter((profile) => profile.route === parsed.values.route);
+    const warnings = [];
+    for (const entry of listed.invalid) warnings.push(`invalid profile ${entry.path}: ${entry.error}`);
+    if (!registry.installed) warnings.push(`no profile registry installed at ${registry.dir}; run tinysdd setup (profiles shipped with the CLI are listed)`);
+    else if (registry.version !== VERSION) warnings.push(`installed registry is from ${registry.version ?? 'an unknown version'}, CLI is ${VERSION}; run tinysdd profiles update`);
+    data = { registry, profiles, invalid: listed.invalid, warnings };
+    presentation = 'models';
+  }
+  else if (parsed.command === 'init') {
+    data = await initProject(project, parsed.values);
+    presentation = 'init';
+  }
   else if (parsed.command === 'config') data = parsed.subcommand === 'show'
     ? await configShow(project, { worker: parsed.values.worker, profile: parsed.values.profile })
     : await configValidate(project, { worker: parsed.values.worker, profile: parsed.values.profile });
@@ -1092,6 +1202,30 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'setup') {
     renderSetup(result.data);
+    return;
+  }
+  if (result.presentation === 'models') {
+    renderModels(result.data);
+    return;
+  }
+  if (result.presentation === 'skills-update') {
+    process.stdout.write(`Skills ${result.data.version} installed at ${result.data.bundleRoot}${result.data.previousVersion ? ` (was ${result.data.previousVersion})` : ''}.\n`);
+    return;
+  }
+  if (result.presentation === 'profiles-update') {
+    const registry = result.data.registry;
+    process.stdout.write(`Profile registry ${registry.version}: ${registry.profiles.length} profile(s) ${registry.action === 'preserve' ? 'already current' : 'installed'} at ${registry.registryDir}${registry.previousVersion && registry.action !== 'preserve' ? ` (was ${registry.previousVersion})` : ''}.\n`);
+    return;
+  }
+  if (result.presentation === 'profiles-new') {
+    process.stdout.write(`Created profile ${result.data.profile.id}: ${result.data.path}\nAdd instructions to its \"instructions\" field, then select it with init --profile or worker --profile.\n`);
+    return;
+  }
+  if (result.presentation === 'init') {
+    const data = result.data;
+    process.stdout.write(`${data.configCreated ? 'Created' : 'Preserved'} config: ${data.configPath}\n`);
+    if (data.profile?.id) process.stdout.write(`Profile: ${data.profile.id} (${data.profile.selectedBy === 'route' ? 'matched on the model route' : 'selected'}, ${data.profile.location})\n`);
+    else if (data.profile?.selectedBy === 'none') process.stderr.write('Warning: no profile matches this model route; create one with tinysdd profiles new, then set workers.<name>.profile\n');
     return;
   }
   if (result.presentation === 'slice-test-review-report') {

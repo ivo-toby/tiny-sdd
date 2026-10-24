@@ -185,6 +185,8 @@ export function profileIdentityDigest(profile) {
 }
 
 const PROFILE_ID = /^[a-z0-9][a-z0-9._-]*$/;
+// Written by setup and `profiles update` beside the installed registry.
+export const REGISTRY_MANIFEST = '.registry.json';
 const MAX_PROFILE_BYTES = 1024 * 1024;
 const BUNDLED_DIR = fileURLToPath(new URL('../profiles/', import.meta.url));
 
@@ -218,7 +220,7 @@ async function regularFile(path) {
   }
 }
 
-async function profilesIn(dir) {
+export async function profilesIn(dir) {
   try {
     const info = await lstat(dir);
     if (!info.isDirectory()) return [];
@@ -226,7 +228,7 @@ async function profilesIn(dir) {
     return [];
   }
   const found = [];
-  for (const name of (await readdir(dir)).filter((entry) => entry.endsWith('.json')).sort()) {
+  for (const name of (await readdir(dir)).filter((entry) => entry.endsWith('.json') && !entry.startsWith('.')).sort()) {
     const path = join(dir, name);
     if (!(await regularFile(path))) continue;
     try {
@@ -256,7 +258,11 @@ export async function findProfileById(projectRoot, id, { env = process.env } = {
   if (matches.length === 0) throw tinyError('PROFILE_NOT_FOUND', `profile ${id} not found`, { searched });
   const digests = new Set(matches.map((match) => digestJson(match.value)));
   if (digests.size > 1) {
-    throw tinyError('PROFILE_AMBIGUOUS', `profile ${id} exists with different content in ${matches.map((match) => match.path).join(', ')}; remove or rename one`, { paths: matches.map((match) => match.path) });
+    const locations = new Set(matches.map((match) => match.location));
+    const hint = locations.has('registry') && locations.has('bundled')
+      ? 'the installed registry differs from the profiles shipped with this CLI; run tinysdd profiles update'
+      : 'remove or rename one';
+    throw tinyError('PROFILE_AMBIGUOUS', `profile ${id} exists with different content in ${matches.map((match) => match.path).join(', ')}; ${hint}`, { paths: matches.map((match) => match.path) });
   }
   return matches[0];
 }

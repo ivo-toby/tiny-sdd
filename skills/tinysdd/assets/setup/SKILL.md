@@ -53,8 +53,10 @@ the harness's explicit skill mechanism when their workflows are needed.
   configuration.
 - Setup validates the matching versioned archive and installs the complete
   `skills/` plus sibling `docs/` resource tree under `~/.agents/tinysdd`, with
-  relative Codex and Claude skill links. It preserves unrelated agent config
-  and refuses conflicting managed paths.
+  relative Codex and Claude skill links, and the profile registry under
+  `~/.config/tiny-sdd/registry/`. It preserves unrelated agent config and
+  refuses conflicting managed paths; after a CLI upgrade, `tinysdd skills
+  update` and `tinysdd profiles update` replace them from the new release.
 - Load the exact setup, product, router and selected phase paths. Use the
   setup/product links to preserve each router's `references/` and `templates/`
   siblings, and use an explicit path when the harness does not list a nested
@@ -106,7 +108,11 @@ the harness's explicit skill mechanism when their workflows are needed.
    operator-authorized repair for the pinned package in that exact Node root;
    never fall back to another executable, provider or model.
 4. Run `init` only when the project needs `.tinysdd/`; then run `config validate`
-   and `config show`. `init` preserves an existing config. Add an optional
+   and `config show`. `init` preserves an existing config. Show `tinysdd models
+   --route EXACT_PI_MODEL` first: `init --model` selects the one profile
+   measured on that route, fails when several match (ask the operator, then
+   pass `--profile ID`) and records no profile when none matches (offer
+   `tinysdd profiles new`). Add an optional
    `featureIntegration` command only when the operator has chosen a real
    application entrypoint and protected test.
 5. Confirm the exact Pi provider/model route and its credential environment

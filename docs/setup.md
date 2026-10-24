@@ -16,7 +16,10 @@ automatic OIDC-backed releases are described in the [release guide](releases.md)
 `--project`; it does not require or inspect a project. Use
 `tinysdd init --project /path/to/project` later for project configuration. The
 command performs deterministic metadata checks and installs the matching
-skills bundle without changing the current project. It does not install Node,
+skills bundle and the profile registry (`~/.config/tiny-sdd/registry/`) without
+changing the current project. After upgrading the CLI, run `tinysdd skills
+update` and `tinysdd profiles update`: they replace the installed skills and
+registry with the new version's archive, where setup would report a conflict. It does not install Node,
 Pi, bubblewrap, a model, or a service;
 read a keychain or Pi `auth.json`; select a provider/model; or run inference.
 
