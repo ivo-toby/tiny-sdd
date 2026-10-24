@@ -329,7 +329,7 @@ async function sourceInfo(absolutePath, relativePath, exists) {
   return { path: relativePath, exists: true, bytes: Buffer.byteLength(content), sha256: sha256(content) };
 }
 
-async function loadProfile(projectRoot, reference) {
+export async function loadProfile(projectRoot, reference) {
   if (isProfileId(reference)) {
     const found = await findProfileById(projectRoot, reference);
     return { data: validateProfileDocument(found.value, found.path), source: { id: reference, location: found.location, path: found.path } };

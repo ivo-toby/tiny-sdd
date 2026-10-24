@@ -25,9 +25,12 @@ import {
 } from './fs-utils.mjs';
 import {
   defaultConfig,
+  loadProfile,
   resolveConfig,
   validateConfigDocument,
+  validateProfileReference,
 } from './config.mjs';
+import { profilesForRoute } from './profile-catalog.mjs';
 import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
 import { parseChecksManifest } from './checks-manifest.mjs';
 import {
@@ -791,16 +794,22 @@ export async function initProject(projectRoot, options = {}) {
   return withExclusiveLock(info.lock, async () => {
     const configExists = await readJsonFile(info.config, { code: 'CONFIG_MALFORMED' });
     let configCreated = false;
+    let profile;
     if (!configExists) {
       const hasWorkerArgs = [options.worker, options.provider, options.model].some((value) => value !== undefined);
       if (hasWorkerArgs && [options.worker, options.provider, options.model].some((value) => value === undefined)) {
         throw tinyError('INVALID_ARGUMENT', 'init worker, provider, and model must be supplied together');
       }
+      if (options.profile !== undefined && !hasWorkerArgs) throw tinyError('INVALID_ARGUMENT', 'init --profile needs --worker, --provider and --model');
       const config = defaultConfig();
       if (hasWorkerArgs) {
         validateTaskId(options.worker);
         config.defaultWorker = options.worker;
-        config.workers[options.worker] = { type: 'pi', provider: requireText(options.provider, 'provider'), model: requireText(options.model, 'model') };
+        const model = requireText(options.model, 'model');
+        config.workers[options.worker] = { type: 'pi', provider: requireText(options.provider, 'provider'), model };
+        profile = await selectInitProfile(root, model, options.profile);
+        if (profile.reference !== undefined) config.workers[options.worker].profile = profile.reference;
+        delete profile.reference;
       }
       validateConfigDocument(config);
       await atomicWriteJson(info.config, config);
@@ -826,8 +835,31 @@ export async function initProject(projectRoot, options = {}) {
       await atomicWriteFile(info.gitignore, 'runs/\nlaunches/\nconfig.local.json\n');
       gitignoreCreated = true;
     }
-    return { projectRoot: root, configPath: info.config, gitignorePath: info.gitignore, configCreated, gitignoreCreated };
+    return { projectRoot: root, configPath: info.config, gitignorePath: info.gitignore, configCreated, gitignoreCreated, ...(profile ? { profile } : {}) };
   });
+}
+
+// init records the model, so it also picks the profile measured on that exact
+// route. TinySDD never guesses between several: the operator names one.
+async function selectInitProfile(root, model, requested) {
+  if (requested !== undefined) {
+    const reference = validateProfileReference(requested, 'init --profile');
+    const loaded = await loadProfile(root, reference);
+    const route = loaded.data.model?.route;
+    if (route !== undefined && route !== model) {
+      throw tinyError('PROFILE_ROUTE_MISMATCH', `profile ${loaded.data.id} was measured on route ${route}, not ${model}; select a profile for this route`);
+    }
+    return { selectedBy: 'argument', id: loaded.data.id, location: loaded.source.location, path: loaded.source.path, reference };
+  }
+  const matches = await profilesForRoute(root, model);
+  if (matches.length === 1) {
+    const [match] = matches;
+    return { selectedBy: 'route', id: match.id, location: match.location, path: match.path, status: match.status, reference: match.id };
+  }
+  if (matches.length > 1) {
+    throw tinyError('PROFILE_MATCH_AMBIGUOUS', `${matches.length} profiles match route ${model}: ${matches.map((match) => match.id).join(', ')}; pass init --profile ID`, { candidates: matches.map((match) => match.id) });
+  }
+  return { selectedBy: 'none', reference: undefined };
 }
 
 export async function addTask(projectRoot, options = {}) {
