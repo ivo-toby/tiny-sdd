@@ -13,6 +13,7 @@ import {
 } from './fs-utils.mjs';
 import { validatePhasePolicy, validateTestReviewPolicy } from './phase-gates.mjs';
 import { validateFeatureIntegrationConfig } from './feature-integration.mjs';
+import { WORKER_TYPES } from './runners/types.mjs';
 import { REGISTRY_PROFILE_KEYS, applyProfileLimits, findProfileById, isProfileId, validateRegistryFields } from './model-registry.mjs';
 
 export const CONFIG_SCHEMA_VERSION = 1;
@@ -124,9 +125,9 @@ function validateModelMetadata(value, label) {
 function validateWorker(raw, name, label = `workers.${name}`) {
   assertPlainObject(raw, 'CONFIG_INVALID', label);
   assertExactKeys(raw, WORKER_KEYS, 'CONFIG_INVALID', label);
-  if (raw.type !== 'pi') throw tinyError('UNSUPPORTED_WORKER', `${label}.type must be "pi"`);
+  if (!WORKER_TYPES.includes(raw.type)) throw tinyError('UNSUPPORTED_WORKER', `${label}.type must be ${WORKER_TYPES.map((type) => `"${type}"`).join(' or ')}`);
   const worker = {
-    type: 'pi',
+    type: raw.type,
     provider: assertString(raw.provider, `${label}.provider`),
     model: assertString(raw.model, `${label}.model`),
     limits: validateLimits(raw.limits, `${label}.limits`),

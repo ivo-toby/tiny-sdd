@@ -34,7 +34,7 @@ import { appendUsageRecord, importUsageRecords, USAGE_LEDGER_MAX_BYTES } from '.
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
 import { inspectEffectiveModelSettings } from '../src/effective-model-settings.mjs';
-import { preflightPiWorker } from '../src/pi-environment.mjs';
+import { workerRunner } from '../src/runners/index.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
 import { assessQualification, resolveBenchmarkSuite as resolveCurrentBenchmarkSuite } from '../src/qualification-dispatch.mjs';
 import { BENCHMARK_ROLES } from '../src/benchmark-schema.mjs';
@@ -374,11 +374,13 @@ async function startWorker(project, options) {
   if (!options.task) throw cliError('--task requires a value');
   const resolved = await configShow(project, { worker: options.worker, profile: options.profile });
   if (!resolved.workerName) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; configure defaultWorker or pass --worker');
-  // Fail before detaching when Pi cannot honor the configured request, so an
-  // agent does not poll a launch that was never going to run as configured.
+  // Fail before detaching when the runner cannot honor the configured request, so
+  // an agent does not poll a launch that was never going to run as configured.
   let preflight;
   try {
-    preflight = await preflightPiWorker({ worker: resolved.worker, profile: resolved.profile });
+    const runner = workerRunner(resolved.worker.type);
+    if (!runner) throw new Error(`Unsupported worker adapter: ${String(resolved.worker.type ?? 'missing')}`);
+    preflight = await runner.preflight({ worker: resolved.worker, profile: resolved.profile });
   } catch (error) {
     throw tinyError('WORKER_PREFLIGHT_FAILED', error instanceof Error ? error.message : String(error));
   }

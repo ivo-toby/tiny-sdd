@@ -5,22 +5,15 @@ import { constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
-import {
-  DEFAULT_TIMEOUT_MS,
-  DEFAULT_TOOL_LIMIT,
-  MAX_TIMEOUT_MS,
-  MAX_TOOL_LIMIT,
-  PI_DEFAULT_MAX_TOKENS,
-  PiEnvironmentError,
-  preparePiEnvironment,
-  validatePiWorker,
-} from "./pi-environment.mjs";
+import { DEFAULT_TIMEOUT_MS, DEFAULT_TOOL_LIMIT, MAX_TIMEOUT_MS, MAX_TOOL_LIMIT } from "./pi-environment.mjs";
+import { workerRunner } from "./runners/index.mjs";
+import { WorkerError, executablePath, fail, writeJson } from "./worker-host.mjs";
 import { checkRunnerAvailable } from "./check-runner.mjs";
 import { parseChecksManifest } from "./checks-manifest.mjs";
 import { createCheckChannel } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
-import { relayPiProvider, startInferenceRelay } from "./inference-relay.mjs";
+import { startInferenceRelay } from "./inference-relay.mjs";
 import { digestJson, stableStringify as fsStableStringify } from "./fs-utils.mjs";
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths, unicodeCaseFold } from "./file-scope.mjs";
 import {
@@ -29,7 +22,7 @@ import {
   normalizeCompactionProfile,
   writeCompactionBundle,
 } from "./compaction-runtime.mjs";
-import { createApprovedPacketAnchor, stableStringify as compactionStableStringify } from "./deterministic-compaction.mjs";
+import { createApprovedPacketAnchor } from "./deterministic-compaction.mjs";
 import { profileIdentityDigest } from "./model-registry.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
@@ -40,7 +33,6 @@ const MAX_PATCH_BYTES = 32 * 1024 * 1024;
 const MAX_COPY_FILES = 20_000;
 const MAX_COPY_BYTES = 512 * 1024 * 1024;
 const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
-const MAX_CLAIM_BYTES = 128 * 1024;
 const MAX_SESSION_BYTES = 16 * 1024 * 1024;
 const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
@@ -52,18 +44,7 @@ const PRODUCT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_WORKER_GUIDANCE = `You are a TinySDD implementation worker. Use only the supplied read, write and edit tools in the disposable workspace. Do not execute commands, tests, package managers, shells, network clients or services. Implement exactly the approved task packet, preserve unrelated behavior and assertions, and hand back changed paths plus unrun verification notes. A model completion is not acceptance or test evidence.`;
 const UNKNOWN = "UNKNOWN";
 
-export class WorkerError extends Error {
-  constructor(message, options = {}) {
-    super(message, options);
-    this.name = "WorkerError";
-    if (options.code !== undefined) this.code = options.code;
-    if (options.details !== undefined) this.details = options.details;
-  }
-}
-
-function fail(message) {
-  throw new WorkerError(message);
-}
+export { WorkerError };
 
 function slash(path) {
   return path.split(sep).join("/");
@@ -904,24 +885,7 @@ function buildPrompt({ packet, profile, review, compiledContext, agents, skills,
   return { system, user, rendered: `${system}\n\n## User task\n${user}` };
 }
 
-async function executablePath(candidate, label) {
-  if (typeof candidate !== "string" || !candidate.startsWith("/")) fail(`${label} must be an absolute executable path`);
-  let info;
-  try {
-    info = await lstat(candidate);
-  } catch (error) {
-    fail(`${label} is unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const resolved = await realpath(candidate);
-  const resolvedInfo = await lstat(resolved);
-  if (!resolvedInfo.isFile()) fail(`${label} does not resolve to a regular file`);
-  if (!(resolvedInfo.mode & fsConstants.X_OK)) fail(`${label} is not executable`);
-  // Pi is commonly a symlink to its installed bundle.  It is safe to resolve
-  // for validation while preserving the lexical install root for bwrap.
-  return { path: candidate, resolved, wasSymlink: info.isSymbolicLink() };
-}
-
-async function findDefaultExecutable(name, candidates) {
+async function findDefaultExecutable(name, candidates, runner) {
   for (const candidate of candidates) {
     try {
       return await executablePath(candidate, name);
@@ -930,51 +894,30 @@ async function findDefaultExecutable(name, candidates) {
       // model/runtime selection is performed.
     }
   }
-  fail(`${name} is unavailable; Linux bubblewrap and the installed Pi executable are required`);
+  fail(`${name} is unavailable; Linux bubblewrap and the installed ${runner.label} executable are required`);
 }
 
-async function chooseRuntime(runtime) {
+async function chooseRuntime(runtime, runner) {
+  const locate = (options) => {
+    const candidate = runner.executableCandidate({ runtime, ...options });
+    return executablePath(candidate.path, candidate.label);
+  };
   if (runtime?.test === true) {
     if (process.env.TINYSDD_WORKER_TEST !== "1") fail("Worker test runtime is disabled outside the test harness");
-    const pi = await executablePath(runtime.piExecutable, "test Pi executable");
-    return { test: true, pi, bwrap: null, sourceAgentDir: runtime.sourceAgentDir, sourceEnv: runtime.sourceEnv };
+    const executable = await locate({ test: true });
+    return { test: true, executable, bwrap: null, sourceAgentDir: runtime.sourceAgentDir, sourceEnv: runtime.sourceEnv };
   }
   if (process.platform === "darwin") {
     const sandboxExec = await executablePath(runtime?.sandboxExecExecutable ?? "/usr/bin/sandbox-exec", "macOS sandbox-exec");
-    const pi = await executablePath(runtime?.piExecutable ?? join(dirname(process.execPath), "pi"), "Pi executable");
+    const executable = await locate({ test: false, platform: "darwin" });
     const node = await executablePath(process.execPath, "Node executable");
-    return { test: false, sandbox: "seatbelt", pi, node, sandboxExec, bwrap: null, sourceAgentDir: undefined, sourceEnv: undefined };
+    return { test: false, sandbox: "seatbelt", executable, node, sandboxExec, bwrap: null, sourceAgentDir: undefined, sourceEnv: undefined };
   }
-  if (process.platform !== "linux") fail("Pi workers require Linux bubblewrap or macOS sandbox-exec; refusing an unsandboxed run");
+  if (process.platform !== "linux") fail(`${runner.label} workers require Linux bubblewrap or macOS sandbox-exec; refusing an unsandboxed run`);
   const bwrapCandidates = runtime?.bwrapExecutable ? [runtime.bwrapExecutable] : ["/usr/bin/bwrap", "/bin/bwrap"];
-  const bwrap = await findDefaultExecutable("bubblewrap", bwrapCandidates);
-  const defaultPi = runtime?.piExecutable || join(dirname(process.execPath), "pi");
-  const pi = await executablePath(defaultPi, "Pi executable");
-  return { test: false, pi, bwrap, sourceAgentDir: undefined, sourceEnv: undefined };
-}
-
-async function existingAbsoluteDirectory(path, label) {
-  const info = await lstat(path);
-  if (info.isSymbolicLink() || !info.isDirectory()) fail(`${label} must be a real directory`);
-  const canonical = await realpath(path);
-  if (canonical !== path) fail(`${label} resolves through a symlink`);
-  return canonical;
-}
-
-async function piPackageInfo(pi) {
-  let current = dirname(pi.resolved);
-  for (let count = 0; count < 8; count += 1) {
-    try {
-      const packageJson = JSON.parse(await readFile(join(current, "package.json"), "utf8"));
-      if (typeof packageJson.name === "string" && typeof packageJson.version === "string") return { version: packageJson.version, root: current };
-    } catch {
-      // Continue toward the bounded install root.
-    }
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return { version: null, root: null };
+  const bwrap = await findDefaultExecutable("bubblewrap", bwrapCandidates, runner);
+  const executable = await locate({ test: false, platform: "linux" });
+  return { test: false, executable, bwrap, sourceAgentDir: undefined, sourceEnv: undefined };
 }
 
 function probeCheckRunner(runtimeChoice, runtime) {
@@ -1136,42 +1079,14 @@ function invalidatedQualification(qualification, changedFields) {
   };
 }
 
-function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath, userPrompt, checkExtension, compactionExtension }) {
-  const args = [
-    "--offline",
-    "--print",
-    "--mode",
-    "json",
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-context-files",
-    "--no-approve",
-    "--tools",
-    checkExtension ? "read,write,edit,run_checks" : "read,write,edit",
-    "--provider",
-    provider,
-    "--model",
-    model,
-    "--thinking",
-    thinking,
-    "--session",
-    sessionPath,
-    "--append-system-prompt",
-    systemPromptPath,
-  ];
-  for (const extension of [checkExtension, compactionExtension].filter(Boolean)) args.push("-e", extension);
-  args.push(userPrompt);
-  return args;
-}
-
 // Inside the sandbox's own network namespace this port is free; it is only the
 // forwarder's listening address, never a host port.
 export const LINUX_INFERENCE_PORT = 41_434;
 const SANDBOX_INFERENCE_DIR = "/opt/tinysdd/inference";
 const SANDBOX_FORWARDER = "/opt/tinysdd/inference-forward.mjs";
 
-export function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, checkChannel, compactionBundle, inference }) {
+/** Wrap a runner's bubblewrap invocation: its read-only and writable mounts, its environment and its argv. */
+export function buildBubblewrapArgs({ workspace, invocation, checkChannel, compactionBundle, inference }) {
   if (!inference?.forwarder || !inference?.socketDir || !inference?.socketName) fail("Linux workers require the inference relay forwarder");
   const requiredMounts = ["/usr", "/bin", "/lib", "/lib64"];
   // --unshare-net leaves only loopback; inference reaches the host relay through
@@ -1181,89 +1096,19 @@ export function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piL
   // There is intentionally no /proc mount: worker read tools must not be able
   // to inspect process environments.
   args.push("--ro-bind-try", "/etc/localtime", "/etc/localtime");
-  args.push("--dir", "/opt", "--ro-bind", nodeRoot, "/opt/node", "--dir", "/work", "--bind", workspace, "/work", "--dir", "/pi-state", "--bind", stateDir, "/pi-state", "--chdir", "/work");
+  args.push("--dir", "/opt");
+  for (const mount of invocation.mounts) if (!mount.writable) args.push("--ro-bind", mount.source, mount.target);
+  args.push("--dir", "/work", "--bind", workspace, "/work");
+  for (const mount of invocation.mounts) if (mount.writable) args.push("--dir", mount.target, "--bind", mount.source, mount.target);
+  args.push("--chdir", "/work");
   args.push("--dir", "/opt/tinysdd", "--ro-bind", inference.forwarder, SANDBOX_FORWARDER, "--ro-bind", inference.socketDir, SANDBOX_INFERENCE_DIR);
   if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--ro-bind", checkChannel.extension, "/opt/tinysdd/run-checks.mjs");
   if (compactionBundle) args.push("--dir", "/opt/tinysdd/compaction", "--ro-bind", compactionBundle.directory, "/opt/tinysdd/compaction");
-  // The only writable mounts are the disposable candidate and temporary Pi state.
-  args.push("--setenv", "HOME", "/home", "--setenv", "PI_CODING_AGENT_DIR", "/pi-state", "--setenv", "PATH", "/opt/node/bin:/usr/bin:/bin");
+  // The only writable mounts are the disposable candidate and the runner's temporary state.
+  for (const [name, value] of Object.entries(invocation.env)) args.push("--setenv", name, value);
   if (compactionBundle) args.push("--setenv", COMPACTION_ANCHOR_ENV, "/opt/tinysdd/compaction/anchor.json");
-  args.push("/opt/node/bin/node", SANDBOX_FORWARDER, String(inference.port ?? LINUX_INFERENCE_PORT), `${SANDBOX_INFERENCE_DIR}/${inference.socketName}`, piLexicalPath, ...piArgs);
+  args.push(invocation.launcher, SANDBOX_FORWARDER, String(inference.port ?? LINUX_INFERENCE_PORT), `${SANDBOX_INFERENCE_DIR}/${inference.socketName}`, ...invocation.argv);
   return args;
-}
-
-const WRITE_TOOLS = new Set(["write", "edit"]);
-
-function parseEvents(text) {
-  const assistant = [];
-  const turnEnds = [];
-  let toolCalls = 0;
-  let writeCalls = 0;
-  const toolCallsByName = {};
-  const readPaths = [];
-  const compactions = [];
-  for (const line of text.split(/\r?\n/u)) {
-    if (!line.trim()) continue;
-    let event;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (event.type === "tool_execution_start") {
-      toolCalls += 1;
-      const name = typeof event.toolName === "string" ? event.toolName : "unknown";
-      toolCallsByName[name] = (toolCallsByName[name] ?? 0) + 1;
-      if (WRITE_TOOLS.has(name)) writeCalls += 1;
-      if (name === "read" && typeof event.args?.path === "string") readPaths.push(event.args.path);
-    }
-    if (event.type === "compaction_end") {
-      const summary = typeof event.result?.summary === "string" ? event.result.summary : null;
-      const details = event.result?.details && typeof event.result.details === "object" ? event.result.details : null;
-      const detailsSerialized = details === null ? null : compactionStableStringify(details);
-      compactions.push({
-        reason: event.reason ?? null,
-        aborted: event.aborted === true,
-        tokensBefore: Number.isFinite(event.result?.tokensBefore) ? event.result.tokensBefore : null,
-        estimatedTokensAfter: Number.isFinite(event.result?.estimatedTokensAfter) ? event.result.estimatedTokensAfter : null,
-        summarySha256: summary === null ? null : createHash("sha256").update(summary).digest("hex"),
-        summaryBytes: summary === null ? null : Buffer.byteLength(summary),
-        detailsSha256: detailsSerialized === null ? null : createHash("sha256").update(detailsSerialized).digest("hex"),
-        detailsBytes: detailsSerialized === null ? null : Buffer.byteLength(detailsSerialized),
-        details,
-        deterministic: details?.strategy === "deterministic",
-        fromHook: event.result?.fromHook === true || details?.strategy === "deterministic",
-        errorMessage: typeof event.errorMessage === "string" ? event.errorMessage : null,
-      });
-    }
-    if (event.type === "message_end" && event.message?.role === "assistant") assistant.push(event.message);
-    else if (event.type === "turn_end" && event.message?.role === "assistant") turnEnds.push(event.message);
-    if (event.type === "toolCall" || event.type === "tool_call") toolCalls += 1;
-  }
-  const authoritative = assistant.length > 0 ? assistant : turnEnds;
-  const finalMessage = authoritative.at(-1) ?? null;
-  const textParts = [];
-  for (const message of authoritative) {
-    if (!Array.isArray(message.content)) continue;
-    for (const part of message.content) if (part?.type === "text" && typeof part.text === "string") textParts.push(part.text);
-  }
-  // Sum of per-response usage. Input is re-counted on every response because
-  // each request resends the context; it is not unique prompt tokens.
-  const cumulativeUsage = { assistantMessages: authoritative.length, input: 0, output: 0, reasoning: null, totalTokens: 0 };
-  for (const message of authoritative) {
-    const usage = message.usage ?? {};
-    for (const key of ["input", "output", "totalTokens"]) if (Number.isFinite(usage[key])) cumulativeUsage[key] += usage[key];
-    if (Number.isFinite(usage.reasoning)) cumulativeUsage.reasoning = (cumulativeUsage.reasoning ?? 0) + usage.reasoning;
-  }
-  let claims = textParts.join("\n\n");
-  let truncated = false;
-  if (Buffer.byteLength(claims) > MAX_CLAIM_BYTES) {
-    claims = claims.slice(0, MAX_CLAIM_BYTES);
-    truncated = true;
-  }
-  const stopReason = finalMessage?.stopReason ?? finalMessage?.rawStopReason ?? null;
-  const errorMessage = finalMessage?.errorMessage ?? finalMessage?.error?.message ?? null;
-  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, cumulativeUsage, claims, claimsTruncated: truncated };
 }
 
 function killProcessGroup(pid, signal) {
@@ -1279,7 +1124,7 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal, checkChannel }) {
+async function captureProcess({ runner, command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal, checkChannel }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
@@ -1328,7 +1173,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
           outputPipes.push(pipeline(stream, async (chunks) => {
             for await (const chunk of chunks) await handle.writeFile(chunk);
           }).catch(() => {
-            spawnError ??= "Cannot retain sandboxed Pi output";
+            spawnError ??= `Cannot retain sandboxed ${runner.label} output`;
             killProcessGroup(child.pid, "SIGTERM");
           }));
         }
@@ -1354,7 +1199,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
       latest.bytes = outInfo.size + errInfo.size;
       if (latest.bytes > MAX_RAW_OUTPUT_BYTES) stop("raw_output_limit");
       const text = await readFile(stdoutPath, "utf8");
-      const parsedNow = parseEvents(text);
+      const parsedNow = runner.parseEvents(text);
       latest.toolCalls = parsedNow.toolCalls;
       if (latest.toolCalls >= maxToolCalls) stop("tool_limit");
       // Poll-granular (100 ms): when the first write/edit start was seen.
@@ -1388,7 +1233,7 @@ async function captureProcess({ command, args, cwd, env, stdoutPath, stderrPath,
   await stderrHandle.close();
   const stdout = await readFile(stdoutPath, "utf8");
   const stderr = await readFile(stderrPath, "utf8");
-  const parsed = parseEvents(stdout);
+  const parsed = runner.parseEvents(stdout);
   const bytes = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
   const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "raw_output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : null);
   return {
@@ -1495,10 +1340,6 @@ async function createArtifactDir(projectRoot, runId) {
   return dir;
 }
 
-async function writeJson(path, value) {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-}
-
 function classifyOutcome(capture) {
   if (capture.forcedOutcome) return capture.forcedOutcome;
   if (capture.parsed.stopReason === "length" || capture.parsed.stopReason === "max_tokens") return "response_token_limit";
@@ -1508,12 +1349,11 @@ function classifyOutcome(capture) {
   return "failed";
 }
 
-function outcomeLimitDetails(outcome, capture, metadata, limits) {
+function outcomeLimitDetails(outcome, capture, metadata, limits, runner) {
   if (outcome === "response_token_limit") {
     const usage = capture.parsed.usage ?? {};
     return {
-      maxTokens: metadata.maxTokens ?? PI_DEFAULT_MAX_TOKENS,
-      maxTokensSource: metadata.maxTokens === null ? "pi-default" : "model",
+      ...runner.responseTokenLimit(metadata),
       outputTokens: Number.isFinite(usage.output) ? usage.output : null,
       reasoningTokens: Number.isFinite(usage.reasoning) ? usage.reasoning : null,
     };
@@ -1578,7 +1418,7 @@ async function resolveReview(projectRoot, review) {
   return { ...review, evidence };
 }
 
-function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks, compaction, qualification) {
+function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, piVersion, runChecks, compaction, qualification) {
   const qualificationValue = qualification === undefined ? undefined : {
     recordDigest: qualification.recordDigest ?? null,
     path: qualification.path ?? null,
@@ -1594,7 +1434,7 @@ function runtimeMetadata(prepared, runtime, pi, bwrap, worker, profile, piVersio
   ];
   return {
     schemaVersion: 1,
-    adapter: "pi",
+    adapter: runner.type,
     runtimeScope: { ...DEFAULT_RUNTIME_SCOPE },
     sandbox: runtime.test ? "test-runtime" : runtime.sandbox ?? "bubblewrap",
     sandboxRequired: true,
@@ -1663,12 +1503,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const filesystemAliases = await detectFilesystemAliases(sourceRoot);
   const { caseInsensitive, unicodeInsensitive } = filesystemAliases;
   const inputPaths = taskInputPaths(normalizedPacket);
-  const limits = validatePiWorker(worker);
+  const runner = workerRunner(worker?.type);
+  if (!runner) throw new WorkerError(`Unsupported worker adapter: ${String(worker?.type ?? "missing")}`, { code: "UNSUPPORTED_WORKER" });
+  const limits = runner.validateWorker(worker);
   const selectedAllowed = normalizedPacket.allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
   const frozenBaseline = await resolveFrozenBaseline(sourceRoot, baselineRunId, normalizedPacket.taskId);
   const executionSource = frozenBaseline?.root ?? sourceRoot;
   const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
-  const runtimeChoice = await chooseRuntime(runtime);
+  const runtimeChoice = await chooseRuntime(runtime, runner);
   const checksDeclared = normalizedPacket.checks !== null;
   const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime) : { available: false, reason: null, testInjected: false };
   // The manifest defines immutable dependency mounts even when this host
@@ -1717,14 +1559,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const prompt = buildPrompt({ packet: { ...normalizedPacket, briefText: brief.text }, profile: resolvedProfile.value, review, compiledContext, agents, skills, instructions, builtInPrompt, checkAvailability, checkManifest });
   const inlineProfileResource = resolvedProfile.resource || (resolvedProfile.value ? { path: "<inline-profile>", text: JSON.stringify(resolvedProfile.value) } : null);
   const contextResources = [brief.resource, inlineProfileResource, builtInPrompt, review?.evidence, ...agents, ...skills, ...instructions].filter(Boolean).map(({ text, ...digest }) => ({ ...digest, sha256: digest.sha256 ?? createHash("sha256").update(text).digest("hex"), bytes: digest.bytes ?? Buffer.byteLength(text) }));
-  const prepared = await preparePiEnvironment({ worker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
+  const prepared = await runner.prepareEnvironment({ worker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
 
   let piPackage;
   let piVersion;
   let effectiveQualification = qualification;
   try {
-    piPackage = await piPackageInfo(runtimeChoice.pi);
-    piVersion = runtimeChoice.test ? "test-harness" : piPackage.version;
+    piPackage = await runner.identify(runtimeChoice.executable, { test: runtimeChoice.test });
+    piVersion = piPackage.version;
     const preparedRunChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel: null, baseline: null });
     const qualificationMismatches = qualificationRuntimeMismatches(
       qualification,
@@ -1791,7 +1633,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       compactionBundle = await writeCompactionBundle(compactionStage, compactionAnchor);
     }
     compaction = compactionIdentity(prepared.metadata.compaction, compactionAnchor);
-    runtimeRecord = runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification);
+    runtimeRecord = runtimeMetadata(runner, prepared, runtimeChoice, runtimeChoice.executable, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification);
     await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
@@ -1814,80 +1656,61 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       chain: revisionBase.chain.map(({ id, paths }) => ({ id, paths })),
     });
     if (frozenBaseline) await writeJson(join(artifactDir, "baseline-run.json"), { id: frozenBaseline.id });
-    const systemPromptPath = join(prepared.stateDir, "system-prompt.txt");
-    await writeFile(systemPromptPath, prompt.system, { mode: 0o600 });
-
-    const thinking = resolvedProfile.value?.runtime?.thinking ?? "off";
-    const nativePaths = runtimeChoice.test || runtimeChoice.sandbox === "seatbelt";
-    const promptStateDir = runtimeChoice.sandbox === "seatbelt" ? await realpath(prepared.stateDir) : prepared.stateDir;
-    const sessionPath = nativePaths ? join(promptStateDir, "session.jsonl") : "/pi-state/session.jsonl";
-    sessionHostPath = join(prepared.stateDir, "session.jsonl");
-    const userPromptPath = join(prepared.stateDir, "task-prompt.txt");
-    await writeFile(userPromptPath, prompt.user, { mode: 0o600 });
-    const promptArgumentPath = nativePaths ? join(promptStateDir, "task-prompt.txt") : "/pi-state/task-prompt.txt";
-    const appendPromptPath = nativePaths ? join(promptStateDir, "system-prompt.txt") : "/pi-state/system-prompt.txt";
+    const sandbox = runtimeChoice.test ? "test" : runtimeChoice.sandbox === "seatbelt" ? "seatbelt" : "bubblewrap";
+    const nativePaths = sandbox !== "bubblewrap";
+    // Extension paths are where the sandbox wrapper mounts them, not runner choices.
     const checkExtension = checkChannel ? (nativePaths ? checkChannel.extension : "/opt/tinysdd/run-checks.mjs") : null;
     const compactionExtension = compactionBundle ? (nativePaths ? compactionBundle.entryPath : "/opt/tinysdd/compaction/entry.mjs") : null;
-    const piArgs = buildPiArgs({ checkExtension, compactionExtension, provider: worker.provider, model: worker.model, sessionPath, thinking, systemPromptPath: appendPromptPath, userPrompt: promptArgumentPath.startsWith("/") ? `@${promptArgumentPath}` : prompt.user });
+    sessionHostPath = runner.sessionHostPath(prepared);
+    const invocation = await runner.buildInvocation({ sandbox, prepared, worker, profile: resolvedProfile.value, prompt, executable: runtimeChoice.executable, node: runtimeChoice.node, packageRoot: piPackage.root, checkExtension, compactionExtension });
     let command;
     let args;
     let childEnv;
-    if (runtimeChoice.test) {
-      command = runtimeChoice.pi.path;
-      args = piArgs;
-      childEnv = { ...prepared.env, HOME: prepared.env.HOME, PATH: process.env.PATH || "/usr/bin:/bin", TINYSDD_TEST_WORKSPACE: workspace };
+    if (sandbox === "test") {
+      [command, ...args] = invocation.argv;
+      childEnv = { ...invocation.env, PATH: process.env.PATH || "/usr/bin:/bin", TINYSDD_TEST_WORKSPACE: workspace };
       if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
       for (const [key, value] of Object.entries(runtime?.testEnv ?? {})) {
         if (!key.startsWith("TINYSDD_TEST_")) fail("Test runtime may only add TINYSDD_TEST_* environment values");
         childEnv[key] = String(value);
       }
-    } else if (runtimeChoice.sandbox === "seatbelt") {
-      if (!piPackage.root) fail("Cannot identify the installed Pi package for the macOS sandbox");
-      const stateDir = await realpath(prepared.stateDir);
-      const sourceAgentDir = await realpath(dirname(prepared.sourceModelsPath));
-      const models = JSON.parse(await readFile(join(stateDir, "models.json"), "utf8"));
-      const provider = models.providers[worker.provider];
+    } else if (sandbox === "seatbelt") {
+      const target = await runner.inferenceTarget({ prepared, worker });
       let sandboxProfile;
       try {
-        inferenceRelay = await startInferenceRelay({ provider, model: provider.models[0], env: prepared.env });
-        sandboxProfile = buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, compactionBundle: compactionBundle?.directory, nodeExecutable: runtimeChoice.node.resolved, piExecutable: runtimeChoice.pi.resolved, piRoot: piPackage.root, inferencePort: inferenceRelay.port });
+        inferenceRelay = await startInferenceRelay({ provider: target.provider, model: target.model, env: prepared.env });
+        sandboxProfile = buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle: compactionBundle?.directory, inferencePort: inferenceRelay.port, invocation: invocation.seatbelt });
       } catch (error) {
         fail(`Cannot prepare macOS sandbox: ${error instanceof Error ? error.message : String(error)}`);
       }
       const sandboxPath = join(artifactDir, "sandbox.sb");
       await writeFile(sandboxPath, sandboxProfile, { mode: 0o600 });
-      await mkdir(join(stateDir, "home"), { mode: 0o700 });
-      await mkdir(join(stateDir, "tmp"), { mode: 0o700 });
-      await writeJson(join(stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceRelay.baseUrl, worker.provider) } });
+      await runner.routeInference({ prepared, worker, target, baseUrl: inferenceRelay.baseUrl });
       command = runtimeChoice.sandboxExec.path;
-      args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
-      childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
+      args = ["-f", sandboxPath, ...invocation.argv];
+      childEnv = { ...invocation.env, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
       if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
       runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` };
       await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     } else {
-      const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
-      await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
-      await executablePath(join(nodeRoot, "bin", "node"), "Node executable in the Pi installation root");
-      const models = JSON.parse(await readFile(join(prepared.stateDir, "models.json"), "utf8"));
-      const provider = models.providers[worker.provider];
+      const target = await runner.inferenceTarget({ prepared, worker });
       inferenceStage = await mkdtemp(join(tempRoot, "tinysdd-inference-"));
       const socketDir = join(inferenceStage, "socket");
       await mkdir(socketDir, { mode: 0o700 });
       const forwarder = join(inferenceStage, "inference-forward.mjs");
       await copyFile(new URL("./inference-forward.mjs", import.meta.url), forwarder);
       try {
-        inferenceRelay = await startInferenceRelay({ provider, model: provider.models[0], env: prepared.env, socketPath: join(socketDir, "relay.sock") });
+        inferenceRelay = await startInferenceRelay({ provider: target.provider, model: target.model, env: prepared.env, socketPath: join(socketDir, "relay.sock") });
       } catch (error) {
         // No fallback to host networking: an unsupported API refuses the run.
         fail(`Cannot prepare the Linux sandbox inference relay: ${error instanceof Error ? error.message : String(error)}`);
       }
       const inferenceBaseUrl = `http://127.0.0.1:${LINUX_INFERENCE_PORT}`;
-      await writeJson(join(prepared.stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceBaseUrl, worker.provider) } });
+      await runner.routeInference({ prepared, worker, target, baseUrl: inferenceBaseUrl });
       command = runtimeChoice.bwrap.path;
-      // Provider credentials stay with the host relay; Pi gets only the per-run token.
-      childEnv = { HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work", TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
-      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", checkChannel, compactionBundle, inference: { forwarder, socketDir, socketName: "relay.sock", port: LINUX_INFERENCE_PORT } });
+      // Provider credentials stay with the host relay; the runner gets only the per-run token.
+      childEnv = { ...invocation.env, TINYSDD_WORKSPACE: "/work", TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
+      args = buildBubblewrapArgs({ workspace, invocation, checkChannel, compactionBundle, inference: { forwarder, socketDir, socketName: "relay.sock", port: LINUX_INFERENCE_PORT } });
       runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, inferenceDestination: inferenceBaseUrl };
       await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     }
@@ -1895,7 +1718,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";
       childEnv.TINYSDD_CHECK_DEADLINE = String(Date.now() + limits.timeoutMs);
     }
-    capture = await captureProcess({ checkChannel, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
+    capture = await captureProcess({ runner, checkChannel, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
     if (inferenceRelay) await inferenceRelay.close();
     inferenceRelay = null;
     if (compactionBundle) {
@@ -1930,7 +1753,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       filesystemAliases,
     })).filter(Boolean);
     const outcome = classifyOutcome(capture);
-    const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits);
+    const limitDetails = outcomeLimitDetails(outcome, capture, prepared.metadata, limits, runner);
     const touchedAllowedPaths = new Set(actualChanges.filter((change) => allowedSet.has(change.path)).map((change) => change.path));
     const actualPaths = actualChanges.map((change) => change.path);
     const extraPaths = actualPaths.filter((path) => !allowedSet.has(path));
@@ -2013,9 +1836,9 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         candidate: afterArtifact,
       },
       patch: patchInfo,
-      modelClaims: { observed: Boolean(capture.parsed.claims), source: "unverified assistant text in raw Pi events", unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: ["Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.", ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256 && !entry.deterministic) ? ["Pi compacted the worker context with a model-written summary; inspect packet retention before relying on later turns."] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
-      ...(effectiveQualification === undefined ? {} : { qualification: runtimeMetadata(prepared, runtimeChoice, runtimeChoice.pi, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification).qualification }),
+      modelClaims: { observed: Boolean(capture.parsed.claims), source: `unverified assistant text in raw ${runner.label} events`, unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
+      warnings: [`Raw ${runner.label} events may contain source code. Worker output is not acceptance or verification evidence.`, ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256 && !entry.deterministic) ? [`${runner.label} compacted the worker context with a model-written summary; inspect packet retention before relying on later turns.`] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      ...(effectiveQualification === undefined ? {} : { qualification: runtimeMetadata(runner, prepared, runtimeChoice, runtimeChoice.executable, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification).qualification }),
     };
     await writeJson(join(artifactDir, "result.json"), result);
     return result;
