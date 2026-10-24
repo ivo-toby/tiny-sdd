@@ -13,7 +13,7 @@ initial version/tag bootstrap and the automatic OIDC-backed release workflow
 are described in [the release guide](../../../docs/releases.md).
 
 On Linux, setup runs a bounded direct bubblewrap startup probe with the worker's
-user/PID namespace and core mount shape and the trusted no-op `/usr/bin/true`.
+user/PID/network namespace and core mount shape and the trusted no-op `/usr/bin/true`.
 This establishes only sandbox startup. A present-but-blocked probe makes worker
 readiness false while skills installation continues; human and `--json` output
 include the status and a reproduction command. Run it from the same host or
@@ -544,6 +544,16 @@ synthetic fixtures separately from the offline test suite.
 Use `node scripts/qualify-macos-worker.mjs --provider NAME --model EXACT_ID` for
 a live smoke of one configured endpoint, with its approved credential environment.
 The script retains artifacts and checks the candidate and source independently.
+
+On Linux, bubblewrap runs the worker with `--unshare-net`: only loopback exists
+and no DNS, hosts or CA files are mounted. The same per-run relay holds the
+provider credentials on the host and listens on a Unix socket mounted read-only
+into the sandbox; a fixed TinySDD launcher forwards `127.0.0.1:41434` to it and
+then runs Pi, passing Pi's output and exit status through. Pi receives only the
+relay token, never `TINYSDD_PI_SECRET_*` values. Only the `openai-completions`
+API is supported: any other provider API fails before Pi starts, naming the API,
+with no fallback to host networking. `runtime.json` keeps `sandbox:
+"bubblewrap"` and records `inferenceDestination`.
 
 Use `worker start` for real model calls from an orchestrating agent. It launches
 the controller in a detached process so short-lived agent shells cannot send an
