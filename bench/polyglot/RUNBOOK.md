@@ -117,6 +117,8 @@ For model `K`, round `R` (1, 2 or 3):
    `$B plan-confirm --run main --model K --candidate ID --repeats 1`, run, then
    `$B decide --run main --model K --candidate ID --metric pass1`.
    `keep: true` → winner for K; stop rounds for K.
+   Then record the result in the registry:
+   `$B card --run main --model K --profile ID --metric pass1 --into profiles/<K's registry profile>.json`.
    `keep: false` → note the reasons; next round (max 3).
 
 ## Phase 4 — wrap up

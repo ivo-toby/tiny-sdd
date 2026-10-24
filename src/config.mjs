@@ -13,6 +13,7 @@ import {
 } from './fs-utils.mjs';
 import { validatePhasePolicy, validateTestReviewPolicy } from './phase-gates.mjs';
 import { validateFeatureIntegrationConfig } from './feature-integration.mjs';
+import { REGISTRY_PROFILE_KEYS, validateRegistryFields } from './model-registry.mjs';
 
 export const CONFIG_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 600_000;
@@ -26,7 +27,7 @@ const MODEL_SERVER_KEYS = ['id', 'version'];
 const QUALIFICATION_KEYS = ['mode', 'suite'];
 const QUALIFICATION_MODES = ['off', 'warn', 'enforce'];
 const LIMIT_KEYS = ['timeoutMs', 'maxToolCalls', 'firstWriteMs', 'maxCheckRuns'];
-const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations'];
+const PROFILE_KEYS = ['schemaVersion', 'id', 'instructions', 'runtime', 'evidence', 'limitations', ...REGISTRY_PROFILE_KEYS];
 const RUNTIME_KEYS = ['thinking', 'reasoning', 'compat', 'thinkingBudgets', 'compaction'];
 const COMPAT_KEYS = ['thinkingFormat', 'supportsDeveloperRole', 'thinkingTokenBudgetField'];
 const THINKING_BUDGET_KEYS = ['minimal', 'low', 'medium', 'high'];
@@ -246,7 +247,7 @@ export function validateLocalDocument(raw) {
   };
 }
 
-function validateProfileDocument(raw, path) {
+export function validateProfileDocument(raw, path) {
   assertPlainObject(raw, 'PROFILE_INVALID', `profile ${path}`);
   assertExactKeys(raw, PROFILE_KEYS, 'PROFILE_INVALID', `profile ${path}`);
   if (raw.schemaVersion !== CONFIG_SCHEMA_VERSION) throw tinyError('PROFILE_INVALID', `profile ${path} schemaVersion must be ${CONFIG_SCHEMA_VERSION}`);
@@ -314,7 +315,7 @@ function validateProfileDocument(raw, path) {
       profile[key] = [...raw[key]];
     }
   }
-  return profile;
+  return { ...profile, ...validateRegistryFields(raw, `profile ${path}`) };
 }
 
 async function sourceInfo(absolutePath, relativePath, exists) {

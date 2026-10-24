@@ -482,7 +482,10 @@ not deep-merge partial worker fields. Inspect effective configuration before
 dispatch. Copy a suitable profile into the project and set its relative path
 on the selected worker when needed. Profile `instructions` may be an explicitly
 empty string for an empty baseline; non-string values remain invalid. Profiles
-do not include credentials.
+do not include credentials. Registry profiles (#123) may also carry `status`, `model`, `limits`,
+`responseBudget` and `benchmarks[]` (aggregate benchmark cards). These are
+validated but not yet applied to worker runs: match the Pi model entry's
+`maxTokens` and the worker's `limits.timeoutMs` to the profile by hand.
 
 If a worker omits `limits.timeoutMs` or `limits.maxToolCalls`, the effective
 defaults are 600000 ms (10 minutes) and 100 tool calls. `limits.maxCheckRuns`

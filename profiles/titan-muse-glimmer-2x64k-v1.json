@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-muse-glimmer-2x64k-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/muse-glimmer-2x64k",
+    "family": "meta-muse-glimmer",
+    "server": {
+      "id": "llama.cpp"
+    },
+    "contextWindow": 64000,
+    "parallel": 2
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 16384
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-24",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/muse-glimmer-2x64k",
+        "contextWindow": 64000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 2
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.797,
+      "pass2": 0.918,
+      "minutesPerTask": 7.8,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.769,
+          "pass2": 0.962
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.611,
+          "pass2": 0.806
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.872,
+          "pass2": 0.949
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.958,
+          "pass2": 1
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.824,
+          "pass2": 0.941
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.625,
+          "pass2": 0.792
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Measured on one benchmark (Aider polyglot, single-file exercises) with the TinySDD worker; not a guarantee for multi-file project tasks."
+  ]
+}

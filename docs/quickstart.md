@@ -732,6 +732,24 @@ Profile `instructions` may be an explicitly empty string when the baseline needs
 to preserve an empty instruction value; non-string values remain invalid.
 Other machines must use their own exact configured IDs. No fallback is automatic.
 
+### Model registry profiles
+
+Profiles in `profiles/` named after a host and route (for example
+`titan-gemma4-26b-a4b-2x64k-v1.json`) are registry entries (#123). Each one
+records one exact configuration and its measured results:
+
+- `status`: `proposed`, `baseline`, `tested-improved` or `tested-inconclusive`;
+- `model`: `route`, `family`, `quantization`, `server`, `contextWindow`, `parallel`;
+- `limits.timeoutMs` and `responseBudget.maxTokens`: the settings it was measured with;
+- `benchmarks[]`: aggregate cards (suite, date, settings, pass@1, pass@2,
+  minutes per task, per-language rates, and a keep/reject decision for tested
+  candidates). Cards never hold prompts, traces or test output.
+
+All registry fields are optional and strictly validated; older profiles stay
+valid. In this version TinySDD only validates these fields. It does not yet
+apply `limits` or `responseBudget` to a worker run, so set `maxTokens` in the Pi
+model entry and `limits.timeoutMs` on the worker to the profile's values yourself.
+
 Before a launch, TinySDD compares the requested thinking level with what Pi will
 actually send for that model entry (rules read from pi-ai 0.84.4). A thinking
 level Pi cannot send, because the entry lacks `reasoning: true`, fails

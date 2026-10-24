@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-qwen36-35b-a3b-2x128k-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/qwen3.6-35b-a3b-2x128k",
+    "family": "qwen3.6-35b-a3b",
+    "server": {
+      "id": "llama.cpp"
+    },
+    "contextWindow": 128000,
+    "parallel": 2
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 16384
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-22",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/qwen3.6-35b-a3b-2x128k",
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 2
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.633,
+      "pass2": 0.812,
+      "minutesPerTask": 2.7,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.654,
+          "pass2": 0.808
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.444,
+          "pass2": 0.806
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.692,
+          "pass2": 0.846
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.875,
+          "pass2": 0.917
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.559,
+          "pass2": 0.824
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.417,
+          "pass2": 0.542
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Measured on one benchmark (Aider polyglot, single-file exercises) with the TinySDD worker; not a guarantee for multi-file project tasks."
+  ]
+}
