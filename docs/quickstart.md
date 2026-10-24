@@ -45,7 +45,9 @@ fixed TinySDD launcher starts a loopback forwarder (`127.0.0.1:41434` inside
 the sandbox) to that socket, then runs Pi with its usual arguments and exit
 status. Pi's temporary `models.json` points at the forwarder with the per-run
 relay token; provider credentials and `TINYSDD_PI_SECRET_*` values stay on the
-host. The relay supports only the `openai-completions` API, so a Linux worker
+host. On both platforms, compatibility settings Pi would derive from the
+provider's URL (for example `max_tokens` and the thinking format for a DeepSeek
+endpoint) are written into that `models.json` explicitly unless already set. The relay supports only the `openai-completions` API, so a Linux worker
 whose provider uses another API now fails before Pi starts, naming the API; there
 is no fallback to host networking. The Node executable must be next to `pi` in
 the Pi installation's `bin/` directory.

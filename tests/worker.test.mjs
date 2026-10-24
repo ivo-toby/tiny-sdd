@@ -1857,7 +1857,7 @@ test("worker refuses protected inputs missing from its copy", async () => {
 describe("Linux worker network isolation", { skip: process.platform === "linux" ? false : "the bubblewrap branch runs only on Linux" }, () => {
   // A fake bwrap records what the sandbox would receive and talks to the relay
   // socket the way the in-sandbox forwarder would.
-  async function makeLinuxRuntime(api = "openai-completions") {
+  async function makeLinuxRuntime(api = "openai-completions", { relayRequest = true } = {}) {
     const root = await mkdtemp(join(canonicalTmpdir, "tinysdd-linux-net-"));
     const agentDir = join(root, "agent");
     await mkdir(agentDir, { recursive: true });
@@ -1878,7 +1878,7 @@ const args = process.argv.slice(2);
 const source = (target) => { const index = args.findIndex((value, i) => ["--bind", "--ro-bind"].includes(value) && args[i + 2] === target); return index < 0 ? null : args[index + 1]; };
 const stateDir = source("/pi-state");
 const socketDir = source("/opt/tinysdd/inference");
-const relay = await new Promise((resolve) => {
+const relay = !${relayRequest} ? null : await new Promise((resolve) => {
   const body = JSON.stringify({ model: "fake/exact-model", messages: [] });
   const req = request({ socketPath: socketDir + "/relay.sock", path: "/chat/completions", method: "POST", headers: { authorization: "Bearer " + process.env.TINYSDD_INFERENCE_TOKEN, "content-type": "application/json" } }, (res) => {
     let text = "";
@@ -1957,6 +1957,24 @@ console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", 
       assert.deepEqual((await readdir(canonicalTmpdir)).filter((name) => name.startsWith("tinysdd-inference-")), []);
     } finally {
       await new Promise((resolve) => upstream.close(resolve));
+      await rm(project, { recursive: true, force: true });
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps the compatibility Pi derived from the upstream URL when Pi is pointed at the relay", async () => {
+    // No relay request is made: the upstream is a public URL and tests stay offline.
+    const fixture = await makeLinuxRuntime("openai-completions", { relayRequest: false });
+    const project = await makeProject();
+    try {
+      await withHostEnv({ PI_CODING_AGENT_DIR: fixture.agentDir, FAKE_BASE: "https://api.deepseek.com/v1", FAKE_TOKEN: "synthetic-header-secret" }, () => runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: fixture.bwrap, piExecutable: fixture.pi } }));
+      const seen = JSON.parse(await readFile(fixture.record, "utf8"));
+      assert.equal(seen.relay, null);
+      const [relayed] = seen.models.providers.fake.models;
+      assert.equal(relayed.baseUrl, "http://127.0.0.1:41434");
+      assert.deepEqual(relayed.compat, { supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens", requiresReasoningContentOnAssistantMessages: true, thinkingFormat: "deepseek" });
+      assert.doesNotMatch(JSON.stringify(seen.models), /deepseek\.com/u);
+    } finally {
       await rm(project, { recursive: true, force: true });
       await rm(fixture.root, { recursive: true, force: true });
     }

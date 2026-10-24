@@ -1857,7 +1857,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       await writeFile(sandboxPath, sandboxProfile, { mode: 0o600 });
       await mkdir(join(stateDir, "home"), { mode: 0o700 });
       await mkdir(join(stateDir, "tmp"), { mode: 0o700 });
-      await writeJson(join(stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceRelay.baseUrl) } });
+      await writeJson(join(stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceRelay.baseUrl, worker.provider) } });
       command = runtimeChoice.sandboxExec.path;
       args = ["-f", sandboxPath, runtimeChoice.node.resolved, runtimeChoice.pi.resolved, ...piArgs];
       childEnv = { HOME: join(stateDir, "home"), TMPDIR: join(stateDir, "tmp"), PATH: dirname(runtimeChoice.node.resolved), PI_CODING_AGENT_DIR: stateDir, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
@@ -1882,7 +1882,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         fail(`Cannot prepare the Linux sandbox inference relay: ${error instanceof Error ? error.message : String(error)}`);
       }
       const inferenceBaseUrl = `http://127.0.0.1:${LINUX_INFERENCE_PORT}`;
-      await writeJson(join(prepared.stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceBaseUrl) } });
+      await writeJson(join(prepared.stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceBaseUrl, worker.provider) } });
       command = runtimeChoice.bwrap.path;
       // Provider credentials stay with the host relay; Pi gets only the per-run token.
       childEnv = { HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work", TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };

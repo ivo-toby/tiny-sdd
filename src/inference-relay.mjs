@@ -133,7 +133,51 @@ export async function startInferenceRelay({ provider, model, env, sourceEnv = pr
   };
 }
 
-export function relayPiProvider(provider, model, baseUrl) {
+// Mirrors the baseUrl-dependent part of pi-ai 1.0.0 detectCompat
+// (dist/api/openai-completions.js). Pi derives these request-shape settings
+// from the provider id and the URL, and the relay address hides the URL.
+function piUrlCompat(providerId, modelId, baseUrl) {
+  const url = typeof baseUrl === "string" ? baseUrl : "";
+  const isZai = providerId === "zai" || providerId === "zai-coding-cn" || url.includes("api.z.ai") || url.includes("open.bigmodel.cn");
+  const isTogether = providerId === "together" || url.includes("api.together.ai") || url.includes("api.together.xyz");
+  const isMoonshot = providerId === "moonshotai" || providerId === "moonshotai-cn" || url.includes("api.moonshot.");
+  const isOpenRouter = providerId === "openrouter" || url.includes("openrouter.ai");
+  const isCloudflareWorkersAI = providerId === "cloudflare-workers-ai" || url.includes("api.cloudflare.com");
+  const isCloudflareAiGateway = providerId === "cloudflare-ai-gateway" || url.includes("gateway.ai.cloudflare.com");
+  const isNvidia = providerId === "nvidia" || url.includes("integrate.api.nvidia.com");
+  const isAntLing = providerId === "ant-ling" || url.includes("api.ant-ling.com");
+  const isCerebras = providerId === "cerebras" || url.includes("cerebras.ai");
+  const isDeepSeek = providerId === "deepseek" || url.toLowerCase().includes("deepseek.com");
+  const isGrok = providerId === "xai" || url.includes("api.x.ai");
+  const isNonStandard = isNvidia || isCerebras || isGrok || isTogether || url.includes("chutes.ai") || isDeepSeek || isZai || isMoonshot
+    || providerId === "opencode" || url.includes("opencode.ai") || isCloudflareWorkersAI || isCloudflareAiGateway || isAntLing;
+  const useMaxTokens = url.includes("chutes.ai") || isDeepSeek || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai;
+  const developerRoleModel = isOpenRouter && typeof modelId === "string" && (modelId.startsWith("anthropic/") || modelId.startsWith("openai/"));
+  return {
+    supportsStore: !isNonStandard,
+    supportsDeveloperRole: developerRoleModel || (!isNonStandard && !isOpenRouter),
+    supportsReasoningEffort: !isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
+    maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
+    requiresReasoningContentOnAssistantMessages: isDeepSeek,
+    thinkingFormat: isDeepSeek ? "deepseek" : isZai ? "zai" : isTogether ? "together" : isAntLing ? "ant-ling" : isOpenRouter ? "openrouter" : "openai",
+    sendSessionAffinityHeaders: isOpenRouter,
+    sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
+    supportsLongCacheRetention: !(isTogether || isCloudflareWorkersAI || isCloudflareAiGateway || isNvidia || isAntLing),
+  };
+}
+
+// Settings Pi would have derived from the upstream URL but not from the relay
+// URL become explicit model compat, unless the operator already set them.
+function preservedCompat(providerId, provider, model, relayUrl) {
+  const upstream = piUrlCompat(providerId, model.id, model.baseUrl ?? provider.baseUrl);
+  const relayed = piUrlCompat(providerId, model.id, relayUrl);
+  const explicit = { ...provider.compat, ...model.compat };
+  return Object.fromEntries(Object.entries(upstream).filter(([key, value]) => relayed[key] !== value && explicit[key] === undefined));
+}
+
+export function relayPiProvider(provider, model, baseUrl, providerId) {
   const filtered = (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !["headers", "apiKey", "baseUrl", "models"].includes(key)));
-  return { ...filtered(provider), api: "openai-completions", baseUrl, apiKey: "$TINYSDD_INFERENCE_TOKEN", authHeader: true, models: [{ ...filtered(model), api: "openai-completions", baseUrl }] };
+  const preserved = preservedCompat(providerId, provider, model, baseUrl);
+  const compat = Object.keys(preserved).length > 0 ? { ...preserved, ...model.compat } : model.compat;
+  return { ...filtered(provider), api: "openai-completions", baseUrl, apiKey: "$TINYSDD_INFERENCE_TOKEN", authHeader: true, models: [{ ...filtered(model), ...(compat === undefined ? {} : { compat }), api: "openai-completions", baseUrl }] };
 }

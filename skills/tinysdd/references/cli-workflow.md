@@ -550,7 +550,9 @@ and no DNS, hosts or CA files are mounted. The same per-run relay holds the
 provider credentials on the host and listens on a Unix socket mounted read-only
 into the sandbox; a fixed TinySDD launcher forwards `127.0.0.1:41434` to it and
 then runs Pi, passing Pi's output and exit status through. Pi receives only the
-relay token, never `TINYSDD_PI_SECRET_*` values. Only the `openai-completions`
+relay token, never `TINYSDD_PI_SECRET_*` values. On both platforms, the
+compatibility settings Pi would derive from the provider's URL are written into
+the relay `models.json` explicitly unless already set. Only the `openai-completions`
 API is supported: any other provider API fails before Pi starts, naming the API,
 with no fallback to host networking. `runtime.json` keeps `sandbox:
 "bubblewrap"` and records `inferenceDestination`.

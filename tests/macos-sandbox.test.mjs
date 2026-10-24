@@ -67,6 +67,33 @@ test("temporary Pi configuration has only the relay credential and selected mode
   assert.equal(JSON.stringify({ provider, model }), original);
 });
 
+test("relay configuration keeps the compatibility Pi derives from the upstream URL", () => {
+  // A custom provider id gives Pi no name signal; only the DeepSeek URL does.
+  const deepseekModel = { id: "deepseek-chat", maxTokens: 512, reasoning: true };
+  const deepseek = { api: "openai-completions", baseUrl: "https://api.deepseek.com/v1", apiKey: "$TINYSDD_PI_SECRET_0", models: [deepseekModel] };
+  const relayed = relayPiProvider(deepseek, deepseekModel, "http://127.0.0.1:41434", "my-deepseek");
+  assert.deepEqual(relayed.models[0].compat, {
+    supportsStore: false,
+    supportsDeveloperRole: false,
+    maxTokensField: "max_tokens",
+    requiresReasoningContentOnAssistantMessages: true,
+    thinkingFormat: "deepseek",
+  });
+  assert.doesNotMatch(JSON.stringify(relayed), /deepseek\.com/u);
+
+  // Explicit settings win at either level, and provider-level ones are not shadowed.
+  const configured = relayPiProvider({ ...deepseek, compat: { supportsStore: true } }, { ...deepseekModel, compat: { thinkingFormat: "openai" } }, "http://127.0.0.1:41434", "my-deepseek");
+  assert.deepEqual(configured.compat, { supportsStore: true });
+  assert.deepEqual(configured.models[0].compat, { supportsDeveloperRole: false, maxTokensField: "max_tokens", requiresReasoningContentOnAssistantMessages: true, thinkingFormat: "openai" });
+
+  // A provider id Pi recognizes by name keeps its signal through the relay.
+  assert.equal(relayPiProvider(deepseek, deepseekModel, "http://127.0.0.1:41434", "deepseek").models[0].compat, undefined);
+  // A generic local endpoint implies nothing, so nothing is added.
+  assert.equal(relayPiProvider({ ...deepseek, baseUrl: "http://127.0.0.1:8080/v1" }, deepseekModel, "http://127.0.0.1:41434", "local").models[0].compat, undefined);
+  const openrouter = relayPiProvider({ ...deepseek, baseUrl: "https://openrouter.ai/api/v1" }, { id: "anthropic/claude-x" }, "http://127.0.0.1:41434", "router");
+  assert.deepEqual(openrouter.models[0].compat, { thinkingFormat: "openrouter", sendSessionAffinityHeaders: true, sessionAffinityFormat: "openrouter" });
+});
+
 test("relay streams only to the approved endpoint with host-held credentials", async () => {
   const calls = [];
   const handler = inferenceRelayHandler({ provider, model, env, token: "test-token", transport: async (...args) => {
