@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { attachCard, buildCard, newRegistryProfile } from './lib/card.mjs';
 import { buildManifest } from './lib/dataset.mjs';
 import { buildImage, oracleCheck } from './lib/docker.mjs';
 import { readQueue, readResults, runQueue } from './lib/driver.mjs';
@@ -13,6 +14,7 @@ import { exportFailures } from './lib/export.mjs';
 import { baselinePlan, confirmPlan, decide, screenPlan, screenSelection } from './lib/plans.mjs';
 import { report } from './lib/report.mjs';
 import { triage } from './lib/triage.mjs';
+import { WORKER_TIMEOUT_MS } from './lib/worker-run.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const USAGE = `Usage: node bench/polyglot/cli.mjs <command> [options] [--data DIR] [--json]
@@ -34,6 +36,9 @@ Runs:
   triage --run NAME --model K [--profile ID]   Jev failure labels (discovery only)
   export --run NAME --model K [--profile ID]   discovery failures for the proposer
   decide --run NAME --model K --candidate ID [--metric pass1|pass2]   pre-registered keep/reject on holdout
+  card --run NAME --model K [--profile ID] [--metric pass1|pass2] [--into FILE [--id ID]] [--note TEXT]
+                                 registry benchmark card (aggregates only); --into adds it to a
+                                 profile file, or creates one with --id
 `;
 
 const options = {
@@ -41,7 +46,7 @@ const options = {
   host: { type: 'string' }, repeats: { type: 'string' }, id: { type: 'string' }, file: { type: 'string' },
   note: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' }, seed: { type: 'string' },
   'pass-sample': { type: 'string' }, profile: { type: 'string' }, concurrency: { type: 'string' },
-  metric: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' },
+  metric: { type: 'string' }, into: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' },
 };
 
 function fail(message) {
@@ -263,6 +268,38 @@ const commands = {
     const result = decide({ results: await readResults(runDir), model: required(values, 'model'), candidate: required(values, 'candidate'), metric: values.metric ?? 'pass2' });
     await writeJson(join(runDir, 'decisions', `${values.model}-${values.candidate}-${result.metric}.json`), { ...result, decidedAt: new Date().toISOString() });
     return result;
+  },
+
+  async card(values, p) {
+    const runDir = requireRun(p);
+    const key = required(values, 'model');
+    const model = selectModels(await loadModels(), key)[0];
+    const profile = values.profile ?? 'baseline';
+    const run = await readJson(join(runDir, 'run.json'));
+    const manifest = await loadManifest(p);
+    let decision = null;
+    if (profile !== 'baseline') {
+      const file = join(runDir, 'decisions', `${key}-${profile}-${values.metric ?? 'pass1'}.json`);
+      if (!existsSync(file)) fail(`no decision for ${profile}; run "decide" first`);
+      decision = await readJson(file);
+    }
+    const card = buildCard({
+      results: await readResults(runDir), runName: run.name, datasetCommit: run.datasetCommit,
+      validExercises: manifest.exercises.length - run.excluded.length, model, profile,
+      timeoutMs: WORKER_TIMEOUT_MS, decision, note: values.note,
+    });
+    if (!values.into) return card;
+    const target = resolve(values.into);
+    let doc;
+    if (existsSync(target)) {
+      doc = attachCard(await readJson(target), card);
+    } else {
+      const id = required(values, 'id');
+      const instructions = (await readJson(join(runDir, 'profiles', `${profile}.json`))).instructions ?? '';
+      doc = newRegistryProfile({ id, model, card, instructions });
+    }
+    await writeJson(target, doc);
+    return { profile: target, id: doc.id, benchmarks: doc.benchmarks.length, card };
   },
 };
 

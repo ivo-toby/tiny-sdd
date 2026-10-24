@@ -264,6 +264,17 @@ State must be small: truncate each field to 4000 chars. Missing key or HTTP
 error → record `unavailable` and continue; never fail the run. fetch must be
 injectable for tests.
 
+## 12a. Registry cards (`lib/card.mjs`)
+
+`card --run NAME --model K [--profile ID]` builds one benchmark card for the
+registry (#123): settings from `models.json` plus the worker timeout, pass@1,
+pass@2, mean minutes per entry and per-language rates. A baseline card covers
+every split; a candidate card covers holdout only and needs a `decide` file,
+whose keep/reject result it carries. `--into FILE` adds the card to a TinySDD
+profile (replacing a card with the same suite, variant, split and run) and
+refuses a card whose settings differ from the profile; with `--id` it creates
+the profile when FILE does not exist. Cards hold aggregates only.
+
 ## 13. Tests (each owner)
 
 Offline only. At minimum: split determinism and stratification; workspace
