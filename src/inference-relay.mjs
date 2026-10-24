@@ -17,7 +17,8 @@ function credential(value, env, sourceEnv) {
 }
 
 function upstreamSettings(provider, model, env, sourceEnv) {
-  if ((model.api ?? provider.api) !== "openai-completions") throw new Error("macOS workers currently require the openai-completions inference API");
+  const api = model.api ?? provider.api;
+  if (api !== "openai-completions") throw new Error(`Sandboxed workers currently require the openai-completions inference API; the selected model uses ${api === undefined ? "no declared API" : JSON.stringify(api)}`);
   let url;
   try { url = new URL(model.baseUrl ?? provider.baseUrl); } catch { throw new Error("Inference relay requires an explicit HTTP(S) baseUrl"); }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
@@ -105,7 +106,9 @@ export function inferenceRelayHandler({ provider, model, env, sourceEnv = {}, to
   };
 }
 
-export async function startInferenceRelay({ provider, model, env, sourceEnv = process.env }) {
+// With socketPath the relay listens only on that Unix socket (the Linux worker
+// reaches it through a bind mount); otherwise on an ephemeral loopback port.
+export async function startInferenceRelay({ provider, model, env, sourceEnv = process.env, socketPath }) {
   const token = randomBytes(32).toString("hex");
   const controller = new AbortController();
   const handler = inferenceRelayHandler({ provider, model, env, sourceEnv, token, signal: controller.signal });
@@ -114,13 +117,13 @@ export async function startInferenceRelay({ provider, model, env, sourceEnv = pr
   server.headersTimeout = 10_000;
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    if (socketPath) server.listen(socketPath, resolve);
+    else server.listen(0, "127.0.0.1", resolve);
   });
-  const port = server.address().port;
+  const port = socketPath ? undefined : server.address().port;
   return {
-    port,
+    ...(socketPath ? { socketPath } : { port, baseUrl: `http://127.0.0.1:${port}` }),
     token,
-    baseUrl: `http://127.0.0.1:${port}`,
     close: async () => {
       controller.abort();
       const closed = new Promise((resolve) => server.close(resolve));
