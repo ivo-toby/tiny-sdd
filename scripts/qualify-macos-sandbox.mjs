@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { buildMacosSandboxProfile } from "../src/macos-sandbox.mjs";
+import { piSeatbeltInvocation } from "../src/runners/pi.mjs";
 
 if (process.platform !== "darwin") throw new Error("This qualification requires real macOS Seatbelt");
 
@@ -24,7 +25,7 @@ try {
   for (const path of [join(workspace, "allowed.txt"), join(sourceRoot, "source.txt"), join(sourceAgentDir, "auth.json"), piExecutable, sshFile, outsideFile]) await writeFile(path, "synthetic fixture\n", { mode: 0o600 });
   await symlink(join(sourceRoot, "source.txt"), join(workspace, "source-link"));
   await symlink(sshFile, join(workspace, "home-link"));
-  const profile = buildMacosSandboxProfile({ workspace, stateDir, sourceRoot, sourceAgentDir, nodeExecutable: await realpath(process.execPath), piExecutable, piRoot, inferencePort: 61419 });
+  const profile = buildMacosSandboxProfile({ workspace, sourceRoot, inferencePort: 61419, invocation: piSeatbeltInvocation({ stateDir, sourceAgentDir, nodeExecutable: await realpath(process.execPath), piExecutable, piRoot }) });
   await writeFile(profilePath, profile, { mode: 0o600 });
   const program = `
     const assert = require("node:assert/strict");

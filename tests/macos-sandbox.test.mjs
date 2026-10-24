@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
-import { buildMacosSandboxProfile } from "../src/macos-sandbox.mjs";
+import { buildMacosSandboxProfile as buildProfile } from "../src/macos-sandbox.mjs";
+import { piSeatbeltInvocation } from "../src/runners/pi.mjs";
 import { inferenceRelayHandler, relayPiProvider } from "../src/inference-relay.mjs";
 
 const sandbox = {
@@ -14,6 +15,10 @@ const sandbox = {
   piRoot: "/opt/node/lib/node_modules/pi",
   inferencePort: 54321,
 };
+// The fixtures name Pi's paths; the profile builder receives them as the Pi runner's invocation.
+function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, inferencePort, ...pi }) {
+  return buildProfile({ workspace, sourceRoot, compactionBundle, inferencePort, invocation: piSeatbeltInvocation(pi) });
+}
 const model = { id: "exact-model", maxTokens: 1024, headers: { "X-Model": "$TINYSDD_PI_SECRET_2" } };
 const provider = { api: "openai-completions", baseUrl: "https://inference.example/v1", apiKey: "$TINYSDD_PI_SECRET_0", headers: { "X-Provider": "$TINYSDD_PI_SECRET_1" }, models: [model, { id: "other-model" }] };
 const env = { TINYSDD_PI_SECRET_0: "synthetic-key", TINYSDD_PI_SECRET_1: "synthetic-provider", TINYSDD_PI_SECRET_2: "synthetic-model" };

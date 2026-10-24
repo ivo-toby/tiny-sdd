@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { compileContext } from "../src/context-compiler.mjs";
 import { checkRunnerAvailable } from "../src/check-runner.mjs";
 import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
+import { piBubblewrapInvocation } from "../src/runners/pi.mjs";
 import { buildBubblewrapArgs, copyProjectTree, runWorker } from "../src/worker.mjs";
 import { buildSessionContext } from "./pi100-session-projection.mjs";
 
@@ -2046,7 +2047,7 @@ console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", 
   });
 
   test("bubblewrap arguments cannot be built without the relay forwarder", () => {
-    const common = { workspace: "/tmp/candidate", stateDir: "/tmp/pi-state", nodeRoot: "/opt/node", piArgs: [], piLexicalPath: "/opt/node/bin/pi" };
+    const common = { workspace: "/tmp/candidate", invocation: piBubblewrapInvocation({ nodeRoot: "/opt/node", stateDir: "/tmp/pi-state", args: [] }) };
     assert.throws(() => buildBubblewrapArgs(common), /require the inference relay forwarder/u);
     const args = buildBubblewrapArgs({ ...common, inference: { forwarder: "/tmp/f.mjs", socketDir: "/tmp/socket", socketName: "relay.sock" } });
     assert.deepEqual(args.slice(0, 4), ["--die-with-parent", "--unshare-user", "--unshare-pid", "--unshare-net"]);

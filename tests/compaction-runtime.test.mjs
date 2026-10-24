@@ -23,6 +23,7 @@ import { resolveConfig, validateConfigDocument } from '../src/config.mjs';
 import { digestJson } from '../src/fs-utils.mjs';
 import { buildMacosSandboxProfile } from '../src/macos-sandbox.mjs';
 import { buildBubblewrapArgs, retainSessionArtifact } from '../src/worker.mjs';
+import { piBubblewrapInvocation, piSeatbeltInvocation } from '../src/runners/pi.mjs';
 import { buildSessionContext } from './pi100-session-projection.mjs';
 
 const temp = () => mkdtemp(join(tmpdir(), 'tinysdd-compaction-runtime-'));
@@ -205,14 +206,16 @@ test('retained session reader refuses FIFOs without blocking and bounds regular 
 test('Seatbelt exposes the staged anchor to trusted extension code without granting it writes', () => {
   const profile = buildMacosSandboxProfile({
     workspace: '/private/tmp/candidate',
-    stateDir: '/private/tmp/pi-state',
     sourceRoot: '/Users/operator/project',
-    sourceAgentDir: '/Users/operator/.pi/agent',
     compactionBundle: '/private/tmp/compaction-bundle',
-    nodeExecutable: '/opt/node/bin/node',
-    piExecutable: '/opt/node/lib/node_modules/pi/dist/cli.js',
-    piRoot: '/opt/node/lib/node_modules/pi',
     inferencePort: 54321,
+    invocation: piSeatbeltInvocation({
+      stateDir: '/private/tmp/pi-state',
+      sourceAgentDir: '/Users/operator/.pi/agent',
+      nodeExecutable: '/opt/node/bin/node',
+      piExecutable: '/opt/node/lib/node_modules/pi/dist/cli.js',
+      piRoot: '/opt/node/lib/node_modules/pi',
+    }),
   });
   assert.match(profile, /\(allow file-read\*[^\n]*\(subpath "\/private\/tmp\/compaction-bundle"\)/u);
   assert.doesNotMatch(profile, /file-write\*[^\n]*compaction-bundle/u);
@@ -220,7 +223,7 @@ test('Seatbelt exposes the staged anchor to trusted extension code without grant
 
 test('bubblewrap mounts the compaction bundle with or without run_checks', () => {
   const bundle = { directory: '/private/tmp/compaction-bundle' };
-  const common = { workspace: '/private/tmp/candidate', stateDir: '/private/tmp/pi-state', nodeRoot: '/opt/node', piArgs: [], piLexicalPath: '/opt/node/bin/pi', inference: { forwarder: '/private/tmp/inference-forward.mjs', socketDir: '/private/tmp/inference', socketName: 'relay.sock' } };
+  const common = { workspace: '/private/tmp/candidate', invocation: piBubblewrapInvocation({ nodeRoot: '/opt/node', stateDir: '/private/tmp/pi-state', args: [] }), inference: { forwarder: '/private/tmp/inference-forward.mjs', socketDir: '/private/tmp/inference', socketName: 'relay.sock' } };
   const withoutChecks = buildBubblewrapArgs({ ...common, compactionBundle: bundle });
   const withChecks = buildBubblewrapArgs({
     ...common,
