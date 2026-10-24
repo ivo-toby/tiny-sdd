@@ -7,8 +7,11 @@ or select `--project /path/to/project`. Add `--json` for machine-readable output
 For global onboarding from a reviewed release, run `tinysdd setup` without
 `--project`. It checks Node/Pi/sandbox/model metadata, downloads the matching
 versioned archive, and installs the complete global skills resource tree for
-Codex and Claude. It does not install prerequisites, inspect credentials, start
-services or run inference; use `init` separately for project configuration. The
+Codex and Claude plus the profile registry (`~/.config/tiny-sdd/registry/`). It
+does not install prerequisites, inspect credentials, start services or run
+inference; use `init` separately for project configuration. After a CLI
+upgrade, `tinysdd skills update` and `tinysdd profiles update` replace the
+installed skills and registry with the new version's archive. The
 initial version/tag bootstrap and the automatic OIDC-backed release workflow
 are described in [the release guide](../../../docs/releases.md).
 
@@ -492,6 +495,18 @@ profile id, looked up in `.tinysdd/profiles/`, `~/.config/tiny-sdd/profiles/`,
 different content fail. Pass `--profile ID|PATH` to `config show`, `worker
 run|start|settings` or `bench run` to select another profile for one command.
 A worker limit that contradicts the profile fails with `PROFILE_LIMIT_CONFLICT`.
+
+`tinysdd models [--route MODEL]` lists the selectable profiles with status,
+location, settings and the newest whole-suite baseline pass@1/pass@2. `init
+--model MODEL` writes the one profile measured on that route to
+`workers.NAME.profile`; several matches fail with `PROFILE_MATCH_AMBIGUOUS`
+(rerun with `--profile ID`), no match writes the worker without a profile.
+`init --profile` for another route fails with `PROFILE_ROUTE_MISMATCH`.
+`tinysdd profiles new` asks configuration questions only (or takes `--route`,
+`--id`, `--context-window`, `--parallel`, `--max-tokens`, `--timeout-ms`,
+`--thinking`, `--family`, `--quantization`, `--server`) and writes a `proposed`
+profile to `~/.config/tiny-sdd/profiles/`; an id that already exists fails
+with `PROFILE_EXISTS`.
 
 If a worker omits `limits.timeoutMs` or `limits.maxToolCalls`, the effective
 defaults are 600000 ms (10 minutes) and 100 tool calls. `limits.maxCheckRuns`

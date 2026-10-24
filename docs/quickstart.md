@@ -799,6 +799,37 @@ and whether config or the argument selected it.
 benchmark evidence keeps existing qualification records current. Changing a
 setting or the instructions does change it.
 
+#### Choosing a registry entry
+
+`tinysdd setup` installs the shared registry into `~/.config/tiny-sdd/registry/`.
+After upgrading the CLI, run `tinysdd profiles update` (and `tinysdd skills
+update`) to replace it with the new release's copy; your own profiles are not
+touched. `tinysdd models [--route MODEL]` lists every profile TinySDD can
+select, with its status, location, context window, `maxTokens` and the newest
+whole-suite baseline numbers (pass@1, pass@2, minutes per task). It warns when
+the installed registry is from another CLI version.
+
+`tinysdd init --worker NAME --provider ID --model MODEL` selects the profile
+measured on exactly that route:
+
+- one match: written to `workers.NAME.profile`;
+- several: `PROFILE_MATCH_AMBIGUOUS`, nothing is written; rerun with
+  `--profile ID`;
+- none: the worker is written without a profile and `init` says so.
+
+`init --profile ID|PATH` selects one explicitly; a profile measured on another
+route fails with `PROFILE_ROUTE_MISMATCH`. To change the profile later, edit
+`workers.NAME.profile` in `.tinysdd/config.json`.
+
+For a model without a registry entry, `tinysdd profiles new` asks for the
+route, id, context window, parallel slots, `maxTokens`, timeout, thinking,
+family, quantization and server (empty skips a question), and writes a
+`proposed` profile to `~/.config/tiny-sdd/profiles/<id>.json`. Flags such as
+`--route`, `--max-tokens` and `--timeout-ms` answer questions without a
+terminal. Add instructions to its `instructions` field yourself. Contribute a
+benchmarked profile to the shared registry with a PR to the repository's
+`profiles/`.
+
 Before a launch, TinySDD compares the requested thinking level with what Pi will
 actually send for that model entry (rules read from pi-ai 0.84.4). A thinking
 level Pi cannot send, because the entry lacks `reasoning: true`, fails

@@ -50,6 +50,20 @@ stay in the bundle so relative skill resources continue to resolve. Existing
 agent configuration and unrelated skill entries are preserved; differing
 managed files or links are conflicts.
 
+Setup also installs the shared profile registry from the same archive into
+`~/.config/tiny-sdd/registry/` (`$TINYSDD_CONFIG_DIR` or `$XDG_CONFIG_HOME`
+move it). A registry that differs from the release is a conflict, not
+something setup overwrites. After upgrading the CLI, refresh both from the new
+version's archive:
+
+```sh
+tinysdd skills update
+tinysdd profiles update
+```
+
+Both replace only TinySDD-managed paths. Local profiles in
+`~/.config/tiny-sdd/profiles/` and project profiles are never touched.
+
 ## 2. Load the skills explicitly
 
 The skill files are project-local prompt assets. This checkout tracks relative
@@ -267,6 +281,31 @@ node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" init \
 existing config. It also creates or updates `.tinysdd/.gitignore` for
 `runs/`, `launches/` and `config.local.json`. It never installs Pi, downloads a
 profile, calls a model or changes global harness settings.
+
+### Choose the model profile
+
+A profile holds the instructions and the measured settings (context window,
+`maxTokens`, thinking, timeout) for one exact route. Before `init`, list the
+candidates and show the operator the status and headline numbers:
+
+```sh
+tinysdd --project "$TARGET_PROJECT" models --route EXACT_PI_MODEL
+```
+
+`init --model` then selects the profile itself:
+
+- **One profile measured on that route:** it is written to
+  `workers.NAME.profile` and reported with `selectedBy: "route"`.
+- **Several:** `init` fails with `PROFILE_MATCH_AMBIGUOUS` and writes nothing.
+  Ask the operator which one, then rerun with `--profile ID`.
+- **None:** the worker is written without a profile (`selectedBy: "none"`).
+  Offer `tinysdd profiles new --route EXACT_PI_MODEL` (it asks only
+  configuration questions; flags answer them without a terminal), then rerun
+  `init --profile ID` in a fresh project or set `workers.NAME.profile` by hand.
+
+`--profile` for a profile measured on another route fails with
+`PROFILE_ROUTE_MISMATCH`. Never pick a profile for the operator, and never
+present benchmark numbers from one route as evidence for another.
 
 The named worker uses `type: "pi"`, an exact `provider`, an exact `model`, and
 optional project-relative profile, skill, instruction, model metadata and
