@@ -733,6 +733,43 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("keeps runtime.json, result.json and qualification identity shapes behind the runner interface", async () => {
+    const project = await makeProject();
+    const U = "UNKNOWN";
+    const identity = (piVersion) => ({
+      model: { provider: "fake", id: "fake/exact-model", quantization: U, server: { id: U, version: U } },
+      worker: {
+        profileDigest: U,
+        limits: { timeoutMs: U, maxToolCalls: U, firstWriteMs: U },
+        settings: { sandbox: "test-runtime", effectiveMaxTokens: U, effectiveReasoning: U, effectiveThinkingControl: U, effectiveThinkingReason: U, effectiveThinkingField: U, effectiveThinkingBudgetValue: U, effectiveCompat: U, endpointFingerprint: U },
+      },
+      pi: { version: piVersion },
+      runChecks: { declared: U, available: U, budget: U, unavailableReason: U, provenance: { source: U, unavailableReason: U } },
+      environment: { runtime: U, runtimeVersion: U, platform: U, arch: U },
+    });
+    try {
+      // Key order is part of the byte shape of these artifacts.
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed"), qualification: { status: "qualified", mode: "warn", identity: identity("test-harness") } });
+      const runtimeRecord = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      const resultRecord = JSON.parse(await readFile(join(result.artifactPaths.directory, "result.json"), "utf8"));
+      assert.deepEqual(Object.keys(runtimeRecord), ["schemaVersion", "adapter", "runtimeScope", "sandbox", "sandboxRequired", "provider", "model", "piExecutable", "piVersion", "bubblewrap", "thinking", "effectiveThinkingControl", "effectiveThinkingReason", "effectiveMaxTokens", "maxTokensSource", "thinkingTokenBudgetField", "effectiveThinkingBudget", "endpointFingerprint", "preflight", "reasoningRequested", "rawReasoning", "effectiveReasoning", "rawProviderCompat", "rawModelCompat", "rawCompat", "effectiveCompat", "profileId", "runChecks", "capabilities", "limits", "accounting", "credentialEnvironmentNames", "generatedCredentialReferenceCount", "qualification", "warnings", "compaction"]);
+      assert.deepEqual([runtimeRecord.adapter, runtimeRecord.piExecutable, runtimeRecord.piVersion, runtimeRecord.sandbox, runtimeRecord.bubblewrap], ["pi", "test-harness", "test-harness", "test-runtime", null]);
+      assert.deepEqual(runtimeRecord.capabilities, { tools: ["read", "write", "edit"], extensions: false, globalSkills: false, contextFiles: false, generatedCodeExecution: false, inferenceNetwork: true });
+      assert.deepEqual(Object.keys(resultRecord), ["schemaVersion", "runId", "taskId", "runtimeScope", "runChecks", "taskShape", "fileScope", "workspaceCopy", "outcome", "model", "observed", "changedPaths", "scopeViolations", "artifactPaths", "patch", "modelClaims", "warnings", "qualification"]);
+      assert.deepEqual(Object.keys(resultRecord.observed), ["processTermination", "assistantTermination", "usage", "usageScope", "cumulativeUsage", "toolCalls", "toolCallsByName", "writeCalls", "firstWriteAtMs", "reads", "citedRereads", "repeatedReads", "compactions", "rawOutputBytes"]);
+      assert.equal(resultRecord.warnings[0], "Raw Pi events may contain source code. Worker output is not acceptance or verification evidence.");
+      assert.equal(resultRecord.modelClaims.source, "unverified assistant text in raw Pi events");
+      // A qualification recorded against the Pi identity stays fresh.
+      assert.equal(resultRecord.qualification.status, "qualified");
+      assert.deepEqual(resultRecord.qualification.changedFields, []);
+      const changed = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed"), qualification: { status: "qualified", mode: "warn", identity: identity("0.0.0-other") } });
+      assert.equal(changed.qualification.status, "unqualified");
+      assert.deepEqual(changed.qualification.changedFields, ["pi.version"]);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("retains ordinary extra edits as candidates without applying them to source", async () => {
     const project = await makeProject();
     try {
