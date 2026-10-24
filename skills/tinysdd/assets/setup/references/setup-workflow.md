@@ -358,15 +358,17 @@ failure during inference is a separate observed authentication/transport
 failure. Preserve that result and stop; do not try another provider/model or
 paste a secret-bearing error into a report.
 
-On macOS, the worker keeps the provider credential in the host controller and
-uses a temporary loopback relay for the selected model's `POST
+On macOS and Linux, the worker keeps the provider credential in the host
+controller and uses a temporary per-run relay for the selected model's `POST
 /chat/completions` route. It requires an explicit HTTP(S) base URL and rejects
 redirects, other routes and model substitutions; Pi receives an ephemeral
-relay token, not the provider credential. On Linux, Pi inference receives the
-filtered environment needed for the selected provider inside bubblewrap, while
-the separate `run_checks` sandbox receives neither the provider credential nor
-network access. These are implementation boundaries, not evidence that a
-selected endpoint is currently reachable or authenticated.
+relay token, not the provider credential. On macOS the relay listens on
+loopback. On Linux bubblewrap has no network (`--unshare-net`): the relay
+listens on a Unix socket mounted read-only into the sandbox, and an in-sandbox
+forwarder exposes it to Pi on `127.0.0.1:41434`. The separate `run_checks`
+sandbox receives neither the provider credential nor network access. These are
+implementation boundaries, not evidence that a selected endpoint is currently
+reachable or authenticated.
 
 ## 6. Confirm effective model settings before a readiness run
 
