@@ -30,6 +30,16 @@ const DEFAULT_AGENT = [
   { action: 'read', resource: '*.env.example', effect: 'allow' },
 ];
 
+// ConfigFormatterPlugin resolve() at 20a6cc7: documents apply from lowest to highest priority, and a
+// boolean resets everything before it.
+function resolveFormatter(documents) {
+  return documents.reduce((result, info) => {
+    if (info.formatter === undefined) return result;
+    if (typeof info.formatter === 'boolean') return info.formatter;
+    return { ...(typeof result === 'object' ? result : {}), ...info.formatter };
+  }, undefined);
+}
+
 async function childRules() {
   const text = await readFile(join(DIR, 'tinysdd-slice-worker.md'), 'utf8');
   const frontmatter = text.match(/^---\n([\s\S]*?)\n---\n/u)[1];
@@ -93,4 +103,12 @@ test('opencode parent config asks before shell and external reads and only deleg
   assert.equal(evaluate('subagent', 'explore', rules), 'deny');
   assert.equal(evaluate('subagent', 'general', rules), 'deny');
   for (const path of CONFIG_PATHS) assert.equal(evaluate('edit', path, rules), 'deny', path);
+});
+
+test('opencode parent config disables inherited formatters', async () => {
+  const parent = JSON.parse(await readFile(join(DIR, 'parent-opencode.json'), 'utf8'));
+  assert.equal(parent.formatter, false);
+  // Global config ranks below the run-owned project config.
+  assert.equal(resolveFormatter([{ formatter: true }, parent]), false);
+  assert.equal(resolveFormatter([{ formatter: { prettier: { command: ['prettier', '--write'] } } }, parent]), false);
 });

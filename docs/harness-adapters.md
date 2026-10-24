@@ -299,9 +299,21 @@ The parent config's `permissions` apply to every agent and come after the
 default agent's `*` allow. For the parent session they make
 `external_directory` and `shell` ask. They allow `subagent` only for
 `tinysdd-slice-worker`, so the parent cannot delegate to built-in subagents
-such as `explore`, whose own rules allow shell and external access. They also deny the same configuration
-writes as the subagent. For the subagent they come before its own rules, which
-still decide.
+such as `explore`, whose own rules allow shell and external access. They also
+deny the same configuration writes as the subagent. For the subagent they come
+before its own rules, which still decide.
+
+The parent config also sets `formatter: false`. After `write`, `edit`, and
+`patch` change a file, OpenCode runs any enabled formatter without a `shell`
+permission check. An inherited `formatter: true` would let the subagent edit
+`package.json` or a JavaScript formatter config such as `prettier.config.mjs`
+and have that code run on the next write. A boolean `formatter` value replaces
+every earlier formatter setting, and this project config ranks above global
+config and `opencode.json` files in ancestor directories. Only
+`OPENCODE_CONFIG_CONTENT`, managed (system or MDM) settings, and a `.opencode`
+directory inside the candidate rank higher. At this OpenCode commit the file
+tools do not start language servers yet (`write.ts` and `edit.ts` carry a
+TODO for LSP).
 
 Never create either file inside the candidate. Never overwrite an existing `.opencode`
 directory file, `opencode.json`/`opencode.jsonc`, or global OpenCode config as
@@ -311,9 +323,24 @@ global config directory instead of adding one.
 OpenCode looks for `.opencode` directories in its start directory and every
 ancestor up to the filesystem root. Starting it in the candidate therefore
 loads the adapter parent's definition, and it also loads any `.opencode`
-config in the adapter parent's own ancestors. From the candidate, check
-`opencode debug config` and `opencode debug agents` before delegating, and stop
-if unexpected sources or agents appear.
+config in the adapter parent's own ancestors.
+
+Before starting OpenCode, stop if any of these holds:
+
+- the candidate contains, at its top level and in any letter case, a
+  `.opencode`, `.claude`, or `.agents` directory or an `opencode.json` or
+  `opencode.jsonc` file. `begin` copies tracked source files, so a repository
+  that tracks OpenCode config brings it into the candidate, where it outranks
+  the adapter parent's config and can re-enable formatters or append agent
+  rules;
+- `OPENCODE_CONFIG_CONTENT` is set in the environment that starts OpenCode;
+- managed OpenCode settings exist (a system config directory or macOS MDM
+  preferences), unless you have checked they set neither `formatter` nor
+  agent permissions.
+
+Then, from the candidate, check `opencode debug config` and
+`opencode debug agents` before delegating, and stop if unexpected sources or
+agents appear.
 
 ### Run, delegate, and confirm the model
 

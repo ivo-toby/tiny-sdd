@@ -1,4 +1,5 @@
 {
+  "formatter": false,
   "permissions": [
     { "action": "external_directory", "resource": "*", "effect": "ask" },
     { "action": "shell", "resource": "*", "effect": "ask" },
