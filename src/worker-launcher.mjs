@@ -9,7 +9,7 @@ function invalid(message) {
   return error;
 }
 
-const [projectRoot, taskId, workerName, launchDirectory, baseRunId, baselineRunId] = process.argv.slice(2);
+const [projectRoot, taskId, workerName, launchDirectory, baseRunId, baselineRunId, profile] = process.argv.slice(2);
 
 // `worker stop` sends SIGTERM. Handling it (instead of the default exit) keeps
 // this process alive to kill Pi and finalize the run as `stopped`. The handlers
@@ -25,6 +25,7 @@ try {
   const data = await dispatchWorker(projectRoot, {
     taskId,
     worker: workerName,
+    profile: profile || undefined,
     baseRunId: baseRunId || undefined,
     baselineRunId: baselineRunId || undefined,
     signal: stopController.signal,

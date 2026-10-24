@@ -540,6 +540,34 @@ describe("Pi environment filtering", () => {
     );
   });
 
+  test("applies a registry profile's context window and response budget to the temporary Pi state only", async () => {
+    const sourceEnv = { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" };
+    const before = await readFile(join(sourceAgentDir, "models.json"), "utf8");
+    const profile = { schemaVersion: 1, id: "registry", model: { route: "fake/exact-model", contextWindow: 64000 }, responseBudget: { maxTokens: 512 } };
+    const prepared = await preparePiEnvironment({ worker: worker(), profile, sourceAgentDir, sourceEnv });
+    try {
+      const state = JSON.parse(await readFile(join(prepared.stateDir, "models.json"), "utf8"));
+      const model = state.providers.fake.models[0];
+      assert.equal(model.contextWindow, 64000);
+      assert.equal(model.maxTokens, 512);
+      assert.equal(prepared.metadata.maxTokens, 512);
+      assert.equal(prepared.metadata.preflight.maxTokens.source, "profile");
+      assert.deepEqual(prepared.metadata.preflight.profileSettings, { contextWindow: 64000, maxTokens: 512 });
+      assert.ok(prepared.metadata.preflight.warnings.some((warning) => /sets maxTokens 512; the Pi entry says 256/u.test(warning)));
+    } finally {
+      await prepared.cleanup();
+    }
+    assert.equal(await readFile(join(sourceAgentDir, "models.json"), "utf8"), before);
+    await assert.rejects(
+      preparePiEnvironment({ worker: worker(), profile: { ...profile, model: { route: "fake/other-model" } }, sourceAgentDir, sourceEnv }),
+      /measured on route fake\/other-model, but worker.model is fake\/exact-model/u,
+    );
+    await assert.rejects(
+      preparePiEnvironment({ worker: worker(), profile: { ...profile, limits: { timeoutMs: 900000 } }, sourceAgentDir, sourceEnv }),
+      /limits.timeoutMs is .* but profile registry requires 900000/u,
+    );
+  });
+
   test("writes opt-in deterministic compaction settings and refuses an undersized reserve", async () => {
     const profile = { schemaVersion: 1, id: "compact", runtime: { compaction: { enabled: true } } };
     const prepared = await preparePiEnvironment({ worker: worker(), profile, sourceAgentDir, sourceEnv: { FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" } });

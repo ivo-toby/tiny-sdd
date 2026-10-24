@@ -40,6 +40,7 @@ import { runWorker, workerLimits } from './worker.mjs';
 import { inspectEffectiveModelSettings, assertEffectiveModelSettingsConfirmed } from './effective-model-settings.mjs';
 import { defaultPiAgentDir, preflightPiWorker, validatePiWorker } from './pi-environment.mjs';
 import { DEFAULT_RUNTIME_SCOPE } from './file-scope.mjs';
+import { profileIdentityDigest } from './model-registry.mjs';
 
 const execFileAsync = promisify(execFile);
 const RESERVED_VERIFIER_ROOT = '__tinysdd_benchmark_verifier';
@@ -357,7 +358,7 @@ async function buildIdentity({ suite, suiteSha256, challenges, verifierContent, 
   const effectiveLimits = workerEffectiveLimits(worker);
   const effectiveCheckBudget = workerEffectiveCheckBudget(worker);
   const effectiveCheckLimits = options.limits;
-  const profileDigest = profile === undefined || profile === null ? BENCHMARK_UNKNOWN : digestJson(profile);
+  const profileDigest = profile === undefined || profile === null ? BENCHMARK_UNKNOWN : profileIdentityDigest(profile);
   const runtimeVersion = process.version;
   const code = await resolveCodeRevision(TINYSDD_ROOT, codeRevision);
   const version = tinySddVersion ?? await packageVersion();
@@ -1249,7 +1250,7 @@ async function executeCase({ suiteInfo, challengeInfo, verifierContent, config, 
   const verifierRecords = [...visibleRecords, ...heldOutRecords];
   const outcome = caseOutcome(workerResult, verifierRecords, setupError);
   const resultArtifact = artifacts.result;
-  const profileSha256 = profile === undefined || profile === null ? BENCHMARK_UNKNOWN : digestJson(profile);
+  const profileSha256 = profile === undefined || profile === null ? BENCHMARK_UNKNOWN : profileIdentityDigest(profile);
   const packetSha256 = packetRef.sha256;
   const workerResultSha256 = resultArtifact?.sha256 ?? BENCHMARK_UNKNOWN;
   const caseResult = {

@@ -2055,7 +2055,7 @@ export async function configValidate(projectRoot, options = {}) {
 
 export async function dispatchWorker(projectRoot, options = {}) {
   const root = await canonicalProjectRoot(projectRoot);
-  const resolved = await resolveConfig(root, { workerName: options.worker });
+  const resolved = await resolveConfig(root, { workerName: options.worker, profile: options.profile });
   if (!resolved.worker || !resolved.workerName) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; configure defaultWorker or pass --worker');
   const packet = options.baselineRunId
     ? await resolveBenchmarkPacket(root, options.taskId)

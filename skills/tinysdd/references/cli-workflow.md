@@ -483,9 +483,15 @@ dispatch. Copy a suitable profile into the project and set its relative path
 on the selected worker when needed. Profile `instructions` may be an explicitly
 empty string for an empty baseline; non-string values remain invalid. Profiles
 do not include credentials. Registry profiles (#123) may also carry `status`, `model`, `limits`,
-`responseBudget` and `benchmarks[]` (aggregate benchmark cards). These are
-validated but not yet applied to worker runs: match the Pi model entry's
-`maxTokens` and the worker's `limits.timeoutMs` to the profile by hand.
+`responseBudget` and `benchmarks[]` (aggregate benchmark cards). Worker runs
+apply the profile's `contextWindow`, `maxTokens` and `limits` (in temporary Pi
+state; the operator's Pi config is unchanged), and `model.route` must equal
+`worker.model`. `worker.profile` may be a project-relative JSON path or a
+profile id, looked up in `.tinysdd/profiles/`, `~/.config/tiny-sdd/profiles/`,
+`~/.config/tiny-sdd/registry/` and the shipped profiles; duplicates with
+different content fail. Pass `--profile ID|PATH` to `config show`, `worker
+run|start|settings` or `bench run` to select another profile for one command.
+A worker limit that contradicts the profile fails with `PROFILE_LIMIT_CONFLICT`.
 
 If a worker omits `limits.timeoutMs` or `limits.maxToolCalls`, the effective
 defaults are 600000 ms (10 minutes) and 100 tool calls. `limits.maxCheckRuns`

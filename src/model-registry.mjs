@@ -1,8 +1,12 @@
-import { assertExactKeys, assertPlainObject, tinyError } from './fs-utils.mjs';
+import { lstat, readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { assertExactKeys, assertPlainObject, digestJson, tinyError } from './fs-utils.mjs';
 
 // Optional registry fields on a worker profile (#123). They describe the exact
-// configuration a profile was measured on and the measured results. Applying
-// them to worker runs is a separate step; here they are only validated.
+// configuration a profile was measured on and the measured results. Worker runs
+// apply `model.contextWindow`, `responseBudget.maxTokens` and `limits`.
 export const REGISTRY_PROFILE_KEYS = ['status', 'model', 'limits', 'responseBudget', 'benchmarks'];
 export const PROFILE_STATUSES = ['proposed', 'baseline', 'tested-improved', 'tested-inconclusive'];
 
@@ -167,4 +171,108 @@ export function validateRegistryFields(raw, label) {
     out.benchmarks = raw.benchmarks.map((card, index) => validateBenchmarkCard(card, `${label}.benchmarks[${index}]`));
   }
   return out;
+}
+
+// Fields that record evidence about a profile. They never change a run, so they
+// stay out of the profile identity: adding a benchmark card keeps
+// qualification records and approvals valid.
+const EVIDENCE_ONLY_KEYS = ['status', 'benchmarks'];
+
+export function profileIdentityDigest(profile) {
+  const identity = { ...profile };
+  for (const key of EVIDENCE_ONLY_KEYS) delete identity[key];
+  return digestJson(identity);
+}
+
+const PROFILE_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const MAX_PROFILE_BYTES = 1024 * 1024;
+const BUNDLED_DIR = fileURLToPath(new URL('../profiles/', import.meta.url));
+
+export function isProfileId(value) {
+  return typeof value === 'string' && PROFILE_ID.test(value) && !value.toLowerCase().endsWith('.json');
+}
+
+export function tinysddConfigDir(env = process.env) {
+  if (env.TINYSDD_CONFIG_DIR) return env.TINYSDD_CONFIG_DIR;
+  return join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'tiny-sdd');
+}
+
+// Most specific first. The same id in two places with different content is an
+// error, so a stale copy can never be picked silently.
+export function profileLocations(projectRoot, env = process.env) {
+  const config = tinysddConfigDir(env);
+  return [
+    { location: 'project', dir: join(projectRoot, '.tinysdd', 'profiles') },
+    { location: 'user', dir: join(config, 'profiles') },
+    { location: 'registry', dir: join(config, 'registry') },
+    { location: 'bundled', dir: env.TINYSDD_BUNDLED_PROFILES_DIR || BUNDLED_DIR },
+  ];
+}
+
+async function regularFile(path) {
+  try {
+    const info = await lstat(path);
+    return info.isFile() && info.size <= MAX_PROFILE_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+async function profilesIn(dir) {
+  try {
+    const info = await lstat(dir);
+    if (!info.isDirectory()) return [];
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const name of (await readdir(dir)).filter((entry) => entry.endsWith('.json')).sort()) {
+    const path = join(dir, name);
+    if (!(await regularFile(path))) continue;
+    try {
+      found.push({ path, value: JSON.parse(await readFile(path, 'utf8')) });
+    } catch {
+      // Unparseable files elsewhere in a directory do not block a lookup; a file
+      // that matches the requested id by name is checked below.
+      found.push({ path, value: null });
+    }
+  }
+  return found;
+}
+
+export async function findProfileById(projectRoot, id, { env = process.env } = {}) {
+  const matches = [];
+  const searched = [];
+  for (const { location, dir } of profileLocations(projectRoot, env)) {
+    searched.push(dir);
+    for (const entry of await profilesIn(dir)) {
+      if (entry.value === null) {
+        if (entry.path.endsWith(`/${id}.json`)) invalid(`malformed profile JSON: ${entry.path}`);
+        continue;
+      }
+      if (entry.value?.id === id) matches.push({ location, ...entry });
+    }
+  }
+  if (matches.length === 0) throw tinyError('PROFILE_NOT_FOUND', `profile ${id} not found`, { searched });
+  const digests = new Set(matches.map((match) => digestJson(match.value)));
+  if (digests.size > 1) {
+    throw tinyError('PROFILE_AMBIGUOUS', `profile ${id} exists with different content in ${matches.map((match) => match.path).join(', ')}; remove or rename one`, { paths: matches.map((match) => match.path) });
+  }
+  return matches[0];
+}
+
+// The profile's limits are the measured configuration. A worker that sets the
+// same limit to a different value is a conflict, never a silent choice.
+export function applyProfileLimits(limits, profileLimits, explicitKeys, { worker, profile }) {
+  const merged = { ...limits };
+  for (const [key, value] of Object.entries(profileLimits)) {
+    if (explicitKeys.includes(key) && limits[key] !== value) {
+      throw tinyError('PROFILE_LIMIT_CONFLICT', `worker ${worker} sets limits.${key} ${limits[key]} but profile ${profile} requires ${value}; remove one or select another profile`);
+    }
+    merged[key] = value;
+  }
+  if (merged.firstWriteMs !== undefined && merged.firstWriteMs >= merged.timeoutMs) {
+    throw tinyError('PROFILE_LIMIT_CONFLICT', `worker ${worker}: firstWriteMs must stay below timeoutMs ${merged.timeoutMs} from profile ${profile}`);
+  }
+  return merged;
 }

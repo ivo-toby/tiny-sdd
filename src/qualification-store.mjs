@@ -22,6 +22,7 @@ import {
   mergeQualificationRecords,
   validateQualificationRecord,
 } from './qualification.mjs';
+import { profileIdentityDigest } from './model-registry.mjs';
 
 export const QUALIFICATION_STORE_SCHEMA_VERSION = 1;
 export const QUALIFICATION_STORE_DIRECTORY = '.tinysdd/qualifications';
@@ -550,7 +551,7 @@ async function validateAssociationBindings(root, data) {
         profileStatuses.push({ profilePath: association.profilePath, workerName: association.workerName, configDigest: association.configDigest, status: 'stale', reason: 'profile_unavailable' });
         continue;
       }
-      const currentDigest = digestJson(profileValue);
+      const currentDigest = profileIdentityDigest(profileValue);
       const current = association.profileDigest !== BENCHMARK_UNKNOWN && currentDigest === association.profileDigest;
       profileStatuses.push({
         profilePath: association.profilePath,
@@ -583,7 +584,7 @@ export async function persistQualificationRecord(projectRoot, record, {
   return withQualificationStoreLock(projectRoot, async (root) => {
     const loaded = await readProfileReferencesUnlocked(root);
     await validateAssociationBindings(root, loaded.data);
-    const profileDigest = profile === undefined ? BENCHMARK_UNKNOWN : digestJson(profile);
+    const profileDigest = profile === undefined ? BENCHMARK_UNKNOWN : profileIdentityDigest(profile);
     const snapshot = await snapshotRecordFile(root, normalizedRecord.configDigest);
     const sidecarSnapshot = await snapshotStoreFile(root, QUALIFICATION_PROFILE_REFERENCES_PATH, 'qualification profile references');
     const existing = snapshot.bytes === null ? null : (await recordBytes({ root, path: snapshot.target.path }));
@@ -656,7 +657,7 @@ export async function accumulateQualificationRecord(projectRoot, record, {
       let association;
       let data = loaded.data;
       if (workerName !== undefined) {
-        const profileDigest = profile === undefined ? BENCHMARK_UNKNOWN : digestJson(profile);
+        const profileDigest = profile === undefined ? BENCHMARK_UNKNOWN : profileIdentityDigest(profile);
         const associationTemplate = profileReference({
           profilePath,
           profileDigest,
