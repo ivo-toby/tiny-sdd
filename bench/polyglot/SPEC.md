@@ -16,7 +16,7 @@ and must not need network, Docker, Pi or a model.
 
 - Code: `bench/polyglot/` in this repo.
 - Data root (outside repo): `--data DIR`, default env `TINYSDD_BENCH_DATA`,
-  default `/home/ivo/workspace/tinysdd-bench-data`.
+  default `~/workspace/tinysdd-bench-data`.
 - Dataset checkout: `<data>/polyglot-benchmark` (git clone of
   `https://github.com/Aider-AI/polyglot-benchmark`, pinned commit
   `7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f`).

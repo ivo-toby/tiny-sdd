@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -71,7 +72,7 @@ async function writeJson(path, value) {
 }
 
 function paths(values) {
-  const data = resolve(values.data ?? process.env.TINYSDD_BENCH_DATA ?? '/home/ivo/workspace/tinysdd-bench-data');
+  const data = resolve(values.data ?? process.env.TINYSDD_BENCH_DATA ?? join(homedir(), 'workspace', 'tinysdd-bench-data'));
   const run = values.run ? join(data, 'runs', values.run) : null;
   return { data, checkout: join(data, 'polyglot-benchmark'), manifest: join(data, 'manifest.json'), oracle: join(data, 'oracle-check.json'), run };
 }
