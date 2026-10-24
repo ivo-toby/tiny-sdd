@@ -70,8 +70,10 @@ reference solution fails are excluded automatically.
   3. Every result is recorded in the registry profiles in `profiles/` with
      `card` (see Phase 3 step 6 and Phase 4).
   4. **Paused.** Do not start runs until the operator asks. Planned next:
-     qwen36 with maxTokens 32768 as a settings variant, then Opus-written
-     candidates for qwen36, gemma26 and muse (north skipped).
+     qwen36 with maxTokens 32768 as a settings variant (model key
+     `qwen36mt32`), then Opus-written candidates for qwen36, gemma26 and muse
+     (north skipped). Exact steps, the machine move and a restart prompt are in
+     `HANDOFF.md`.
 - Log each transition in NOTES.md.
 
 ## Phase 1 — baseline (all models, 1 repeat)
