@@ -256,20 +256,23 @@ express, not something the template fixes.
 candidate, and reloads agent definitions when they change. A blanket `edit`
 allow would let the subagent write a candidate-local definition whose rules are
 appended after the original ones and can re-enable shell or external access or
-change the model. Both templates therefore deny `edit` on `.*` (every
-top-level dot path, in any letter case), on `opencode.json` and
-`opencode.jsonc`, and on `????????.json` and `????????.jsonc`, which also
-covers stem-case variants such as `OpenCode.json`. Side effects and limits:
+change the model. A candidate-local config can also set formatter commands,
+which the `write` tool runs after a write without a `shell` permission check.
+Checking the config after the subagent returns is therefore too late.
+
+Both templates deny `edit` on `.*` (every top-level dot path, in any letter
+case) and on `????????.<ext>` for all 48 letter-case variants of `json` and
+`jsonc`. Together with the eight-character `????????` stem, that covers every
+spelling of `opencode.json` and `opencode.jsonc`, which matters because a
+case-insensitive filesystem (default macOS APFS) resolves `OpenCode.JSON` to
+the same file. OpenCode wildcards have no character classes and are
+case-sensitive outside Windows, so the variants are listed one by one. Side
+effects and limits:
 
 - slices cannot edit top-level dot files such as `.gitignore` or anything
   under `.github/`;
-- the `????????.json(c)` rules also deny other paths of that exact length,
-  such as `src/data.json`;
-- OpenCode wildcards have no character classes and are case-sensitive outside
-  Windows, so an all-caps extension such as `OpenCode.JSON` is not denied. On a
-  case-insensitive filesystem (default macOS APFS) OpenCode would still load
-  it. Use a case-sensitive volume for the adapter parent, or check
-  `opencode debug config` from the candidate after the subagent returns;
+- the `????????.<ext>` rules also deny other paths of exactly that shape, such
+  as `src/data.json`;
 - the rules match the path the tool reports, relative to the candidate. They do
   not follow symlinks that already exist in the candidate.
 

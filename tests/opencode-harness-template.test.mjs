@@ -44,16 +44,20 @@ async function parentGlobalRules() {
   return JSON.parse(await readFile(join(DIR, 'parent-opencode.json'), 'utf8')).permissions;
 }
 
+function caseVariants(word) {
+  return [...word].reduce((acc, ch) => acc.flatMap((prefix) => [...new Set([prefix + ch, prefix + ch.toUpperCase()])]), ['']);
+}
+
+// OpenCode loads opencode.json(c) and .opencode/.claude/.agents from the candidate. On a
+// case-insensitive filesystem any letter case reaches the same file, so every variant must be denied.
 const CONFIG_PATHS = [
-  '.opencode/agents/tinysdd-slice-worker.md',
-  '.OpenCode/agents/tinysdd-slice-worker.md',
-  '.opencode/opencode.json',
+  ...['opencode', 'OpenCode', 'OPENCODE'].flatMap((stem) =>
+    [...caseVariants('json'), ...caseVariants('jsonc')].map((extension) => `${stem}.${extension}`)),
+  ...['.opencode', '.OpenCode', '.OPENCODE'].flatMap((root) => [`${root}/agents/tinysdd-slice-worker.md`, `${root}/opencode.json`]),
   '.claude/skills/x/SKILL.md',
+  '.Claude/settings.json',
   '.agents/skills/x/SKILL.md',
-  'opencode.json',
-  'opencode.jsonc',
-  'OpenCode.json',
-  'OPENCODE.jsonc',
+  '.AGENTS/skills/x/SKILL.md',
 ];
 
 test('opencode slice worker exposes only file tools and denies paths outside the candidate', async () => {
@@ -73,6 +77,12 @@ test('opencode slice worker exposes only file tools and denies paths outside the
 test('opencode slice worker cannot write candidate-local config that would redefine it', async () => {
   const rules = [...await parentGlobalRules(), ...await childRules()];
   for (const path of CONFIG_PATHS) assert.equal(evaluate('edit', path, rules), 'deny', path);
+});
+
+test('opencode templates deny the same configuration paths', async () => {
+  const configRules = (rules) => rules.filter((rule) => rule.action === 'edit' && rule.effect === 'deny' && !rule.resource.includes('env'));
+  assert.deepEqual(configRules(await childRules()), configRules(await parentGlobalRules()));
+  assert.equal(CONFIG_PATHS.filter((path) => !path.startsWith('.')).length, 144);
 });
 
 test('opencode parent config asks before shell and external reads and only delegates to the slice worker', async () => {
