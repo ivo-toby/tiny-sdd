@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 
 import {
   CLI_VERSION,
+  installRegistry,
+  updateProfiles,
+  updateSkills,
   DOWNLOAD_TIMEOUT_MS,
   MAX_ARCHIVE_BYTES,
   MAX_EXTRACTED_BYTES,
@@ -420,22 +423,22 @@ test('runSetup installs a version-matched archive and reports metadata-only read
     await mkdir(agent, { recursive: true });
     await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { local: { models: [{ id: 'model-a' }] } } }));
     const entries = [];
-    for (const path of ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md']) {
+    for (const path of ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md', 'profiles/titan-gemma4-26b-a4b-2x64k-v1.json']) {
       entries.push([path, await readFile(join(repoRoot, path))]);
     }
-    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, archiveBytes: archive(entries) });
+    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(result.version, CLI_VERSION);
     assert.equal(result.checks.pi.status, 'ready');
     assert.equal(result.checks.models.status, 'ready');
     assert.equal(result.checks.sandbox.worker.supported, true);
     assert.equal(result.checks.authentication.status, 'unknown');
     assert.match(result.nextSteps.join('\n'), /Linux-only|authorized worker smoke|metadata/u);
-    const linuxResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: join(home, 'missing-prlimit') }, probe: { spawnImpl: fakeProbe().spawnImpl } }, archiveBytes: archive(entries) });
+    const linuxResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: join(home, 'missing-prlimit') }, probe: { spawnImpl: fakeProbe().spawnImpl } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(linuxResult.ready, true);
     assert.equal(linuxResult.checks.sandbox.checks.available, false);
     assert.match(linuxResult.nextSteps.join('\n'), /Linux run_checks is unavailable/u);
     assert.match(linuxResult.warnings.join('\n'), /check-runner readiness/u);
-    const blockedResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: pi.pi }, probe: { spawnImpl: fakeProbe({ code: 1 }).spawnImpl } }, archiveBytes: archive(entries) });
+    const blockedResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: pi.pi }, probe: { spawnImpl: fakeProbe({ code: 1 }).spawnImpl } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(blockedResult.ready, false);
     assert.equal(blockedResult.checks.sandbox.worker.supported, false);
     assert.equal(blockedResult.checks.sandbox.worker.probe.status, 'failed-empty-stderr');
@@ -489,17 +492,153 @@ test('global setup is cwd-independent and leaves a project config untouched', as
     await mkdir(agent, { recursive: true });
     await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { local: { models: [{ id: 'model-a' }] } } }));
     const entries = [];
-    for (const path of ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md']) {
+    for (const path of ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md', 'profiles/titan-gemma4-26b-a4b-2x64k-v1.json']) {
       entries.push([path, await readFile(join(repoRoot, path))]);
     }
     const before = await readFile(join(cwd, '.tinysdd', 'config.json'));
     process.chdir(cwd);
-    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, archiveBytes: archive(entries) });
+    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(result.installation.bundleRoot, join(home, '.agents', 'tinysdd'));
     assert.deepEqual(await readFile(join(cwd, '.tinysdd', 'config.json')), before);
   } finally {
     process.chdir(previousCwd);
     await cleanup(cwd);
+    await cleanup(home);
+    await cleanup(pi.root);
+  }
+});
+
+const RELEASE_FILES = ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md'];
+
+async function releaseEntries({ profiles = ['titan-gemma4-26b-a4b-2x64k-v1.json', 'titan-qwen36-35b-a3b-2x128k-v1.json'], extra = [] } = {}) {
+  const entries = [];
+  for (const path of RELEASE_FILES) entries.push([path, await readFile(join(repoRoot, path))]);
+  for (const name of profiles) entries.push([`profiles/${name}`, await readFile(join(repoRoot, 'profiles', name))]);
+  return [...entries, ...extra];
+}
+
+async function setupHome() {
+  const home = await temporary('tinysdd-registry-home-');
+  const pi = await fakePi(home);
+  const agent = join(home, 'agent');
+  await mkdir(agent, { recursive: true });
+  await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { local: { models: [{ id: 'model-a' }] } } }));
+  const options = { homeDir: home, configDir: join(home, 'config'), nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } } };
+  return { home, pi, options, registry: join(home, 'config', 'registry') };
+}
+
+test('setup installs the profile registry and refuses to overwrite a changed one', async () => {
+  const { home, pi, options, registry } = await setupHome();
+  try {
+    const first = await runSetup({ ...options, archiveBytes: archive(await releaseEntries()) });
+    assert.equal(first.registry.action, 'install');
+    assert.deepEqual(first.registry.profiles, ['titan-gemma4-26b-a4b-2x64k-v1', 'titan-qwen36-35b-a3b-2x128k-v1']);
+    assert.deepEqual(
+      await readFile(join(registry, 'titan-gemma4-26b-a4b-2x64k-v1.json')),
+      await readFile(join(repoRoot, 'profiles', 'titan-gemma4-26b-a4b-2x64k-v1.json')),
+    );
+    const manifest = JSON.parse(await readFile(join(registry, '.registry.json'), 'utf8'));
+    assert.equal(manifest.version, CLI_VERSION);
+    const again = await runSetup({ ...options, archiveBytes: archive(await releaseEntries()) });
+    assert.equal(again.registry.action, 'preserve');
+
+    await writeFile(join(registry, 'titan-gemma4-26b-a4b-2x64k-v1.json'), '{"edited":true}\n');
+    const skillsBefore = await readFile(join(home, '.agents', 'tinysdd', 'skills', 'tinysdd', 'SKILL.md'));
+    await assert.rejects(runSetup({ ...options, archiveBytes: archive(await releaseEntries()) }), (error) => {
+      assert.equal(error.code, 'SETUP_CONFLICT');
+      assert.match(error.message, /tinysdd profiles update/u);
+      return true;
+    });
+    assert.deepEqual(await readFile(join(home, '.agents', 'tinysdd', 'skills', 'tinysdd', 'SKILL.md')), skillsBefore);
+  } finally {
+    await cleanup(home);
+    await cleanup(pi.root);
+  }
+});
+
+test('profiles update replaces the registry and leaves local profiles alone', async () => {
+  const { home, pi, options, registry } = await setupHome();
+  try {
+    await runSetup({ ...options, archiveBytes: archive(await releaseEntries()) });
+    await writeFile(join(registry, '.registry.json'), JSON.stringify({ schemaVersion: 1, version: '0.0.1' }));
+    await writeFile(join(registry, 'titan-gemma4-26b-a4b-2x64k-v1.json'), '{"stale":true}\n');
+    await writeFile(join(registry, 'retired-v1.json'), '{"retired":true}\n');
+    await mkdir(join(options.configDir, 'profiles'), { recursive: true });
+    await writeFile(join(options.configDir, 'profiles', 'mine.json'), '{"mine":true}\n');
+
+    const result = await updateProfiles({ configDir: options.configDir, archiveBytes: archive(await releaseEntries({ profiles: ['titan-gemma4-26b-a4b-2x64k-v1.json'] })) });
+    assert.equal(result.registry.action, 'replace');
+    assert.equal(result.registry.previousVersion, '0.0.1');
+    assert.deepEqual(result.registry.profiles, ['titan-gemma4-26b-a4b-2x64k-v1']);
+    assert.deepEqual(
+      await readFile(join(registry, 'titan-gemma4-26b-a4b-2x64k-v1.json')),
+      await readFile(join(repoRoot, 'profiles', 'titan-gemma4-26b-a4b-2x64k-v1.json')),
+    );
+    await assert.rejects(lstat(join(registry, 'retired-v1.json')), { code: 'ENOENT' });
+    assert.equal(await readFile(join(options.configDir, 'profiles', 'mine.json'), 'utf8'), '{"mine":true}\n');
+    assert.equal(JSON.parse(await readFile(join(registry, '.registry.json'), 'utf8')).version, CLI_VERSION);
+  } finally {
+    await cleanup(home);
+    await cleanup(pi.root);
+  }
+});
+
+test('a release without a valid profile registry is rejected before anything is written', async () => {
+  const { home, pi, options, registry } = await setupHome();
+  try {
+    await assert.rejects(updateProfiles({ configDir: options.configDir, archiveBytes: archive(await releaseEntries({ profiles: [] })) }), (error) => {
+      assert.equal(error.code, 'SETUP_ARCHIVE_INVALID');
+      assert.match(error.message, /profiles\/ registry/u);
+      return true;
+    });
+    const broken = await releaseEntries({ extra: [['profiles/broken.json', '{"schemaVersion":1,"id":"broken","status":"great"}']] });
+    await assert.rejects(runSetup({ ...options, archiveBytes: archive(broken) }), (error) => {
+      assert.equal(error.code, 'SETUP_ARCHIVE_INVALID');
+      assert.match(error.message, /profiles\/broken\.json/u);
+      return true;
+    });
+    await assert.rejects(lstat(registry), { code: 'ENOENT' });
+    await assert.rejects(lstat(join(home, '.agents', 'tinysdd')), { code: 'ENOENT' });
+    const duplicate = await releaseEntries({ extra: [['profiles/copy.json', await readFile(join(repoRoot, 'profiles', 'titan-gemma4-26b-a4b-2x64k-v1.json'))]] });
+    const extraction = await temporary('tinysdd-extract-');
+    try {
+      const sourceRoot = await extractReleaseArchive(archive(duplicate), extraction);
+      await assert.rejects(installRegistry({ sourceRoot, configDir: options.configDir }), { code: 'SETUP_ARCHIVE_INVALID' });
+    } finally {
+      await cleanup(extraction);
+    }
+  } finally {
+    await cleanup(home);
+    await cleanup(pi.root);
+  }
+});
+
+test('skills update replaces a changed bundle that setup refuses to overwrite', async () => {
+  const { home, pi, options } = await setupHome();
+  try {
+    await runSetup({ ...options, archiveBytes: archive(await releaseEntries()) });
+    const skill = join(home, '.agents', 'tinysdd', 'skills', 'tinysdd', 'SKILL.md');
+    await writeFile(skill, 'old skill\n');
+    await writeFile(join(home, '.agents', 'tinysdd', 'docs', 'removed.md'), 'gone in this release\n');
+    await assert.rejects(installBundle({ sourceRoot: repoRoot, homeDir: home }), { code: 'SETUP_CONFLICT' });
+
+    const result = await updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) });
+    assert.equal(result.version, CLI_VERSION);
+    assert.equal(result.previousVersion, CLI_VERSION);
+    assert.deepEqual(await readFile(skill), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+    await assert.rejects(lstat(join(home, '.agents', 'tinysdd', 'docs', 'removed.md')), { code: 'ENOENT' });
+    assert.deepEqual(result.linksCreated, []);
+    assert.deepEqual(await readFile(join(home, '.claude', 'skills', 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+
+    const fresh = await temporary('tinysdd-fresh-home-');
+    try {
+      const installed = await updateSkills({ homeDir: fresh, archiveBytes: archive(await releaseEntries()) });
+      assert.equal(installed.previousVersion, null);
+      assert.equal(installed.linksCreated.length, 4);
+    } finally {
+      await cleanup(fresh);
+    }
+  } finally {
     await cleanup(home);
     await cleanup(pi.root);
   }
