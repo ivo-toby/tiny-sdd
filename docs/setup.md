@@ -54,7 +54,7 @@ Seatbelt path can remain supported.
 ### Linux bubblewrap startup failures
 
 On Linux, setup performs a bounded direct `bubblewrap` startup probe after it
-finds the executable. The probe uses the worker's user and PID namespace flags,
+finds the executable. The probe uses the worker's user, PID and network namespace flags,
 core read-only system mounts, temporary `/tmp` and `/home` mounts, disposable
 `/work` and `/pi-state` bind mounts, and the trusted no-op `/usr/bin/true`. It
 does not invoke a shell, model, network request, Pi, or check runner. Setup
@@ -69,7 +69,7 @@ with stderr, a silent nonzero exit, a launch error, and a timeout. It includes a
 copyable reproduction command, for example:
 
 ```sh
-/usr/bin/bwrap --die-with-parent --unshare-user --unshare-pid \
+/usr/bin/bwrap --die-with-parent --unshare-user --unshare-pid --unshare-net \
   --dev /dev --tmpfs /tmp --tmpfs /home --dir /etc \
   --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib \
   --ro-bind /lib64 /lib64 --dir /work --dir /pi-state \

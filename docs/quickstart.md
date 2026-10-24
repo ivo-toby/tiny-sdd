@@ -35,10 +35,26 @@ in the controller, rejects other routes/models and redirects, and closes when
 the run ends. Pi receives an ephemeral relay token and no provider credential
 environment variables. All other network ports are denied. MLX, llama.cpp and
 LM Studio servers can use their OpenAI-compatible endpoints; each deployment
-still needs a live smoke run. The Linux bubblewrap path is unchanged.
+still needs a live smoke run.
+
+The Linux bubblewrap worker has no host network. It runs in its own network
+namespace (`--unshare-net`) with only loopback, and DNS, hosts and CA files are
+not mounted. The same per-run relay runs on the host, listening only on a Unix
+socket in a run-owned directory that is mounted read-only into the sandbox. A
+fixed TinySDD launcher starts a loopback forwarder (`127.0.0.1:41434` inside
+the sandbox) to that socket, then runs Pi with its usual arguments and exit
+status. Pi's temporary `models.json` points at the forwarder with the per-run
+relay token; provider credentials and `TINYSDD_PI_SECRET_*` values stay on the
+host. On both platforms, compatibility settings Pi would derive from the
+provider's URL (for example `max_tokens` and the thinking format for a DeepSeek
+endpoint) are written into that `models.json` explicitly unless already set. The relay supports only the `openai-completions` API, so a Linux worker
+whose provider uses another API now fails before Pi starts, naming the API; there
+is no fallback to host networking. The Node executable must be next to `pi` in
+the Pi installation's `bin/` directory.
 
 `runtime.json` records `sandbox: "seatbelt"`, the executable, relay destination
-and retained `sandbox.sb` profile on macOS. Linux keeps `sandbox: "bubblewrap"`.
+and retained `sandbox.sb` profile on macOS. Linux keeps `sandbox: "bubblewrap"` and records the in-sandbox relay address as
+`inferenceDestination`.
 Run the separate native escape qualification with the same Node installation:
 
 ```sh
@@ -72,7 +88,7 @@ identical files and refuses conflicting paths. See the [setup guide](setup.md)
 for the global layout and release prerequisite.
 
 On Linux, setup also runs a bounded direct bubblewrap startup probe using the
-worker's user/PID namespace and core mount shape with `/usr/bin/true`. A passing
+worker's user/PID/network namespace and core mount shape with `/usr/bin/true`. A passing
 probe covers sandbox startup only; it does not prove provider authentication,
 inference, Pi startup, or full check-runner execution. If bubblewrap is present
 but startup is blocked, setup still installs the skills, marks worker readiness
