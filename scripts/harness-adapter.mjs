@@ -3,7 +3,7 @@
 import { publicError } from '../src/fs-utils.mjs';
 import { beginHarnessCapture, finalizeHarnessCapture } from '../src/harness-adapter.mjs';
 
-const usageText = 'usage: harness-adapter.mjs begin --bundle <directory> --harness <claude-code|pi> --model <id> [--candidate-parent <directory>] [--project <path>] [--json]\n'
+const usageText = 'usage: harness-adapter.mjs begin --bundle <directory> --harness <claude-code|opencode|pi> --model <id> [--candidate-parent <directory>] [--project <path>] [--json]\n'
   + '       harness-adapter.mjs finalize --run <run-id> --completed <true|false> [--claim <text>] [--project <path>] [--json]';
 
 function usage(message, { json = false } = {}) {
