@@ -1,0 +1,13 @@
+{
+  "permissions": [
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "subagent", "resource": "tinysdd-slice-worker", "effect": "allow" },
+    { "action": "edit", "resource": ".*", "effect": "deny" },
+    { "action": "edit", "resource": "opencode.json", "effect": "deny" },
+    { "action": "edit", "resource": "opencode.jsonc", "effect": "deny" },
+    { "action": "edit", "resource": "????????.json", "effect": "deny" },
+    { "action": "edit", "resource": "????????.jsonc", "effect": "deny" }
+  ]
+}

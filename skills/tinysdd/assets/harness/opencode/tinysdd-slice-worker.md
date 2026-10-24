@@ -11,6 +11,11 @@ permissions:
   - { action: "edit", resource: "*", effect: "allow" }
   - { action: "edit", resource: "*.env", effect: "deny" }
   - { action: "edit", resource: "*.env.*", effect: "deny" }
+  - { action: "edit", resource: ".*", effect: "deny" }
+  - { action: "edit", resource: "opencode.json", effect: "deny" }
+  - { action: "edit", resource: "opencode.jsonc", effect: "deny" }
+  - { action: "edit", resource: "????????.json", effect: "deny" }
+  - { action: "edit", resource: "????????.jsonc", effect: "deny" }
 ---
 
 You implement exactly one approved TinySDD slice in the candidate directory
@@ -28,7 +33,9 @@ Use the approved brief, interfaces, protected paths, preparation inputs, and
 stop conditions literally. The packet's `allowedPaths` are the expected
 implementation and test paths for planning; the default ordinary
 create/modify scope also permits an extra ordinary file. Report every actual
-extra path so the host and reviewer can inspect it. Do not delete, move, or
+extra path so the host and reviewer can inspect it. Do not create or edit
+OpenCode, Claude, or agent configuration (`.opencode`, `.claude`, `.agents`,
+`opencode.json`, `opencode.jsonc`); those writes are denied. Do not delete, move, or
 rename files or change filesystem types, and do not edit the packet, context,
 checks, preparation, or protected files. Preserve unrelated behavior. If a
 required fact is missing, stop and report it to the parent; do not guess and do

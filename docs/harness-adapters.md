@@ -198,7 +198,9 @@ isolation, credential protection, check execution, or observed model identity.
 
 ## OpenCode
 
-The template is `skills/tinysdd/assets/harness/opencode/tinysdd-slice-worker.md`.
+The templates are in `skills/tinysdd/assets/harness/opencode/`:
+`tinysdd-slice-worker.md` defines the subagent, and `parent-opencode.json`
+sets the run-owned permissions for the parent session.
 The facts below come from reading the OpenCode 2.1.4 source at sst/opencode
 commit `20a6cc72917586eb5314be075f96dbb21d16c480`. They were not observed in a
 live OpenCode session.
@@ -224,8 +226,13 @@ those cannot turn a deny into an allow. The `--auto` and `--yolo` CLI flags only
 answer `ask` requests; they do not override a deny. Rules from global config
 `permissions` are placed before the agent's own rules.
 
-The template starts with `{ action: "*", resource: "*", effect: "deny" }` and
-then allows only `read` and `edit`, with `.env` and `.env.*` paths denied again.
+OpenCode's default agent rules start with `{ action: "*", resource: "*",
+effect: "allow" }`. An agent or session with no extra rules therefore does
+not ask before shell commands, edits, or reads outside its directory.
+
+The subagent template starts with `{ action: "*", resource: "*", effect:
+"deny" }`. It then allows only `read` and `edit`, and denies `.env`/`.env.*`
+paths and OpenCode configuration again (see **Configuration writes** below).
 In this OpenCode version that leaves:
 
 | Tool | Result |
@@ -244,19 +251,56 @@ deletions and type changes as scope violations, and a move shows up as a
 deletion plus an extra path. This is a gap in what OpenCode permissions can
 express, not something the template fixes.
 
+**Configuration writes.** OpenCode loads `.opencode/`, `.claude/`, `.agents/`,
+`opencode.json`, and `opencode.jsonc` from its start directory, which is the
+candidate, and reloads agent definitions when they change. A blanket `edit`
+allow would let the subagent write a candidate-local definition whose rules are
+appended after the original ones and can re-enable shell or external access or
+change the model. Both templates therefore deny `edit` on `.*` (every
+top-level dot path, in any letter case), on `opencode.json` and
+`opencode.jsonc`, and on `????????.json` and `????????.jsonc`, which also
+covers stem-case variants such as `OpenCode.json`. Side effects and limits:
+
+- slices cannot edit top-level dot files such as `.gitignore` or anything
+  under `.github/`;
+- the `????????.json(c)` rules also deny other paths of that exact length,
+  such as `src/data.json`;
+- OpenCode wildcards have no character classes and are case-sensitive outside
+  Windows, so an all-caps extension such as `OpenCode.JSON` is not denied. On a
+  case-insensitive filesystem (default macOS APFS) OpenCode would still load
+  it. Use a case-sensitive volume for the adapter parent, or check
+  `opencode debug config` from the candidate after the subagent returns;
+- the rules match the path the tool reports, relative to the candidate. They do
+  not follow symlinks that already exist in the candidate.
+
+TinySDD finalize reports these paths as ordinary extras; it does not block
+them. Inspect every reported extra before `task apply`.
+
 The deny-all rule overrides broader global `permissions` (for example a global
 `shell` allow). The template's later `read` and `edit` allows also override any
 narrower global `read` or `edit` denies. Add those denies to your copy of the
 template if you need them.
 
-### Install the definition
+### Install the definitions
 
 Use a fresh, run-owned adapter parent outside both the source project and the
 returned candidate, and pass it to `begin` as `--candidate-parent`. After
-choosing the exact model, create
-`<adapter-parent>/.opencode/agents/tinysdd-slice-worker.md` exclusively (for
-example with `writeFile(path, bytes, { flag: 'wx' })`). Never create the
-definition inside the candidate. Never overwrite an existing `.opencode`
+choosing the exact model, create both files exclusively (for example with
+`writeFile(path, bytes, { flag: 'wx' })`):
+
+- `<adapter-parent>/.opencode/agents/tinysdd-slice-worker.md` from
+  `tinysdd-slice-worker.md`;
+- `<adapter-parent>/.opencode/opencode.json` from `parent-opencode.json`.
+
+The parent config's `permissions` apply to every agent and come after the
+default agent's `*` allow. For the parent session they make
+`external_directory` and `shell` ask. They allow `subagent` only for
+`tinysdd-slice-worker`, so the parent cannot delegate to built-in subagents
+such as `explore`, whose own rules allow shell and external access. They also deny the same configuration
+writes as the subagent. For the subagent they come before its own rules, which
+still decide.
+
+Never create either file inside the candidate. Never overwrite an existing `.opencode`
 directory file, `opencode.json`/`opencode.jsonc`, or global OpenCode config as
 part of a run. Do not use `OPENCODE_CONFIG_DIR` for this: it replaces the
 global config directory instead of adding one.
@@ -274,10 +318,14 @@ Start `opencode` from the returned candidate directory with the operator's
 chosen frontier model as the parent. The parent loads the `tinysdd` skill,
 reads `artifactDir/packet.json`, `artifactDir/bundle/compiled-context.md` when
 present, and `artifactDir/bundle/checks.json`. Those files are outside the
-candidate, so OpenCode asks the operator to approve the parent's
-`external_directory` access. Approve those reads once; do not start the parent
-with `--auto`, `--yolo`, or `--dangerously-skip-permissions`, which approve
-every `ask` for the parent session, including shell commands.
+candidate. With `parent-opencode.json` installed, OpenCode asks the operator to
+approve that `external_directory` access and any shell command. Without it,
+the default rules allow both silently. Approve only the retained input reads.
+Do not start the parent with `--auto`, `--yolo`, or
+`--dangerously-skip-permissions`, which approve every `ask` for the parent
+session, including shell commands. Before delegating, confirm from
+`opencode debug config` that the adapter parent's `opencode.json` is a loaded
+source.
 
 The parent then calls the `subagent` tool with `agent: "tinysdd-slice-worker"`.
 Because the subagent cannot read outside the candidate, the delegation prompt
