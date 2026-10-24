@@ -368,6 +368,7 @@ function bubblewrapProbeArgs({ workspace, stateDir, includeHostBinds = true } = 
     '--die-with-parent',
     '--unshare-user',
     '--unshare-pid',
+    '--unshare-net',
     '--dev', '/dev',
     '--tmpfs', '/tmp',
     '--tmpfs', '/home',

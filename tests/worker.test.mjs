@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { compileContext } from "../src/context-compiler.mjs";
 import { checkRunnerAvailable } from "../src/check-runner.mjs";
 import { piRuntimePreflight, preparePiEnvironment } from "../src/pi-environment.mjs";
-import { copyProjectTree, runWorker } from "../src/worker.mjs";
+import { buildBubblewrapArgs, copyProjectTree, runWorker } from "../src/worker.mjs";
 import { buildSessionContext } from "./pi100-session-projection.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -1852,4 +1852,135 @@ test("worker refuses protected inputs missing from its copy", async () => {
   } finally {
     await rm(project, { recursive: true, force: true });
   }
+});
+
+describe("Linux worker network isolation", { skip: process.platform === "linux" ? false : "the bubblewrap branch runs only on Linux" }, () => {
+  // A fake bwrap records what the sandbox would receive and talks to the relay
+  // socket the way the in-sandbox forwarder would.
+  async function makeLinuxRuntime(api = "openai-completions") {
+    const root = await mkdtemp(join(canonicalTmpdir, "tinysdd-linux-net-"));
+    const agentDir = join(root, "agent");
+    await mkdir(agentDir, { recursive: true });
+    const linuxModels = structuredClone(models);
+    linuxModels.providers.fake.api = api;
+    await writeFile(join(agentDir, "models.json"), `${JSON.stringify(linuxModels)}\n`);
+    const bin = join(root, "node", "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "pi"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+    await writeFile(join(bin, "node"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+    const record = join(root, "bwrap-record.json");
+    const bwrap = join(root, "fake-bwrap.mjs");
+    // bwrap gets the sandbox PATH, so the fake names its interpreter directly.
+    await writeFile(bwrap, `#!${process.execPath}
+import { readFileSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
+const args = process.argv.slice(2);
+const source = (target) => { const index = args.findIndex((value, i) => ["--bind", "--ro-bind"].includes(value) && args[i + 2] === target); return index < 0 ? null : args[index + 1]; };
+const stateDir = source("/pi-state");
+const socketDir = source("/opt/tinysdd/inference");
+const relay = await new Promise((resolve) => {
+  const body = JSON.stringify({ model: "fake/exact-model", messages: [] });
+  const req = request({ socketPath: socketDir + "/relay.sock", path: "/chat/completions", method: "POST", headers: { authorization: "Bearer " + process.env.TINYSDD_INFERENCE_TOKEN, "content-type": "application/json" } }, (res) => {
+    let text = "";
+    res.on("data", (chunk) => { text += chunk; });
+    res.on("end", () => resolve({ status: res.statusCode, text }));
+  });
+  req.on("error", (error) => resolve({ error: error.message }));
+  req.end(body);
+});
+writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, env: process.env, models: JSON.parse(readFileSync(stateDir + "/models.json", "utf8")), forwarder: readFileSync(source("/opt/tinysdd/inference-forward.mjs"), "utf8"), relay }));
+console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] } }));
+`, { mode: 0o755 });
+    return { root, agentDir, bwrap, pi: join(bin, "pi"), record };
+  }
+
+  async function withHostEnv(values, action) {
+    const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, values);
+    try {
+      return await action();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  test("runs Pi without host networking or provider credentials, through the relay forwarder", async () => {
+    const { createServer } = await import("node:http");
+    const upstreamCalls = [];
+    const upstream = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        upstreamCalls.push({ url: req.url, headers: req.headers, body });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ upstream: "reached" }));
+      });
+    });
+    await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const fixture = await makeLinuxRuntime();
+    const project = await makeProject();
+    try {
+      const result = await withHostEnv({ PI_CODING_AGENT_DIR: fixture.agentDir, FAKE_BASE: `http://127.0.0.1:${upstream.address().port}/v1`, FAKE_TOKEN: "synthetic-header-secret" }, () => runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: fixture.bwrap, piExecutable: fixture.pi } }));
+      const seen = JSON.parse(await readFile(fixture.record, "utf8"));
+      const { args } = seen;
+      assert.ok(args.includes("--unshare-net"));
+      for (const path of ["/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/services", "/etc/ssl/certs", "/etc/ca-certificates"]) assert.ok(!args.includes(path), `${path} must not be mounted`);
+      // The fixed launcher starts the forwarder, then Pi with its own arguments.
+      const launcher = args.indexOf("/opt/node/bin/node");
+      assert.deepEqual(args.slice(launcher, launcher + 5), ["/opt/node/bin/node", "/opt/tinysdd/inference-forward.mjs", "41434", "/opt/tinysdd/inference/relay.sock", "/opt/node/bin/pi"]);
+      assert.equal(args.at(-1), "@/pi-state/task-prompt.txt");
+      assert.equal(args[args.indexOf("/opt/tinysdd/inference-forward.mjs") - 2], "--ro-bind");
+      assert.equal(args[args.indexOf("/opt/tinysdd/inference") - 2], "--ro-bind");
+      assert.equal(seen.forwarder, await readFile(new URL("../src/inference-forward.mjs", import.meta.url), "utf8"));
+      // No provider credential, generated reference or host secret enters the sandbox.
+      assert.deepEqual(Object.keys(seen.env).filter((key) => key.startsWith("TINYSDD_PI_")), []);
+      assert.match(seen.env.TINYSDD_INFERENCE_TOKEN, /^[0-9a-f]{64}$/u);
+      assert.doesNotMatch(JSON.stringify(seen.env), /synthetic-header-secret|literal-provider-secret/u);
+      const provider = seen.models.providers.fake;
+      assert.equal(provider.baseUrl, "http://127.0.0.1:41434");
+      assert.equal(provider.apiKey, "$TINYSDD_INFERENCE_TOKEN");
+      assert.equal(provider.headers, undefined);
+      assert.deepEqual(provider.models.map(({ id, baseUrl, headers }) => ({ id, baseUrl, headers })), [{ id: "fake/exact-model", baseUrl: "http://127.0.0.1:41434", headers: undefined }]);
+      assert.doesNotMatch(JSON.stringify(seen.models), /synthetic-header-secret|literal-provider-secret|TINYSDD_PI_/u);
+      // The relay socket reaches the configured provider with the host-held credentials.
+      assert.deepEqual(seen.relay, { status: 200, text: JSON.stringify({ upstream: "reached" }) });
+      assert.equal(upstreamCalls.length, 1);
+      assert.equal(upstreamCalls[0].url, "/v1/chat/completions");
+      assert.equal(upstreamCalls[0].headers.authorization, "Bearer synthetic-header-secret");
+      const metadata = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.equal(metadata.sandbox, "bubblewrap");
+      assert.equal(metadata.inferenceDestination, "http://127.0.0.1:41434");
+      assert.equal(metadata.generatedCredentialReferenceCount, 0);
+      assert.deepEqual((await readdir(canonicalTmpdir)).filter((name) => name.startsWith("tinysdd-inference-")), []);
+    } finally {
+      await new Promise((resolve) => upstream.close(resolve));
+      await rm(project, { recursive: true, force: true });
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("bubblewrap arguments cannot be built without the relay forwarder", () => {
+    const common = { workspace: "/tmp/candidate", stateDir: "/tmp/pi-state", nodeRoot: "/opt/node", piArgs: [], piLexicalPath: "/opt/node/bin/pi" };
+    assert.throws(() => buildBubblewrapArgs(common), /require the inference relay forwarder/u);
+    const args = buildBubblewrapArgs({ ...common, inference: { forwarder: "/tmp/f.mjs", socketDir: "/tmp/socket", socketName: "relay.sock" } });
+    assert.deepEqual(args.slice(0, 4), ["--die-with-parent", "--unshare-user", "--unshare-pid", "--unshare-net"]);
+  });
+
+  test("fails closed for a provider API the relay does not support", async () => {
+    const fixture = await makeLinuxRuntime("anthropic-messages");
+    const project = await makeProject();
+    try {
+      await assert.rejects(
+        withHostEnv({ PI_CODING_AGENT_DIR: fixture.agentDir, FAKE_BASE: "http://127.0.0.1:9/v1", FAKE_TOKEN: "synthetic-header-secret" }, () => runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: { test: false, bwrapExecutable: fixture.bwrap, piExecutable: fixture.pi } })),
+        (error) => error.name === "WorkerError" && /Linux sandbox inference relay/u.test(error.message) && /openai-completions/u.test(error.message) && /"anthropic-messages"/u.test(error.message),
+      );
+      await assert.rejects(readFile(fixture.record, "utf8"), { code: "ENOENT" });
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
 });

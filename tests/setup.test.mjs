@@ -220,10 +220,12 @@ test('bubblewrap startup probe uses the worker namespace and mount shape with a 
   assert.ok(opened.every(({ length }) => length === 256));
   assert.ok(call.args.includes('--unshare-user'));
   assert.ok(call.args.includes('--unshare-pid'));
+  // The worker runs without host networking, so the probe needs a network namespace too.
+  assert.ok(call.args.includes('--unshare-net'));
   assert.ok(call.args.includes('--ro-bind'));
   assert.ok(call.args.includes('--bind'));
   assert.equal(call.args.at(-1), '/usr/bin/true');
-  assert.match(probe.reproduction.command, /--unshare-user.*--unshare-pid.*\/usr\/bin\/true/u);
+  assert.match(probe.reproduction.command, /--unshare-user.*--unshare-pid.*--unshare-net.*\/usr\/bin\/true/u);
 });
 
 test('bubblewrap startup probe distinguishes silent failures, diagnostics, timeouts, and launch errors', async () => {

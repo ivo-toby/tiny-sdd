@@ -1164,31 +1164,30 @@ function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath,
   return args;
 }
 
-export function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, env, checkChannel, compactionBundle }) {
+// Inside the sandbox's own network namespace this port is free; it is only the
+// forwarder's listening address, never a host port.
+export const LINUX_INFERENCE_PORT = 41_434;
+const SANDBOX_INFERENCE_DIR = "/opt/tinysdd/inference";
+const SANDBOX_FORWARDER = "/opt/tinysdd/inference-forward.mjs";
+
+export function buildBubblewrapArgs({ workspace, stateDir, nodeRoot, piArgs, piLexicalPath, checkChannel, compactionBundle, inference }) {
+  if (!inference?.forwarder || !inference?.socketDir || !inference?.socketName) fail("Linux workers require the inference relay forwarder");
   const requiredMounts = ["/usr", "/bin", "/lib", "/lib64"];
-  const args = ["--die-with-parent", "--unshare-user", "--unshare-pid", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--dir", "/etc"];
+  // --unshare-net leaves only loopback; inference reaches the host relay through
+  // the forwarder and the bind-mounted Unix socket.
+  const args = ["--die-with-parent", "--unshare-user", "--unshare-pid", "--unshare-net", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--dir", "/etc"];
   for (const mount of requiredMounts) args.push("--ro-bind", mount, mount);
-  // Keep networking usable for the configured inference proxy without exposing
-  // the host's entire /etc tree.  There is intentionally no /proc mount:
-  // worker read tools must not be able to inspect process environments.
-  for (const path of [
-    "/etc/hosts",
-    "/etc/resolv.conf",
-    "/etc/nsswitch.conf",
-    "/etc/services",
-    "/etc/localtime",
-    "/etc/ssl/certs",
-    "/etc/ca-certificates",
-  ]) args.push("--ro-bind-try", path, path);
+  // There is intentionally no /proc mount: worker read tools must not be able
+  // to inspect process environments.
+  args.push("--ro-bind-try", "/etc/localtime", "/etc/localtime");
   args.push("--dir", "/opt", "--ro-bind", nodeRoot, "/opt/node", "--dir", "/work", "--bind", workspace, "/work", "--dir", "/pi-state", "--bind", stateDir, "/pi-state", "--chdir", "/work");
-  if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--dir", "/opt/tinysdd", "--ro-bind", checkChannel.extension, "/opt/tinysdd/run-checks.mjs");
-  if (compactionBundle && !checkChannel) args.push("--dir", "/opt/tinysdd");
+  args.push("--dir", "/opt/tinysdd", "--ro-bind", inference.forwarder, SANDBOX_FORWARDER, "--ro-bind", inference.socketDir, SANDBOX_INFERENCE_DIR);
+  if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--ro-bind", checkChannel.extension, "/opt/tinysdd/run-checks.mjs");
   if (compactionBundle) args.push("--dir", "/opt/tinysdd/compaction", "--ro-bind", compactionBundle.directory, "/opt/tinysdd/compaction");
-  // No --unshare-net: model inference must reach the configured proxy.  The
-  // only writable mounts are the disposable candidate and temporary Pi state.
+  // The only writable mounts are the disposable candidate and temporary Pi state.
   args.push("--setenv", "HOME", "/home", "--setenv", "PI_CODING_AGENT_DIR", "/pi-state", "--setenv", "PATH", "/opt/node/bin:/usr/bin:/bin");
   if (compactionBundle) args.push("--setenv", COMPACTION_ANCHOR_ENV, "/opt/tinysdd/compaction/anchor.json");
-  args.push(piLexicalPath, ...piArgs);
+  args.push("/opt/node/bin/node", SANDBOX_FORWARDER, String(inference.port ?? LINUX_INFERENCE_PORT), `${SANDBOX_INFERENCE_DIR}/${inference.socketName}`, piLexicalPath, ...piArgs);
   return args;
 }
 
@@ -1750,6 +1749,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let workspace;
   let baseline;
   let inferenceRelay;
+  let inferenceStage;
   let checkChannel;
   let compactionStage;
   let compactionBundle;
@@ -1867,9 +1867,28 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     } else {
       const nodeRoot = dirname(dirname(runtimeChoice.pi.path));
       await existingAbsoluteDirectory(nodeRoot, "Pi installation root");
+      await executablePath(join(nodeRoot, "bin", "node"), "Node executable in the Pi installation root");
+      const models = JSON.parse(await readFile(join(prepared.stateDir, "models.json"), "utf8"));
+      const provider = models.providers[worker.provider];
+      inferenceStage = await mkdtemp(join(tempRoot, "tinysdd-inference-"));
+      const socketDir = join(inferenceStage, "socket");
+      await mkdir(socketDir, { mode: 0o700 });
+      const forwarder = join(inferenceStage, "inference-forward.mjs");
+      await copyFile(new URL("./inference-forward.mjs", import.meta.url), forwarder);
+      try {
+        inferenceRelay = await startInferenceRelay({ provider, model: provider.models[0], env: prepared.env, socketPath: join(socketDir, "relay.sock") });
+      } catch (error) {
+        // No fallback to host networking: an unsupported API refuses the run.
+        fail(`Cannot prepare the Linux sandbox inference relay: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const inferenceBaseUrl = `http://127.0.0.1:${LINUX_INFERENCE_PORT}`;
+      await writeJson(join(prepared.stateDir, "models.json"), { providers: { [worker.provider]: relayPiProvider(provider, provider.models[0], inferenceBaseUrl) } });
       command = runtimeChoice.bwrap.path;
-      childEnv = { ...prepared.env, HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work" };
-      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", env: childEnv, checkChannel, compactionBundle });
+      // Provider credentials stay with the host relay; Pi gets only the per-run token.
+      childEnv = { HOME: "/home", PATH: "/opt/node/bin:/usr/bin:/bin", PI_CODING_AGENT_DIR: "/pi-state", TINYSDD_WORKSPACE: "/work", TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
+      args = buildBubblewrapArgs({ workspace, stateDir: prepared.stateDir, nodeRoot, piArgs, piLexicalPath: "/opt/node/bin/pi", checkChannel, compactionBundle, inference: { forwarder, socketDir, socketName: "relay.sock", port: LINUX_INFERENCE_PORT } });
+      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, inferenceDestination: inferenceBaseUrl };
+      await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     }
     if (checkChannel) {
       childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";
@@ -2020,6 +2039,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (baseline) await rm(baseline, { recursive: true, force: true }).catch(() => {});
     if (compactionStage) await rm(compactionStage, { recursive: true, force: true }).catch(() => {});
+    if (inferenceStage) await rm(inferenceStage, { recursive: true, force: true }).catch(() => {});
   }
 }
 

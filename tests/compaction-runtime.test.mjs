@@ -220,7 +220,7 @@ test('Seatbelt exposes the staged anchor to trusted extension code without grant
 
 test('bubblewrap mounts the compaction bundle with or without run_checks', () => {
   const bundle = { directory: '/private/tmp/compaction-bundle' };
-  const common = { workspace: '/private/tmp/candidate', stateDir: '/private/tmp/pi-state', nodeRoot: '/opt/node', piArgs: [], piLexicalPath: '/opt/node/bin/pi', env: {} };
+  const common = { workspace: '/private/tmp/candidate', stateDir: '/private/tmp/pi-state', nodeRoot: '/opt/node', piArgs: [], piLexicalPath: '/opt/node/bin/pi', inference: { forwarder: '/private/tmp/inference-forward.mjs', socketDir: '/private/tmp/inference', socketName: 'relay.sock' } };
   const withoutChecks = buildBubblewrapArgs({ ...common, compactionBundle: bundle });
   const withChecks = buildBubblewrapArgs({
     ...common,
