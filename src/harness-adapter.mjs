@@ -32,7 +32,7 @@ import {
 } from './worker.mjs';
 
 export const HARNESS_CAPTURE_SCHEMA_VERSION = 1;
-export const HARNESS_KINDS = Object.freeze(['claude-code', 'pi']);
+export const HARNESS_KINDS = Object.freeze(['claude-code', 'opencode', 'pi']);
 
 const RUN_ID_PATTERN = /^worker-[0-9A-Za-z-]+$/u;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;

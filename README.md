@@ -293,7 +293,7 @@ not shipped in the npm package.
 | `node scripts/validate-change.mjs --help` | Validate portable change/slice artifacts. |
 | `node scripts/export-slice.mjs --help` | Export a prepared slice bundle. |
 | `node scripts/research.mjs --help` | Prepare bounded research packets and validate selections. |
-| `node scripts/harness-adapter.mjs --help` | Begin/finalize retained Claude Code or interactive Pi runs. |
+| `node scripts/harness-adapter.mjs --help` | Begin/finalize retained Claude Code, OpenCode or interactive Pi runs. |
 | `node scripts/archive-change.mjs --help` | Archive a freshly accepted change and merge its living specs. |
 
 See the [artifact format](docs/artifact-format.md),

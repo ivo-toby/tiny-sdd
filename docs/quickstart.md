@@ -354,7 +354,7 @@ reconstruction with UNKNOWN historical approval and run evidence. Its protected
 feature check enters through the real fixture entrypoint; it is offline evidence
 for the descriptor tooling, not a Talon, Pi, provider or foreign-harness run.
 
-For an approved slice consumed by Claude Code or interactive Pi, follow the
+For an approved slice consumed by Claude Code, OpenCode or interactive Pi, follow the
 [foreign harness adapter guide](harness-adapters.md). The exported bundle and
 candidate parent stay outside the source project; the host-managed begin step
 retains the exact packet and bundle under `.tinysdd/runs/worker-*` evidence
