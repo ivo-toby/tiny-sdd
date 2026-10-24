@@ -177,6 +177,11 @@ worker adapter does not provide MCP or arbitrary extensions. It returns a
 disposable candidate and patch without executing tests or applying changes to
 the source project. Instructions alone do not enforce write scope.
 
+To choose between the sandboxed worker and implementing in a foreign harness
+(Claude Code, OpenCode or interactive Pi), follow the "Harness or sandboxed
+worker?" rule in docs/harness-adapters.md. The OpenCode subagent template is
+assets/harness/opencode/tinysdd-slice-worker.md.
+
 Make only the agreed change and preserve unrelated work. Follow the user's
 branch and commit policy; no automatic commits are required. For a revision,
 return the precise failing obligation and observed evidence. Prefer focused
