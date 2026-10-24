@@ -332,6 +332,35 @@ function validateWorker(worker) {
   return { timeoutMs, maxToolCalls, firstWriteMs, maxCheckRuns };
 }
 
+// A registry profile is the configuration the model was measured with, so its
+// context window and response budget replace the Pi entry's values in the
+// temporary state. The operator's own models.json is never modified.
+function applyProfileModelSettings(model, profile, worker) {
+  const warnings = [];
+  const settings = {};
+  const route = profile?.model?.route;
+  if (route !== undefined && route !== worker.model) {
+    fail(`Profile ${profile.id} was measured on route ${route}, but worker.model is ${worker.model}; select a profile for this route`);
+  }
+  const contextWindow = profile?.model?.contextWindow;
+  if (contextWindow !== undefined) {
+    if (Number.isFinite(model.contextWindow) && model.contextWindow !== contextWindow) {
+      warnings.push(`profile ${profile.id} sets contextWindow ${contextWindow}; the Pi entry says ${model.contextWindow}. Make sure the server is configured for ${contextWindow}`);
+    }
+    model.contextWindow = contextWindow;
+    settings.contextWindow = contextWindow;
+  }
+  const maxTokens = profile?.responseBudget?.maxTokens;
+  if (maxTokens !== undefined) {
+    if (Number.isFinite(model.maxTokens) && model.maxTokens !== maxTokens) {
+      warnings.push(`profile ${profile.id} sets maxTokens ${maxTokens}; the Pi entry says ${model.maxTokens}`);
+    }
+    model.maxTokens = maxTokens;
+    settings.maxTokens = maxTokens;
+  }
+  return { warnings, settings, maxTokens: maxTokens !== undefined };
+}
+
 // Pi clamps the requested level before constructing OpenAI-compatible requests.
 // Provider auto-detection and server behavior remain outside this prediction.
 export const PREFLIGHT_BASIS = "pi-ai 1.0.0 models.js clampThinkingLevel and api/openai-completions.js OpenAI/DeepSeek control; other formats legacy predictions; server behavior unverified";
@@ -487,6 +516,7 @@ async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
   const model = structuredClone(configuredModel);
   if (provider.compat || model.compat) model.compat = { ...(provider.compat ?? {}), ...(model.compat ?? {}) };
   const profileRuntime = profile?.runtime;
+  const applied = applyProfileModelSettings(model, profile, worker);
   if (profileRuntime?.reasoning !== undefined) model.reasoning = profileRuntime.reasoning;
   if (profileRuntime?.compat) model.compat = { ...(model.compat ?? {}), ...profileRuntime.compat };
   const generatedEnv = {};
@@ -498,6 +528,9 @@ async function resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv }) {
     ...piRuntimePreflight({ api, model, thinking: profileRuntime?.thinking ?? "off", thinkingBudgets: profileRuntime?.thinkingBudgets ?? null, compaction: profileRuntime?.compaction }),
     endpointFingerprint: endpoint,
   };
+  if (applied.maxTokens) preflight.maxTokens = { ...preflight.maxTokens, source: "profile" };
+  preflight.warnings = [...applied.warnings, ...preflight.warnings];
+  preflight.profileSettings = applied.settings;
   return { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight };
 }
 
@@ -527,7 +560,7 @@ export async function preflightPiWorker({ worker, profile = null, sourceAgentDir
       thinkingSource: profile?.runtime?.thinking === undefined ? "tinysdd-default" : "profile",
       thinkingDefault: "off",
       contextWindow: Number.isFinite(resolved.model.contextWindow) ? resolved.model.contextWindow : "UNKNOWN",
-      contextWindowSource: Number.isFinite(resolved.model.contextWindow) ? "model" : "UNKNOWN",
+      contextWindowSource: profile?.model?.contextWindow !== undefined ? "profile" : Number.isFinite(resolved.model.contextWindow) ? "model" : "UNKNOWN",
     },
   };
 }
@@ -541,6 +574,9 @@ export async function preflightPiWorker({ worker, profile = null, sourceAgentDir
  */
 export async function preparePiEnvironment({ worker, profile = null, sourceAgentDir = defaultSourceAgentDir(), sourceEnv = process.env } = {}) {
   const limits = validateWorker(worker);
+  for (const [key, value] of Object.entries(profile?.limits ?? {})) {
+    if (limits[key] !== value) fail(`Worker limits.${key} is ${limits[key]} but profile ${profile.id} requires ${value}; resolve the profile through the project config`);
+  }
   const { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight } = await resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv });
   if (preflight.errors.length > 0) fail(`Worker preflight failed: ${preflight.errors.join("; ")}`);
   const stateDir = await mkdtemp(join(tmpdir(), "tinysdd-pi-state-"));
