@@ -727,7 +727,8 @@ contexts grow.
 
 | Item | State | Notes |
 | --- | --- | --- |
-| Model-specific instruction experiments (#108) | **Removed** | The A/B tooling was removed: its home-made suites were saturated and no profile showed a measured improvement. A deterministic replacement benchmark is planned. |
+| Model-specific instruction experiments (#108) | **Removed** | The A/B tooling was removed: its home-made suites were saturated and no profile showed a measured improvement. Replaced by the deterministic polyglot benchmark in `bench/polyglot` (#148). |
+| Model registry (#123) | **Part A implemented** | Profiles may record `status`, `model`, `limits`, `responseBudget` and aggregate `benchmarks[]` cards; nine registry entries from polyglot run `main` ship in `profiles/`. The fields are validated, not yet applied to worker runs (part B); `init` matching, `profiles update`, `skills update`, `models` and the profile wizard are part C. |
 | Gitignore-aware copy | **Implemented** | `git ls-files -z --cached --others --exclude-standard` in a Git work tree, with the existing name, symlink and size rules on top; walk fallback for non-git projects, Git errors and immutable baseline replays. Mode in `result.workspaceCopy`. An allowed file or context resource that exists but is ignored or excluded fails clearly, as does an empty listing (a project ignored by an enclosing repository). Submodule directories are copied with the walk rules. This also removes the need for a hand-synced clean worktree: ignored files in the project directory are never copied. |
 | Outcome names | **Implemented** | `raw_output_limit`, `response_token_limit`, `no_progress`; `limitDetails` (for token limits: effective `maxTokens`, its source, output and reasoning tokens). Shared list in src/outcomes.mjs. Frozen `experiments/` tooling keeps its historical names. |
 | Manifest validation at add | **Implemented** | `task add` compiles the manifest (schema, ranges, budget) before mutating state. |

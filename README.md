@@ -31,8 +31,10 @@ or a small model pilot does not establish reliable delivery across projects.
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
+| Model registry | Profiles in `profiles/` per exact model configuration (route, context, `maxTokens`, timeout, thinking) with aggregate polyglot benchmark results ([#123](https://github.com/ivo-toby/tiny-sdd/issues/123)); developer benchmark in `bench/polyglot` (not shipped in the npm package) | The settings are validated but not yet applied to worker runs; set them in Pi and the worker config yourself. |
 
-Other open work includes [Pi runtime upgrades](https://github.com/ivo-toby/tiny-sdd/issues/100),
+Other open work includes [applying registry profiles](https://github.com/ivo-toby/tiny-sdd/issues/123),
+[Pi runtime upgrades](https://github.com/ivo-toby/tiny-sdd/issues/100),
 [full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
 [benchmark oracle fixes](https://github.com/ivo-toby/tiny-sdd/issues/120) and
 [incomplete-result reporting](https://github.com/ivo-toby/tiny-sdd/issues/124).
