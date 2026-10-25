@@ -83,7 +83,11 @@ function paths(values) {
 }
 
 async function loadModels() {
-  return (await readJson(join(HERE, 'models.json'))).models;
+  const models = (await readJson(join(HERE, 'models.json'))).models;
+  for (const model of models) {
+    if (model.timeoutMs !== undefined && (!Number.isInteger(model.timeoutMs) || model.timeoutMs <= 0)) fail(`model ${model.key}: timeoutMs must be a positive integer`);
+  }
+  return models;
 }
 
 function selectModels(all, list) {
@@ -286,7 +290,7 @@ const commands = {
     const card = buildCard({
       results: await readResults(runDir), runName: run.name, datasetCommit: run.datasetCommit,
       validExercises: manifest.exercises.length - run.excluded.length, model, profile,
-      timeoutMs: WORKER_TIMEOUT_MS, decision, note: values.note,
+      timeoutMs: model.timeoutMs ?? WORKER_TIMEOUT_MS, decision, note: values.note,
     });
     if (!values.into) return card;
     const target = resolve(values.into);

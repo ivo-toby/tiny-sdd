@@ -178,6 +178,7 @@ export async function runQueue({
     for (let n = 1; n <= (entry.attempts ?? 2); n += 1) {
       const record = await withHarnessRetry(entry, n, () => d.runAttempt({
         checkoutDir, exercise, model, profile, attempt: n, previous, caseDir, runtime, agentDir: agentDirs.get(model.key),
+        ...(model.timeoutMs ? { timeoutMs: model.timeoutMs } : {}),
       }));
       if (record === ABANDONED) return;
       attempts.push(record);

@@ -73,6 +73,14 @@ Both profiles then have the same route, so `tinysdd init` reports
 `PROFILE_MATCH_AMBIGUOUS` for it. Ask the operator which profile should stay in
 the shared registry, and do it in a PR to the repo.
 
+### Step 1b: gemma26 and muse with looser limits (added 2026-10-25)
+
+Models can now set `timeoutMs` in `models.json`; the default is still 10 minutes.
+- `gemma26lim`: maxTokens 32768 and timeoutMs 1200000 (20 min).
+- `muselim`: timeoutMs 1200000.
+
+Run them like Step 1, one at a time, `gemma26lim` first. Compare each with its original and record it with `card --into profiles/<new id>.json --id <new id>`. The card records the timeout too.
+
 ### Step 2: Opus-written candidates for qwen36, gemma26 and muse (1 round each, north skipped)
 
 The running Claude session (Opus) writes the candidates itself, following
@@ -81,7 +89,7 @@ RUNBOOK Phase 3. Haiku may only analyze.
 - Use ids `<model>-o1-<slug>`, for example `qwen36-o1-...`, so they never collide with the withdrawn `*-r1-*` ids.
 - Use `--metric pass1` everywhere.
 - For qwen36, use `--seed 1`: the already queued `baseline-rerun` entries are reused instead of duplicated.
-- **qwen36 settings:** if Step 1 shows that 32k clearly helps, ask the operator whether to screen the qwen36 candidates on `qwen36mt32` instead. That needs its own export from the `qwen36mt32` baseline.
+- **Settings:** screen each model's candidates on its variant with looser limits (`qwen36mt32`, `gemma26lim`, `muselim`) when that variant is not worse than the original. That needs its own discovery export from the variant's baseline. Use ids `<model>-o2-<slug>` for these.
 - **Order:** qwen36, then gemma26, then muse. One screen at a time on Titan.
 - **Per model:**
   1. Export the discovery failures.

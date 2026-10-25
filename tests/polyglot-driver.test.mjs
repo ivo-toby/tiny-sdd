@@ -227,6 +227,14 @@ const featuresFor = (result) => (result.pass2 ? ['passed'] : ['tests_failed']);
 const noSleep = async () => {};
 
 describe('runQueue', () => {
+  test('a model timeoutMs overrides the default worker timeout', async () => {
+    const { runDir, manifest } = await makeRun({ entries: [entry('e1', 'python/a')], exercises: ['python/a'] });
+    const seen = [];
+    const slow = { ...model, timeoutMs: 1200000 };
+    await runQueue({ runDir, models: [slow], checkoutDir: '/unused', manifest, deps: { runAttempt: async (args) => { seen.push(args.timeoutMs); return { ...passing, n: 1 }; }, featuresFor, sleep: noSleep } });
+    assert.deepEqual(seen, [1200000]);
+  });
+
   test('resume skips finished entries and excluded exercises', async () => {
     const { runDir, manifest } = await makeRun({
       entries: [entry('e1', 'python/a'), entry('e2', 'python/b'), entry('e3', 'python/c')],
