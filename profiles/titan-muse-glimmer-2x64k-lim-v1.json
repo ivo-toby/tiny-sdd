@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-muse-glimmer-2x64k-lim-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/muse-glimmer-2x64k",
+    "contextWindow": 64000,
+    "parallel": 2,
+    "note": "Settings variant of muse: 20-minute timeout (11 of 20 discovery first-attempt failures hit the 10-minute timeout at about 23 tok/s)."
+  },
+  "limits": {
+    "timeoutMs": 1200000
+  },
+  "responseBudget": {
+    "maxTokens": 16384
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-26",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/muse-glimmer-2x64k",
+        "contextWindow": 64000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 1200000,
+        "parallel": 2
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.845,
+      "pass2": 0.937,
+      "minutesPerTask": 7.9,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.808,
+          "pass2": 0.923
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.722,
+          "pass2": 0.889
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.949,
+          "pass2": 1
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.958,
+          "pass2": 0.979
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.794,
+          "pass2": 0.912
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.75,
+          "pass2": 0.875
+        }
+      }
+    },
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-28",
+      "variant": "muse-o2-trace-edges",
+      "split": "holdout",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/muse-glimmer-2x64k",
+        "contextWindow": 64000,
+        "maxTokens": 16384,
+        "thinking": "medium",
+        "timeoutMs": 1200000,
+        "parallel": 2
+      },
+      "exercises": 104,
+      "repeats": 1,
+      "pass1": 0.76,
+      "pass2": 0.885,
+      "minutesPerTask": 8.7,
+      "perLanguage": {
+        "cpp": {
+          "n": 13,
+          "pass1": 0.538,
+          "pass2": 0.769
+        },
+        "go": {
+          "n": 17,
+          "pass1": 0.353,
+          "pass2": 0.706
+        },
+        "java": {
+          "n": 22,
+          "pass1": 0.909,
+          "pass2": 1
+        },
+        "javascript": {
+          "n": 24,
+          "pass1": 0.958,
+          "pass2": 1
+        },
+        "python": {
+          "n": 17,
+          "pass1": 0.882,
+          "pass2": 0.941
+        },
+        "rust": {
+          "n": 11,
+          "pass1": 0.727,
+          "pass2": 0.727
+        }
+      },
+      "decision": {
+        "metric": "pass1",
+        "keep": false,
+        "n": 104,
+        "delta": -0.058,
+        "reasons": [
+          "delta_not_above_0.05",
+          "language_drop:cpp",
+          "language_drop:go"
+        ]
+      }
+    }
+  ]
+}
