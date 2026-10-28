@@ -155,8 +155,9 @@ draft, acceptance scope or archive byte fails closed.
 
 `slice.json` has exact required keys `schemaVersion: 1`, `id`, `brief`,
 `context`, `checks`, `implementationFiles`, `sliceTests`, `protect`,
-`interfaces`, `dependsOn`, `budget`, `openDecisions`, `testReview`.
-Slice IDs are globally unique task IDs such as `broker-s1`.
+`interfaces`, `dependsOn`, `budget`, `openDecisions`, `testReview`, and optional
+`worker` (a configured worker name chosen by the preparing model) with an
+optional `workerReason` (#164). Slice IDs are globally unique task IDs such as `broker-s1`.
 
 - `implementationFiles`: nonempty expected create/modify paths, including caller
   wiring where assigned. Counted separately for advisory implementation sizing;
