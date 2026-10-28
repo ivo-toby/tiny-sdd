@@ -61,6 +61,22 @@ Before the change, a limit caused 12 of 35 qwen36 discovery failures, 10 of 22 f
 
 The o2 candidates were written by Opus; earlier rounds by the operating session. Candidate texts are in the run's `candidates/` directory. A set written by Haiku was withdrawn before screening.
 
+## Escalation: fast worker first, strong worker on failure
+
+The baselines allow a simulation without new runs. Each exercise is first given to a fast worker (attempt plus revision). Only if that fails does a strong worker get the exercise, and its own baseline result on that exercise counts. Time is the sum of both runs.
+
+| Policy | Solved | min/task | Escalated |
+| --- | ---: | ---: | ---: |
+| muselim alone | 93.7% | 7.9 | |
+| gemma26lim alone | 94.2% | 9.0 | |
+| qwen38nextflash alone | 97.1% | 2.0 | |
+| qwen38pi → muselim | 97.6% | 3.6 | 28 (13.5%) |
+| qwen38pi → gemma26lim | 96.6% | 3.4 | 28 (13.5%) |
+| qwen38q4s → muselim | 98.6% | 4.2 | 25 (12.1%) |
+| qwen38pi → qwen38nextflash | 98.6% | 2.1 | 28 (13.5%) |
+
+On Titan, escalating from qwen38pi to muselim solves more exercises than muselim alone in less than half the time. Two limits to this simulation: an escalated exercise gets up to four attempts instead of two, and the strong worker does not see why the fast one failed. It does use the strong worker's real result on the same hard exercises, so the correlation between "hard for one" and "hard for the other" is in the numbers. This supports #164.
+
 ## Cost
 
 The run took 4,579 results between 2026-10-19 and 2026-10-28: about 324 task-hours on Titan and 23 on randal (sum of task durations; Titan usually ran two tasks at a time). The looser-limit variants and their candidate rounds alone took about 158 task-hours on Titan. No power measurement was taken.
