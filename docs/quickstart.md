@@ -914,6 +914,37 @@ tinysdd worker start --task first-change --worker qwen --json
 tinysdd worker status --id LAUNCH_ID --json
 ```
 
+### Worker per task and escalation
+
+A task can name the worker that should run it, chosen by the preparing model:
+
+```sh
+tinysdd task add --id parser --brief docs/tasks/parser.md --allow src/parser.ts \
+  --worker strong --worker-reason 'three interfaces, async edge cases'
+```
+
+A slice descriptor carries the same choice as optional `worker` and
+`workerReason` fields, and the registration plan passes them on. The worker is
+part of what the operator approves: changing it with `task update --worker`
+makes the approval stale. `--worker=` clears it.
+
+`worker run` and `worker start` pick the worker in this order: an explicit
+`--worker`, then the task's worker, then `defaultWorker`. The run's
+`result.json` and `runtime.json` record the choice as `workerSelection`
+(`workerName`, `source` of `option`, `task` or `default`, and the reason).
+
+Optional `workerTiers` in the config lists workers from fast to strong:
+
+```json
+{ "workerTiers": ["fast", "strong"] }
+```
+
+When a run ends with a failed outcome, the result includes an `escalation`
+suggestion with the next tier and the command to run it. TinySDD never starts
+that run itself. The operator, or an orchestrating agent after the operator
+agrees, runs it with `--escalated-from RUN_ID`, and the new run records the
+failed run under `workerSelection.escalatedFrom`.
+
 Qualification dispatch uses the current worker, the current benchmark suite,
 and the effective verifier and runtime facts. Set an optional project suite and
 mode in `.tinysdd/config.json`:

@@ -230,7 +230,8 @@ node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add --
 Repeat in topological order for dependencies. Copying the bytes explicitly keeps
 the registered packet inputs identical to the approved descriptor files; carry
 every `allow`, `protect`, `preparation` and `dependsOn` value from the plan,
-using `--depends-on` for dependencies. An absent preparation entry remains an
+using `--depends-on` for dependencies, and the plan's `worker` and
+`workerReason` as `--worker` and `--worker-reason` when the slice names one. An absent preparation entry remains an
 absence check and is not added to `--protect` until it exists. The validator does
 not create controller files.
 
@@ -480,6 +481,37 @@ tinysdd config show --json
 tinysdd worker start --task validation --worker qwen --json
 tinysdd worker status --id LAUNCH_ID --json
 ```
+
+Worker per task and escalation:
+
+A task can name the worker that should run it, chosen by the preparing model:
+
+```sh
+tinysdd task add --id parser --brief docs/tasks/parser.md --allow src/parser.ts \
+  --worker strong --worker-reason 'three interfaces, async edge cases'
+```
+
+A slice descriptor carries the same choice as optional `worker` and
+`workerReason` fields, and the registration plan passes them on. The worker is
+part of what the operator approves: changing it with `task update --worker`
+makes the approval stale. `--worker=` clears it.
+
+`worker run` and `worker start` pick the worker in this order: an explicit
+`--worker`, then the task's worker, then `defaultWorker`. The run's
+`result.json` and `runtime.json` record the choice as `workerSelection`
+(`workerName`, `source` of `option`, `task` or `default`, and the reason).
+
+Optional `workerTiers` in the config lists workers from fast to strong:
+
+```json
+{ "workerTiers": ["fast", "strong"] }
+```
+
+When a run ends with a failed outcome, the result includes an `escalation`
+suggestion with the next tier and the command to run it. TinySDD never starts
+that run itself. The operator, or an orchestrating agent after the operator
+agrees, runs it with `--escalated-from RUN_ID`, and the new run records the
+failed run under `workerSelection.escalatedFrom`.
 
 Existing config is preserved: edit it deliberately to add named workers.
 Optional `.tinysdd/config.local.json` replaces entire workers by name; it does
