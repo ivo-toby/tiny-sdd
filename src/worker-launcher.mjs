@@ -9,7 +9,7 @@ function invalid(message) {
   return error;
 }
 
-const [projectRoot, taskId, workerName, launchDirectory, baseRunId, baselineRunId, profile] = process.argv.slice(2);
+const [projectRoot, taskId, workerName, launchDirectory, baseRunId, baselineRunId, profile, escalatedFrom] = process.argv.slice(2);
 
 // `worker stop` sends SIGTERM. Handling it (instead of the default exit) keeps
 // this process alive to kill Pi and finalize the run as `stopped`. The handlers
@@ -19,22 +19,24 @@ process.once('SIGTERM', () => stopController.abort());
 process.once('SIGINT', () => stopController.abort());
 
 try {
-  if (![projectRoot, taskId, workerName, launchDirectory].every((value) => typeof value === 'string' && value.length > 0)) {
-    throw invalid('worker launcher requires project root, task, worker, and launch directory');
+  if (![projectRoot, taskId, launchDirectory].every((value) => typeof value === 'string' && value.length > 0)) {
+    throw invalid('worker launcher requires project root, task, and launch directory');
   }
   const data = await dispatchWorker(projectRoot, {
     taskId,
-    worker: workerName,
+    // Empty means no --worker: dispatchWorker then picks the task's worker or defaultWorker.
+    worker: workerName || undefined,
     profile: profile || undefined,
     baseRunId: baseRunId || undefined,
     baselineRunId: baselineRunId || undefined,
+    escalatedFrom: escalatedFrom || undefined,
     signal: stopController.signal,
   });
   const failedOutcome = isFailedWorkerOutcome(data?.outcome);
   const scopeViolations = Array.isArray(data?.scopeViolations) && data.scopeViolations.length > 0;
   const stopped = data?.outcome === 'stopped';
   let code = 'WORKER_FAILED';
-  let message = `worker ended with outcome ${data?.outcome}`;
+  let message = `worker ended with outcome ${data?.outcome}${data?.escalation ? `; suggested next worker: ${data.escalation.suggestedWorker} (${data.escalation.command})` : ''}`;
   if (scopeViolations) {
     code = 'WORKER_SCOPE_VIOLATION';
     message = 'worker retained ineligible candidate changes';

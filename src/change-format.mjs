@@ -35,7 +35,7 @@ const OPERATIONS = new Set(['add', 'modify', 'remove']);
 const CHANGE_KEYS = ['schemaVersion', 'id', 'proposal', 'design', 'specDeltas', 'slices', 'budget', 'featureTests', 'featureChecks', 'integration', 'constitution'];
 const DELTA_KEYS = ['schemaVersion', 'spec', 'baseSha256', 'changes'];
 const DELTA_CHANGE_KEYS = ['operation', 'id', 'text'];
-const SLICE_KEYS = ['schemaVersion', 'id', 'brief', 'context', 'checks', 'implementationFiles', 'sliceTests', 'protect', 'interfaces', 'dependsOn', 'budget', 'openDecisions', 'testReview'];
+const SLICE_KEYS = ['schemaVersion', 'id', 'brief', 'context', 'checks', 'implementationFiles', 'sliceTests', 'protect', 'interfaces', 'dependsOn', 'budget', 'openDecisions', 'testReview', 'worker', 'workerReason'];
 const BUDGET_KEYS = ['maxImplementationFiles', 'maxSliceTestFiles', 'maxCompiledContextBytes'];
 const INTEGRATION_KEYS = ['id', 'requirementIds', 'entrypoints', 'wiringSlice', 'testPaths', 'checkIds'];
 const REVIEW_KEYS = ['schemaVersion', 'workflow', 'criteria'];
@@ -245,6 +245,7 @@ export function parseSliceDocument(text) {
   if (implementationFiles.some((item) => sliceTests.includes(item))) {
     invalid('slice.implementationFiles and slice.sliceTests must be disjoint');
   }
+  if (value.workerReason !== undefined && value.worker === undefined) invalid('slice.workerReason needs slice.worker');
   return {
     schemaVersion: 1,
     id: slug(value.id, 'slice.id'),
@@ -262,6 +263,9 @@ export function parseSliceDocument(text) {
       return value.openDecisions.map((item, index) => nonemptyText(item, `slice.openDecisions[${index}]`));
     })(),
     testReview: parseReview(value.testReview),
+    // The preparing model's choice of worker for this slice; the operator approves it with the task.
+    ...(value.worker === undefined ? {} : { worker: slug(value.worker, 'slice.worker') }),
+    ...(value.workerReason === undefined ? {} : { workerReason: nonemptyText(value.workerReason, 'slice.workerReason').trim() }),
   };
 }
 
@@ -784,6 +788,8 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
       protect,
       preparation,
       dependsOn: [...slice.value.dependsOn].sort(),
+      ...(slice.value.worker === undefined ? {} : { worker: slice.value.worker }),
+      ...(slice.value.workerReason === undefined ? {} : { workerReason: slice.value.workerReason }),
     };
   });
   const warnings = [...ownershipWarnings];
