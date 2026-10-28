@@ -86,7 +86,6 @@ The run took 4,579 results between 2026-10-19 and 2026-10-28: about 324 task-hou
 - **Training data:** Exercism exercises are public and probably in the models' training data, and the worker may read the tests. Absolute scores are inflated; the ranking is what carries over.
 - **Single repeat:** differences under about 3 points are not reliable.
 - **Infrastructure:** a wrong route (207 results) and a datacenter outage on 2026-10-20 (184 results) were removed and rerun. On 2026-10-28 the muse route timed out for about an hour; 3 holdout entries ended 0/0 then. Counting all 3 as passes would still give about −2.9 points, so the decision stands.
-- **Machine:** the second operating machine has 3 CPUs; the Docker test container is now capped at the CPU count instead of a fixed 4 (`bench/polyglot/lib/docker.mjs`).
 
 ## What follows for TinySDD
 
