@@ -151,6 +151,9 @@ function normalizeTaskShape(options) {
   const protect = normalizeTaskPaths(options.protect, 'protect');
   const preparation = normalizePreparation(options.preparation);
   assertProtectAllowDisjoint(allow, protect);
+  const worker = normalizeTaskWorker(options.worker);
+  const workerReason = options.workerReason === undefined ? undefined : requireText(options.workerReason, 'workerReason');
+  if (workerReason !== undefined && worker === undefined) throw tinyError('INVALID_ARGUMENT', 'workerReason needs a worker');
   return {
     brief,
     ...(context === undefined ? {} : { context }),
@@ -159,10 +162,20 @@ function normalizeTaskShape(options) {
     allow,
     ...(protect.length > 0 ? { protect } : {}),
     ...(preparation === undefined || preparation.length === 0 ? {} : { preparation }),
+    ...(worker === undefined ? {} : { worker }),
+    ...(workerReason === undefined ? {} : { workerReason }),
   };
 }
 
-const TASK_SHAPE_FIELDS = ['brief', 'context', 'checks', 'allow', 'protect', 'preparation', 'dependsOn'];
+function normalizeTaskWorker(value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/.test(value)) {
+    throw tinyError('INVALID_ARGUMENT', 'worker must contain only lowercase letters, digits, hyphens, or underscores');
+  }
+  return value;
+}
+
+const TASK_SHAPE_FIELDS = ['brief', 'context', 'checks', 'allow', 'protect', 'preparation', 'dependsOn', 'worker', 'workerReason'];
 
 function taskShape(task) {
   return structuredClone(Object.fromEntries(TASK_SHAPE_FIELDS.filter((field) => task[field] !== undefined).map((field) => [field, task[field]])));
@@ -613,7 +626,9 @@ function approvalBindsTaskShape(approval, task) {
       && (approval.context ?? null) === (task.context ?? null)
       && (approval.checks ?? null) === (task.checks ?? null)
       && stableStringify(approval.protect ?? null) === stableStringify(task.protect ?? null)
-      && stableStringify(approval.preparation ?? null) === stableStringify(task.preparation ?? null),
+      && stableStringify(approval.preparation ?? null) === stableStringify(task.preparation ?? null)
+      // Approvals from before per-task workers have no worker and bind tasks that have none.
+      && (approval.worker ?? null) === (task.worker ?? null),
   );
 }
 
@@ -767,6 +782,8 @@ function publicTask(task, stateInfo) {
     allow: [...task.allow],
     ...(task.protect ? { protect: [...task.protect] } : {}),
     ...(task.preparation ? { preparation: structuredClone(task.preparation) } : {}),
+    ...(task.worker ? { worker: task.worker } : {}),
+    ...(task.workerReason ? { workerReason: task.workerReason } : {}),
     ...(task.revisions?.length > 0 ? { revisions: structuredClone(task.revisions) } : {}),
     status: stateInfo.status,
     blockedBy: [...stateInfo.blockedBy],
@@ -865,7 +882,7 @@ async function selectInitProfile(root, model, requested) {
 export async function addTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const feature = options.feature === undefined ? undefined : validateFeature(options.feature);
-  const { brief, context, checks, dependsOn, allow, protect, preparation: requestedPreparation } = normalizeTaskShape(options);
+  const { brief, context, checks, dependsOn, allow, protect, preparation: requestedPreparation, worker, workerReason } = normalizeTaskShape(options);
   const root = await canonicalProjectRoot(projectRoot);
   const validated = await validateTaskInputs(root, { brief, context, checks, allow, protect, preparation: requestedPreparation });
   const { compiled, preparation } = validated;
@@ -883,11 +900,13 @@ export async function addTask(projectRoot, options = {}) {
       allow,
       ...(protect ? { protect } : {}),
       ...(preparation.length > 0 ? { preparation } : {}),
+      ...(worker === undefined ? {} : { worker }),
+      ...(workerReason === undefined ? {} : { workerReason }),
       createdAt: timestamp,
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}) }, sizing: taskSizing(allow, compiled) };
+    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing: taskSizing(allow, compiled) };
   });
 }
 
@@ -905,9 +924,10 @@ export async function updateTask(projectRoot, options = {}) {
     if (fields.length === 0) throw tinyError('INVALID_ARGUMENT', 'task update requires at least one shape field');
     const previous = taskShape(task);
     const updated = { ...previous, ...Object.fromEntries(fields.map((field) => [field, options[field]])) };
-    for (const field of ['context', 'checks']) {
+    for (const field of ['context', 'checks', 'worker', 'workerReason']) {
       if (updated[field] === '') delete updated[field];
     }
+    if (updated.worker === undefined) delete updated.workerReason;
     const shape = normalizeTaskShape(updated);
     assertDependenciesExist(state, id, shape.dependsOn);
     const validated = await validateTaskInputs(root, shape, { refreshPreparation: true });
@@ -979,7 +999,7 @@ export async function approveTask(projectRoot, options = {}) {
     const protectDigest = await protectedFilesDigest(root, task.protect);
     const approvedAt = nowIso();
     const preparationDigest = await preparationFilesDigest(root, task.preparation);
-    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, preparation: task.preparation ?? null, preparationDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], dependencyAcceptances, by, reason, approvedAt };
+    const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, preparation: task.preparation ?? null, preparationDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], ...(task.worker === undefined ? {} : { worker: task.worker }), dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
     return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
   });
@@ -2085,10 +2105,30 @@ export async function configValidate(projectRoot, options = {}) {
   return { valid: true, ...resolved };
 }
 
+// Order: an explicit --worker, then the worker the task was approved with, then defaultWorker.
+export async function selectTaskWorker(projectRoot, taskId, explicitWorker) {
+  if (explicitWorker !== undefined) return { workerName: explicitWorker, source: 'option' };
+  const root = await canonicalProjectRoot(projectRoot);
+  const state = await readState(await layout(root, { create: false }));
+  const task = typeof taskId === 'string' && Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
+  if (task?.worker !== undefined) return { workerName: task.worker, source: 'task', ...(task.workerReason ? { reason: task.workerReason } : {}) };
+  return { workerName: undefined, source: 'default' };
+}
+
+// Escalation is only ever a suggestion: the controller never starts another worker itself.
+export function suggestEscalation(workerTiers, workerName, taskId, runId) {
+  const index = Array.isArray(workerTiers) ? workerTiers.indexOf(workerName) : -1;
+  if (index < 0 || index === workerTiers.length - 1) return undefined;
+  const next = workerTiers[index + 1];
+  return { suggestedWorker: next, command: `tinysdd worker run --task ${taskId} --worker ${next} --escalated-from ${runId}` };
+}
+
 export async function dispatchWorker(projectRoot, options = {}) {
   const root = await canonicalProjectRoot(projectRoot);
-  const resolved = await resolveConfig(root, { workerName: options.worker, profile: options.profile });
+  const selection = await selectTaskWorker(root, options.taskId, options.worker);
+  const resolved = await resolveConfig(root, { workerName: selection.workerName, profile: options.profile });
   if (!resolved.worker || !resolved.workerName) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; configure defaultWorker or pass --worker');
+  const workerSelection = { ...selection, workerName: resolved.workerName };
   const packet = options.baselineRunId
     ? await resolveBenchmarkPacket(root, options.taskId)
     : await resolveTaskPacket(root, options.taskId);
@@ -2108,7 +2148,7 @@ export async function dispatchWorker(projectRoot, options = {}) {
     throw error;
   }
   if (typeof adapter.runWorker !== 'function') throw tinyError('WORKER_UNAVAILABLE', 'src/worker.mjs does not export runWorker');
-  return withSliceTestWorkerGate(root, options, (reviewFeedback) => adapter.runWorker({
+  const result = await withSliceTestWorkerGate(root, options, (reviewFeedback) => adapter.runWorker({
     projectRoot: root,
     packet: reviewFeedback === undefined ? packet : { ...packet, review: reviewFeedback },
     worker: resolved.worker,
@@ -2118,7 +2158,13 @@ export async function dispatchWorker(projectRoot, options = {}) {
     baseRunId: options.baseRunId,
     baselineRunId: options.baselineRunId,
     signal: options.signal,
+    selection: workerSelection,
+    escalatedFrom: options.escalatedFrom,
   }));
+  const escalation = result && typeof result === 'object' && result.outcome !== undefined && result.outcome !== 'completed'
+    ? suggestEscalation(resolved.config.workerTiers, resolved.workerName, options.taskId, result.runId)
+    : undefined;
+  return escalation === undefined ? result : { ...result, escalation };
 }
 
 export function createController(projectRoot) {

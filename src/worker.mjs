@@ -479,6 +479,40 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId,
   return { id: baseRunId, chain, paths, runtime: immediateRuntime };
 }
 
+// An escalated run names the earlier run of the same task that a weaker worker failed.
+async function resolveEscalationSource(projectRoot, escalatedFrom, taskId) {
+  if (escalatedFrom === undefined || escalatedFrom === null) return null;
+  if (typeof escalatedFrom !== "string" || !SAFE_RUN_ID.test(escalatedFrom)) fail("escalatedFrom must name a TinySDD worker run");
+  const runDirectory = resolve(projectRoot, ".tinysdd", "runs", escalatedFrom);
+  if (!isInside(projectRoot, runDirectory)) fail("escalatedFrom escapes projectRoot");
+  const resultPath = join(runDirectory, "result.json");
+  let result;
+  try {
+    const resultInfo = await lstat(resultPath);
+    if (resultInfo.isSymbolicLink() || !resultInfo.isFile()) fail("escalated-from run result is not a regular file");
+    result = JSON.parse(await readFile(resultPath, "utf8"));
+  } catch (error) {
+    if (error instanceof WorkerError) throw error;
+    fail(`Cannot load escalated-from run ${escalatedFrom}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (result?.taskId !== taskId) fail("escalated-from run belongs to a different task");
+  return {
+    runId: escalatedFrom,
+    ...(result.workerSelection?.workerName ? { workerName: result.workerSelection.workerName } : {}),
+    model: { provider: result.model?.provider ?? UNKNOWN, id: result.model?.id ?? UNKNOWN },
+  };
+}
+
+function workerSelectionRecord(selection, escalation) {
+  if (!selection && !escalation) return null;
+  return {
+    workerName: selection?.workerName ?? UNKNOWN,
+    source: selection?.source ?? UNKNOWN,
+    ...(selection?.reason ? { reason: selection.reason } : {}),
+    ...(escalation ? { escalatedFrom: escalation } : {}),
+  };
+}
+
 async function resolveFrozenBaseline(projectRoot, baselineRunId, taskId) {
   if (baselineRunId === undefined || baselineRunId === null) return null;
   if (typeof baselineRunId !== "string" || !SAFE_RUN_ID.test(baselineRunId)) fail("baselineRunId must name a TinySDD worker run");
@@ -1495,7 +1529,7 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
  * harness explicitly enables it.  Production callers use the four documented
  * arguments and therefore require Linux bubblewrap or macOS Seatbelt.
  */
-export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal, qualification } = {}) {
+export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal, qualification, selection, escalatedFrom } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
@@ -1508,6 +1542,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const limits = runner.validateWorker(worker);
   const selectedAllowed = normalizedPacket.allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
   const frozenBaseline = await resolveFrozenBaseline(sourceRoot, baselineRunId, normalizedPacket.taskId);
+  const workerSelection = workerSelectionRecord(selection, await resolveEscalationSource(sourceRoot, escalatedFrom, normalizedPacket.taskId));
   const executionSource = frozenBaseline?.root ?? sourceRoot;
   const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
   const runtimeChoice = await chooseRuntime(runtime, runner);
@@ -1634,6 +1669,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     }
     compaction = compactionIdentity(prepared.metadata.compaction, compactionAnchor);
     runtimeRecord = runtimeMetadata(runner, prepared, runtimeChoice, runtimeChoice.executable, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification);
+    if (workerSelection) runtimeRecord.workerSelection = workerSelection;
     await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     await writeJson(join(artifactDir, "context.json"), {
       schemaVersion: 1,
@@ -1791,6 +1827,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         },
       } : {}),
       model: { provider: worker.provider, id: worker.model },
+      ...(workerSelection ? { workerSelection } : {}),
       observed: {
         processTermination: capture.processTermination,
         assistantTermination: { observed: Boolean(capture.parsed.finalMessage), stopReason: capture.parsed.stopReason, errorMessage: capture.parsed.errorMessage },

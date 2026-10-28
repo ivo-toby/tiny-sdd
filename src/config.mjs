@@ -208,7 +208,7 @@ function validateQualification(raw, label = 'config.qualification') {
 
 export function validateConfigDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config');
-  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate', 'qualification', 'phaseGates', 'testReview', 'featureIntegration'], 'CONFIG_INVALID', 'config');
+  assertExactKeys(raw, ['schemaVersion', 'defaultWorker', 'workers', 'semanticGate', 'qualification', 'phaseGates', 'testReview', 'featureIntegration', 'workerTiers'], 'CONFIG_INVALID', 'config');
   if (raw.schemaVersion !== CONFIG_SCHEMA_VERSION) {
     throw tinyError('CONFIG_INVALID', `config.schemaVersion must be ${CONFIG_SCHEMA_VERSION}`);
   }
@@ -222,6 +222,7 @@ export function validateConfigDocument(raw) {
   const phaseGates = raw.phaseGates === undefined ? undefined : validatePhasePolicy(raw.phaseGates);
   const testReview = raw.testReview === undefined ? undefined : validateTestReviewPolicy(raw.testReview);
   const featureIntegration = raw.featureIntegration === undefined ? undefined : validateFeatureIntegrationConfig(raw.featureIntegration);
+  const workerTiers = raw.workerTiers === undefined ? undefined : validateWorkerTiers(raw.workerTiers, 'config.workerTiers');
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
@@ -231,18 +232,28 @@ export function validateConfigDocument(raw) {
     ...(phaseGates === undefined ? {} : { phaseGates }),
     ...(testReview === undefined ? {} : { testReview }),
     ...(featureIntegration === undefined ? {} : { featureIntegration }),
+    ...(workerTiers === undefined ? {} : { workerTiers }),
   };
+}
+
+// Worker names from fastest to strongest; a failed run suggests the next one.
+function validateWorkerTiers(value, label) {
+  if (!Array.isArray(value) || value.length < 2) throw tinyError('CONFIG_INVALID', `${label} must list at least two worker names`);
+  const names = value.map((name, index) => assertSafeName(name, `${label}[${index}]`));
+  if (new Set(names).size !== names.length) throw tinyError('CONFIG_INVALID', `${label} must not repeat a worker`);
+  return names;
 }
 
 export function validateLocalDocument(raw) {
   assertPlainObject(raw, 'CONFIG_INVALID', 'config.local');
-  assertExactKeys(raw, ['defaultWorker', 'workers', 'qualification', 'phaseGates', 'testReview', 'featureIntegration'], 'CONFIG_INVALID', 'config.local');
+  assertExactKeys(raw, ['defaultWorker', 'workers', 'qualification', 'phaseGates', 'testReview', 'featureIntegration', 'workerTiers'], 'CONFIG_INVALID', 'config.local');
   const workers = raw.workers === undefined ? undefined : validateWorkers(raw.workers, 'config.local.workers');
   const defaultWorker = raw.defaultWorker === undefined ? undefined : assertSafeName(raw.defaultWorker, 'config.local.defaultWorker');
   const qualification = raw.qualification === undefined ? undefined : validateQualification(raw.qualification, 'config.local.qualification');
   const phaseGates = raw.phaseGates === undefined ? undefined : validatePhasePolicy(raw.phaseGates, 'config.local.phaseGates');
   const testReview = raw.testReview === undefined ? undefined : validateTestReviewPolicy(raw.testReview, 'config.local.testReview');
   const featureIntegration = raw.featureIntegration === undefined ? undefined : validateFeatureIntegrationConfig(raw.featureIntegration, 'config.local.featureIntegration');
+  const workerTiers = raw.workerTiers === undefined ? undefined : validateWorkerTiers(raw.workerTiers, 'config.local.workerTiers');
   return {
     ...(defaultWorker === undefined ? {} : { defaultWorker }),
     ...(workers === undefined ? {} : { workers }),
@@ -250,6 +261,7 @@ export function validateLocalDocument(raw) {
     ...(phaseGates === undefined ? {} : { phaseGates }),
     ...(testReview === undefined ? {} : { testReview }),
     ...(featureIntegration === undefined ? {} : { featureIntegration }),
+    ...(workerTiers === undefined ? {} : { workerTiers }),
   };
 }
 
@@ -401,6 +413,10 @@ export async function resolveConfig(projectRoot, options = {}) {
   if (defaultWorker !== undefined && !Object.hasOwn(workers, defaultWorker)) {
     throw tinyError('CONFIG_INVALID', `default worker is not defined: ${defaultWorker}`);
   }
+  const workerTiers = local.workerTiers ?? base.workerTiers;
+  for (const name of workerTiers ?? []) {
+    if (!Object.hasOwn(workers, name)) throw tinyError('CONFIG_INVALID', `workerTiers names an undefined worker: ${name}`);
+  }
   const selectedName = options.workerName ?? options.worker;
   if (selectedName !== undefined) {
     assertSafeName(selectedName, 'worker');
@@ -421,6 +437,7 @@ export async function resolveConfig(projectRoot, options = {}) {
     ...(local.phaseGates === undefined && base.phaseGates === undefined ? {} : { phaseGates: local.phaseGates ?? base.phaseGates }),
     ...(local.testReview === undefined && base.testReview === undefined ? {} : { testReview: local.testReview ?? base.testReview }),
     ...(local.featureIntegration === undefined && base.featureIntegration === undefined ? {} : { featureIntegration: local.featureIntegration ?? base.featureIntegration }),
+    ...(workerTiers === undefined ? {} : { workerTiers: [...workerTiers] }),
     workers: effectiveWorkers,
   };
   const selectedWorker = selectedWorkerName === undefined ? undefined : effectiveWorkers[selectedWorkerName];

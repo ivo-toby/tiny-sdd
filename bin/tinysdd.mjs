@@ -17,6 +17,7 @@ import {
   controllerNext,
   controllerStatus,
   dispatchWorker,
+  selectTaskWorker,
   initProject,
   publicError,
   resolveBenchmarkPacket,
@@ -67,16 +68,16 @@ Usage:
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME] [--profile ID|PATH]
   tinysdd [--json] [--project PATH] status [--feature NAME]
   tinysdd [--json] [--project PATH] next
-  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME]
-  tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]]
+  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME] [--worker NAME [--worker-reason TEXT]]
+  tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--worker NAME] [--worker-reason TEXT]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task packet --id ID
   tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
   tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL [--candidate-paths FILE[,FILE]]
   tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
   tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
-  tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID]
-  tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID]
+  tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID] [--escalated-from RUN_ID]
+  tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID] [--escalated-from RUN_ID]
   tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
   tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
   tinysdd [--json] [--project PATH] worker settings --worker NAME [--profile ID|PATH] --entry-kind real|synthetic [--observed-reasoning-tokens N]
@@ -236,8 +237,8 @@ function parseCommand(args) {
   if (command === 'task') {
     if (!['add', 'update', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, update, approve, packet, apply, review, close, or supersede');
     const allowedByCommand = {
-      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['feature', 'value']]),
-      update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['depends-on', 'list']]),
+      add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['feature', 'value'], ['worker', 'value'], ['worker-reason', 'value']]),
+      update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['depends-on', 'list'], ['worker', 'value'], ['worker-reason', 'value']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
       apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
@@ -258,7 +259,7 @@ function parseCommand(args) {
       stop: new Map([['id', 'value'], ['wait-ms', 'value']]),
     };
     const allowed = allowedBySubcommand[subcommand]
-      ?? new Map([['task', 'value'], ['worker', 'value'], ['profile', 'value'], ['base-run', 'value'], ['baseline-run', 'value']]);
+      ?? new Map([['task', 'value'], ['worker', 'value'], ['profile', 'value'], ['base-run', 'value'], ['baseline-run', 'value'], ['escalated-from', 'value']]);
     const { values, positional } = parseFlags(rest, allowed);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     if (subcommand === 'stop') values['wait-ms'] = parseWaitMs(values['wait-ms']);
@@ -372,7 +373,8 @@ async function launchDirectory(project, id, { allowMissing = true } = {}) {
 
 async function startWorker(project, options) {
   if (!options.task) throw cliError('--task requires a value');
-  const resolved = await configShow(project, { worker: options.worker, profile: options.profile });
+  const selection = await selectTaskWorker(project, options.task, options.worker);
+  const resolved = await configShow(project, { worker: selection.workerName, profile: options.profile });
   if (!resolved.workerName) throw tinyError('WORKER_NOT_SELECTED', 'no worker selected; configure defaultWorker or pass --worker');
   // Fail before detaching when the runner cannot honor the configured request, so
   // an agent does not poll a launch that was never going to run as configured.
@@ -411,7 +413,8 @@ async function startWorker(project, options) {
     status: 'starting',
   });
   const launcher = fileURLToPath(new URL('../src/worker-launcher.mjs', import.meta.url));
-  const child = spawn(process.execPath, [launcher, location.root, options.task, resolved.workerName, location.directory, options['base-run'] ?? '', options['baseline-run'] ?? '', options.profile ?? ''], {
+  // The launcher repeats the selection, so an explicit --worker is passed only when one was given.
+  const child = spawn(process.execPath, [launcher, location.root, options.task, options.worker ?? '', location.directory, options['base-run'] ?? '', options['baseline-run'] ?? '', options.profile ?? '', options['escalated-from'] ?? ''], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -422,6 +425,8 @@ async function startWorker(project, options) {
     id,
     taskId: options.task,
     worker: resolved.workerName,
+    workerSource: selection.source,
+    ...(options['escalated-from'] ? { escalatedFrom: options['escalated-from'] } : {}),
     ...(options['base-run'] ? { baseRun: options['base-run'] } : {}),
     ...(options['baseline-run'] ? { baselineRun: options['baseline-run'] } : {}),
     ...(options.profile ? { profile: options.profile } : {}),
@@ -464,6 +469,7 @@ async function runWorkerCommand(project, options) {
       profile: options.profile,
       baseRunId: options['base-run'],
       baselineRunId: options['baseline-run'],
+      escalatedFrom: options['escalated-from'],
     });
     return warnings.length === 0 ? data : { ...data, warnings: [...new Set([...warnings, ...(data.warnings ?? [])])] };
   } catch (error) {
@@ -957,6 +963,8 @@ async function run(argv) {
     protect: parsed.values.protect,
     preparation: parsed.values.preparation,
     feature: parsed.values.feature,
+    worker: parsed.values.worker,
+    workerReason: parsed.values['worker-reason'],
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'update') data = await updateTask(project, {
     id: parsed.values.id,
@@ -969,6 +977,8 @@ async function run(argv) {
     protect: parsed.values.protect,
     preparation: parsed.values.preparation,
     dependsOn: parsed.values['depends-on'],
+    worker: parsed.values.worker,
+    workerReason: parsed.values['worker-reason'],
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'approve') data = await approveTask(project, {
     id: parsed.values.id,
@@ -1110,7 +1120,7 @@ async function run(argv) {
         code: scopeViolations ? 'WORKER_SCOPE_VIOLATION' : 'WORKER_FAILED',
         message: scopeViolations
           ? 'worker changed paths outside packet.allowedPaths'
-          : `worker ended with outcome ${data.outcome}`,
+          : `worker ended with outcome ${data.outcome}${data.escalation ? `; suggested next worker: ${data.escalation.suggestedWorker} (${data.escalation.command})` : ''}`,
         details: { outcome: data?.outcome, scopeViolations: data?.scopeViolations ?? [] },
       },
       data,
