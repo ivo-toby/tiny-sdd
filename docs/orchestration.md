@@ -40,18 +40,25 @@ Everything else can run in parallel. "Notes" means the issue has an
 
 **Controller and CLI lane (serial)**
 
-1. #17 `--protect` and `task update`: notes posted, `agent-ready`.
-2. #27 slice-DAG `status` and `--feature`: notes posted. Start after #17,
-   because both change `addTask`, `publicTask`, `validateState` and the CLI
-   parser.
-3. #8 frontier-token accounting: needs notes. Keep usage out of
+1. #17 / PR #60: merged as `5fe36c3`; replay shape mismatch fixed and #17 closed.
+2. #62 `task apply` approval guard: operator decision and implementation notes
+   posted; implementation dispatched from merged #60 main.
+3. #36 CLI warning integration: follows #62 if it still needs changes in
+   `bin/tinysdd.mjs`; worker/channel work can proceed separately.
+4. #27 slice-DAG `status` and `--feature`: notes posted; after the above
+   controller/CLI changes are merged.
+5. #7 benchmark harness: design approved by Ivo; prepare schemas independently,
+   but queue CLI integration after #27.
+6. #8 frontier-token accounting: needs notes. Keep usage out of
    `controller.json` (an append-only file under `.tinysdd/` avoids state
    compatibility work), and report missing usage as unknown, never zero.
 
 **Worker runtime lane**
 
-1. #36 `run_checks` Pi extension: needs notes; #26's runner (`src/check-runner.mjs`)
-   is on `main`. Include:
+1. #36 `run_checks` Pi extension: notes reassessed for Pi 1.0.0; unavailable-host
+   behavior decided by Ivo (omit tool/extension, record why, warn). Dependency
+   mounts use live sourceRoot read-only with recorded content identity (Ivo). #26's runner
+   (`src/check-runner.mjs`) is on `main`. Include:
    - writing `checks.jsonl`, which #26 deliberately left to the caller;
    - refusing a dependency mount that overlaps an expected task path, because
      the read-only mount would hide the worker's edits; the mount remains a
@@ -60,8 +67,9 @@ Everything else can run in parallel. "Notes" means the issue has an
      `{ source, target }` shape.
 2. #42 and #43 follow #36. #43 option 2 needs the extension; #42 also needs #23.
 
-**Benchmark lane.** #7 is the critical path. It needs a design spec before any
-implementation:
+**Benchmark lane.** #7 is the critical path. Ivo approved the design spec on
+2026-10-03; its config digest must include declared/effective `run_checks`
+availability and budget so enabled/disabled runs and qualifications never mix:
 - the challenge format;
 - the results schema with its config digest;
 - held-out checks run through the #26 runner, never visible to the worker.
@@ -88,6 +96,13 @@ the operator. It unblocks:
 - The live model smoke for #58.
 
 ## Decisions already made
+
+- **#62 apply approval:** only the final lineage run's retained packet approval
+  digest must match the task's current approval. Missing/mismatched digest is
+  `RUN_APPROVAL_MISMATCH` before writes; no override.
+- **#36 unavailable runner:** a checks packet continues without the extension
+  or tool, with explicit runtime metadata/result warning and CLI stderr warning.
+  No new Seatbelt channel grants. #7/#24 config identity includes availability.
 
 Don't relitigate these; cite them in notes when relevant.
 
