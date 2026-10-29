@@ -171,7 +171,11 @@ and install into the resolved path (for example a GNU stow package holding
 `~/.claude/skills`). The skill links above are then created inside the resolved
 directory and point at the resolved bundle root. Symlinks inside the managed
 bundle tree, and skill entries that are not links or point elsewhere, remain
-conflicts.
+conflicts. A symlink whose target directory does not exist yet (a fresh
+dotfiles checkout) is followed and the target is created. Before
+`skills update` replaces a non-empty bundle root, the root must be a TinySDD
+bundle (`package.json` with the TinySDD package name and the product skill);
+otherwise it is a conflict and nothing is deleted.
 
 After setup, start a fresh Claude or Codex session in the intended project so
 it rescans the global skill directory. Invoke `/tinysdd-setup` in Claude or
