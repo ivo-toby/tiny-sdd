@@ -84,8 +84,10 @@ resource tree, checks Node/Pi/sandbox/model metadata, and installs the complete
 skills bundle for Claude and Codex. It refuses an unavailable release instead
 of falling back to an unpinned branch. It does not install prerequisites, read
 credentials, start services or run inference. Repeatable setup preserves
-identical files and refuses conflicting paths. See the [setup guide](setup.md)
-for the global layout and release prerequisite.
+identical files and refuses conflicting paths. A symlinked skills directory
+(`~/.claude/skills`, `~/.agents/skills`) or bundle root (`~/.agents/tinysdd`)
+is resolved to its real path, so dotfiles-managed layouts work. See the
+[setup guide](setup.md) for the global layout and release prerequisite.
 
 On Linux, setup also runs a bounded direct bubblewrap startup probe using the
 worker's user/PID/network namespace and core mount shape with `/usr/bin/true`. A passing

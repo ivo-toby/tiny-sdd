@@ -164,6 +164,15 @@ Existing agent configuration and unrelated skill entries remain untouched.
 Repeated setup with identical release bytes is a no-op. A differing existing
 managed path or link is a conflict and stops setup rather than overwriting it.
 
+Dotfiles-managed layouts are supported: `setup` and `skills update` resolve a
+symlinked `~/.agents`, `~/.agents/skills`, `~/.claude/skills` or
+`~/.agents/tinysdd` to its real directory, run the same conflict checks there,
+and install into the resolved path (for example a GNU stow package holding
+`~/.claude/skills`). The skill links above are then created inside the resolved
+directory and point at the resolved bundle root. Symlinks inside the managed
+bundle tree, and skill entries that are not links or point elsewhere, remain
+conflicts.
+
 After setup, start a fresh Claude or Codex session in the intended project so
 it rescans the global skill directory. Invoke `/tinysdd-setup` in Claude or
 `$tinysdd-setup` in Codex; the installed setup skill guides project/model setup

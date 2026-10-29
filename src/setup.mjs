@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, readlink, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, posix, relative, resolve } from 'node:path';
+import { basename, dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { validateProfileDocument } from './config.mjs';
@@ -77,6 +77,37 @@ async function ensureDirectoryTree(path, label = 'directory') {
     if (!info) await mkdir(current);
   }
   return absolute;
+}
+
+// Resolves a managed global path to its real directory, following symlinks so
+// a dotfiles-managed ~/.claude/skills or ~/.agents/tinysdd is supported. A
+// missing path is created under its resolved parent; anything that exists but
+// is not a directory stays a conflict.
+async function resolveManagedDirectory(path, label) {
+  const absolute = resolve(path);
+  let resolved = null;
+  try {
+    resolved = await realpath(absolute);
+  } catch (error) {
+    if (error?.code === 'ELOOP') throw setupError('SETUP_CONFLICT', `${label} contains a symbolic link loop: ${absolute}`);
+    if (!isMissing(error) && error?.code !== 'ENOTDIR') throw error;
+  }
+  if (resolved) {
+    const info = await lstat(resolved);
+    if (!info.isDirectory()) throw setupError('SETUP_CONFLICT', `${label} is not a directory: ${absolute}`);
+    return resolved;
+  }
+  await resolveManagedDirectory(dirname(absolute), label);
+  try {
+    await mkdir(absolute, { recursive: true });
+  } catch (error) {
+    const info = await lstatIfPresent(absolute);
+    if (info?.isSymbolicLink()) throw setupError('SETUP_CONFLICT', `${label} contains a symbolic link: ${absolute}`);
+    throw error;
+  }
+  resolved = await realpath(absolute);
+  if (!(await lstat(resolved)).isDirectory()) throw setupError('SETUP_CONFLICT', `${label} is not a directory: ${absolute}`);
+  return resolved;
 }
 
 function parseVersion(version) {
@@ -1044,6 +1075,50 @@ function globalLayout(homeDir) {
   };
 }
 
+// Same layout with each managed directory resolved to its real path, so a
+// symlinked ~/.claude/skills, ~/.agents/skills or ~/.agents/tinysdd (common in
+// dotfiles setups) is checked and written through its target. Link targets are
+// recomputed from the resolved bundle root so they still point at it.
+async function resolvedGlobalLayout(homeDir) {
+  const layout = globalLayout(homeDir);
+  const agentsRoot = await resolveManagedDirectory(layout.agentsRoot, 'global agents directory');
+  const codexSkills = await resolveManagedDirectory(layout.codexSkills, 'Codex skills directory');
+  const claudeSkills = await resolveManagedDirectory(layout.claudeSkills, 'Claude skills directory');
+  const bundleRoot = await resolveManagedDirectory(layout.bundleRoot, 'global TinySDD bundle');
+  return {
+    ...layout,
+    agentsRoot,
+    codexSkills,
+    claudeSkills,
+    bundleRoot,
+    links: [
+      ...LINK_TARGETS.map((entry) => ({ agent: 'codex', ...entry, path: join(codexSkills, entry.name), target: relative(codexSkills, join(bundleRoot, ...entry.target)) })),
+      ...LINK_TARGETS.map((entry) => ({ agent: 'claude', ...entry, path: join(claudeSkills, entry.name), target: relative(claudeSkills, join(bundleRoot, ...entry.target)) })),
+    ],
+  };
+}
+
+// Resolves a path through symlinks as far as the path exists, so a link whose
+// final target is not created yet can still be compared with its expected
+// target when the bundle root itself is a symlink.
+async function resolveThroughSymlinks(path) {
+  const absolute = resolve(path);
+  let current = absolute;
+  let suffix = '';
+  for (;;) {
+    try {
+      const resolved = await realpath(current);
+      return suffix ? join(resolved, ...suffix.split('/').filter(Boolean)) : resolved;
+    } catch (error) {
+      if (!isMissing(error) && error?.code !== 'ENOTDIR') throw error;
+      const parent = dirname(current);
+      if (parent === current) return absolute;
+      suffix = suffix ? `${basename(current)}/${suffix}` : basename(current);
+      current = parent;
+    }
+  }
+}
+
 async function checkLinkPlan(links) {
   const actions = [];
   for (const link of links) {
@@ -1055,8 +1130,12 @@ async function checkLinkPlan(links) {
     if (!existing.isSymbolicLink()) throw setupError('SETUP_CONFLICT', `existing ${link.agent} skill entry is not a link: ${link.path}`);
     const actual = await readlink(link.path);
     if (actual !== link.target) {
+      const expected = resolve(dirname(link.path), link.target);
       let sameTarget = false;
-      try { sameTarget = (await realpath(link.path)) === resolve(dirname(link.path), link.target); } catch {}
+      try { sameTarget = (await realpath(link.path)) === expected; } catch {}
+      if (!sameTarget) {
+        sameTarget = (await resolveThroughSymlinks(resolve(dirname(link.path), actual))) === (await resolveThroughSymlinks(expected));
+      }
       if (!sameTarget) throw setupError('SETUP_CONFLICT', `existing ${link.agent} skill link points elsewhere: ${link.path}`);
     }
     actions.push({ ...link, action: 'preserve' });
@@ -1066,12 +1145,9 @@ async function checkLinkPlan(links) {
 
 export async function installBundle({ sourceRoot, homeDir = homedir(), expectedVersion = CLI_VERSION } = {}) {
   const metadata = await validateBundle(sourceRoot, { expectedVersion });
-  const layout = globalLayout(homeDir);
-  await ensureDirectoryTree(layout.agentsRoot, 'global agents directory');
+  const layout = await resolvedGlobalLayout(homeDir);
   const existingBundle = await lstatIfPresent(layout.bundleRoot);
-  if (existingBundle?.isSymbolicLink() || (existingBundle && !existingBundle.isDirectory())) throw setupError('SETUP_CONFLICT', `global TinySDD bundle path conflicts: ${layout.bundleRoot}`);
-  await ensureDirectoryTree(layout.codexSkills, 'Codex skills directory');
-  await ensureDirectoryTree(layout.claudeSkills, 'Claude skills directory');
+  if (existingBundle && !existingBundle.isDirectory()) throw setupError('SETUP_CONFLICT', `global TinySDD bundle path conflicts: ${layout.bundleRoot}`);
   const sourcePaths = ['package.json', 'skills', 'docs'];
   const paths = [];
   for (const path of sourcePaths) paths.push(...await collectFiles(sourceRoot, path));
@@ -1292,18 +1368,15 @@ async function copyBundle(sourceRoot, destination) {
 // links that point elsewhere are still a conflict, as in setup.
 export async function updateSkills({ version = CLI_VERSION, homeDir = homedir(), archiveBytes, fetchImpl = globalThis.fetch } = {}) {
   return withReleaseSource({ version, archiveBytes, fetchImpl }, async (sourceRoot, archive) => {
-    const layout = globalLayout(homeDir);
-    await ensureDirectoryTree(layout.agentsRoot, 'global agents directory');
-    await ensureDirectoryTree(layout.codexSkills, 'Codex skills directory');
-    await ensureDirectoryTree(layout.claudeSkills, 'Claude skills directory');
+    const layout = await resolvedGlobalLayout(homeDir);
     const existing = await lstatIfPresent(layout.bundleRoot);
-    if (existing?.isSymbolicLink() || (existing && !existing.isDirectory())) throw setupError('SETUP_CONFLICT', `global TinySDD bundle path conflicts: ${layout.bundleRoot}`);
+    if (existing && !existing.isDirectory()) throw setupError('SETUP_CONFLICT', `global TinySDD bundle path conflicts: ${layout.bundleRoot}`);
     let previousVersion = null;
     if (existing) {
       try { previousVersion = JSON.parse(await readFile(join(layout.bundleRoot, 'package.json'), 'utf8')).version ?? null; } catch {}
     }
     const linkActions = await checkLinkPlan(layout.links);
-    const staging = await mkdtemp(join(layout.agentsRoot, `.${INSTALL_ROOT_NAME}-`));
+    const staging = await mkdtemp(join(dirname(layout.bundleRoot), `.${INSTALL_ROOT_NAME}-`));
     try {
       const files = await copyBundle(sourceRoot, staging);
       if (existing) {
