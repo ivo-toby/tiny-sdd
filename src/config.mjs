@@ -20,7 +20,8 @@ export const CONFIG_SCHEMA_VERSION = 1;
 export const DEFAULT_TIMEOUT_MS = 600_000;
 export const MAX_TIMEOUT_MS = 3_600_000;
 export const DEFAULT_MAX_TOOL_CALLS = 100;
-export const MAX_TOOL_CALLS = 100;
+// Sanity ceiling only; productive runs may need far more than the old 100-call cap.
+export const MAX_TOOL_CALLS = 10_000;
 
 const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits', 'modelMetadata'];
 const MODEL_METADATA_KEYS = ['quantization', 'server'];

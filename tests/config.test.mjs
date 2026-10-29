@@ -206,6 +206,22 @@ test('rejects unknown, null, unsupported, and out-of-range config values', () =>
   assert.deepEqual(explicit.workers.pi.limits, { timeoutMs: 1200000, maxToolCalls: 40, maxCheckRuns: 7, firstWriteMs: 480000 });
 });
 
+test('accepts a maxToolCalls budget above the old 100-call cap and still bounds it', () => {
+  const raised = validateConfigDocument({
+    schemaVersion: 1,
+    workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 600000, maxToolCalls: 250 } } },
+  });
+  assert.equal(raised.workers.pi.limits.maxToolCalls, 250);
+  assert.throws(() => validateConfigDocument({
+    schemaVersion: 1,
+    workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 600000, maxToolCalls: 10001 } } },
+  }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateConfigDocument({
+    schemaVersion: 1,
+    workers: { pi: { type: 'pi', provider: 'p', model: 'm', limits: { timeoutMs: 600000, maxToolCalls: 0 } } },
+  }), { code: 'CONFIG_INVALID' });
+});
+
 test('rejects symlinked profile paths', async (t) => {
   const root = await project();
   try {
