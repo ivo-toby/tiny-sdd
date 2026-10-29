@@ -1379,12 +1379,26 @@ async function copyBundle(sourceRoot, destination) {
   return paths;
 }
 
-// A non-empty existing bundle root must actually be a TinySDD bundle before
+// A non-empty existing bundle root must have exactly the shape `copyBundle`
+// writes (top-level `package.json`, `skills/`, `docs/` only) before
 // `skills update` replaces it: the root can sit behind a symlink (dotfiles
-// setups), and the replace path moves it aside and deletes it.
+// setups), and the replace path moves it aside and deletes it. A source
+// checkout has the right package name and skill file but extra top-level
+// entries (`.git`, `src`, ...), so it is rejected here.
+const BUNDLE_TOP_LEVEL = new Set(['package.json', 'skills', 'docs']);
+
 async function assertExistingBundleIsOurs(bundleRoot) {
-  const entries = await readdir(bundleRoot).catch(() => []);
+  let entries;
+  try {
+    entries = await readdir(bundleRoot);
+  } catch (error) {
+    if (isMissing(error)) return;
+    throw error;
+  }
   if (entries.length === 0) return;
+  for (const entry of entries) {
+    if (!BUNDLE_TOP_LEVEL.has(entry)) throw setupError('SETUP_CONFLICT', `existing global bundle is not a TinySDD bundle; refusing to replace: ${bundleRoot}`);
+  }
   let metadata = null;
   try { metadata = JSON.parse(await readFile(join(bundleRoot, 'package.json'), 'utf8')); } catch {}
   if (metadata?.name !== PACKAGE_NAME) throw setupError('SETUP_CONFLICT', `existing global bundle is not a TinySDD bundle; refusing to replace: ${bundleRoot}`);
