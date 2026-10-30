@@ -48,7 +48,10 @@ setup skills into `~/.agents/skills` for Codex and `~/.claude/skills` for
 Claude. The sibling `docs/`, `assets/`, `references/` and `templates/` files
 stay in the bundle so relative skill resources continue to resolve. Existing
 agent configuration and unrelated skill entries are preserved; differing
-managed files or links are conflicts.
+managed files or links are conflicts. A symlinked `~/.agents`, skills
+directory or bundle root is resolved to its real path, so dotfiles-managed
+layouts (for example a stow package providing `~/.claude/skills`) work with
+both `setup` and `skills update`.
 
 Setup also installs the shared profile registry from the same archive into
 `~/.config/tiny-sdd/registry/` (`$TINYSDD_CONFIG_DIR` or `$XDG_CONFIG_HOME`

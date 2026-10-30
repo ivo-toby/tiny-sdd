@@ -9,7 +9,9 @@ For global onboarding from a reviewed release, run `tinysdd setup` without
 versioned archive, and installs the complete global skills resource tree for
 Codex and Claude plus the profile registry (`~/.config/tiny-sdd/registry/`). It
 does not install prerequisites, inspect credentials, start services or run
-inference; use `init` separately for project configuration. After a CLI
+inference; use `init` separately for project configuration. A symlinked
+`~/.claude/skills`, `~/.agents/skills` or `~/.agents/tinysdd` (dotfiles setups)
+is resolved to its real path before the conflict checks run. After a CLI
 upgrade, `tinysdd skills update` and `tinysdd profiles update` replace the
 installed skills and registry with the new version's archive. The
 initial version/tag bootstrap and the automatic OIDC-backed release workflow

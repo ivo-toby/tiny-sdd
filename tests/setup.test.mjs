@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -641,5 +641,174 @@ test('skills update replaces a changed bundle that setup refuses to overwrite', 
   } finally {
     await cleanup(home);
     await cleanup(pi.root);
+  }
+});
+
+test('setup and skills update resolve a symlinked skills directory and bundle root', async () => {
+  const home = await temporary('tinysdd-symlink-home-');
+  const dotfiles = await temporary('tinysdd-dotfiles-');
+  try {
+    const realAgents = join(dotfiles, 'agents');
+    const realClaudeSkills = join(dotfiles, 'claude-skills');
+    await mkdir(join(realAgents, 'skills', 'unrelated'), { recursive: true });
+    await writeFile(join(realAgents, 'skills', 'unrelated', 'SKILL.md'), 'keep this skill\n');
+    await mkdir(realClaudeSkills, { recursive: true });
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await symlink(realAgents, join(home, '.agents'));
+    await symlink(realClaudeSkills, join(home, '.claude', 'skills'));
+
+    const first = await installBundle({ sourceRoot: repoRoot, homeDir: home });
+    assert.equal(first.bundleRoot, join(realAgents, 'tinysdd'));
+    assert.equal(await readFile(join(realAgents, 'skills', 'unrelated', 'SKILL.md'), 'utf8'), 'keep this skill\n');
+    assert.equal((await realpath(join(home, '.claude', 'skills', 'tinysdd'))), join(realAgents, 'tinysdd', 'skills', 'tinysdd'));
+    assert.deepEqual(await readFile(join(realClaudeSkills, 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+
+    await writeFile(join(realAgents, 'tinysdd', 'skills', 'tinysdd', 'SKILL.md'), 'operator-owned change\n');
+    await assert.rejects(installBundle({ sourceRoot: repoRoot, homeDir: home }), { code: 'SETUP_CONFLICT' });
+
+    const result = await updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) });
+    assert.equal(result.bundleRoot, join(realAgents, 'tinysdd'));
+    assert.equal(result.previousVersion, CLI_VERSION);
+    assert.deepEqual(await readFile(join(realAgents, 'tinysdd', 'skills', 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+    assert.deepEqual(await readFile(join(realClaudeSkills, 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+  } finally {
+    await cleanup(home);
+    await cleanup(dotfiles);
+  }
+});
+
+test('skills update resolves a symlinked bundle root and keeps unrelated entries', async () => {
+  const home = await temporary('tinysdd-symlink-bundle-home-');
+  const dotfiles = await temporary('tinysdd-bundle-dotfiles-');
+  try {
+    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
+    const realBundle = join(dotfiles, 'tinysdd-bundle');
+    await mkdir(realBundle, { recursive: true });
+    await rm(join(home, '.agents', 'tinysdd'), { recursive: true, force: true });
+    await symlink(realBundle, join(home, '.agents', 'tinysdd'));
+    await writeFile(join(realBundle, 'package.json'), JSON.stringify({ name: 'tinysdd', version: CLI_VERSION }));
+    await mkdir(join(realBundle, 'skills', 'tinysdd'), { recursive: true });
+    await mkdir(join(realBundle, 'docs'), { recursive: true });
+    await writeFile(join(realBundle, 'skills', 'tinysdd', 'SKILL.md'), 'old skill\n');
+    await writeFile(join(realBundle, 'docs', 'stale.md'), 'gone in this release\n');
+
+    const result = await updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) });
+    assert.equal(result.bundleRoot, realBundle);
+    assert.equal(result.previousVersion, CLI_VERSION);
+    await assert.rejects(lstat(join(realBundle, 'docs', 'stale.md')), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(join(realBundle, 'skills', 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+    const bundleInfo = await lstat(join(home, '.agents', 'tinysdd'));
+    assert.equal(bundleInfo.isSymbolicLink(), true);
+  } finally {
+    await cleanup(home);
+    await cleanup(dotfiles);
+  }
+});
+
+test('skills update rejects a symlinked skills entry that points elsewhere', async () => {
+  const { home, pi, options } = await setupHome();
+  try {
+    await runSetup({ ...options, archiveBytes: archive(await releaseEntries()) });
+    await rm(join(home, '.claude', 'skills', 'tinysdd'), { force: true });
+    await symlink('../../elsewhere', join(home, '.claude', 'skills', 'tinysdd'));
+    await assert.rejects(updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) }), (error) => {
+      assert.equal(error.code, 'SETUP_CONFLICT');
+      assert.match(error.message, /points elsewhere/u);
+      return true;
+    });
+  } finally {
+    await cleanup(home);
+    await cleanup(pi.root);
+  }
+});
+
+test('setup and skills update follow a dangling symlink to a not-yet-created target', async () => {
+  const home = await temporary('tinysdd-dangling-home-');
+  const dotfiles = await temporary('tinysdd-dangling-dotfiles-');
+  try {
+    const realAgents = join(dotfiles, 'agents');
+    await mkdir(realAgents, { recursive: true });
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await symlink(realAgents, join(home, '.agents'));
+    await symlink(join(dotfiles, 'claude-skills'), join(home, '.claude', 'skills'));
+    await symlink(join(dotfiles, 'bundle'), join(realAgents, 'tinysdd'));
+
+    const first = await installBundle({ sourceRoot: repoRoot, homeDir: home });
+    assert.equal(first.bundleRoot, join(dotfiles, 'bundle'));
+    assert.equal((await lstat(join(realAgents, 'tinysdd'))).isSymbolicLink(), true);
+    assert.deepEqual(await readFile(join(dotfiles, 'claude-skills', 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+
+    await writeFile(join(dotfiles, 'bundle', 'skills', 'tinysdd', 'SKILL.md'), 'operator-owned change\n');
+    const result = await updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) });
+    assert.equal(result.bundleRoot, join(dotfiles, 'bundle'));
+    assert.deepEqual(await readFile(join(dotfiles, 'bundle', 'skills', 'tinysdd', 'SKILL.md')), await readFile(join(repoRoot, 'skills', 'tinysdd', 'SKILL.md')));
+    assert.equal((await lstat(join(realAgents, 'tinysdd'))).isSymbolicLink(), true);
+  } finally {
+    await cleanup(home);
+    await cleanup(dotfiles);
+  }
+});
+
+test('skills update refuses to replace a symlinked bundle root that is not a TinySDD bundle', async () => {
+  const home = await temporary('tinysdd-unsafe-bundle-home-');
+  const dotfiles = await temporary('tinysdd-unsafe-dotfiles-');
+  try {
+    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
+    const other = join(dotfiles, 'some-repo');
+    await mkdir(other, { recursive: true });
+    await writeFile(join(other, 'README.md'), 'not a tinysdd bundle\n');
+    await rm(join(home, '.agents', 'tinysdd'), { recursive: true, force: true });
+    await symlink(other, join(home, '.agents', 'tinysdd'));
+
+    await assert.rejects(updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) }), (error) => {
+      assert.equal(error.code, 'SETUP_CONFLICT');
+      assert.match(error.message, /not a TinySDD bundle/u);
+      return true;
+    });
+    assert.equal(await readFile(join(other, 'README.md'), 'utf8'), 'not a tinysdd bundle\n');
+    assert.equal((await lstat(join(home, '.agents', 'tinysdd'))).isSymbolicLink(), true);
+  } finally {
+    await cleanup(home);
+    await cleanup(dotfiles);
+  }
+});
+
+test('skills update refuses to replace a symlinked bundle root that is a source checkout', async () => {
+  const home = await temporary('tinysdd-checkout-bundle-home-');
+  const dotfiles = await temporary('tinysdd-checkout-dotfiles-');
+  try {
+    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
+    const checkout = join(dotfiles, 'tiny-sdd-clone');
+    await mkdir(join(checkout, 'skills', 'tinysdd'), { recursive: true });
+    await mkdir(join(checkout, '.git'), { recursive: true });
+    await writeFile(join(checkout, 'package.json'), JSON.stringify({ name: 'tinysdd', version: CLI_VERSION }));
+    await writeFile(join(checkout, 'skills', 'tinysdd', 'SKILL.md'), 'clone skill\n');
+    await writeFile(join(checkout, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await rm(join(home, '.agents', 'tinysdd'), { recursive: true, force: true });
+    await symlink(checkout, join(home, '.agents', 'tinysdd'));
+
+    await assert.rejects(updateSkills({ homeDir: home, archiveBytes: archive(await releaseEntries()) }), (error) => {
+      assert.equal(error.code, 'SETUP_CONFLICT');
+      assert.match(error.message, /not a TinySDD bundle/u);
+      return true;
+    });
+    assert.equal(await readFile(join(checkout, '.git', 'HEAD'), 'utf8'), 'ref: refs/heads/main\n');
+    assert.equal(await readFile(join(checkout, 'skills', 'tinysdd', 'SKILL.md'), 'utf8'), 'clone skill\n');
+    assert.equal((await lstat(join(home, '.agents', 'tinysdd'))).isSymbolicLink(), true);
+  } finally {
+    await cleanup(home);
+    await cleanup(dotfiles);
+  }
+});
+
+test('a conflicting install leaves no empty bundle root behind', async () => {
+  const home = await temporary('tinysdd-conflict-leftover-home-');
+  try {
+    await mkdir(join(home, '.agents', 'skills'), { recursive: true });
+    await writeFile(join(home, '.agents', 'skills', 'tinysdd'), 'not a link\n');
+    await assert.rejects(installBundle({ sourceRoot: repoRoot, homeDir: home }), { code: 'SETUP_CONFLICT' });
+    await assert.rejects(lstat(join(home, '.agents', 'tinysdd')), { code: 'ENOENT' });
+  } finally {
+    await cleanup(home);
   }
 });
