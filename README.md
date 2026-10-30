@@ -131,7 +131,7 @@ in the supported environment references rather than project files.
 | Worker setting | Default | Supported range |
 | --- | --- | --- |
 | `limits.timeoutMs` | `600000` (10 minutes) | 1–3600000 ms |
-| `limits.maxToolCalls` | `100` | 1–100 |
+| `limits.maxToolCalls` | `100` | 1–10000 |
 | `limits.maxCheckRuns` | `12` | 1–20 |
 | `limits.firstWriteMs` | Disabled | Positive, below `timeoutMs` |
 

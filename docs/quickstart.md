@@ -697,7 +697,7 @@ dependency mounts cannot overlap any allowed path.
 
 When `limits.timeoutMs` and `limits.maxToolCalls` are omitted, each worker gets
 600000 ms (10 minutes) and 100 tool calls. Explicit values remain bounded by
-the existing 3600000 ms and 100-call caps; `firstWriteMs` remains opt-in.
+the existing 3600000 ms and 10000-call caps; `firstWriteMs` remains opt-in.
 
 `checks.jsonl` and bounded output artifacts retain host observations, including
 the digests of the candidate bytes checked. `result.workerObservedChecks` labels
