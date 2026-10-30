@@ -1262,6 +1262,10 @@ describe("Pi worker capture and scope", () => {
       assert.equal(availableArgs.includes("bash"), false);
       assert.equal(availableArgs.includes("sh"), false);
       assert.equal(availableArgs.includes("shell"), false);
+      // Pi 1.4.0 auto-discovers extensions, MCP servers, skills, prompts and context files unless told not to.
+      for (const flag of ["--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve"]) {
+        assert.equal(availableArgs.includes(flag), true, `worker launch must pass ${flag}`);
+      }
     } finally {
       await rm(project, { recursive: true, force: true });
     }
