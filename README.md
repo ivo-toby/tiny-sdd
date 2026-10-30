@@ -27,14 +27,14 @@ or a small model pilot does not establish reliable delivery across projects.
 | --- | --- | --- |
 | Onboarding | Global CLI, prerequisite checks, Linux sandbox startup probe, explicit Pi model discovery, version-matched Claude/Codex skill installation | Setup does not install prerequisites, authenticate models or run inference. |
 | SDD preparation | Constitution entry check; specify, research, plan and slice skills; portable change artifacts and cited context | The skills guide the outer agent. They are not an automatic end-to-end planner. |
-| Workers | Pi execution in disposable sandboxed copies; protected inputs; retained candidates, patches, checks and usage | Pi is pinned to **1.0.0**. Linux provides the check runner; macOS does not. |
+| Workers | Pi execution in disposable sandboxed copies; protected inputs; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**. Linux provides the check runner; macOS does not. |
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
 | Model registry | Profiles in `profiles/` per exact model configuration (route, context, `maxTokens`, timeout, thinking) with aggregate polyglot benchmark results ([#123](https://github.com/ivo-toby/tiny-sdd/issues/123)); developer benchmark in `bench/polyglot` (not shipped in the npm package) | Worker runs apply the profile's context window, `maxTokens` and limits; the server must actually serve that configuration. `setup` installs the registry, `init --model` selects the matching profile, `tinysdd models` lists them and `tinysdd profiles new` creates a local one. |
 
 Other open work includes [registry profile selection and updates](https://github.com/ivo-toby/tiny-sdd/issues/123),
-[Pi runtime upgrades](https://github.com/ivo-toby/tiny-sdd/issues/100),
+[Pi 1.4.0 live qualification](https://github.com/ivo-toby/tiny-sdd/issues/100),
 [full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
 [benchmark oracle fixes](https://github.com/ivo-toby/tiny-sdd/issues/120) and
 [incomplete-result reporting](https://github.com/ivo-toby/tiny-sdd/issues/124).
@@ -45,7 +45,7 @@ The dated experiment reports are historical evidence, not a current model rankin
 Prerequisites:
 
 - **Node.js >= 22.19.0**.
-- **Pi 1.0.0** (`@earendil-works/pi-coding-agent`), installed beside the Node
+- **Pi 1.4.0** (`@earendil-works/pi-coding-agent`, exact pin; 1.0.0 is refused), installed beside the Node
   executable used by TinySDD, with an explicit provider/model in Pi's `models.json`.
 - **Linux:** bubblewrap and util-linux, with working user namespaces. In an
   LXC/Incus container, host/container policy can prevent sandbox startup even

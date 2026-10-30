@@ -161,7 +161,7 @@ installation, is not a qualified layout for this adapter.
 
 If that sibling executable is missing, stop the setup flow and obtain explicit
 operator authorization before changing the selected Node installation. The
-current pinned Pi package is `@earendil-works/pi-coding-agent@1.0.0`; install it
+current pinned Pi package is `@earendil-works/pi-coding-agent@1.4.0`; install it
 into the Node root that owns the exact `process.execPath` being used by
 TinySDD. Do not use an unrelated global prefix, another Node installation or a
 `PATH`-only install:
@@ -191,7 +191,7 @@ authorization, the one machine-level repair is:
 
 ```sh
 "$NPM_EXECUTABLE" install --global --prefix "$NODE_ROOT" \
-  '@earendil-works/pi-coding-agent@1.0.0'
+  '@earendil-works/pi-coding-agent@1.4.0'
 ```
 
 Verify the exact layout and package identity with the same Node path before
@@ -226,7 +226,7 @@ for (let count = 0; count < 8; count += 1) {
   if (parent === current) break;
   current = parent;
 }
-if (version !== '1.0.0') throw new Error(`expected Pi package 1.0.0, found ${version ?? 'no package identity'}`);
+if (version !== '1.4.0') throw new Error(`expected Pi package 1.4.0, found ${version ?? 'no package identity'}`);
 console.log(JSON.stringify({ executable, resolved, package: '@earendil-works/pi-coding-agent', version }));
 NODE
 ```
@@ -237,14 +237,13 @@ This repair does not choose a provider, invent a model alias or read a
 credential store. If the operator does not authorize the install, report the
 missing sibling executable and leave the project and Node installation alone.
 
-The current target is Pi **1.0.0**, and its fixed check-client surface requires
-Node **>=22.19.0**. The package declares Node >=22, but use the stricter
-22.19.0 floor for a worker readiness attempt. The runtime records the Pi
-package version by walking from the resolved executable to a nearby
-`package.json`; a successful `pi --version` by itself is discovery, not a
-worker observation. The current worker records this version but does not
-enforce the 1.0.0 target, so stop setup when the observed package version is
-different instead of treating preflight success as compatibility evidence.
+The current target is Pi **1.4.0**, an exact pin, and its fixed check-client
+surface requires Node **>=22.19.0**. The package declares Node >=22, but use the
+stricter 22.19.0 floor for a worker readiness attempt. Setup walks from the
+resolved executable to a nearby `package.json` and refuses any other version,
+including 1.0.0, so stop and replace the package when it reports
+`unsupported-version`. A successful `pi --version` by itself is discovery, not
+a worker observation.
 
 The supported worker sandbox matrix is:
 
@@ -410,13 +409,13 @@ Set the worker's `profile` to that project-relative JSON file and validate it.
 For OpenAI-compatible routes, `reasoning: true`, `compat.thinkingFormat`, and
 `thinkingLevelMap` determine what Pi sends. With OpenAI thinking format, `off`
 is sent only with a string `thinkingLevelMap.off` and reasoning-effort support;
-`supportsReasoningEffort: false` suppresses it. Pi 1.0.0 clamps unsupported
+`supportsReasoningEffort: false` suppresses it. Pi 1.4.0 clamps unsupported
 levels before constructing requests: `thinkingLevelMap.off: null` can turn
 requested `off` into effective `minimal` and enable reasoning. The report shows
 both levels and requires mismatch acknowledgement. Unsupported non-off requests
 still fail preflight instead of silently accepting Pi's clamped level.
 A sent parameter does not prove the server honored it. The basis identifies
-checked Pi 1.0.0 level-clamping and OpenAI/DeepSeek request rules; other format
+checked Pi 1.4.0 level-clamping and OpenAI/DeepSeek request rules; other format
 predictions are legacy, and provider auto-detection remains unverified.
 Profile reasoning/compat overrides also appear in the effective result.
 

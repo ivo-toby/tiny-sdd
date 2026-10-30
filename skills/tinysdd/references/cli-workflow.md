@@ -549,8 +549,8 @@ dispatch when a project uses an explicit budget.
 
 Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`, Pi in
 the same installation as the CLI's Node executable, and the exact model in Pi's
-configured models. Pi 1.0.0 requires Node >=22.19.0; its fixed check-client
-integration still needs live qualification. Missing sandbox support fails closed. It uses
+configured models. The exact Pi pin is 1.4.0 (1.0.0 is refused), which requires
+Node >=22.19.0; its fixed check-client integration still needs live qualification. Missing sandbox support fails closed. It uses
 read/write/edit tools in a disposable copy. Available declared checks add the
 fixed `run_checks` client; generated code executes only in the separate Linux
 check sandbox. An unavailable host records the reason and runs without the
@@ -576,7 +576,9 @@ model-free deterministic hook with `runtime.compaction.enabled: true`:
 ```
 
 `reserveTokens` must be at least effective `maxTokens`; omitting it derives the
-effective value. The host stages a read-only approved-packet anchor and wrapper
+effective value. In Pi 1.4.0 it only sets when automatic compaction starts; summary
+budgets no longer depend on it, and the deterministic path makes no model call.
+The host stages a read-only approved-packet anchor and wrapper
 for both bubblewrap and Seatbelt, independent of `run_checks`. Only paired old
 `read` and `run_checks` results are replaced by bounded digest and replay-marker
 text. `runtime.json.compaction` records the choice and anchor identity, while
@@ -701,12 +703,12 @@ contract; setup enforces confirmation through its skill workflow. Do not
 script automatic digest confirmation. Reinspect and reconfirm settings changes.
 
 The report separates `requestedThinking` from Pi's `effectiveThinking` after
-level clamping. In Pi 1.0.0, `thinkingLevelMap.off: null` can clamp `off` to
+level clamping. In Pi 1.4.0, `thinkingLevelMap.off: null` can clamp `off` to
 `minimal`, enabling reasoning; this requires the named mismatch acknowledgement.
 OpenAI-format `off` needs both a string off mapping and reasoning-effort support
 to send a value. Unsupported non-off requests still fail preflight rather than
 silently accepting a clamped level. `sent` predicts request construction only,
-not server compliance. The basis names checked Pi 1.0.0 clamping/OpenAI/DeepSeek
+not server compliance. The basis names checked Pi 1.4.0 clamping/OpenAI/DeepSeek
 rules; other format predictions are legacy and auto-detection stays unverified.
 `maxTokens` is the configured response ceiling. Pi can lower the cap for an
 individual request based on remaining context; this report is not an observation
@@ -937,11 +939,11 @@ same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
 one JSON result. Dependency mounts cannot overlap allowed
 paths. `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
 check. Budget exhaustion, unknown ids and runner unavailability throw tool
-errors and do not end the worker. Pi 1.0.0 makes a batch containing `run_checks`
+errors and do not end the worker. Pi 1.4.0 makes a batch containing `run_checks`
 sequential in assistant source order: `[write, run_checks]` sees the write;
 `[run_checks, write]` sees the earlier candidate. No sibling reordering occurs.
-Keep extension discovery and built-ins disabled, loading only the read-only
-check client with `read,write,edit,run_checks`. Do not enable codemode, MCP,
+Keep extension discovery and built-ins disabled (`--no-extensions`, `--no-mcp`),
+loading only the read-only check client with `read,write,edit,run_checks`. Do not enable codemode, MCP,
 tool-search or llama.cpp built-ins. Check time
 counts toward the worker deadline; checks are cancelled when the worker ends.
 
