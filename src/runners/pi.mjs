@@ -18,6 +18,9 @@ function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath,
     "--mode",
     "json",
     "--no-extensions",
+    // --no-extensions already leaves out the built-in MCP extension in Pi 1.4.0;
+    // this also keeps any MCP server config (for example a project .pi/mcp.json) from connecting.
+    "--no-mcp",
     "--no-skills",
     "--no-prompt-templates",
     "--no-context-files",
