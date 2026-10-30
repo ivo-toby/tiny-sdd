@@ -510,7 +510,7 @@ test('global setup is cwd-independent and leaves a project config untouched', as
 
 const RELEASE_FILES = ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md'];
 
-async function releaseEntries({ profiles = ['titan-gemma4-26b-a4b-2x64k-v1.json', 'titan-qwen36-35b-a3b-2x128k-v1.json'], extra = [] } = {}) {
+async function releaseEntries({ profiles = ['titan-gemma4-26b-a4b-2x64k-v1.json', 'titan-qwen36-35b-a3b-2x128k-mt32-v1.json'], extra = [] } = {}) {
   const entries = [];
   for (const path of RELEASE_FILES) entries.push([path, await readFile(join(repoRoot, path))]);
   for (const name of profiles) entries.push([`profiles/${name}`, await readFile(join(repoRoot, 'profiles', name))]);
@@ -532,7 +532,7 @@ test('setup installs the profile registry and refuses to overwrite a changed one
   try {
     const first = await runSetup({ ...options, archiveBytes: archive(await releaseEntries()) });
     assert.equal(first.registry.action, 'install');
-    assert.deepEqual(first.registry.profiles, ['titan-gemma4-26b-a4b-2x64k-v1', 'titan-qwen36-35b-a3b-2x128k-v1']);
+    assert.deepEqual(first.registry.profiles, ['titan-gemma4-26b-a4b-2x64k-v1', 'titan-qwen36-35b-a3b-2x128k-mt32-v1']);
     assert.deepEqual(
       await readFile(join(registry, 'titan-gemma4-26b-a4b-2x64k-v1.json')),
       await readFile(join(repoRoot, 'profiles', 'titan-gemma4-26b-a4b-2x64k-v1.json')),
