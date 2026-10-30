@@ -20,11 +20,12 @@ export const PI_AGENT_ENV = "PI_CODING_AGENT_DIR";
 export { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS };
 export const DEFAULT_TOOL_LIMIT = DEFAULT_MAX_TOOL_CALLS;
 export const MAX_TOOL_LIMIT = MAX_TOOL_CALLS;
-// Pi 0.84.4 documents these model defaults (docs/models.md).  A model entry
-// without maxTokens is silently capped at PI_DEFAULT_MAX_TOKENS per response.
+// Pi 1.4.0 documents this default (docs/models-configuration.md) and applies it
+// in provider-composer.js. A model entry without maxTokens is capped at
+// PI_DEFAULT_MAX_TOKENS per response.
 export const PI_DEFAULT_MAX_TOKENS = 16_384;
-// pi-ai 1.0.0 DEFAULT_THINKING_BUDGETS and MIN_ANSWER_TOKENS
-// (dist/api/simple-options.js): the per-level reasoning cap Pi sends when a
+// pi-ai 1.4.0 DEFAULT_THINKING_BUDGETS and MIN_ANSWER_TOKENS are unchanged from
+// 1.0.0 (dist/api/simple-options.js): the per-level reasoning cap Pi sends when a
 // thinkingTokenBudgetField is configured, clamped to leave answer room.
 export const PI_DEFAULT_THINKING_BUDGETS = Object.freeze({ minimal: 1024, low: 2048, medium: 8192, high: 16384 });
 const PI_MIN_ANSWER_TOKENS = 1024;
@@ -363,7 +364,7 @@ function applyProfileModelSettings(model, profile, worker) {
 
 // Pi clamps the requested level before constructing OpenAI-compatible requests.
 // Provider auto-detection and server behavior remain outside this prediction.
-export const PREFLIGHT_BASIS = "pi-ai 1.0.0 models.js clampThinkingLevel and api/openai-completions.js OpenAI/DeepSeek control; other formats legacy predictions; server behavior unverified";
+export const PREFLIGHT_BASIS = "pi-ai 1.4.0 models.js clampThinkingLevel and api/openai-completions.js OpenAI/DeepSeek control (unchanged from 1.0.0); other formats legacy predictions; server behavior unverified";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function clampThinkingLevel(model, requested) {

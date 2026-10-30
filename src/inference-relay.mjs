@@ -133,8 +133,9 @@ export async function startInferenceRelay({ provider, model, env, sourceEnv = pr
   };
 }
 
-// Mirrors the baseUrl-dependent part of pi-ai 1.0.0 detectCompat
-// (dist/api/openai-completions.js). Pi derives these request-shape settings
+// Mirrors the baseUrl-dependent part of pi-ai detectCompat
+// (dist/api/openai-completions.js). The function is byte-identical in pi-ai
+// 1.0.0 and 1.4.0. Pi derives these request-shape settings
 // from the provider id and the URL, and the relay address hides the URL.
 function piUrlCompat(providerId, modelId, baseUrl) {
   const url = typeof baseUrl === "string" ? baseUrl : "";
