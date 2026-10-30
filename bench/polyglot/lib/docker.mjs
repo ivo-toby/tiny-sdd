@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LANGUAGES, prepareWorkspace, readReferenceFiles } from './dataset.mjs';
@@ -71,7 +71,8 @@ export async function runTests({ workDir, language, timeoutMs = 180000 }) {
     'run', '--rm', '--name', name,
     '--network', 'none',
     '--memory', '4g',
-    '--cpus', '4',
+    // Docker rejects --cpus above the daemon's CPU count (exit 125).
+    '--cpus', String(Math.min(4, availableParallelism())),
     ...userFlag(),
     '-e', 'HOME=/tmp',
     '--tmpfs', '/tmp:rw,exec,size=1g',

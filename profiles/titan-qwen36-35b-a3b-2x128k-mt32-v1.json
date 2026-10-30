@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-qwen36-35b-a3b-2x128k-mt32-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/qwen3.6-35b-a3b-2x128k",
+    "contextWindow": 128000,
+    "parallel": 2,
+    "note": "Settings variant of qwen36: maxTokens 32768 (12 of 35 discovery first-attempt failures hit 16384)."
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 32768
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-24",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/qwen3.6-35b-a3b-2x128k",
+        "contextWindow": 128000,
+        "maxTokens": 32768,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 2
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.667,
+      "pass2": 0.87,
+      "minutesPerTask": 2.7,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.692,
+          "pass2": 0.846
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.278,
+          "pass2": 0.694
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.821,
+          "pass2": 0.974
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.938,
+          "pass2": 0.979
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.706,
+          "pass2": 0.882
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.375,
+          "pass2": 0.75
+        }
+      }
+    },
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-26",
+      "variant": "qwen36-o2-error-cases",
+      "split": "holdout",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/qwen3.6-35b-a3b-2x128k",
+        "contextWindow": 128000,
+        "maxTokens": 32768,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 2
+      },
+      "exercises": 104,
+      "repeats": 1,
+      "pass1": 0.644,
+      "pass2": 0.856,
+      "minutesPerTask": 3.3,
+      "perLanguage": {
+        "cpp": {
+          "n": 13,
+          "pass1": 0.615,
+          "pass2": 1
+        },
+        "go": {
+          "n": 17,
+          "pass1": 0.412,
+          "pass2": 0.706
+        },
+        "java": {
+          "n": 22,
+          "pass1": 0.682,
+          "pass2": 0.909
+        },
+        "javascript": {
+          "n": 24,
+          "pass1": 0.958,
+          "pass2": 0.958
+        },
+        "python": {
+          "n": 17,
+          "pass1": 0.529,
+          "pass2": 0.882
+        },
+        "rust": {
+          "n": 11,
+          "pass1": 0.455,
+          "pass2": 0.545
+        }
+      },
+      "decision": {
+        "metric": "pass1",
+        "keep": false,
+        "n": 104,
+        "delta": -0.058,
+        "reasons": [
+          "delta_not_above_0.05",
+          "language_drop:java",
+          "language_drop:python"
+        ]
+      }
+    }
+  ]
+}

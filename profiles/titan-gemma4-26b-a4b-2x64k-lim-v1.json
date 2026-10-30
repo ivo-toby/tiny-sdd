@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-gemma4-26b-a4b-2x64k-lim-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/llamacpp/gemma4-26b-a4b-2x64k",
+    "contextWindow": 64000,
+    "parallel": 2,
+    "note": "Settings variant of gemma26: maxTokens 32768 and a 20-minute timeout (8 of 22 discovery first-attempt failures hit maxTokens, 2 the 10-minute timeout)."
+  },
+  "limits": {
+    "timeoutMs": 1200000
+  },
+  "responseBudget": {
+    "maxTokens": 32768
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-25",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/gemma4-26b-a4b-2x64k",
+        "contextWindow": 64000,
+        "maxTokens": 32768,
+        "thinking": "medium",
+        "timeoutMs": 1200000,
+        "parallel": 2
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.783,
+      "pass2": 0.942,
+      "minutesPerTask": 9,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.808,
+          "pass2": 0.923
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.667,
+          "pass2": 0.889
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.769,
+          "pass2": 1
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.938,
+          "pass2": 1
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.765,
+          "pass2": 0.971
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.667,
+          "pass2": 0.792
+        }
+      }
+    },
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-10-27",
+      "variant": "gemma26-o2-existing-api",
+      "split": "holdout",
+      "run": "main",
+      "settings": {
+        "route": "titan/llamacpp/gemma4-26b-a4b-2x64k",
+        "contextWindow": 64000,
+        "maxTokens": 32768,
+        "thinking": "medium",
+        "timeoutMs": 1200000,
+        "parallel": 2
+      },
+      "exercises": 104,
+      "repeats": 1,
+      "pass1": 0.769,
+      "pass2": 0.904,
+      "minutesPerTask": 9.1,
+      "perLanguage": {
+        "cpp": {
+          "n": 13,
+          "pass1": 0.923,
+          "pass2": 1
+        },
+        "go": {
+          "n": 17,
+          "pass1": 0.529,
+          "pass2": 0.706
+        },
+        "java": {
+          "n": 22,
+          "pass1": 0.682,
+          "pass2": 0.955
+        },
+        "javascript": {
+          "n": 24,
+          "pass1": 1,
+          "pass2": 1
+        },
+        "python": {
+          "n": 17,
+          "pass1": 0.765,
+          "pass2": 0.882
+        },
+        "rust": {
+          "n": 11,
+          "pass1": 0.636,
+          "pass2": 0.818
+        }
+      },
+      "decision": {
+        "metric": "pass1",
+        "keep": false,
+        "n": 104,
+        "delta": 0.019,
+        "reasons": [
+          "delta_not_above_0.05"
+        ]
+      }
+    }
+  ]
+}
