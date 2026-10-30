@@ -42,7 +42,7 @@ function preparation() {
   };
 }
 
-test('extension adapts deterministic output to the Pi 1.0.0 hook shape without a model call', async () => {
+test('extension adapts deterministic output to the Pi 1.4.0 hook shape without a model call', async () => {
   const pi = fakePi();
   let modelCalls = 0;
   registerCompactionExtension(pi, { approvedPacketAnchor: anchor, model: () => { modelCalls += 1; } });
