@@ -16,7 +16,9 @@ const PACKAGE = JSON.parse(await readFile(PACKAGE_PATH, 'utf8'));
 export const CLI_VERSION = PACKAGE.version;
 export const PACKAGE_NAME = PACKAGE.name;
 export const PI_PACKAGE_NAME = '@earendil-works/pi-coding-agent';
-export const PI_VERSION = '1.0.0';
+// Exact pin. 1.4.0 was checked against the 1.0.0 -> 1.4.0 changelog and package
+// source (issue #100); other versions are refused, including 1.0.0.
+export const PI_VERSION = '1.4.0';
 export const NODE_MINIMUM = Object.freeze({ major: 22, minor: 19, patch: 0 });
 export const GIT_REPOSITORY = 'https://github.com/ivo-toby/tiny-sdd';
 export const SETUP_DOCS_URL = `${GIT_REPOSITORY}/blob/main/docs/setup.md`;
@@ -1195,7 +1197,8 @@ function setupInstructions(checks) {
   const instructions = [];
   if (!checks.node.supported) instructions.push(`Use Node >=22.19.0 and rerun setup: ${SETUP_DOCS_URL}`);
   if (checks.pi.status === 'missing') instructions.push(`Install ${PI_PACKAGE_NAME}@${PI_VERSION} beside this Node executable, then rerun setup: ${SETUP_DOCS_URL}`);
-  else if (checks.pi.status === 'unsupported-version' || checks.pi.status === 'unqualified') instructions.push(`Use the supported ${PI_PACKAGE_NAME}@${PI_VERSION} beside this Node executable: ${SETUP_DOCS_URL}`);
+  else if (checks.pi.status === 'unsupported-version') instructions.push(`Replace ${PI_PACKAGE_NAME}@${checks.pi.version ?? 'the installed version'} with ${PI_PACKAGE_NAME}@${PI_VERSION} beside this Node executable, then rerun setup: ${SETUP_DOCS_URL}`);
+  else if (checks.pi.status === 'unqualified') instructions.push(`Use the supported ${PI_PACKAGE_NAME}@${PI_VERSION} beside this Node executable: ${SETUP_DOCS_URL}`);
   if (!checks.sandbox.worker.supported) {
     if (checks.sandbox.platform !== 'linux' || checks.sandbox.worker.probe?.status === 'missing') {
       instructions.push(`Install or enable the supported ${checks.sandbox.platform === 'linux' ? 'bubblewrap' : checks.sandbox.platform === 'darwin' ? 'macOS Seatbelt' : 'worker sandbox'}; no automatic installation is performed: ${SETUP_DOCS_URL}`);
