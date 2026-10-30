@@ -23,7 +23,7 @@ registry with the new version's archive, where setup would report a conflict. It
 Pi, bubblewrap, a model, or a service;
 read a keychain or Pi `auth.json`; select a provider/model; or run inference.
 
-The checks cover Node **>=22.19.0**, the Pi **1.0.0** executable beside the
+The checks cover Node **>=22.19.0**, the Pi **1.4.0** executable beside the
 Node executable running the CLI, and the supported worker sandbox:
 
 | Host | Worker sandbox | Check runner |
@@ -41,7 +41,7 @@ supported layout:
 NODE_BIN_DIR="$(node -p 'require("node:path").dirname(process.execPath)')"
 NODE_ROOT="$(node -p 'require("node:path").dirname(require("node:path").dirname(process.execPath))')"
 "$NODE_BIN_DIR/npm" install --global --prefix "$NODE_ROOT" \
-  '@earendil-works/pi-coding-agent@1.0.0'
+  '@earendil-works/pi-coding-agent@1.4.0'
 ```
 
 For Linux check-runner support, Debian/Ubuntu operators can install

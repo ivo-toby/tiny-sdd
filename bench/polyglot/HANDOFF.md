@@ -116,7 +116,7 @@ RUNBOOK Phase 3. Haiku may only analyze.
 **What the new machine needs:**
 - Linux with Docker and bubblewrap, or macOS;
 - Node ≥ 22.19;
-- Pi `1.0.0` (`@earendil-works/pi-coding-agent`) beside that Node;
+- Pi `1.4.0` (`@earendil-works/pi-coding-agent`) beside that Node;
 - network access to `https://ai-gateway.cloud.toby.nu/v1` and, for triage only, `api.typesafe.ai`.
 
 **Keys:**
