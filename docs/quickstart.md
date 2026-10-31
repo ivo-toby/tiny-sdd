@@ -881,8 +881,12 @@ no ordering, so a check first waits 100 ms and then until no write call of its
 own message is in flight, also one that started after it; checks run one at a
 time. This narrows the race but does not guarantee it; the check record's
 candidate digests show which bytes were checked. `runtime.json.runnerFacts`
-records the permission rules and plugin the run actually got. `run_checks` calls count toward `maxToolCalls`. This runner
-and its plugin are unverified against a live model or a live sandbox.
+records the permission rules and plugin the run actually got. `run_checks`
+calls count toward `maxToolCalls`. The plugin was exercised with OpenCode 2.1.4
+run from source (not the release binary), inside bubblewrap with the worker's
+mounts and a scripted model: OpenCode loaded it, offered only `read`, `write`,
+`edit` and `run_checks`, and without the allow rule refused `run_checks`. It is
+unverified against a live model and on macOS.
 
 ### Model registry profiles
 
