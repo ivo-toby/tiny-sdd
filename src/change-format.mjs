@@ -601,13 +601,9 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     addRead(files, context);
     addRead(files, checks);
     const parsedChecks = parseChecksManifest(checks.text);
-    if (parsedChecks.checks.length !== 1) {
-      invalid(`slice ${value.id} checks must declare exactly one check`);
-    }
-    const sliceCheck = parsedChecks.checks[0];
     for (const testPath of value.sliceTests) {
-      if (!sliceCheck.argv.includes(testPath)) {
-        readinessIssues.push(makeReadinessIssue('SLICE_TEST_NOT_CHECKED', `slice test is not a literal operand of slice ${value.id}'s check: ${testPath}`, { sliceId: value.id, path: testPath }));
+      if (!parsedChecks.checks.some((check) => check.argv.includes(testPath))) {
+        readinessIssues.push(makeReadinessIssue('SLICE_TEST_NOT_CHECKED', `slice test is not a literal operand of any of slice ${value.id}'s checks: ${testPath}`, { sliceId: value.id, path: testPath }));
       }
     }
     const contextManifest = parseContextManifest(context.text);

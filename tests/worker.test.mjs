@@ -1212,7 +1212,7 @@ describe("Pi worker capture and scope", () => {
     const project = await makeProject();
     try {
       const { context } = await approvedContextPacket(project);
-      const checks = checksPacket(["first"]);
+      const checks = checksPacket(["first", "second"]);
       const noTool = await runWorker({
         projectRoot: project,
         packet: { ...packet(), context },
@@ -1241,6 +1241,9 @@ describe("Pi worker capture and scope", () => {
       assert.match(noToolPrompt, /report checks as unrun unless the packet itself supplies observed evidence/u);
       assert.match(noToolPrompt, /Start by planning the allowed-file edit/u);
       assert.match(availablePrompt, /named `run_checks` host tool/u);
+      assert.match(availablePrompt, /## Declared checks \(run_checks\)/u);
+      assert.match(availablePrompt, /- first \(timeout 1000 ms\): "node" "-e" "0"/u);
+      assert.match(availablePrompt, /- second \(timeout 1000 ms\): "node" "-e" "0"/u);
       assert.match(availablePrompt, /After each written or edited allowed file, call `run_checks`/u);
       assert.match(availablePrompt, /fix reported failures within the approved scope/u);
       assert.match(availablePrompt, /do not simulate checks in reasoning/u);

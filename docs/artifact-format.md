@@ -179,9 +179,12 @@ optional `workerReason` (#164). Slice IDs are globally unique task IDs such as `
   refuses. Prose and adequacy still need review.
 - `context`: unchanged schema accepted by `parseContextManifest()` in
   `src/context-compiler.mjs`; existing facts, source-size and resource caps apply.
-- `checks`: unchanged `parseChecksManifest()` schema with exactly one named
-  argv check. That check explicitly names every expected `sliceTests` path as a literal
-  argv operand. Commands are never shell strings. Feature checks are separate.
+- `checks`: unchanged `parseChecksManifest()` schema with its existing 1–16
+  check limit, so a slice may declare several named argv checks side by side
+  (for example `test`, `lint`, `typecheck`), each with its own id and timeout.
+  Every expected `sliceTests` path must appear as a literal argv operand of at
+  least one declared check. Commands are never shell strings. Feature checks
+  are separate.
 
 Expected implementation/test lists are disjoint within a slice, with no
 duplicates. Their union maps to the task's expected `allow` list for packet
@@ -225,7 +228,7 @@ remain unchanged and may still count the total expected path list.
 `feature-checks.json` uses the existing checks schema, allowing its existing
 1–16 check limit. Every feature test appears as a literal argv operand in at
 least one referenced feature check. It exercises existing application entrypoints,
-including wiring from callers into the new feature. A slice's own single check
+including wiring from callers into the new feature. A slice's own checks
 can stay focused on its writable tests; this never substitutes for the feature
 checks or existing regression coverage.
 

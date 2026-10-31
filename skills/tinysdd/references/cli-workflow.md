@@ -958,7 +958,10 @@ counts toward the worker deadline; checks are cancelled when the worker ends.
 Inspect `checks.jsonl`, bounded check-output artifacts and
 `result.workerObservedChecks`. The observations identify the checked input
 digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
-independent operator verification remains required. When the client is
+independent operator verification remains required. A checks file may declare
+several named checks (e.g. `test`, `lint`, `typecheck`), each with its own argv
+and timeout; the worker prompt lists every declared check by id and each
+result is reported by id. When the client is
 available, the worker contract makes the named host tool explicit and directs
 an edit → `run_checks` → fix loop after each eligible ordinary file write or edit.
 Failures are fixed only within the approved task boundaries; the worker stops and reports when the

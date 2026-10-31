@@ -708,7 +708,11 @@ When the tool is available, the worker contract asks for an edit → `run_checks
 → fix loop: run the named checks after each allowed write or edit, fix failures
 within scope, and stop/report when the check budget or required information or
 permission is exhausted. The handoff lists observed checks separately from
-checks still unrun. This contract does not add a shell or arbitrary execution
+checks still unrun. A slice's checks file may declare several named checks
+(for example `test` and `lint`), each with its own argv and timeout; the prompt
+lists each declared check by id, and `run_checks`, `checks.jsonl`,
+`workerObservedChecks` and review evidence report every result by id. This
+contract does not add a shell or arbitrary execution
 tool; an unavailable runner keeps the existing no-check prompt and Pi tool
 arguments.
 
