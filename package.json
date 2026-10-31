@@ -1,6 +1,6 @@
 {
   "name": "tinysdd",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "description": "Operator-led spec-driven development workflow CLI",
   "repository": {
     "type": "git",
