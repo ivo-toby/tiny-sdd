@@ -1188,7 +1188,14 @@ function killProcessGroup(pid, signal) {
   }
 }
 
-async function captureProcess({ runner, command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal, checkChannel }) {
+// Tools the contract names but the runner's announced loadout lacks (#197).
+// An unannounced loadout cannot be checked and yields no missing tools.
+function missingTools(expectedTools, toolLoadout) {
+  if (!Array.isArray(expectedTools) || !Array.isArray(toolLoadout)) return [];
+  return expectedTools.filter((name) => !toolLoadout.includes(name));
+}
+
+async function captureProcess({ runner, command, args, cwd, env, stdoutPath, stderrPath, timeoutMs, maxToolCalls, firstWriteMs = null, direct, pipeOutput = false, signal, checkChannel, expectedTools = null }) {
   const stdoutHandle = await (await import("node:fs/promises")).open(stdoutPath, "w");
   const stderrHandle = await (await import("node:fs/promises")).open(stderrPath, "w");
   const startedAt = Date.now();
@@ -1266,6 +1273,8 @@ async function captureProcess({ runner, command, args, cwd, env, stdoutPath, std
       const parsedNow = runner.parseEvents(text);
       latest.toolCalls = parsedNow.toolCalls;
       if (latest.toolCalls >= maxToolCalls) stop("tool_limit");
+      // The model must never be told about a tool it cannot call.
+      if (missingTools(expectedTools, parsedNow.toolLoadout).length > 0) stop("failed");
       // Poll-granular (100 ms): when the first write/edit start was seen.
       if (firstWriteAtMs === null && parsedNow.writeCalls > 0) firstWriteAtMs = Date.now() - startedAt;
       // A worker that ended on its own is classified from its own stop reason.
@@ -1299,11 +1308,13 @@ async function captureProcess({ runner, command, args, cwd, env, stdoutPath, std
   const stderr = await readFile(stderrPath, "utf8");
   const parsed = runner.parseEvents(stdout);
   const bytes = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
-  const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "raw_output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : null);
+  const missing = missingTools(expectedTools, parsed.toolLoadout);
+  const reason = forcedOutcome || (bytes > MAX_RAW_OUTPUT_BYTES ? "raw_output_limit" : parsed.toolCalls >= maxToolCalls ? "tool_limit" : missing.length > 0 ? "failed" : null);
   return {
     stdout,
     stderr,
     parsed,
+    toolLoadout: Array.isArray(expectedTools) && Array.isArray(parsed.toolLoadout) ? { expected: [...expectedTools], announced: [...parsed.toolLoadout], missing } : null,
     processTermination: {
       exitCode: termination.code,
       signal: termination.signal,
@@ -1771,7 +1782,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       let sandboxProfile;
       try {
         inferenceRelay = await startInferenceRelay({ provider: target.provider, model: target.model, env: prepared.env });
-        sandboxProfile = buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle: compactionBundle?.directory, inferencePort: inferenceRelay.port, invocation: invocation.seatbelt });
+        sandboxProfile = buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle: compactionBundle?.directory, checkChannel: checkChannel ? { extension: checkChannel.extension, requests: checkChannel.requests, responses: checkChannel.responses } : null, inferencePort: inferenceRelay.port, invocation: invocation.seatbelt });
       } catch (error) {
         fail(`Cannot prepare macOS sandbox: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1816,7 +1827,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";
       childEnv.TINYSDD_CHECK_DEADLINE = String(Date.now() + limits.timeoutMs);
     }
-    capture = await captureProcess({ runner, checkChannel, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
+    capture = await captureProcess({ runner, checkChannel, expectedTools: runtimeRecord.capabilities.tools, command, args, cwd: nativePaths ? workspace : sourceRoot, env: childEnv, stdoutPath: join(artifactDir, "stdout.jsonl"), stderrPath: join(artifactDir, "stderr.txt"), timeoutMs: limits.timeoutMs, maxToolCalls: limits.maxToolCalls, firstWriteMs: limits.firstWriteMs, direct: runtimeChoice.test, pipeOutput: runtimeChoice.sandbox === "seatbelt" || (runtimeChoice.test && runtime?.pipeOutput === true), signal });
     if (inferenceRelay) await inferenceRelay.close();
     inferenceRelay = null;
     if (compactionBundle) {
@@ -1896,6 +1907,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         firstWriteAtMs: capture.firstWriteAtMs,
         ...readObservations(capture.parsed.readPaths, workspace, compiledContext),
         compactions: capture.parsed.compactions,
+        ...(capture.toolLoadout ? { toolLoadout: capture.toolLoadout } : {}),
         ...(retainedSession ? {
           session: {
             available: retainedSession.available,
@@ -1930,7 +1942,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       },
       patch: patchInfo,
       modelClaims: { observed: Boolean(capture.parsed.claims), source: `unverified assistant text in raw ${runner.label} events`, unverified: true, text: capture.parsed.claims, truncated: capture.parsed.claimsTruncated },
-      warnings: [`Raw ${runner.label} events may contain source code. Worker output is not acceptance or verification evidence.`, ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256 && !entry.deterministic) ? [`${runner.label} compacted the worker context with a model-written summary; inspect packet retention before relying on later turns.`] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
+      warnings: [`Raw ${runner.label} events may contain source code. Worker output is not acceptance or verification evidence.`, ...(effectiveQualification?.warnings ?? []), ...(runChecks.declared && !runChecks.available ? [`run_checks unavailable: ${runChecks.reason}`] : []), ...(capture.toolLoadout?.missing.length ? [`${runner.label} did not declare ${capture.toolLoadout.missing.join(", ")} to the model; the run was stopped and failed.`] : []), ...prepared.metadata.preflight.warnings.map((warning) => `Preflight: ${warning}`), ...(capture.parsed.compactions.some((entry) => !entry.aborted && entry.summarySha256 && !entry.deterministic) ? [`${runner.label} compacted the worker context with a model-written summary; inspect packet retention before relying on later turns.`] : []), ...(runtimeChoice.test ? ["Test runtime bypassed the OS sandbox; production execution remains fail-closed."] : []), ...(patchInfo.available ? [] : ["git diff --no-index did not produce a complete patch artifact."]), ...(patchInfo.applyCheck && !patchInfo.applyCheck.pass ? ["git apply --check did not validate the portable patch against the frozen candidate snapshot."] : [])],
       ...(effectiveQualification === undefined ? {} : { qualification: runtimeMetadata(runner, prepared, runtimeChoice, runtimeChoice.executable, runtimeChoice.bwrap, worker, resolvedProfile.value, piVersion, runChecks, compaction, effectiveQualification).qualification }),
     };
     await writeJson(join(artifactDir, "result.json"), result);

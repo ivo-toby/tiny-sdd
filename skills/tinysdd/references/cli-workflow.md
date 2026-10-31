@@ -1038,6 +1038,11 @@ Keep extension discovery and built-ins disabled (`--no-extensions`, `--no-mcp`),
 loading only the read-only check client with `read,write,edit,run_checks`. Do not enable codemode, MCP,
 tool-search or llama.cpp built-ins. Check time
 counts toward the worker deadline; checks are cancelled when the worker ends.
+A worker whose Pi tool loadout (announced before the first turn) lacks a
+contract tool such as `run_checks` is stopped and fails with `Pi did not declare
+run_checks to the model; ...`; `observed.toolLoadout` lists `expected`,
+`announced` and `missing`. Do not treat such a run's unrun checks as a model
+choice.
 
 Inspect `checks.jsonl`, bounded check-output artifacts and
 `result.workerObservedChecks`. The observations identify the checked input

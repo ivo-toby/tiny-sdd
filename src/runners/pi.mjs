@@ -157,6 +157,8 @@ export function parseEvents(text) {
   const toolCallsByName = {};
   const readPaths = [];
   const compactions = [];
+  // Pi 1.4.0 announces the tools it declares to the model in a system message before the first turn.
+  let toolLoadout = null;
   for (const line of text.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let event;
@@ -191,6 +193,9 @@ export function parseEvents(text) {
         errorMessage: typeof event.errorMessage === "string" ? event.errorMessage : null,
       });
     }
+    if (toolLoadout === null && event.message?.role === "system" && Array.isArray(event.message.toolsAdded)) {
+      toolLoadout = event.message.toolsAdded.map((tool) => tool?.name).filter((name) => typeof name === "string");
+    }
     if (event.type === "message_end" && event.message?.role === "assistant") assistant.push(event.message);
     else if (event.type === "turn_end" && event.message?.role === "assistant") turnEnds.push(event.message);
     if (event.type === "toolCall" || event.type === "tool_call") toolCalls += 1;
@@ -218,7 +223,7 @@ export function parseEvents(text) {
   }
   const stopReason = finalMessage?.stopReason ?? finalMessage?.rawStopReason ?? null;
   const errorMessage = finalMessage?.errorMessage ?? finalMessage?.error?.message ?? null;
-  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, cumulativeUsage, claims, claimsTruncated: truncated };
+  return { assistant: authoritative, finalMessage, stopReason, errorMessage, usage: finalMessage?.usage ?? null, toolCalls, writeCalls, toolCallsByName, readPaths, compactions, toolLoadout, cumulativeUsage, claims, claimsTruncated: truncated };
 }
 
 export const piRunner = Object.freeze({

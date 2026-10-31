@@ -15,14 +15,20 @@ function inside(root, path) {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-/** Build a Seatbelt profile around a runner's executable, program and read, write and private roots. */
-export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, inferencePort, invocation }) {
+/**
+ * Build a Seatbelt profile around a runner's executable, program and read, write and private roots.
+ * `checkChannel` is the run_checks channel: the runner loads its extension and reads responses,
+ * and may only write requests.
+ */
+export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, checkChannel, inferencePort, invocation }) {
   const { executable, program } = invocation;
-  const paths = [workspace, ...invocation.writable, sourceRoot, ...invocation.private, compactionBundle, executable, program.path, ...invocation.readable].filter(Boolean);
+  const channelReadable = checkChannel ? [checkChannel.extension, checkChannel.responses] : [];
+  const channelWritable = checkChannel ? [checkChannel.requests] : [];
+  const paths = [workspace, ...invocation.writable, sourceRoot, ...invocation.private, compactionBundle, ...channelReadable, ...channelWritable, executable, program.path, ...invocation.readable].filter(Boolean);
   for (const path of paths) pathString(path);
   if (!invocation.readable.some((root) => inside(root, program.path))) throw new Error(`${program.label} must be inside its installed package`);
-  const readable = [...SYSTEM_READ_ROOTS, ...invocation.readable, ...(compactionBundle ? [compactionBundle] : [])];
-  const writable = [workspace, ...invocation.writable];
+  const readable = [...SYSTEM_READ_ROOTS, ...invocation.readable, ...(compactionBundle ? [compactionBundle] : []), ...channelReadable];
+  const writable = [workspace, ...invocation.writable, ...channelWritable];
   const privateRoots = [sourceRoot, ...invocation.private];
   for (const privateRoot of privateRoots) {
     for (const granted of [...readable, ...writable, executable]) {
@@ -31,8 +37,8 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
       }
     }
   }
-  for (const state of invocation.writable) {
-    if (inside(workspace, state) || inside(state, workspace)) throw new Error("Seatbelt candidate and Pi state must be separate directories");
+  for (const state of [...invocation.writable, ...channelReadable, ...channelWritable]) {
+    if (inside(workspace, state) || inside(state, workspace)) throw new Error("Seatbelt candidate, Pi state and check channel must be separate directories");
   }
   if (!Number.isInteger(inferencePort) || inferencePort < 1 || inferencePort > 65535) throw new Error("Seatbelt requires a valid inference relay port");
   const ancestors = new Set();

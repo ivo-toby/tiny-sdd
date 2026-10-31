@@ -16,8 +16,8 @@ const sandbox = {
   inferencePort: 54321,
 };
 // The fixtures name Pi's paths; the profile builder receives them as the Pi runner's invocation.
-function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, inferencePort, ...pi }) {
-  return buildProfile({ workspace, sourceRoot, compactionBundle, inferencePort, invocation: piSeatbeltInvocation(pi) });
+function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, checkChannel, inferencePort, ...pi }) {
+  return buildProfile({ workspace, sourceRoot, compactionBundle, checkChannel, inferencePort, invocation: piSeatbeltInvocation(pi) });
 }
 const model = { id: "exact-model", maxTokens: 1024, headers: { "X-Model": "$TINYSDD_PI_SECRET_2" } };
 const provider = { api: "openai-completions", baseUrl: "https://inference.example/v1", apiKey: "$TINYSDD_PI_SECRET_0", headers: { "X-Provider": "$TINYSDD_PI_SECRET_1" }, models: [model, { id: "other-model" }] };
@@ -168,4 +168,21 @@ test("relay resolves declared env references on the host and hides provider erro
   assert.equal(authorization, "Bearer synthetic-host-key");
   assert.equal(result.status, 401);
   assert.doesNotMatch(result.text, /synthetic-host-key/u);
+});
+
+test("Seatbelt grants the run_checks channel: extension and responses read-only, requests writable (#197)", () => {
+  const checkChannel = { extension: "/private/tmp/channel/run-checks.mjs", requests: "/private/tmp/channel/requests", responses: "/private/tmp/channel/responses" };
+  const profile = buildMacosSandboxProfile({ ...sandbox, checkChannel });
+  const reads = profile.split("\n").find((line) => line.startsWith("(allow file-read* (subpath"));
+  assert.match(reads, /\(subpath "\/private\/tmp\/channel\/run-checks\.mjs"\)/u);
+  assert.match(reads, /\(subpath "\/private\/tmp\/channel\/responses"\)/u);
+  assert.doesNotMatch(reads, /channel\/requests|\(subpath "\/private\/tmp\/channel"\)/u);
+  const writes = profile.split("\n").filter((line) => line.startsWith("(allow file-read* file-write*"));
+  assert.deepEqual(writes, ['(allow file-read* file-write* (subpath "/private/tmp/candidate"))', '(allow file-read* file-write* (subpath "/private/tmp/pi-state"))', '(allow file-read* file-write* (subpath "/private/tmp/channel/requests"))']);
+  assert.match(profile, /\(allow file-read-metadata [^\n]*\(literal "\/private\/tmp\/channel"\)/u);
+  assert.doesNotMatch(buildMacosSandboxProfile(sandbox), /channel/u);
+  for (const root of ["/Users/operator/project/.channel", "/private/tmp/candidate/.channel"]) {
+    const inside = { extension: `${root}/run-checks.mjs`, requests: `${root}/requests`, responses: `${root}/responses` };
+    assert.throws(() => buildMacosSandboxProfile({ ...sandbox, checkChannel: inside }), /overlap|separate/u);
+  }
 });

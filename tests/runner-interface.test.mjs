@@ -98,3 +98,16 @@ test('the Pi runner keeps its executable defaults and response token limit sourc
   assert.deepEqual(piRunner.responseTokenLimit({ maxTokens: null }), { maxTokens: 16384, maxTokensSource: 'pi-default' });
   assert.deepEqual(piRunner.responseTokenLimit({ maxTokens: 512 }), { maxTokens: 512, maxTokensSource: 'model' });
 });
+
+test('the Pi runner reads the tool loadout Pi 1.4.0 announces before the first turn (#197)', () => {
+  // Shape observed from a real Pi 1.4.0 --mode json run: system message_start/message_end carry toolsAdded.
+  const system = { role: 'system', content: '', sections: {}, toolsAdded: [{ name: 'read', description: 'r' }, { name: 'write', description: 'w' }, { name: 'edit', description: 'e' }] };
+  const stream = [
+    { type: 'session', version: 3, id: 's' },
+    { type: 'message_start', message: system },
+    { type: 'message_end', message: system },
+    { type: 'message_end', message: { role: 'system', toolsAdded: [{ name: 'run_checks' }] } },
+  ].map((event) => JSON.stringify(event)).join('\n');
+  assert.deepEqual(piRunner.parseEvents(stream).toolLoadout, ['read', 'write', 'edit']);
+  assert.equal(piRunner.parseEvents('{"type":"session"}\n').toolLoadout, null);
+});
