@@ -66,9 +66,9 @@ from the approved manifest, per-check `timeoutMs`, `maxCheckRuns`, bounded and
 digested output, candidate input digests, `acceptanceEvidence: false`,
 cancellation when the worker ends, and check time counted toward the worker
 deadline. The profile denies everything except reading the system, `/bin`,
-`/usr/bin`, the Node installation and the dependency mount sources; writing the
-check's scratch copy, its home and tmp directories and `/dev/null`; and starting
-processes from those places. There is no network rule, so the check has no
+`/usr/bin`, the Node executable and the dependency mount sources; writing the
+check's scratch copy, its home and tmp directories and `/dev/null`; starting
+processes from those places; and signalling processes in the same sandbox. There is no network rule, so the check has no
 network, and the source project, home and worker state are not readable. The
 result's `sandbox.limitsApplied` and `sandbox.limitsNotApplied` say which limits
 held.
@@ -85,9 +85,20 @@ The differences from Linux:
   not threads. Above `kern.maxprocperuid`, `maxProcesses` is reported as not
   applied. If either `ulimit` fails, the check does not run
   (`CHECK_RUNNER_UNAVAILABLE`). There is no address-space limit.
-- There is no PID namespace. The check's process group is killed on timeout or
-  cancellation. Cancellation uses the process group, not `/proc`; `worker stop`
-  itself still requires Linux `/proc`.
+- There is no PID namespace and no `--die-with-parent`. The check's process
+  group is killed when the check exits, times out or is cancelled, and a small
+  watchdog inside the sandbox kills the group when TinySDD itself exits or is
+  killed: it waits on a pipe from TinySDD, which closes then. A process that
+  leaves the group (for example with `setsid`) can outlive the check until it
+  exits on its own; it still has no network and can only write to the removed
+  scratch directory. Cancellation uses the process group, not `/proc`;
+  `worker stop` itself still requires Linux `/proc`.
+- Only the Node executable is readable and executable, not its installation
+  root (with the macOS installer that root is `/usr/local`). A symlinked
+  `bin/node`, as Homebrew installs it, is granted at its target; a Homebrew
+  Node's libraries outside that path are not, so it may not start and the check
+  fails with the dynamic loader's error. Use a self-contained Node build (the
+  nodejs.org installer or a version manager) for checks on macOS.
 - Feature integration (`feature accept` with `featureIntegration`) uses the same
   runner, so it also runs on macOS.
 
