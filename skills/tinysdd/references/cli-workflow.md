@@ -476,8 +476,10 @@ tinysdd task close --id scratch --by operator --reason 'no longer needed'
 A worker's `type` is `pi` or `opencode`. An `opencode` worker needs an absolute
 `opencodeConfig` path to the OpenCode config file that defines its provider
 (`@ai-sdk/openai-compatible`, see `docs/quickstart.md`). A `pi` worker must not
-set it. The OpenCode runner has no `run_checks` tool, so declared checks are
-reported unavailable for it, and it has no deterministic compaction. On Linux
+set it. Declared checks give an OpenCode worker `run_checks` through a local
+TinySDD plugin (the only plugin, one extra `run_checks` allow rule); OpenCode
+runs one step's tool calls concurrently, so a check waits for the earlier
+write calls of its message. It has no deterministic compaction. On Linux
 its sandbox gets a procfs that Pi's sandbox does not have. Provider headers
 other than `User-Agent` are refused; use an `{env:NAME}` API key instead.
 
@@ -560,9 +562,10 @@ the same installation as the CLI's Node executable, and the exact model in Pi's
 configured models. The exact Pi pin is 1.4.0 (1.0.0 is refused), which requires
 Node >=22.19.0; its fixed check-client integration still needs live qualification. Missing sandbox support fails closed. It uses
 read/write/edit tools in a disposable copy. Available declared checks add the
-fixed `run_checks` client; generated code executes only in the separate Linux
-check sandbox. An unavailable host records the reason and runs without the
-client. Source files may appear in local raw events and sent
+fixed `run_checks` client; generated code executes only in the separate
+check sandbox (bubblewrap on Linux, `linux-bubblewrap`; Seatbelt on macOS,
+`macos-seatbelt`, which refuses root callers). An unavailable host records the
+reason and runs without the client. Source files may appear in local raw events and sent
 model context: use only authorized projects and providers. Excluded filenames
 are a precaution, not a general detector for secrets embedded in source.
 Ambient `TMPDIR` (or the `/tmp` fallback) is resolved through host aliases on

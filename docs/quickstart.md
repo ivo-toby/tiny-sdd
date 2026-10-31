@@ -25,9 +25,13 @@ The macOS adapter uses Seatbelt with read access to system libraries, the Node
 executable and the installed Pi package. The candidate and temporary Pi state
 are writable. The source project, original Pi state and other home files are
 inaccessible, including through symlinks. Pi receives read/write/edit; process
-forks and shell execution are denied. The Linux check runner is unavailable on
-macOS, so a declared checks packet records that condition and runs without
-`run_checks`.
+forks and shell execution are denied. A declared checks packet gets
+`run_checks` (runner `macos-seatbelt`): each check runs under its own Seatbelt
+profile with no network, writes only to a scratch copy of the candidate, and
+read-only dependency mounts. The macOS runner refuses a root caller and needs
+`/bin/ps`; without it the run records the reason and runs without
+`run_checks`. See [setup](setup.md#check-runner-on-macos) for how it differs
+from the Linux runner. Live macOS check runs are unverified.
 
 macOS currently supports the `openai-completions` API with an explicit HTTP(S)
 base URL. A temporary loopback relay forwards only `POST /chat/completions` for
@@ -782,9 +786,15 @@ OpenCode sandbox gets its own procfs, which the OpenCode binary needs; the Pi
 sandbox still has none, and the new procfs lists only sandbox processes. The worker's OpenCode configuration
 comes only from TinySDD: no project, global, managed or wellknown OpenCode
 configuration is read. The run is headless (`--standalone`, `--format json`),
-allows only read and edit, and has automatic compaction off. Declared
-`run_checks` are reported unavailable for this runner. This runner is
-unverified against a live model or a live sandbox.
+allows only read and edit, and has automatic compaction off. Declared checks
+add a local TinySDD plugin that provides `run_checks`. It is the only plugin
+the config names; it is mounted read-only and talks to the same host check
+channel as Pi's. The permissions get exactly one more rule,
+`{ "action": "run_checks", "resource": "*", "effect": "allow" }`, after the
+`*` deny. OpenCode starts the tool calls of one step concurrently, so a check
+waits for the write calls of its own message that started before it, and checks
+run one at a time. `run_checks` calls count toward `maxToolCalls`. This runner
+and its plugin are unverified against a live model or a live sandbox.
 
 ### Model registry profiles
 

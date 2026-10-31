@@ -29,7 +29,7 @@ Node executable running the CLI, and the supported worker sandbox:
 | Host | Worker sandbox | Check runner |
 | --- | --- | --- |
 | Linux | `/usr/bin/bwrap` or `/bin/bwrap`, with a passing startup probe | bubblewrap plus `prlimit` and, for root callers, `setpriv` |
-| macOS | `/usr/bin/sandbox-exec` | unavailable; `run_checks` is Linux-only |
+| macOS | `/usr/bin/sandbox-exec` | Seatbelt (`sandbox-exec`) plus `/bin/ps`; not for root callers |
 
 Setup does not install any of these prerequisites. For Node, use the [official
 Node downloads](https://nodejs.org/en/download) and rerun `tinysdd setup` with
@@ -50,9 +50,48 @@ For Linux check-runner support, Debian/Ubuntu operators can install
 `sudo dnf install bubblewrap util-linux`. The [bubblewrap project
 documentation](https://github.com/containers/bubblewrap) and the
 [util-linux manual](https://man7.org/linux/man-pages/man1/prlimit.1.html)
-describe those host tools. macOS `sandbox-exec` is an operating-system
-facility; TinySDD reports `run_checks` as unavailable there while the worker
-Seatbelt path can remain supported.
+describe those host tools. macOS `sandbox-exec` and `/bin/ps` are part of the
+operating system. Run setup and workers as your own user: the macOS check runner
+refuses root, because macOS has no `setpriv` to drop to and does not apply the
+process limit to root.
+
+### Check runner on macOS
+
+On macOS each declared check runs under its own Seatbelt profile (runner
+`macos-seatbelt`). It keeps the Linux runner's record shape and guarantees:
+argv only from the approved manifest, per-check `timeoutMs`, `maxCheckRuns`,
+bounded and digested output, candidate input digests, `acceptanceEvidence:
+false`, cancellation when the worker ends, and check time counted toward the
+worker deadline. The profile denies everything except reading the system, the
+shells, the Node installation and the dependency mount sources, writing the
+check's scratch directory and `/dev/null`, starting processes from those
+places, and signalling processes in the same sandbox. There is no network rule,
+so the check has no network, and the source project, home and worker state are
+not readable.
+
+The differences from Linux:
+
+- The host copies the candidate into the scratch directory, and each dependency
+  mount is a symlink to its source, which the profile allows to read but not
+  write. There is no tmpfs, so the scratch directory is on disk; only the file
+  size limit and the copy limit (`scratchBytes`) bound it.
+- A fixed shell script sets the limits before the check starts: the process
+  limit is the uid's current process count (from `/bin/ps`) plus
+  `maxProcesses`, capped at the hard limit, and the file size limit is
+  `fileSizeBytes`. macOS counts processes, not threads. There is no
+  address-space limit.
+- There is no PID namespace. The check's process group is killed when the check
+  exits, times out or is cancelled. A process that leaves the group (for example
+  with `setsid`) can outlive the check until it exits on its own; it still has
+  no network and can only write to the removed scratch directory.
+- Cancellation uses the process group, not `/proc`. `worker stop` itself still
+  requires Linux `/proc`.
+- Feature integration (`feature accept` with `featureIntegration`) uses the same
+  runner, so it also runs on macOS.
+
+None of this has been observed on a live Mac yet: the tests run the macOS code
+path on Linux with a stand-in `sandbox-exec`, so whether Seatbelt accepts and
+enforces the profile is unverified.
 
 ### Linux bubblewrap startup failures
 

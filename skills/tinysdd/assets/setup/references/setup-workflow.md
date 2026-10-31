@@ -250,7 +250,7 @@ The supported worker sandbox matrix is:
 | Host | Worker sandbox | Required executable(s) | `run_checks` |
 | --- | --- | --- | --- |
 | Linux | bubblewrap | `/usr/bin/bwrap` or `/bin/bwrap` | Available only when Linux bubblewrap, `prlimit`, and (when privileged) `setpriv` are available. |
-| macOS | Seatbelt | `/usr/bin/sandbox-exec` | Unavailable by design because the check runner requires Linux. |
+| macOS | Seatbelt | `/usr/bin/sandbox-exec` | Available with `/bin/ps` when setup and the worker run as a non-root user; refused for root. |
 | Other | none | unsupported | Worker refuses an unsandboxed run. |
 
 The check runner also requires a real Node root with `bin/node`; it does not
@@ -648,8 +648,8 @@ retained paths named by the result and compare these fields:
   provider-attested quality result.
 - If `runtime.json.runChecks.available` is true, a retained
   `workerObservedChecks.runs` entry shows the `readiness` check with exit code
-  zero. If it is false, record its exact `unavailableReason`; macOS normally
-  reports that the check runner requires Linux. An unavailable check runner is
+  zero. If it is false, record its exact `unavailableReason`; on macOS that is
+  usually a root caller or a missing `/bin/ps`. An unavailable check runner is
   distinct from a failed check.
 
 This smoke observes one authenticated inference path, sandbox startup and a

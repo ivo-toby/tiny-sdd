@@ -796,7 +796,7 @@ export async function runCheck(options) {
 // macOS has no bind mounts and no tmpfs: the host copies the candidate into the
 // scratch directory, each dependency mount is a symlink to its read-only source,
 // and the Seatbelt profile allows writes only inside the scratch directory. The
-// differences from Linux are in docs/worker-runtime-next.md 3.1.
+// differences from Linux are in docs/setup.md (Check runner on macOS).
 async function runSeatbeltCheck({ request, binaries, scratch, signal, setupDeadline }) {
   const work = join(scratch, 'work');
   const home = join(scratch, 'home');
