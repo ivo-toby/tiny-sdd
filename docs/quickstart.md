@@ -753,7 +753,14 @@ sequentially in assistant source order: `[write, run_checks]` observes that
 write; `[run_checks, write]` checks the earlier candidate. The tool does not
 reorder sibling writes. Checks share
 the worker wall-clock deadline and are cancelled when the worker ends. Declared
-dependency mounts cannot overlap any allowed path.
+dependency mounts cannot overlap any allowed path. Each mount is fingerprinted
+before launch (up to 250,000 entries and 512 MiB of file content). Symlinks may
+point anywhere inside the project, so npm workspace links such as
+`node_modules/@scope/pkg -> ../../packages/pkg` are recorded by their target.
+When a mount cannot be fingerprinted (a symlink that leaves the project, a
+limit exceeded, a special file), the run starts without `run_checks` and
+`runtime.json.runChecks.reason` starts with `dependency mount identity
+unavailable:`.
 
 When neither the worker's `limits` nor its profile's measured `limits` set
 `timeoutMs` and `maxToolCalls`, each worker gets 600000 ms (10 minutes) and 100
