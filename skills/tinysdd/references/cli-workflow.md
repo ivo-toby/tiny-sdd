@@ -152,25 +152,25 @@ Use the phases in that order:
 
 The frontier phase files prepare artifacts only. A successful validator,
 frontmatter value, or phase label does not approve anything. They do not bundle
-the TinySDD CLI, scripts or schemas. Set these roots when working from any
-directory; `TARGET_PROJECT` owns the descriptor set and controller state:
+the TinySDD CLI, scripts or schemas. Set this root when working from any
+directory; `TARGET_PROJECT` owns the descriptor set and controller state, and
+the `tinysdd` command comes from the installed CLI:
 
 ~~~sh
-TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
 TARGET_PROJECT=/absolute/path/to/project
 ~~~
 
 The current phase CLI supports only the human research gate:
 
 ~~~sh
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+tinysdd --project "$TARGET_PROJECT" \
   phase record --phase research --feature reservations \
   --proposal changes/reservations/proposal.md \
   --context changes/reservations/research.context.json \
   --by operator --reason 'Reviewed the cited research inputs'
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+tinysdd --project "$TARGET_PROJECT" \
   phase status --feature reservations
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+tinysdd --project "$TARGET_PROJECT" \
   phase advance --from research --to plan --feature reservations \
   --by operator --reason 'Research is current and complete'
 ~~~
@@ -206,11 +206,13 @@ BRIEF_SOURCE_RELATIVE=changes/example/slices/s1/brief.md
 CONTEXT_SOURCE_RELATIVE=changes/example/slices/s1/context.json
 CHECKS_SOURCE_RELATIVE=changes/example/slices/s1/checks.json
 
-node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
-  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --json
+tinysdd --project "$TARGET_PROJECT" change validate \
+  --change "$CHANGE_RELATIVE" --json
 ```
 
-The validator only prints destination paths in the plan. Read the selected
+With `--json` the CLI prints the standard `{ ok, data }` envelope, so the plan
+is at `.data.registrationPlan` (the old standalone script printed the bare
+object; the subcommand wraps it). The validator only prints destination paths in the plan. Read the selected
 slice descriptor's actual `brief`, `context` and `checks` paths; a source folder
 need not match the slice ID. Copy those exact descriptor inputs to the fixed
 target paths before `task add` and approval:
@@ -220,7 +222,7 @@ mkdir -p "$TASK_ROOT"
 cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
 cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
 cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add --id "$SLICE_ID" --feature example \
+tinysdd --project "$TARGET_PROJECT" task add --id "$SLICE_ID" --feature example \
   --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
   --checks "$TASK_ROOT_RELATIVE/$SLICE_ID.checks.json" \
   --preparation specs/example.md \
@@ -243,8 +245,8 @@ exporter checks packet identity and writes no project files or controller state:
 
 ```sh
 BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
-node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --slice "$SLICE_ID" \
+tinysdd --project "$TARGET_PROJECT" change export \
+  --change "$CHANGE_RELATIVE" --slice "$SLICE_ID" \
   --out "$BUNDLE_OUT" --json
 ```
 

@@ -56,10 +56,10 @@ this integration check. Ensure each wiring obligation names the owning slice and
 cites its entrypoint.
 
 The phase file is prompt guidance; a standalone install does not include the
-TinySDD CLI, validator, exporter, schemas or repository docs. Before
-registration, set these roots from any working directory:
+validator, exporter, schemas or repository docs. Before
+registration, set these roots from any working directory (the `tinysdd`
+command comes from the installed CLI, so no checkout is needed):
 
-    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
     TARGET_PROJECT=/absolute/path/to/project
     CHANGE_ROOT_RELATIVE=changes/FEATURE
     CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
@@ -73,8 +73,8 @@ registration, set these roots from any working directory:
 Run the validator with the target project selected explicitly. Keep the change
 argument project-relative; the validator rejects an absolute change path:
 
-    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --ready --json
+    tinysdd --project "$TARGET_PROJECT" change validate \
+      --change "$CHANGE_RELATIVE" --ready --json
 
 Read the complete registrationPlan. Set the three `*_SOURCE_RELATIVE` values
 from the selected slice descriptor's actual `brief`, `context` and `checks`
@@ -87,7 +87,7 @@ shorten a plan list or add an approval flag:
     cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
     cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
     cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add \
+    tinysdd --project "$TARGET_PROJECT" task add \
       --id "$SLICE_ID" --feature FEATURE \
       --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
       --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
@@ -99,13 +99,13 @@ Use the actual operator attribution and reason. Omit --depends-on when the plan
 entry is empty. The validator is read-only. Task approval remains the existing
 implement gate and must be obtained separately.
 
-After normal task approval and accepted prerequisites, export with the checkout
-exporter if a foreign harness needs a portable bundle. Export does not run
+After normal task approval and accepted prerequisites, export with the installed
+CLI if a foreign harness needs a portable bundle. Export does not run
 checks, apply a candidate or accept a feature:
 
     BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
-    node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+    tinysdd --project "$TARGET_PROJECT" change export \
+      --change "$CHANGE_RELATIVE" \
       --slice "$SLICE_ID" --out "$BUNDLE_OUT" --json
 
 Stop when a

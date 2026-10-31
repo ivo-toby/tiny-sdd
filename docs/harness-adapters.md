@@ -47,8 +47,7 @@ candidate parent. The paths below are literal placeholders; replace them with
 the paths selected by the operator. The command does not execute a harness:
 
 ```text
-node /absolute/tiny-sdd/scripts/export-slice.mjs \
-  --project /absolute/project \
+tinysdd --project /absolute/project change export \
   --change changes/feature/change.json \
   --slice feature-s1 \
   --out /absolute/canonical/adapter-runs/feature-s1-bundle \

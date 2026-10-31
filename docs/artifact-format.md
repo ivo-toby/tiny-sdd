@@ -20,11 +20,11 @@ approval, test-adequacy verdict, verification or feature acceptance.
 ## Work delivered by #20
 
 Implement versioned schemas and dependency-free validators, an offline
-registration-plan script, a fresh-approved-task bundle exporter, documentation
+registration-plan command, a fresh-approved-task bundle exporter, documentation
 and a broker reference example. Reuse current controller/context/checks APIs;
 no new controller/CLI gate or live provider loop is included. Code locations
 proposed: `src/change-format.mjs`, `src/slice-bundle.mjs`,
-`scripts/validate-change.mjs`, `scripts/export-slice.mjs`, focused tests and
+`bin/tinysdd.mjs` (`change validate` / `change export`), focused tests and
 `examples/artifact-format/`. Update quickstart and CLI workflow when implemented.
 
 #28 implements phase transitions; #81 implements active Jev assessment, bounded

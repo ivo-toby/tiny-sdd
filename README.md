@@ -320,8 +320,8 @@ not shipped in the npm package.
 
 | Script | Purpose |
 | --- | --- |
-| `node scripts/validate-change.mjs --help` | Validate portable change/slice artifacts. |
-| `node scripts/export-slice.mjs --help` | Export a prepared slice bundle. |
+| `tinysdd change validate --change PATH [--ready] [--json]` | Validate portable change/slice artifacts and print the registration plan (installed subcommand). |
+| `tinysdd change export --change PATH --slice ID --out DIR [--json]` | Export a prepared slice bundle (installed subcommand). |
 | `node scripts/research.mjs --help` | Prepare bounded research packets and validate selections. |
 | `node scripts/harness-adapter.mjs --help` | Begin/finalize retained Claude Code, OpenCode or interactive Pi runs. |
 | `node scripts/archive-change.mjs --help` | Archive a freshly accepted change and merge its living specs. |

@@ -34,6 +34,8 @@ import { assertInternalPath, atomicWriteJson, canonicalProjectRoot, ensureDirect
 import { appendUsageRecord, importUsageRecords, USAGE_LEDGER_MAX_BYTES } from '../src/usage.mjs';
 import { isFailedWorkerOutcome } from '../src/outcomes.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
+import { buildRegistrationPlan } from '../src/change-format.mjs';
+import { exportSliceBundle } from '../src/slice-bundle.mjs';
 import { inspectEffectiveModelSettings } from '../src/effective-model-settings.mjs';
 import { workerRunner } from '../src/runners/index.mjs';
 import { inspectBenchmarkIdentity, runBenchmark } from '../src/benchmark-runner.mjs';
@@ -68,6 +70,8 @@ Usage:
   tinysdd [--json] [--project PATH] config show|validate [--worker NAME] [--profile ID|PATH]
   tinysdd [--json] [--project PATH] status [--feature NAME]
   tinysdd [--json] [--project PATH] next
+  tinysdd [--json] [--project PATH] change validate --change PATH [--ready]
+  tinysdd [--json] [--project PATH] change export --change PATH --slice ID --out DIR
   tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME] [--worker NAME [--worker-reason TEXT]]
   tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--worker NAME] [--worker-reason TEXT]
   tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
@@ -177,6 +181,11 @@ function parseFlags(tokens, allowed) {
     const equals = token.indexOf('=');
     const name = equals === -1 ? token.slice(2) : token.slice(2, equals);
     if (!allowed.has(name)) throw cliError(`unknown option: --${name}`);
+    if (allowed.get(name) === 'flag') {
+      if (equals !== -1) throw cliError(`--${name} does not take a value`);
+      values[name] = true;
+      continue;
+    }
     let value;
     if (equals !== -1) {
       value = token.slice(equals + 1);
@@ -231,6 +240,15 @@ function parseCommand(args) {
   if (command === 'config') {
     if (!['show', 'validate'].includes(subcommand)) throw cliError('config requires show or validate');
     const { values, positional } = parseFlags(rest, new Map([['worker', 'value'], ['profile', 'value']]));
+    if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
+    return { command, subcommand, values };
+  }
+  if (command === 'change') {
+    if (!['validate', 'export'].includes(subcommand)) throw cliError('change requires validate or export');
+    const allowed = subcommand === 'validate'
+      ? new Map([['change', 'value'], ['ready', 'flag']])
+      : new Map([['change', 'value'], ['slice', 'value'], ['out', 'value']]);
+    const { values, positional } = parseFlags(rest, allowed);
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -953,6 +971,38 @@ async function run(argv) {
     return { ok: true, data, presentation: 'status' };
   }
   else if (parsed.command === 'next') data = await controllerNext(project);
+  else if (parsed.command === 'change' && parsed.subcommand === 'validate') {
+    const plan = await buildRegistrationPlan({ projectRoot: project, changePath: requiredOption(parsed.values, 'change'), requireReady: parsed.values.ready === true });
+    data = {
+      schemaVersion: plan.schemaVersion,
+      changeId: plan.changeId,
+      readiness: plan.readiness,
+      warnings: plan.warnings,
+      metrics: plan.metrics,
+      registrationPlan: plan.registrationPlan,
+      preparationIdentity: plan.preparationIdentity,
+      runtimeScope: plan.runtimeScope,
+    };
+    presentation = 'change-validate';
+  }
+  else if (parsed.command === 'change' && parsed.subcommand === 'export') {
+    const result = await exportSliceBundle({
+      projectRoot: project,
+      changePath: requiredOption(parsed.values, 'change'),
+      sliceId: requiredOption(parsed.values, 'slice'),
+      outputDir: requiredOption(parsed.values, 'out'),
+    });
+    data = {
+      schemaVersion: result.schemaVersion,
+      outputDir: result.outputDir,
+      manifestPath: result.manifestPath,
+      totalBytes: result.totalBytes,
+      files: result.files,
+      runtimeScope: result.manifest.runtimeScope,
+      identity: result.manifest.identity,
+    };
+    presentation = 'change-export';
+  }
   else if (parsed.command === 'task' && parsed.subcommand === 'add') data = await addTask(project, {
     id: parsed.values.id,
     brief: parsed.values.brief,
@@ -1273,6 +1323,24 @@ function writeResult(result, json) {
   }
   if (result.presentation === 'phase-advance') {
     process.stdout.write(`Phase ${result.data.feature}: advanced ${result.data.from} to ${result.data.to}.\n`);
+    return;
+  }
+  if (result.presentation === 'change-validate') {
+    const report = result.data;
+    process.stdout.write(`Change ${report.changeId}: ${report.readiness.ready ? 'ready' : 'not ready'} (${report.metrics.sliceCount} slice(s), ${report.metrics.deltaCount} delta(s)).\n`);
+    for (const warning of report.warnings ?? []) {
+      const text = typeof warning === 'string' ? warning : warning.message ?? warning.code ?? JSON.stringify(warning);
+      process.stderr.write(`Warning: ${text}\n`);
+    }
+    for (const issue of report.readiness.issues ?? []) {
+      const text = typeof issue === 'string' ? issue : issue.message ?? issue.code ?? JSON.stringify(issue);
+      process.stderr.write(`Not ready: ${text}\n`);
+    }
+    return;
+  }
+  if (result.presentation === 'change-export') {
+    const report = result.data;
+    process.stdout.write(`Exported slice bundle to ${report.outputDir} (${report.files.length} file(s), ${report.totalBytes} bytes). Manifest: ${report.manifestPath}\n`);
     return;
   }
   if (result.presentation === 'phase-status') {

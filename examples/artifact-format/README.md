@@ -11,7 +11,7 @@ reported.
 From the repository root, validate the fixture with:
 
 ```text
-node scripts/validate-change.mjs --change examples/artifact-format/changes/broker-recut/change.json --ready --json
+tinysdd change validate --change examples/artifact-format/changes/broker-recut/change.json --ready --json
 ```
 
 The feature check is offline and uses the real `src/entrypoint.mjs` caller for
@@ -40,7 +40,7 @@ cp examples/artifact-format/changes/broker-recut/slices/s1/brief.md .tinysdd/tas
 cp examples/artifact-format/changes/broker-recut/slices/s1/context.json .tinysdd/tasks/broker-s1.context.json
 cp examples/artifact-format/changes/broker-recut/slices/s1/checks.json .tinysdd/tasks/broker-s1.checks.json
 PLAN_JSON=$(mktemp)
-node scripts/validate-change.mjs \
+tinysdd change validate \
   --change examples/artifact-format/changes/broker-recut/change.json \
   --ready --json > "$PLAN_JSON"
 node --input-type=module - "$PLAN_JSON" <<'NODE'

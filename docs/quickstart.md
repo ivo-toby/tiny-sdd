@@ -247,23 +247,22 @@ preparation order is:
 The frontier skills prepare artifacts; they do not approve them. The current
 phase CLI implements only the human research handler. If it is configured, use
 the real commands. These assets do not bundle the CLI, scripts or schemas; set
-the TinySDD checkout and canonical target project roots once when working from
-an unrelated directory:
+the canonical target project root once when working from an unrelated
+directory (the `tinysdd` command comes from the installed CLI):
 
 ~~~sh
-TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
 TARGET_PROJECT=/absolute/path/to/project
 ~~~
 
 ~~~sh
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+tinysdd --project "$TARGET_PROJECT" \
   phase record --phase research --feature reservations \
   --proposal changes/reservations/proposal.md \
   --context changes/reservations/research.context.json \
   --by operator --reason 'Reviewed the cited research inputs'
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+tinysdd --project "$TARGET_PROJECT" \
   phase status --feature reservations
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+tinysdd --project "$TARGET_PROJECT" \
   phase advance --from research --to plan --feature reservations \
   --by operator --reason 'Research is current and complete'
 ~~~
@@ -293,18 +292,17 @@ telemetry UNKNOWN, never zero.
 The first controller sequence is:
 
 ```sh
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" init
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add --id first-change --brief docs/tasks/first-change.md --allow src/example.mjs,test/example.test.mjs
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task approve --id first-change --by ivo --reason 'Reviewed this task brief'
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" next
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task packet --id first-change --json
+tinysdd --project "$TARGET_PROJECT" init
+tinysdd --project "$TARGET_PROJECT" task add --id first-change --brief docs/tasks/first-change.md --allow src/example.mjs,test/example.test.mjs
+tinysdd --project "$TARGET_PROJECT" task approve --id first-change --by ivo --reason 'Reviewed this task brief'
+tinysdd --project "$TARGET_PROJECT" next
+tinysdd --project "$TARGET_PROJECT" task packet --id first-change --json
 ```
 
 For a portable change descriptor, validate the preparation artifacts and print
 the topological registration plan without changing controller state:
 
 ```sh
-TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
 TARGET_PROJECT=/absolute/path/to/project
 CHANGE_ROOT_RELATIVE=changes/example
 CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
@@ -315,12 +313,13 @@ BRIEF_SOURCE_RELATIVE=changes/example/slices/s1/brief.md
 CONTEXT_SOURCE_RELATIVE=changes/example/slices/s1/context.json
 CHECKS_SOURCE_RELATIVE=changes/example/slices/s1/checks.json
 
-node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
-  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+tinysdd --project "$TARGET_PROJECT" change validate \
+  --change "$CHANGE_RELATIVE" \
   --json
 ```
 
-The plan is read-only. Read the selected slice descriptor's actual `brief`,
+With `--json` the CLI prints the standard `{ ok, data }` envelope, so the plan
+is at `.data.registrationPlan`. The plan is read-only. Read the selected slice descriptor's actual `brief`,
 `context` and `checks` paths; do not derive a source folder from its ID. Before
 registering each slice, copy those exact descriptor bytes to the fixed target
 task paths shown by the plan, then use those paths for `task add` and approval.
@@ -331,7 +330,7 @@ mkdir -p "$TASK_ROOT"
 cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
 cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
 cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
-node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add --id "$SLICE_ID" --feature example \
+tinysdd --project "$TARGET_PROJECT" task add --id "$SLICE_ID" --feature example \
   --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
   --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
   --checks "$TASK_ROOT_RELATIVE/$SLICE_ID.checks.json" \
@@ -361,8 +360,8 @@ where it is an alias); the exporter refuses symlinked output parents.
 
 ```sh
 BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
-node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+tinysdd --project "$TARGET_PROJECT" change export \
+  --change "$CHANGE_RELATIVE" \
   --slice "$SLICE_ID" \
   --out "$BUNDLE_OUT" \
   --json
@@ -536,6 +535,8 @@ After the feature is explicitly accepted and its integration proof is still
 fresh, archive its living-spec change with the standalone script:
 
 ```sh
+TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+TARGET_PROJECT=/absolute/path/to/project
 node "$TINYSDD_CHECKOUT/scripts/archive-change.mjs" \
   --project "$TARGET_PROJECT" \
   --change changes/reservations/change.json \
