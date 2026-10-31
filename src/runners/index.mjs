@@ -1,7 +1,8 @@
 import { piRunner } from "./pi.mjs";
+import { openCodeRunner } from "./opencode.mjs";
 import { WORKER_TYPES } from "./types.mjs";
 
-const RUNNERS = Object.freeze({ pi: piRunner });
+const RUNNERS = Object.freeze({ pi: piRunner, opencode: openCodeRunner });
 
 export { WORKER_TYPES };
 
