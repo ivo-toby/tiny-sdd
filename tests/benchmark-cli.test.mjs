@@ -76,7 +76,8 @@ test('help advertises the benchmark command without creating project state', asy
     assert.equal(result.status, 0);
     const parsed = parseSingleJson(result);
     assert.equal(parsed.ok, true);
-    assert.match(parsed.data.help, /bench run --worker NAME \[--profile ID\|PATH\] \[--suite PATH\] \[--repeat K\]/u);
+    assert.match(parsed.data.help, /bench run\s+Run a benchmark suite/u);
+    assert.match((await invoke(root, 'help', 'bench', 'run')).stdout, /--confirm-settings DIGEST/u);
     await assert.rejects(readFile(join(root, '.tinysdd', 'config.json')));
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -159,6 +159,12 @@ npm test
 node bin/tinysdd.mjs --help
 ```
 
+`tinysdd --help` lists the commands grouped by phase with one-line
+descriptions and the normal flow (`setup → init → task add → task approve →
+worker start → worker status → task review`). Every command has its own help
+with usage, flag meanings and defaults, and an example:
+`tinysdd worker stop --help` or `tinysdd help worker stop`.
+
 The offline decision-evaluation foundation is documented in
 [docs/decision-evaluation.md](decision-evaluation.md). It compares saved
 provider predictions with separately reviewed labels and never performs live
@@ -398,7 +404,7 @@ tinysdd status --feature reservations
 
 Record manual usage only when the phase, model and attribution are known. The
 token fields accept nonnegative safe integers; use the named phases shown by
-`tinysdd --help` and provide either `--task` or `--feature`:
+`tinysdd usage record --help` (or `tinysdd --help`) and provide either `--task` or `--feature`:
 
 ```sh
 tinysdd usage record --phase review --model frontier/model --input 1200 --output 400 --reasoning 80 --feature reservations

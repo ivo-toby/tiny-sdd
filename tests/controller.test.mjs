@@ -1140,7 +1140,8 @@ test('CLI supersede returns the closure as JSON and status prints how the task e
     const supersededHuman = await cli('task', 'supersede', '--id', 'broker-s1', '--with', 'broker-s2', '--by', 'operator', '--reason', 'x').catch((error) => error);
     assert.equal(supersededHuman.code, 1);
     assert.match(supersededHuman.stderr, /^ERROR \[TASK_CLOSED\] task broker-s2 is closed\n$/u);
-    assert.match((await cli('--help')).stdout, /task supersede --id ID --with ID\[,ID\] --by LABEL --reason TEXT/u);
+    assert.match((await cli('--help')).stdout, /task supersede\s+Retire a task/u);
+    assert.match((await cli('--help', 'task', 'supersede')).stdout, /task supersede --id ID --with ID\[,ID\] --by LABEL --reason TEXT/u);
   } finally {
     await cleanup(root);
   }
@@ -2773,8 +2774,8 @@ test('CLI task apply prints one line, reports already-applied files and returns 
     assert.deepEqual(parsed.data.applied.files.map((file) => file.status), ['already-applied', 'already-applied']);
     const again = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
     assert.equal(again.stdout, `one: applied 2 file(s) from ${RUN_ONE} (2 already applied)\n`);
-    assert.match((await cli('--help')).stdout, /task apply --id ID --run RUN_ID --by LABEL\n/u);
-    assert.doesNotMatch((await cli('--help')).stdout, /allow-incomplete/u);
+    assert.match((await cli('--help', 'task', 'apply')).stdout, /task apply --id ID --run RUN_ID --by LABEL\n/u);
+    assert.doesNotMatch((await cli('--help', 'task', 'apply')).stdout, /allow-incomplete/u);
   } finally {
     await cleanup(root);
   }
