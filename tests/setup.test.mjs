@@ -342,7 +342,7 @@ test('bubblewrap startup probe can spawn a deterministic executable and cleans a
   }
 });
 
-test('sandbox inspection reports macOS inference support with Linux-only check limitation', async () => {
+test('sandbox inspection reports macOS inference and Seatbelt check-runner support', async () => {
   const home = await temporary('tinysdd-sandbox-');
   try {
     const bwrap = join(home, 'bwrap');
@@ -365,8 +365,13 @@ test('sandbox inspection reports macOS inference support with Linux-only check l
     assert.equal(blocked.checks.available, false);
     const mac = await inspectSandbox({ platform: 'darwin', executablePaths: { sandboxExec: bwrap } });
     assert.equal(mac.worker.supported, true);
-    assert.equal(mac.checks.available, false);
-    assert.match(mac.checks.reason, /macOS|Linux/u);
+    assert.equal(mac.checks.available, true);
+    assert.equal(mac.checks.runner, 'seatbelt');
+    assert.equal(mac.checks.sandboxExec, bwrap);
+    const macMissing = await inspectSandbox({ platform: 'darwin', executablePaths: { sandboxExec: join(home, 'missing-sandbox-exec') } });
+    assert.equal(macMissing.worker.supported, false);
+    assert.equal(macMissing.checks.available, false);
+    assert.match(macMissing.checks.reason, /sandbox-exec/u);
   } finally {
     await cleanup(home);
   }

@@ -29,7 +29,7 @@ Node executable running the CLI, and the supported worker sandbox:
 | Host | Worker sandbox | Check runner |
 | --- | --- | --- |
 | Linux | `/usr/bin/bwrap` or `/bin/bwrap`, with a passing startup probe | bubblewrap plus `prlimit` and, for root callers, `setpriv` |
-| macOS | `/usr/bin/sandbox-exec` | unavailable; `run_checks` is Linux-only |
+| macOS | `/usr/bin/sandbox-exec` | Seatbelt via `sandbox-exec`, when available |
 
 Setup does not install any of these prerequisites. For Node, use the [official
 Node downloads](https://nodejs.org/en/download) and rerun `tinysdd setup` with

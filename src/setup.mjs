@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { checkRunnerAvailable } from './check-runner.mjs';
 import { validateProfileDocument } from './config.mjs';
 import { tinyError } from './fs-utils.mjs';
 import { REGISTRY_MANIFEST, tinysddConfigDir } from './model-registry.mjs';
@@ -718,10 +719,13 @@ export async function inspectSandbox({ platform = process.platform, privileged =
   }
   if (platform === 'darwin') {
     const sandboxExec = await firstExecutable(executablePaths.sandboxExec ? [executablePaths.sandboxExec] : ['/usr/bin/sandbox-exec']);
+    const runner = checkRunnerAvailable({ platform, sandboxExecPath: sandboxExec?.path });
     return {
       platform,
       worker: sandboxExec ? { supported: true, sandbox: 'seatbelt', executable: sandboxExec.path } : { supported: false, sandbox: 'seatbelt', executable: null, reason: 'macOS sandbox-exec is not available at /usr/bin/sandbox-exec' },
-      checks: { available: false, runner: 'linux-bubblewrap', reason: 'run_checks is unavailable on macOS by design' },
+      checks: runner.available
+        ? { available: true, runner: runner.runner, sandboxExec: sandboxExec.path }
+        : { available: false, runner: runner.runner ?? 'seatbelt', reason: runner.reason },
     };
   }
   return {
@@ -1213,7 +1217,7 @@ function setupInstructions(checks) {
     instructions.push(`Linux run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing bubblewrap, prlimit or setpriv executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
   }
   if (!checks.models.usable) instructions.push(`Add an explicit provider/model entry to ${checks.models.modelsPath}; credentials remain environment references and are not inspected: ${SETUP_DOCS_URL}`);
-  if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin') instructions.push(`macOS worker setup is supported; run_checks is Linux-only: ${SETUP_DOCS_URL}`);
+  if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin') instructions.push(`macOS run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing sandbox-exec executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
   if (instructions.length === 0) {
     instructions.push(
       'Start a fresh Claude or Codex session in the intended project, then invoke /tinysdd-setup in Claude or $tinysdd-setup in Codex.',

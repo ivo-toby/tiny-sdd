@@ -1,7 +1,7 @@
 import { afterEach, after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { CHECK_LIMIT_DEFAULTS, checkRunnerAvailable, runCheck } from '../src/check-runner.mjs';
+import { buildSeatbeltCheckProfile } from '../src/macos-sandbox.mjs';
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
@@ -1100,14 +1101,14 @@ describe('check runner', { skip: SKIP }, () => {
       assert.equal(real[10], '/usr/bin/bwrap');
     });
 
-    test('the runner is unavailable off Linux', async () => {
+    test('the runner is unavailable on an unsupported platform', async () => {
       const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
       const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      Object.defineProperty(process, 'platform', { value: 'win32' });
       try {
         const availability = checkRunnerAvailable();
         assert.equal(availability.available, false);
-        assert.match(availability.reason, /requires Linux/u);
+        assert.match(availability.reason, /requires Linux or macOS/u);
         await assert.rejects(run(candidate, {}), { code: 'CHECK_RUNNER_UNAVAILABLE' });
       } finally {
         Object.defineProperty(process, 'platform', platform);
@@ -1255,6 +1256,315 @@ describe('check runner', { skip: SKIP }, () => {
   });
 });
 
+// The Seatbelt backend runs on macOS through sandbox-exec. This host is Linux,
+// so these tests drive the darwin code path with a stub sandbox-exec that
+// records its arguments and applies the same shape the real binary gets: the
+// profile file is written, the environment is scrubbed and the check runs in
+// the scratch work directory. What is verified here is the runner's own
+// behavior: availability, profile content, spawn shape, evidence labeling and
+// child cleanup. Live Seatbelt enforcement on macOS is not verified here.
+describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (process.env.TINYSDD_NO_POSIX_IDS === '1' ? 'win32 emulation: no tmpdir' : false) || (AS_ROOT ? 'a root caller is refused before any run' : false) }, () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  let fixtures;
+  let scratchRoot;
+  let counter = 0;
+
+  before(async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    fixtures = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-seatbelt-runner-'));
+    scratchRoot = join(fixtures, 'scratch');
+    await mkdir(scratchRoot);
+  });
+
+  after(async () => {
+    Object.defineProperty(process, 'platform', realPlatform);
+    await rm(fixtures, { recursive: true, force: true });
+  });
+
+  afterEach(async () => {
+    assert.deepEqual(await readdir(scratchRoot), [], 'scratch directories were left behind');
+  });
+
+  async function makeDir(files = {}) {
+    counter += 1;
+    const root = join(fixtures, `sb-fixture-${counter}`);
+    await mkdir(root);
+    for (const [path, content] of Object.entries(files)) {
+      const target = join(root, path);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, content);
+    }
+    return root;
+  }
+
+  // A stub sandbox-exec: records argv and the profile passed with -f, then
+  // execs the remaining command (the stub ignores the profile, like the real
+  // binary applies it only to the exec it performs).
+  async function stubSandboxExec() {
+    counter += 1;
+    const path = join(fixtures, `sandbox-exec-${counter}.sh`);
+    const dump = join(fixtures, `sb-args-${counter}.txt`);
+    await writeFile(path, [
+      '#!/bin/sh',
+      `printf '%s\\n' "$@" > '${dump}'`,
+      'profile=""',
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "-f" ]; then profile="$2"; shift 2; continue; fi',
+      '  break',
+      'done',
+      `printf '%s\\n' "$profile" >> '${dump}'`,
+      `cat "$profile" >> '${dump}'`,
+      'exec "$@"',
+      '',
+    ].join('\n'));
+    await chmod(path, 0o755);
+    return { path, dump };
+  }
+
+  function run(candidateDir, check, extra = {}) {
+    return runCheck({
+      candidateDir,
+      check: { id: 'c1', argv: ['node', '--test', 't.test.mjs'], timeoutMs: 30000, ...check },
+      tempRoot: scratchRoot,
+      ...extra,
+    });
+  }
+
+  // The stub prints argv, then the profile path again, then the profile text.
+  function parseDump(dump) {
+    const lines = readFileSync(dump, 'utf8').split('\n').filter(Boolean);
+    let profilePathIndex = -1;
+    for (let index = lines.length - 1; index > 0; index -= 1) {
+      if (lines[index].endsWith('/check.sb')) { profilePathIndex = index; break; }
+    }
+    assert.ok(profilePathIndex > 0, dump);
+    return {
+      args: lines.slice(0, profilePathIndex),
+      profile: lines.slice(profilePathIndex + 1).join('\n'),
+    };
+  }
+
+  test('availability reports the seatbelt runner and a missing sandbox-exec reason', () => {
+    const available = checkRunnerAvailable({ sandboxExecPath: process.execPath });
+    assert.equal(available.available, true);
+    assert.equal(available.reason, null);
+    assert.equal(available.runner, 'seatbelt');
+    const missing = checkRunnerAvailable({ sandboxExecPath: '/nonexistent/sandbox-exec' });
+    assert.equal(missing.available, false);
+    assert.match(missing.reason, /sandbox-exec is not an executable file/u);
+  });
+
+  test('a passing check runs through sandbox-exec and reports runner seatbelt', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const stub = await stubSandboxExec();
+    const result = await run(candidate, {}, { sandboxExecPath: stub.path });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.timedOut, false);
+    assert.match(result.output.text, /pass 1/mu);
+    assert.equal(result.sandbox.runner, 'seatbelt');
+    assert.equal(result.sandbox.sandboxExec, stub.path);
+    assert.equal(result.sandbox.network, 'none');
+    assert.deepEqual(result.sandbox.env, ['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
+    assert.deepEqual(result.sandbox.runAs, { uid: process.getuid(), gid: process.getgid() });
+    assert.ok(result.sandbox.limitsApplied.includes('fileSizeBytes'));
+    assert.ok(result.sandbox.limitsApplied.includes('storedOutputBytes'));
+    // scratchBytes is enforced at copy time only; addressSpaceBytes and
+    // tmpfsBytes have no Darwin equivalent: all three are reported as not applied.
+    assert.deepEqual(result.sandbox.limitsNotApplied.filter((key) => !['maxProcesses'].includes(key)).sort(), ['addressSpaceBytes', 'scratchBytes', 'tmpfsBytes']);
+    assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
+    // The stub recorded argv: -f <profile>, then the fixed /bin/sh wrapper whose
+    // argv follows it as "$@", then the check argv with the host node.
+    const { args, profile } = parseDump(stub.dump);
+    assert.ok(args[1].endsWith('/check.sb'), args[1]);
+    assert.deepEqual(args.slice(2, 5), ["/bin/bash", "-c", args[4]]);
+    assert.match(args[4], /^ulimit -f \d+ \|\| \{ printf 'tinysdd-setup: setting the file-size limit failed\\n' >&2; exit 125; \}; ulimit -u \d+ \|\| \{ printf 'tinysdd-setup: setting the process limit failed\\n' >&2; exit 125; \}; exec "\$@"$/u);
+    assert.equal(args[5], 'tinysdd-check');
+    assert.equal(args[6], join(dirname(dirname(process.execPath)), 'bin', 'node'));
+    assert.deepEqual(args.slice(7), ['--test', 't.test.mjs']);
+    // The recorded profile is the written one: deny default, no network allow.
+    assert.match(profile, /^\(version 1\)\n\(deny default\)/u);
+    assert.doesNotMatch(profile, /network/u, 'no network rule is allowed');
+    assert.match(profile, /\(deny file-write-unlink /u);
+  });
+
+  test('whatever follows -f <profile> is covered by a process-exec rule', async () => {
+    // The launcher and the profile must not drift apart: sandbox-exec checks
+    // its own execvp against process-exec, so the first argv entry after the
+    // profile has to be allowed.
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const stub = await stubSandboxExec();
+    const result = await run(candidate, {}, { sandboxExecPath: stub.path });
+    assert.equal(result.exitCode, 0);
+    const { args, profile } = parseDump(stub.dump);
+    const execRule = /^\(allow process-exec (.+)\)$/mu.exec(profile);
+    assert.ok(execRule, profile);
+    const allowed = [...execRule[1].matchAll(/\((?:subpath|literal) ("(?:[^"\\]|\\.)*")\)/gu)].map((match) => JSON.parse(match[1]));
+    for (const launched of [args[2], args[6]]) {
+      assert.ok(allowed.some((path) => launched === path || launched.startsWith(`${path}/`)), `${launched} is not covered by process-exec: ${allowed.join(', ')}`);
+    }
+    // /bin/sh (the wrapper) and the shebang interpreter /usr/bin/env stay
+    // executable, matching what the Linux runner allows from /usr and /bin.
+    assert.ok(allowed.includes('/bin') && allowed.includes('/usr/bin'), allowed.join(', '));
+  });
+
+  test('the seatbelt profile denies network and writes outside the scratch', () => {
+    const profile = buildSeatbeltCheckProfile({
+      work: '/private/tmp/tinysdd-check-x/work',
+      home: '/private/tmp/tinysdd-check-x/home',
+      tmp: '/private/tmp/tinysdd-check-x/tmp',
+      nodeRoot: '/opt/node',
+      mounts: [{ source: '/proj/node_modules', target: 'node_modules' }],
+    });
+    assert.match(profile, /^\(version 1\)\n\(deny default\)\n/u);
+    assert.doesNotMatch(profile, /network/u);
+    assert.match(profile, /\(allow file-read\* file-write\* \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\)\)/u);
+    assert.match(profile, /\(subpath "\/proj\/node_modules"\)/u);
+    assert.match(profile, /\(allow process-exec \(subpath "\/bin"\) \(subpath "\/usr\/bin"\) \(subpath "\/opt\/node"\) \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\) \(subpath "\/proj\/node_modules"\)\)/u);
+    // Nothing outside the scratch is writable.
+    const writeRules = profile.split('\n').filter((line) => line.includes('file-write*'));
+    for (const rule of writeRules) {
+      assert.ok(/tinysdd-check-x|\/dev\/null/u.test(rule), rule);
+    }
+  });
+
+  test('dependency mounts are linked into the work copy and argv[0] inside one runs', async () => {
+    const dependencies = await makeDir({ 'pkg/cli.js': "#!/usr/bin/env node\nconsole.log('pkg ran');\n" });
+    await chmod(join(dependencies, 'pkg/cli.js'), 0o755);
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const stub = await stubSandboxExec();
+    const result = await run(candidate, { argv: ['pkg/cli.js'] }, { sandboxExecPath: stub.path, dependencyMounts: [{ source: join(dependencies, 'pkg'), target: 'pkg' }] });
+    assert.equal(result.exitCode, 0);
+    assert.match(result.output.text, /pkg ran/u);
+    const { args } = parseDump(stub.dump);
+    // argv[0] inside a mount is launched from the work copy path.
+    assert.match(args[6], /\/work\/pkg\/cli\.js$/u, args.join(' '));
+  });
+
+  test('a write outside the scratch is not granted by the profile', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const stub = await stubSandboxExec();
+    const result = await run(candidate, {}, { sandboxExecPath: stub.path });
+    assert.equal(result.exitCode, 0);
+    const { profile } = parseDump(stub.dump);
+    assert.doesNotMatch(profile, new RegExp(`file-write\\* \\(subpath "${candidate.replace(/[/.]/gu, '\\$&')}"\\)`, 'u'));
+  });
+
+  test('the sandbox inherits no environment from the host', async () => {
+    const previous = process.env.TINYSDD_SECRET_PROBE;
+    process.env.TINYSDD_SECRET_PROBE = 'x';
+    try {
+      const candidate = await makeDir({ 'env.mjs': 'console.log(JSON.stringify(process.env));\n' });
+      const stub = await stubSandboxExec();
+      const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path });
+      assert.equal(result.exitCode, 0);
+      // The bash wrapper adds SHLVL; the check's JSON is the last { line.
+      const environment = JSON.parse(result.output.text.trim().split('\n').filter((line) => line.startsWith('{')).pop());
+      assert.equal(environment.TINYSDD_SECRET_PROBE, undefined);
+      assert.deepEqual(Object.keys(environment).sort(), ['CI', 'HOME', 'LANG', 'PATH', 'PWD', 'SHLVL', 'TMPDIR'].sort());
+      assert.ok(environment.HOME.includes('/home'), environment.HOME);
+      assert.ok(environment.TMPDIR.includes('/tmp'), environment.TMPDIR);
+    } finally {
+      if (previous === undefined) delete process.env.TINYSDD_SECRET_PROBE;
+      else process.env.TINYSDD_SECRET_PROBE = previous;
+    }
+  });
+
+  test('a timeout kills the process group and reports timedOut', async () => {
+    const token = `tinysdd-sb-leak-${process.pid}-${Date.now()}`;
+    const candidate = await makeDir({
+      'loop.mjs': [
+        "import { spawn } from 'node:child_process';",
+        "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', process.argv[2]], { stdio: 'ignore' });",
+        "console.log('spawned');",
+        'for (;;) {}',
+        '',
+      ].join('\n'),
+    });
+    const stub = await stubSandboxExec();
+    const started = Date.now();
+    const result = await run(candidate, { argv: ['node', 'loop.mjs', token], timeoutMs: 1500 }, { sandboxExecPath: stub.path });
+    const elapsed = Date.now() - started;
+    assert.equal(result.timedOut, true);
+    assert.ok(elapsed < 5000, `returned after ${elapsed} ms`);
+    assert.equal(result.signal, 'SIGKILL');
+    assert.match(result.output.text, /spawned/u);
+    let remaining = [];
+    for (const entry of await readdir('/proc')) {
+      if (!/^\d+$/u.test(entry)) continue;
+      try {
+        if ((await readFile(`/proc/${entry}/cmdline`, 'utf8')).includes(token)) remaining.push(entry);
+      } catch { /* exited during the scan */ }
+    }
+    for (let attempt = 0; attempt < 30 && remaining.length > 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      remaining = [];
+      for (const entry of await readdir('/proc')) {
+        if (!/^\d+$/u.test(entry)) continue;
+        try {
+          if ((await readFile(`/proc/${entry}/cmdline`, 'utf8')).includes(token)) remaining.push(entry);
+        } catch { /* exited during the scan */ }
+      }
+    }
+    assert.deepEqual(remaining, []);
+  });
+
+  test('a missing sandbox-exec is CHECK_RUNNER_UNAVAILABLE', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    await assert.rejects(run(candidate, {}, { sandboxExecPath: '/nonexistent/sandbox-exec' }), { code: 'CHECK_RUNNER_UNAVAILABLE' });
+  });
+
+  test('a wrapper whose ulimit fails is a setup failure, not a run without limits', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    // A fake bash whose ulimit builtin always fails, like a
+    // kern.maxprocperuid-capped RLIMIT_NPROC on a real Mac. The stub rewrites
+    // argv[0] (/bin/bash) to this fake, so no PATH quoting is involved.
+    counter += 1;
+    const fakeBash = join(fixtures, `fake-bash-${counter}.sh`);
+    await writeFile(fakeBash, [
+      '#!/bin/sh',
+      'script="$3"',
+      'shift 3',
+      'exec /bin/bash -c \'ulimit() { return 1; }; eval "$0"\' "$script" "$@"',
+      '',
+    ].join('\n'));
+    await chmod(fakeBash, 0o755);
+    counter += 1;
+    const stub = join(fixtures, `sandbox-exec-${counter}.sh`);
+    const dump = join(fixtures, `sb-args-${counter}.txt`);
+    await writeFile(stub, [
+      '#!/bin/sh',
+      `printf '%s\\n' "$@" > '${dump}'`,
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "-f" ]; then shift 2; continue; fi',
+      '  break',
+      'done',
+      'if [ "$1" = "/bin/bash" ]; then',
+      `  set -- '${fakeBash}' "$@"`,
+      'fi',
+      'exec "$@"',
+      '',
+    ].join('\n'));
+    await chmod(stub, 0o755);
+    await assert.rejects(run(candidate, {}, { sandboxExecPath: stub }), (error) => {
+      assert.equal(error.code, 'CHECK_RUNNER_UNAVAILABLE');
+      assert.match(error.details.output, /tinysdd-setup: setting the (file-size|process) limit failed/u);
+      return true;
+    });
+  });
+});
+
+test('a root caller is refused at availability on darwin: Seatbelt cannot drop privileges', { skip: AS_ROOT ? false : 'only a root caller is refused this way' }, () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  try {
+    const availability = checkRunnerAvailable({ sandboxExecPath: process.execPath });
+    assert.equal(availability.available, false);
+    assert.match(availability.reason, /will not run checks as root/u);
+  } finally {
+    Object.defineProperty(process, 'platform', platform);
+  }
+});
+
 // Windows has no process.getuid, geteuid or getgid. This host has them, so a
 // child process emulates such a host: the runner must refuse with a code and
 // this file must still load and skip.
@@ -1276,7 +1586,7 @@ test('without POSIX identity APIs the runner reports unavailable and this file s
     assert.deepEqual(JSON.parse(stdout), { available: false, code: 'CHECK_RUNNER_UNAVAILABLE' });
     const suite = await execFileAsync(process.execPath, ['--import', preload, '--test', '--test-reporter=tap', fileURLToPath(import.meta.url)], { env });
     assert.match(suite.stdout, /^# fail 0$/mu);
-    assert.match(suite.stdout, /check runner unavailable: the check runner requires Linux \(this is win32\)/u);
+    assert.match(suite.stdout, /check runner unavailable: the check runner requires Linux or macOS \(this is win32\)/u);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

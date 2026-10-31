@@ -570,8 +570,9 @@ the same installation as the CLI's Node executable, and the exact model in Pi's
 configured models. The exact Pi pin is 1.4.0 (1.0.0 is refused), which requires
 Node >=22.19.0; its fixed check-client integration still needs live qualification. Missing sandbox support fails closed. It uses
 read/write/edit tools in a disposable copy. Available declared checks add the
-fixed `run_checks` client; generated code executes only in the separate Linux
-check sandbox. An unavailable host records the reason and runs without the
+fixed `run_checks` client; generated code executes only in the separate check
+sandbox (bubblewrap on Linux, Seatbelt on macOS). An unavailable host records
+the reason and runs without the
 client. Source files may appear in local raw events and sent
 model context: use only authorized projects and providers. Excluded filenames
 are a precaution, not a general detector for secrets embedded in source.
@@ -950,8 +951,9 @@ Declare fixed task checks in a reviewed JSON file under `.tinysdd/tasks/` and
 pass it to `task add` with `--checks PATH`. The controller validates and binds
 the declaration into approval and the packet. When the host runner is available,
 a checks-bearing packet exposes `run_checks` with optional `checkId` (omitted
-means all checks in order). It uses the separate Linux bubblewrap runner,
-without network or credentials. An unavailable host records the reason and
+means all checks in order). It uses the separate host sandbox runner
+(bubblewrap on Linux, Seatbelt on macOS), without network or credentials.
+An unavailable host records the reason and
 keeps the no-check tool surface. `worker start` and `worker run` repeat the
 same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
 one JSON result. Dependency mounts cannot overlap allowed
