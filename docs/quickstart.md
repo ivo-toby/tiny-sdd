@@ -774,8 +774,12 @@ provider and model from that file:
 
 The provider must use `@ai-sdk/openai-compatible` (`npm`, or `package` in the
 native form), an `options.baseURL` (or `settings.baseURL`) and an
-`{env:NAME}` API key reference, or no key. A literal key, another package or a
-header is refused before the run starts. The worker's OpenCode configuration
+`{env:NAME}` API key reference, or no key. The relay sends that key as
+`Authorization: Bearer`. A literal key, another package, or any header other
+than `User-Agent` (which is ignored with a warning) is refused before the run
+starts; the refusal names the header and never shows its value. On Linux the
+OpenCode sandbox gets its own procfs, which the OpenCode binary needs; the Pi
+sandbox still has none, and the new procfs lists only sandbox processes. The worker's OpenCode configuration
 comes only from TinySDD: no project, global, managed or wellknown OpenCode
 configuration is read. The run is headless (`--standalone`, `--format json`),
 allows only read and edit, and has automatic compaction off. Declared
