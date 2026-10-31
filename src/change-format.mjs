@@ -1,6 +1,6 @@
 import { lstat, open } from 'node:fs/promises';
 import { compileContext, contextSizeMetrics, MAX_COMPILED_CONTEXT_BYTES, parseContextManifest } from './context-compiler.mjs';
-import { parseChecksManifest } from './checks-manifest.mjs';
+import { checksRunTypecheck, isTypeScriptPath, parseChecksManifest } from './checks-manifest.mjs';
 import {
   assertExactKeys,
   assertPlainObject,
@@ -792,6 +792,8 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
   for (const slice of slices) {
     if (slice.value.implementationFiles.length > slice.resolvedBudget.maxImplementationFiles) warnings.push({ code: 'IMPLEMENTATION_SIZING_EXCEEDED', message: `slice ${slice.value.id} expects ${slice.value.implementationFiles.length} implementation files, above advisory budget ${slice.resolvedBudget.maxImplementationFiles}`, details: { sliceId: slice.value.id, count: slice.value.implementationFiles.length, limit: slice.resolvedBudget.maxImplementationFiles } });
     if (slice.value.sliceTests.length > slice.resolvedBudget.maxSliceTestFiles) warnings.push({ code: 'SLICE_TEST_SIZING_EXCEEDED', message: `slice ${slice.value.id} expects ${slice.value.sliceTests.length} slice-test files, above advisory budget ${slice.resolvedBudget.maxSliceTestFiles}`, details: { sliceId: slice.value.id, count: slice.value.sliceTests.length, limit: slice.resolvedBudget.maxSliceTestFiles } });
+    const touchesTypeScript = [...slice.value.implementationFiles, ...slice.value.sliceTests].some(isTypeScriptPath);
+    if (touchesTypeScript && !checksRunTypecheck(slice.parsedChecks.checks)) warnings.push({ code: 'TS_NO_TYPECHECK', message: `slice ${slice.value.id} writes TypeScript files but no declared check runs a typecheck; add one (e.g. tsc --noEmit) because test runners strip types`, details: { sliceId: slice.value.id } });
   }
   if (readinessIssues.some((issue) => issue.code === 'FEATURE_TEST_NOT_CHECKED')) {
     // These are preparation integrity errors, rather than optional review prose.

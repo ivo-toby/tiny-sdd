@@ -102,3 +102,21 @@ export function parseChecksManifest(text) {
 
   return { schemaVersion: CHECKS_MANIFEST_SCHEMA_VERSION, dependencyMounts, checks };
 }
+
+// A check runs a typecheck when it is named for one or invokes a known
+// typechecker. Test runners such as Vitest and tsx strip types, so a green
+// test run does not prove the slice compiles.
+const TYPECHECK_BASENAMES = new Set(['tsc', 'tsgo', 'vue-tsc', 'svelte-check']);
+
+export function checkRunsTypecheck(check) {
+  if (/type[-_]?check|tsc/u.test(check.id)) return true;
+  return check.argv.some((argument) => TYPECHECK_BASENAMES.has(argument.split(/[\\/]/u).pop()));
+}
+
+export function checksRunTypecheck(checks) {
+  return checks.some(checkRunsTypecheck);
+}
+
+export function isTypeScriptPath(path) {
+  return /\.(ts|tsx|mts|cts)$/u.test(path);
+}

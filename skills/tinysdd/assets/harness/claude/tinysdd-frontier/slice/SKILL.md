@@ -55,6 +55,11 @@ disconnected from that caller. Direct-import slice tests cannot substitute for
 this integration check. Ensure each wiring obligation names the owning slice and
 cites its entrypoint.
 
+For a TypeScript slice, declare a typecheck check (`tsc --noEmit` or the
+repository equivalent) alongside the test and lint checks: test runners such as
+Vitest and tsx strip types, so a green test run does not prove the slice
+compiles.
+
 The phase file is prompt guidance; a standalone install does not include the
 validator, exporter, schemas or repository docs. Before
 registration, set these roots from any working directory (the `tinysdd`

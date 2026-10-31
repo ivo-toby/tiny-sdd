@@ -32,7 +32,7 @@ import {
 } from './config.mjs';
 import { profilesForRoute } from './profile-catalog.mjs';
 import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
-import { parseChecksManifest } from './checks-manifest.mjs';
+import { checksRunTypecheck, isTypeScriptPath, parseChecksManifest } from './checks-manifest.mjs';
 import {
   extractAcceptanceCriteria,
   extractEvidenceChecks,
@@ -198,9 +198,7 @@ async function validateTaskInputs(root, task, { refreshPreparation = false } = {
   await readProjectFile(root, task.brief, taskBriefOptions());
   // Validate the manifest schema, source ranges and budget before recording it.
   const compiled = task.context === undefined ? null : await compileTaskContext(root, task.context);
-  if (task.checks !== undefined) {
-    parseChecksManifest(await readProjectFile(root, task.checks, taskBriefOptions()));
-  }
+  const checks = task.checks === undefined ? null : parseChecksManifest(await readProjectFile(root, task.checks, taskBriefOptions()));
   assertProtectAllowDisjoint(task.allow, task.protect ?? []);
   for (const [label, paths] of [['allowed', task.allow], ['protected', task.protect ?? []]]) {
     for (const path of paths) {
@@ -236,7 +234,7 @@ async function validateTaskInputs(root, task, { refreshPreparation = false } = {
     }
     preparation.push(actual);
   }
-  return { compiled, preparation };
+  return { compiled, preparation, checks };
 }
 
 async function preparationFilesDigest(root, preparation) {
@@ -311,7 +309,7 @@ function compileApprovedContext(root, task) {
 export const TASK_SIZE_THRESHOLDS = Object.freeze({ allowedFiles: 3, compiledContextBytes: 40 * 1024, citedTestLines: 300 });
 // Provisional and uncalibrated; tune on the talon reruns.
 export const BEHAVIOR_SPLIT_THRESHOLDS = Object.freeze({ citedOrderingAssertions: 8 });
-function taskSizing(allow, compiled) {
+function taskSizing(allow, compiled, checks) {
   const metrics = { allowedFiles: allow.length, ...contextSizeMetrics(compiled) };
   const warnings = Object.entries(TASK_SIZE_THRESHOLDS)
     .filter(([key, limit]) => metrics[key] > limit)
@@ -325,6 +323,9 @@ function taskSizing(allow, compiled) {
   }
   const recommended = reasons.length > 0;
   if (recommended) warnings.push(`behavior split recommended (${reasons.join('; ')}): separate the sequential core from the async edge, each with its own test file; fewer files alone will not help`);
+  if (checks && allow.some(isTypeScriptPath) && !checksRunTypecheck(checks.checks)) {
+    warnings.push('TypeScript files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit) because test runners strip types');
+  }
   return { ...metrics, behaviorSplit: { recommended, reasons }, thresholds: { ...TASK_SIZE_THRESHOLDS, ...BEHAVIOR_SPLIT_THRESHOLDS }, warnings };
 }
 
@@ -885,7 +886,7 @@ export async function addTask(projectRoot, options = {}) {
   const { brief, context, checks, dependsOn, allow, protect, preparation: requestedPreparation, worker, workerReason } = normalizeTaskShape(options);
   const root = await canonicalProjectRoot(projectRoot);
   const validated = await validateTaskInputs(root, { brief, context, checks, allow, protect, preparation: requestedPreparation });
-  const { compiled, preparation } = validated;
+  const { compiled, preparation, checks: parsedChecks } = validated;
   return mutateState(root, async (state) => {
     if (Object.hasOwn(state.tasks, id)) throw tinyError('TASK_EXISTS', `task already exists: ${id}`);
     assertDependenciesExist(state, id, dependsOn);
@@ -906,7 +907,7 @@ export async function addTask(projectRoot, options = {}) {
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing: taskSizing(allow, compiled) };
+    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing: taskSizing(allow, compiled, parsedChecks) };
   });
 }
 
@@ -932,6 +933,7 @@ export async function updateTask(projectRoot, options = {}) {
     assertDependenciesExist(state, id, shape.dependsOn);
     const validated = await validateTaskInputs(root, shape, { refreshPreparation: true });
     const compiled = validated.compiled;
+    const parsedChecks = validated.checks;
     if (validated.preparation.length > 0) shape.preparation = validated.preparation;
     else delete shape.preparation;
     if (stableStringify(previous) === stableStringify(shape)) throw tinyError('TASK_UNCHANGED', `task ${id} shape is unchanged`);
@@ -945,7 +947,7 @@ export async function updateTask(projectRoot, options = {}) {
       else task[field] = shape[field];
     }
     task.revisions = [...(task.revisions ?? []), revision];
-    return { task: publicTask(task, await inspectTask(root, state, task)), revision: structuredClone(revision), sizing: taskSizing(task.allow, compiled) };
+    return { task: publicTask(task, await inspectTask(root, state, task)), revision: structuredClone(revision), sizing: taskSizing(task.allow, compiled, parsedChecks) };
   });
 }
 
@@ -969,6 +971,7 @@ export async function approveTask(projectRoot, options = {}) {
       : null;
     const contextDigest = compiled ? compiled.sha256 : null;
     let checksDigest = null;
+    let parsedChecks = null;
     if (task.checks) {
       let checksText;
       try {
@@ -976,7 +979,7 @@ export async function approveTask(projectRoot, options = {}) {
       } catch {
         throw tinyError('CHECKS_MISSING', `checks manifest is missing: ${task.checks}`);
       }
-      parseChecksManifest(checksText);
+      parsedChecks = parseChecksManifest(checksText);
       checksDigest = sha256(checksText);
     }
     const dependencyAcceptances = {};
@@ -1001,7 +1004,7 @@ export async function approveTask(projectRoot, options = {}) {
     const preparationDigest = await preparationFilesDigest(root, task.preparation);
     const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, preparation: task.preparation ?? null, preparationDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], ...(task.worker === undefined ? {} : { worker: task.worker }), dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
-    return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled) };
+    return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled, parsedChecks) };
   });
 }
 

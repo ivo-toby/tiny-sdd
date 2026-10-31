@@ -27,6 +27,10 @@ this note if none apply.>
 <State any test-writing approval needed, verification limitations, or checks
 that cannot be run. Delete this note if none apply.>
 
+For a TypeScript change, include a typecheck (e.g. `tsc --noEmit`) as a check;
+test runners such as Vitest and tsx strip types, so passing tests do not prove
+the change compiles.
+
 ## Expected changes and stop conditions
 
 - <Expected path>: <purpose of the change>.
