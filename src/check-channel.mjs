@@ -165,6 +165,14 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
   };
 }
 
+// The worker-side check tool for each runner: a Pi extension file, or an OpenCode
+// plugin directory (OpenCode loads configured local plugins only from a directory).
+// `target` is where the Linux sandbox mounts it read-only.
+export const CHECK_TOOLS = Object.freeze({
+  'pi-extension': { source: './run-checks-extension.mjs', path: 'run-checks.mjs', target: '/opt/tinysdd/run-checks.mjs', directory: false },
+  'opencode-plugin': { source: './run-checks-opencode-plugin.mjs', path: 'run-checks-plugin', target: '/opt/tinysdd/run-checks-plugin', directory: true },
+});
+
 // Validates the declared mounts and fingerprints them. Configuration errors
 // throw plainly; an error with code DEPENDENCY_IDENTITY_UNAVAILABLE means the
 // mounts are valid but cannot be identified, so run_checks must stay off.
@@ -196,15 +204,24 @@ export async function identifyDependencyMounts({ manifest, sourceRoot, allowedPa
   return { mounts, dependencyIdentity };
 }
 
-export async function createCheckChannel({ manifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths, maxCheckRuns, runner = runCheck, nodeRoot, dependencies }) {
+export async function createCheckChannel({ manifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths, maxCheckRuns, runner = runCheck, nodeRoot, dependencies, tool = 'pi-extension' }) {
+  if (!Object.hasOwn(CHECK_TOOLS, tool)) throw new Error(`unknown check tool: ${tool}`);
   const { mounts, dependencyIdentity } = dependencies ?? await identifyDependencyMounts({ manifest, sourceRoot, allowedPaths });
   const root = await mkdtemp(join(tempRoot, 'tinysdd-channel-'));
   const requests = join(root, 'requests');
   const responses = join(root, 'responses');
   await mkdir(requests, { mode: 0o700 });
   await mkdir(responses, { mode: 0o700 });
-  const extension = join(root, 'run-checks.mjs');
-  await copyFile(new URL('./run-checks-extension.mjs', import.meta.url), extension);
+  const checkTool = CHECK_TOOLS[tool];
+  const extension = join(root, checkTool.path);
+  if (checkTool.directory) {
+    await mkdir(extension, { mode: 0o700 });
+    await copyFile(new URL(checkTool.source, import.meta.url), join(extension, 'index.js'));
+    // Bun reads the module type from the nearest package.json.
+    await writeFile(join(extension, 'package.json'), '{"type":"module"}\n', { mode: 0o600 });
+  } else {
+    await copyFile(new URL(checkTool.source, import.meta.url), extension);
+  }
   const identities = await Promise.all([requests, responses].map((path) => lstat(path)));
   const logPath = join(artifactDir, 'checks.jsonl');
   await writeFile(logPath, '', { mode: 0o600 });
@@ -307,7 +324,7 @@ export async function createCheckChannel({ manifest, sourceRoot, workspace, arti
     }
   }
   return {
-    root, requests, responses, extension, logPath, runs,
+    root, requests, responses, extension, extensionTarget: checkTool.target, tool, logPath, runs,
     mounts, dependencyIdentity,
     start(timeoutMs) { deadline = Date.now() + timeoutMs; },
     poll() {

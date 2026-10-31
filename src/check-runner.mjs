@@ -548,7 +548,7 @@ async function linkMountPoints(work, mounts) {
 // the sandbox. There is no network rule to allow: (deny default) already denies
 // all outbound traffic.
 function seatbeltArguments({ binaries, profilePath, work, check, shell }) {
-  const executable = check.executable === '/opt/node/bin/node' ? join(binaries.nodeRoot, 'bin', 'node') : join(work, check.executable.replace(/^\/work\//u, ''));
+  const executable = check.executable === '/opt/node/bin/node' ? binaries.nodeExecutable : join(work, check.executable.replace(/^\/work\//u, ''));
   if (!shell) return ['-f', profilePath, executable, ...check.argv.slice(1)];
   // The argv reaches the shell only as "$@", never as script text.
   return ['-f', profilePath, ...shell, executable, ...check.argv.slice(1)];
@@ -641,7 +641,7 @@ function summarizeOutput(capture, limits) {
   };
 }
 
-function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal }) {
+function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, watchdogPipe = false, killGroupOnExit = false }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
     let settled = false;
@@ -655,6 +655,7 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal }) {
       clearTimeout(killTimer);
       clearTimeout(graceTimer);
       signal?.removeEventListener('abort', abort);
+      child?.stdio?.[3]?.destroy();
       callback();
     };
     const abort = () => {
@@ -667,7 +668,9 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal }) {
       // detached so the whole group can be killed on timeout. The Seatbelt
       // backend passes its scrubbed values through env instead, because
       // sandbox-exec keeps its environment and launches the argv directly.
-      child = spawn(command, args, { env: env ?? {}, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      // The watchdog pipe is fd 3, not stdin: Node's pipe is a socket, and bash
+      // with a socket on stdin assumes rshd and reads the system bashrc.
+      child = spawn(command, args, { env: env ?? {}, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe', ...(watchdogPipe ? ['pipe'] : [])] });
     } catch (error) {
       reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }));
       return;
@@ -675,8 +678,18 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal }) {
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     child.on('error', (error) => finish(() => reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }))));
+    // The child may exit without reading; its closed pipe is not a host error.
+    child.stdio[3]?.on('error', () => {});
     child.stdout.on('data', (chunk) => capture.push(chunk));
     child.stderr.on('data', (chunk) => capture.push(chunk));
+    // Without a PID namespace nothing takes background processes down with the
+    // check, so its group is killed as soon as the check itself exits.
+    if (killGroupOnExit) {
+      child.on('exit', () => {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ }
+        graceTimer ??= setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, KILL_GRACE_MS);
+      });
+    }
     child.on('close', (exitCode, signal) => finish(() => {
       resolve({ exitCode, signal, timedOut, durationMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6) });
     }));
@@ -775,7 +788,9 @@ export async function runCheck(options) {
       });
       await linkMountPoints(work, request.mounts);
       const profilePath = join(scratch, 'check.sb');
-      const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeRoot: request.nodeRoot, mounts: request.mounts });
+      // A symlinked bin/node (Homebrew) is granted and started at its target.
+      const nodeExecutable = await realpath(join(request.nodeRoot, 'bin', 'node'));
+      const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts: request.mounts });
       await writeFile(profilePath, profile, { mode: 0o600 });
       checkPreparation(options.signal, setupDeadline);
       const capture = new OutputCapture(request.limits.storedOutputBytes);
@@ -798,7 +813,12 @@ export async function runCheck(options) {
       // bash is used for the wrapper because Darwin's /bin/sh (and Linux dash)
       // have no ulimit -u; bash supports both -f and -u. A failing ulimit
       // aborts with the setup-failure convention instead of running unenforced.
+      // macOS has no --die-with-parent either: before the limits apply, a
+      // background reader waits on fd 3, a pipe the host never writes. When the
+      // host exits or is killed the pipe closes and the reader kills the check's
+      // process group. The check itself does not inherit fd 3.
       const wrapper = [
+        '{ read -r _ <&3 || :; kill -9 0; } & exec 3<&-',
         `ulimit -f ${Math.floor(request.limits.fileSizeBytes / 512)} || { printf '${SETUP_PREFIX}setting the file-size limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         `ulimit -u ${processLimit} || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         'exec "$@"',
@@ -806,7 +826,7 @@ export async function runCheck(options) {
       const run = await runSandbox({
         command: binaries.sandboxExec,
         args: seatbeltArguments({
-          binaries: { ...binaries, nodeRoot: request.nodeRoot },
+          binaries: { ...binaries, nodeExecutable },
           profilePath,
           work,
           check: request.check,
@@ -817,6 +837,8 @@ export async function runCheck(options) {
         timeoutMs: remainingTimeout,
         capture,
         signal: options.signal,
+        watchdogPipe: true,
+        killGroupOnExit: true,
       });
       const setupFailure = sandboxSetupFailure(run, capture.head);
       if (setupFailure) throw unavailable('the check sandbox could not be created; the check did not run', { output: setupFailure });

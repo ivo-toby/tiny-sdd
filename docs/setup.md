@@ -58,6 +58,53 @@ facility. On macOS the check runner (`run_checks` and the
 `sandbox-exec` is missing or the caller is root, because Seatbelt has no
 privilege drop.
 
+### Check runner on macOS
+
+On macOS each declared check runs under its own Seatbelt profile (runner
+`seatbelt`). It keeps the Linux runner's record shape and guarantees: argv only
+from the approved manifest, per-check `timeoutMs`, `maxCheckRuns`, bounded and
+digested output, candidate input digests, `acceptanceEvidence: false`,
+cancellation when the worker ends, and check time counted toward the worker
+deadline. The profile denies everything except reading the system, `/bin`,
+`/usr/bin`, the Node executable and the dependency mount sources; writing the
+check's scratch copy, its home and tmp directories and `/dev/null`; starting
+processes from those places; and signalling processes in the same sandbox.
+There is no network rule, so the check has no network, and the source project,
+home and worker state are not readable. The result's `sandbox.limitsApplied` and `sandbox.limitsNotApplied` say which limits
+held.
+
+The differences from Linux:
+
+- The host copies the candidate into the scratch directory, and each dependency
+  mount is a symlink to its source, which the profile allows to read but not
+  write. There is no tmpfs, so the scratch directory is on disk: `scratchBytes`
+  bounds the copy only, and is reported as not applied.
+- A fixed `/bin/bash` wrapper sets the limits before the check starts: the file
+  size limit from `fileSizeBytes`, and a process limit of the uid's current
+  process count (from `/bin/ps`) plus `maxProcesses`. macOS counts processes,
+  not threads. Above `kern.maxprocperuid`, `maxProcesses` is reported as not
+  applied. If either `ulimit` fails, the check does not run
+  (`CHECK_RUNNER_UNAVAILABLE`). There is no address-space limit.
+- There is no PID namespace and no `--die-with-parent`. The check's process
+  group is killed when the check exits, times out or is cancelled, and a small
+  watchdog inside the sandbox kills the group when TinySDD itself exits or is
+  killed: it waits on a pipe from TinySDD, which closes then. A process that
+  leaves the group (for example with `setsid`) can outlive the check until it
+  exits on its own; it still has no network and can only write to the removed
+  scratch directory. Cancellation uses the process group, not `/proc`;
+  `worker stop` itself still requires Linux `/proc`.
+- Only the Node executable is readable and executable, not its installation
+  root (with the macOS installer that root is `/usr/local`). A symlinked
+  `bin/node`, as Homebrew installs it, is granted at its target; a Homebrew
+  Node's libraries outside that path are not, so it may not start and the check
+  fails with the dynamic loader's error. Use a self-contained Node build (the
+  nodejs.org installer or a version manager) for checks on macOS.
+- Feature integration (`feature accept` with `featureIntegration`) uses the same
+  runner, so it also runs on macOS.
+
+Qualifications recorded on macOS while `run_checks` was unavailable no longer
+match the runtime and must be redone; see the quickstart's qualification notes.
+
 ### Linux bubblewrap startup failures
 
 On Linux, setup performs a bounded direct `bubblewrap` startup probe after it
@@ -153,9 +200,9 @@ check OpenCode; the worker identifies the pinned 2.1.4 binary at launch and
 refuses any other version. The worker runs `~/.opencode/bin/opencode`. On
 Linux its bubblewrap sandbox mounts a fresh procfs for that binary, which Pi's
 sandbox does not do. A provider header other than `User-Agent` is refused;
-set the key in `options.apiKey` as an `{env:NAME}` reference instead. The
-OpenCode runner has no `run_checks` tool yet; declared checks are reported
-unavailable.
+set the key in `options.apiKey` as an `{env:NAME}` reference instead.
+Declared checks give the OpenCode worker `run_checks` through a local TinySDD
+plugin; see the quickstart's OpenCode section.
 
 Use the [setup workflow reference](../skills/tinysdd/assets/setup/references/setup-workflow.md)
 for the exact Pi layout and provider/model boundary. Keep API keys and other

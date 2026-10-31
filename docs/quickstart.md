@@ -32,7 +32,8 @@ the candidate writable), so a checks-bearing packet gets `run_checks` and
 `feature accept` can run its integration check; results record
 `sandbox.runner: "seatbelt"`. The macOS check runner refuses a root caller,
 because Seatbelt cannot drop privileges. Live Seatbelt enforcement of checks has
-not been observed on a Mac yet.
+not been observed on a Mac yet. See [setup](setup.md#check-runner-on-macos) for
+how the macOS check runner differs from the Linux one.
 
 macOS currently supports the `openai-completions` API with an explicit HTTP(S)
 base URL. A temporary loopback relay forwards only `POST /chat/completions` for
@@ -870,10 +871,22 @@ OpenCode sandbox gets its own procfs, which the OpenCode binary needs; the Pi
 sandbox still has none, and the new procfs lists only sandbox processes. The worker's OpenCode configuration
 comes only from TinySDD: no project, global, managed or wellknown OpenCode
 configuration is read. The run is headless (`--standalone`, `--format json`),
-allows only read and edit, and has automatic compaction off. Declared
-`run_checks` are reported unavailable for this runner on every platform (#182).
-This runner is
-unverified against a live model or a live sandbox.
+allows only read and edit, and has automatic compaction off. Declared checks
+add a local TinySDD plugin that provides `run_checks`. It is the only plugin
+the config names; it is mounted read-only and talks to the same host check
+channel as Pi's. The permissions get exactly one more rule,
+`{ "action": "run_checks", "resource": "*", "effect": "allow" }`, after the
+`*` deny. OpenCode starts the tool calls of one step concurrently and gives
+no ordering, so a check first waits 100 ms and then until no write call of its
+own message is in flight, also one that started after it; checks run one at a
+time. This narrows the race but does not guarantee it; the check record's
+candidate digests show which bytes were checked. `runtime.json.runnerFacts`
+records the permission rules and plugin the run actually got. `run_checks`
+calls count toward `maxToolCalls`. The plugin was exercised with OpenCode 2.1.4
+run from source (not the release binary), inside bubblewrap with the worker's
+mounts and a scripted model: OpenCode loaded it, offered only `read`, `write`,
+`edit` and `run_checks`, and without the allow rule refused `run_checks`. It is
+unverified against a live model and on macOS.
 
 ### Model registry profiles
 
@@ -1114,7 +1127,11 @@ unavailable current suite or runtime context produces an explicit warning in
 `warn` mode. Optional quantization and server metadata remain explicit
 `UNKNOWN` facts when absent. A changed model endpoint, profile, verifier,
 suite, check declaration, or budget produces a different digest; records for
-the old digest are stale.
+the old digest are stale. A qualification is also compared with the run's
+`run_checks` availability and reason. Records made while `run_checks` was
+unavailable, on macOS before the Seatbelt check runner or for any OpenCode
+worker, no longer match once checks are available: `warn` reports the run as
+unqualified and `enforce` refuses it. Qualify such a worker again.
 
 To end a launch early, run `tinysdd worker stop --id LAUNCH_ID --json` rather than
 killing the launcher. It signals the launcher, which stops Pi and finalizes the

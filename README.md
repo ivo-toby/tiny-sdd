@@ -27,7 +27,7 @@ or a small model pilot does not establish reliable delivery across projects.
 | --- | --- | --- |
 | Onboarding | Global CLI, prerequisite checks, Linux sandbox startup probe, explicit Pi model discovery, version-matched Claude/Codex skill installation | Setup does not install prerequisites, authenticate models or run inference. |
 | SDD preparation | Constitution entry check; specify, research, plan and slice skills; portable change artifacts and cited context | The skills guide the outer agent. They are not an automatic end-to-end planner. |
-| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; per-task worker choice; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**, OpenCode to **2.1.4**. Pi workers get `run_checks` on Linux (bubblewrap) and macOS (Seatbelt); OpenCode workers do not have it yet ([#182](https://github.com/ivo-toby/tiny-sdd/issues/182)). `worker stop` is Linux-only. |
+| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; per-task worker choice; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**, OpenCode to **2.1.4**. Pi and OpenCode workers get `run_checks` on Linux (bubblewrap) and macOS (Seatbelt); the macOS check runner refuses root, and live macOS and OpenCode check runs are unverified. `worker stop` is Linux-only. |
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
@@ -194,7 +194,8 @@ must use `@ai-sdk/openai-compatible` with `options.baseURL`, and `options.apiKey
 must be an `{env:NAME}` reference. A `User-Agent` header is ignored; other
 headers are refused. The worker itself only sees the inference relay and a
 per-run token. On Linux the OpenCode sandbox gets its own `/proc`, which the
-binary needs; Pi workers do not. OpenCode runs record their own runner identity,
+binary needs; Pi workers do not. Declared checks reach OpenCode through a
+TinySDD plugin that adds only `run_checks`. OpenCode runs record their own runner identity,
 so they never reuse a Pi qualification. See
 [the quickstart](docs/quickstart.md#opencode-worker) for details.
 

@@ -171,6 +171,7 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(CHECK_LIMIT_DEFAULTS.scratchBytes, 512 * MIB);
     assert.equal(CHECK_LIMIT_DEFAULTS.maxProcesses, 512);
     assert.deepEqual(result.sandbox, {
+      runner: 'linux-bubblewrap',
       bwrap: result.sandbox.bwrap,
       prlimit: result.sandbox.prlimit,
       network: 'none',
@@ -1031,7 +1032,7 @@ describe('check runner', { skip: SKIP }, () => {
     });
 
     test('checkRunnerAvailable says why it is unavailable', async () => {
-      assert.deepEqual(checkRunnerAvailable(), { available: true, reason: null });
+      assert.deepEqual(checkRunnerAvailable(), { available: true, reason: null, runner: 'linux-bubblewrap' });
       const missing = checkRunnerAvailable({ bwrapPath: '/nonexistent/bwrap' });
       assert.equal(missing.available, false);
       assert.match(missing.reason, /bubblewrap.*\/nonexistent\/bwrap/u);
@@ -1063,7 +1064,7 @@ describe('check runner', { skip: SKIP }, () => {
     });
 
     test('a caller that is not root does not need setpriv', { skip: AS_ROOT ? 'a root caller needs setpriv' : false }, async () => {
-      assert.deepEqual(checkRunnerAvailable({ setprivPath: '/nonexistent/setpriv' }), { available: true, reason: null });
+      assert.deepEqual(checkRunnerAvailable({ setprivPath: '/nonexistent/setpriv' }), { available: true, reason: null, runner: 'linux-bubblewrap' });
       const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
       const result = await run(candidate, {}, { setprivPath: '/nonexistent/setpriv' });
       assert.equal(result.exitCode, 0, result.output.text);
@@ -1330,6 +1331,18 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     });
   }
 
+  // A killed process can stay a zombie until it is reaped, and signal 0 still
+  // reaches a zombie, so a zombie counts as gone (Linux /proc state Z).
+  async function processGone(pid) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try { process.kill(pid, 0); } catch { return true; }
+      const state = await readFile(`/proc/${pid}/stat`, 'utf8').then((text) => /\) (\S)/u.exec(text)?.[1], () => null);
+      if (state === 'Z') return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+
   // The stub prints argv, then the profile path again, then the profile text.
   function parseDump(dump) {
     const lines = readFileSync(dump, 'utf8').split('\n').filter(Boolean);
@@ -1377,7 +1390,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     const { args, profile } = parseDump(stub.dump);
     assert.ok(args[1].endsWith('/check.sb'), args[1]);
     assert.deepEqual(args.slice(2, 5), ["/bin/bash", "-c", args[4]]);
-    assert.match(args[4], /^ulimit -f \d+ \|\| \{ printf 'tinysdd-setup: setting the file-size limit failed\\n' >&2; exit 125; \}; ulimit -u \d+ \|\| \{ printf 'tinysdd-setup: setting the process limit failed\\n' >&2; exit 125; \}; exec "\$@"$/u);
+    assert.match(args[4], /^\{ read -r _ <&3 \|\| :; kill -9 0; \} & exec 3<&-; ulimit -f \d+ \|\| \{ printf 'tinysdd-setup: setting the file-size limit failed\\n' >&2; exit 125; \}; ulimit -u \d+ \|\| \{ printf 'tinysdd-setup: setting the process limit failed\\n' >&2; exit 125; \}; exec "\$@"$/u);
     assert.equal(args[5], 'tinysdd-check');
     assert.equal(args[6], join(dirname(dirname(process.execPath)), 'bin', 'node'));
     assert.deepEqual(args.slice(7), ['--test', 't.test.mjs']);
@@ -1412,14 +1425,19 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
       work: '/private/tmp/tinysdd-check-x/work',
       home: '/private/tmp/tinysdd-check-x/home',
       tmp: '/private/tmp/tinysdd-check-x/tmp',
-      nodeRoot: '/opt/node',
+      nodeExecutable: '/usr/local/bin/node',
       mounts: [{ source: '/proj/node_modules', target: 'node_modules' }],
     });
     assert.match(profile, /^\(version 1\)\n\(deny default\)\n/u);
     assert.doesNotMatch(profile, /network/u);
     assert.match(profile, /\(allow file-read\* file-write\* \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\)\)/u);
     assert.match(profile, /\(subpath "\/proj\/node_modules"\)/u);
-    assert.match(profile, /\(allow process-exec \(subpath "\/bin"\) \(subpath "\/usr\/bin"\) \(subpath "\/opt\/node"\) \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\) \(subpath "\/proj\/node_modules"\)\)/u);
+    assert.match(profile, /\(allow process-exec \(subpath "\/bin"\) \(subpath "\/usr\/bin"\) \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\) \(subpath "\/proj\/node_modules"\) \(literal "\/usr\/local\/bin\/node"\)\)/u);
+    // Only the Node executable, not its installation root (/usr/local with the macOS installer).
+    assert.match(profile, /\(allow file-read\* [^\n]*\(literal "\/usr\/local\/bin\/node"\)/u);
+    assert.doesNotMatch(profile, /\(subpath "\/usr\/local(?:\/bin)?"\)/u);
+    // Signals reach the check's own sandbox (its group watchdog), never the host.
+    assert.match(profile, /^\(allow signal \(target same-sandbox\)\)$/mu);
     // Nothing outside the scratch is writable.
     const writeRules = profile.split('\n').filter((line) => line.includes('file-write*'));
     for (const rule of writeRules) {
@@ -1467,6 +1485,42 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
       if (previous === undefined) delete process.env.TINYSDD_SECRET_PROBE;
       else process.env.TINYSDD_SECRET_PROBE = previous;
     }
+  });
+
+  test('background processes are killed when the check exits', async () => {
+    const leaves = "import { spawn } from 'node:child_process';\nconst child = spawn('/bin/sleep', ['30'], { stdio: 'inherit' });\nchild.unref();\nconsole.log('SLEEPER ' + child.pid);\n";
+    const candidate = await makeDir({ 'leave.mjs': leaves });
+    const stub = await stubSandboxExec();
+    const started = Date.now();
+    const result = await run(candidate, { argv: ['node', 'leave.mjs'] }, { sandboxExecPath: stub.path });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.timedOut, false);
+    assert.ok(Date.now() - started < 20000, 'the sleeper held the run open');
+    const pid = Number(/SLEEPER (\d+)/u.exec(result.output.text)[1]);
+    assert.ok(await processGone(pid), 'the sleeper survived the check');
+  });
+
+  test('a check does not outlive a host that is killed', async () => {
+    const stub = await stubSandboxExec();
+    const pidFile = join(fixtures, `hang-${counter}.pid`);
+    const candidate = await makeDir({ 'hang.mjs': "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], String(process.pid));\nsetInterval(() => {}, 1000);\n" });
+    // The host is a separate process that kills itself mid-check, so nothing
+    // in it can clean up: only the in-sandbox watchdog can stop the check.
+    const host = join(fixtures, `host-${counter}.mjs`);
+    await writeFile(host, [
+      "Object.defineProperty(process, 'platform', { value: 'darwin' });",
+      `const { runCheck } = await import(${JSON.stringify(new URL('../src/check-runner.mjs', import.meta.url).href)});`,
+      "setTimeout(() => process.kill(process.pid, 'SIGKILL'), 1500);",
+      `await runCheck({ candidateDir: ${JSON.stringify(candidate)}, check: { id: 'c1', argv: ['node', 'hang.mjs', ${JSON.stringify(pidFile)}], timeoutMs: 60000 }, tempRoot: ${JSON.stringify(scratchRoot)}, sandboxExecPath: ${JSON.stringify(stub.path)} });`,
+      '',
+    ].join('\n'));
+    await assert.rejects(execFileAsync(process.execPath, [host], { env: { PATH: process.env.PATH ?? '/usr/bin:/bin' }, timeout: 30000 }), (error) => error.signal === 'SIGKILL');
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    const survived = !(await processGone(pid));
+    if (survived) process.kill(pid, 'SIGKILL');
+    // The killed host could not remove its scratch copy.
+    for (const entry of await readdir(scratchRoot)) await rm(join(scratchRoot, entry), { recursive: true, force: true });
+    assert.equal(survived, false, 'the check kept running after its host was killed');
   });
 
   test('a timeout kills the process group and reports timedOut', async () => {

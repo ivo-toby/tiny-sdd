@@ -240,4 +240,5 @@ export const piRunner = Object.freeze({
   routeInference,
   responseTokenLimit,
   parseEvents,
+  checkTool: "pi-extension",
 });
