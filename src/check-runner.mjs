@@ -690,6 +690,11 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, watch
         graceTimer ??= setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, KILL_GRACE_MS);
       });
     }
+    // 'close' also waits for the watchdog pipe, which the watchdog holds open
+    // for as long as it lives. Closing the host end when the check exits ends
+    // that wait, and the watchdog, seeing the pipe close, kills the rest of the
+    // group itself: the cleanup does not depend on killGroupOnExit.
+    if (watchdogPipe) child.on('exit', () => child.stdio[3]?.destroy());
     child.on('close', (exitCode, signal) => finish(() => {
       resolve({ exitCode, signal, timedOut, durationMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6) });
     }));
@@ -816,9 +821,11 @@ export async function runCheck(options) {
       // macOS has no --die-with-parent either: before the limits apply, a
       // background reader waits on fd 3, a pipe the host never writes. When the
       // host exits or is killed the pipe closes and the reader kills the check's
-      // process group. The check itself does not inherit fd 3.
+      // process group. The check itself does not inherit fd 3. The reader's own
+      // output goes to /dev/null, so it never holds the check's output pipes
+      // open: the run ends when the check does, also without the group kill.
       const wrapper = [
-        '{ read -r _ <&3 || :; kill -9 0; } & exec 3<&-',
+        '{ read -r _ <&3 || :; kill -9 0; } >/dev/null 2>&1 & exec 3<&-',
         `ulimit -f ${Math.floor(request.limits.fileSizeBytes / 512)} || { printf '${SETUP_PREFIX}setting the file-size limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         `ulimit -u ${processLimit} || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         'exec "$@"',

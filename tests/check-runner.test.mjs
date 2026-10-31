@@ -1390,7 +1390,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     const { args, profile } = parseDump(stub.dump);
     assert.ok(args[1].endsWith('/check.sb'), args[1]);
     assert.deepEqual(args.slice(2, 5), ["/bin/bash", "-c", args[4]]);
-    assert.match(args[4], /^\{ read -r _ <&3 \|\| :; kill -9 0; \} & exec 3<&-; ulimit -f \d+ \|\| \{ printf 'tinysdd-setup: setting the file-size limit failed\\n' >&2; exit 125; \}; ulimit -u \d+ \|\| \{ printf 'tinysdd-setup: setting the process limit failed\\n' >&2; exit 125; \}; exec "\$@"$/u);
+    assert.match(args[4], /^\{ read -r _ <&3 \|\| :; kill -9 0; \} >\/dev\/null 2>&1 & exec 3<&-; ulimit -f \d+ \|\| \{ printf 'tinysdd-setup: setting the file-size limit failed\\n' >&2; exit 125; \}; ulimit -u \d+ \|\| \{ printf 'tinysdd-setup: setting the process limit failed\\n' >&2; exit 125; \}; exec "\$@"$/u);
     assert.equal(args[5], 'tinysdd-check');
     assert.equal(args[6], join(dirname(dirname(process.execPath)), 'bin', 'node'));
     assert.deepEqual(args.slice(7), ['--test', 't.test.mjs']);
