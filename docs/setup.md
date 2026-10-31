@@ -68,9 +68,9 @@ cancellation when the worker ends, and check time counted toward the worker
 deadline. The profile denies everything except reading the system, `/bin`,
 `/usr/bin`, the Node executable and the dependency mount sources; writing the
 check's scratch copy, its home and tmp directories and `/dev/null`; starting
-processes from those places; and signalling processes in the same sandbox. There is no network rule, so the check has no
-network, and the source project, home and worker state are not readable. The
-result's `sandbox.limitsApplied` and `sandbox.limitsNotApplied` say which limits
+processes from those places; and signalling processes in the same sandbox.
+There is no network rule, so the check has no network, and the source project,
+home and worker state are not readable. The result's `sandbox.limitsApplied` and `sandbox.limitsNotApplied` say which limits
 held.
 
 The differences from Linux:
