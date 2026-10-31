@@ -1,6 +1,10 @@
 # CLI workflow
 
-Run `tinysdd --help` for the installed interface. In a source checkout use
+Run `tinysdd --help` for the installed interface: it lists the commands grouped
+by phase with one-line descriptions and the normal flow. Each command also has
+its own help with usage, flag meanings, defaults and an example, via
+`tinysdd <command> [<sub>] --help` or `tinysdd help <command> [<sub>]`. In a
+source checkout use
 `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs`; run it from the target project
 or select `--project /path/to/project`. Add `--json` for machine-readable output.
 
