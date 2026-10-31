@@ -10,7 +10,7 @@ import { workerRunner } from "./runners/index.mjs";
 import { WorkerError, executablePath, fail, writeJson } from "./worker-host.mjs";
 import { checkRunnerAvailable } from "./check-runner.mjs";
 import { parseChecksManifest } from "./checks-manifest.mjs";
-import { createCheckChannel } from "./check-channel.mjs";
+import { createCheckChannel, identifyDependencyMounts } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { startInferenceRelay } from "./inference-relay.mjs";
@@ -1592,10 +1592,21 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const executionSource = frozenBaseline?.root ?? sourceRoot;
   const runtimeChoice = await chooseRuntime(runtime, runner);
   const checksDeclared = normalizedPacket.checks !== null;
-  const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime, runner) : { available: false, reason: null, testInjected: false };
+  let checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime, runner) : { available: false, reason: null, testInjected: false };
   // The manifest defines immutable dependency mounts even when this host
   // cannot execute the declared checker.
   const checkManifest = checksDeclared ? parseChecksManifest(normalizedPacket.checks.text) : null;
+  // Mounts are identified before the prompt is built: a mount that cannot be
+  // identified turns run_checks off for this run instead of blocking it (#195).
+  let checkDependencies = null;
+  if (checkManifest && checkAvailability.available) {
+    try {
+      checkDependencies = await identifyDependencyMounts({ manifest: checkManifest, sourceRoot, allowedPaths: selectedAllowed });
+    } catch (error) {
+      if (error?.code !== "DEPENDENCY_IDENTITY_UNAVAILABLE") throw error;
+      checkAvailability = { available: false, reason: `dependency mount identity unavailable: ${error.message}`, testInjected: false };
+    }
+  }
   const revisionBase = await resolveRevisionBase(sourceRoot, baseRunId, selectedAllowed, normalizedPacket.taskId, {
     protectedPaths: normalizedPacket.protectedPaths,
     inputPaths,
@@ -1704,7 +1715,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeFile(join(artifactDir, "prompt.txt"), prompt.rendered, { mode: 0o600 });
     if (compiledContext) await writeFile(join(artifactDir, "compiled-context.md"), compiledContext.rendered, { mode: 0o600 });
     if (checkManifest && checkAvailability.available) {
-      checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
+      checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), dependencies: checkDependencies, ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
     }
     const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
     if (prepared.metadata.compaction?.enabled) {

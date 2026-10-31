@@ -1011,7 +1011,11 @@ An unavailable host records the reason and
 keeps the no-check tool surface. `worker start` and `worker run` repeat the
 same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
 one JSON result. Dependency mounts cannot overlap allowed
-paths. `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
+paths. Symlinks inside a mount may point anywhere inside the project (npm
+workspace links). A mount that cannot be fingerprinted (a symlink leaving the
+project, more than 250,000 entries or 512 MiB) starts the worker without
+`run_checks`, with the reason `dependency mount identity unavailable: ...`.
+`limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
 check, so size it for the number of declared checks: a slice declaring `test`,
 `lint` and `typecheck` spends 3 runs per all-checks call. Budget exhaustion, unknown ids and runner unavailability throw tool
 errors and do not end the worker. Pi 1.4.0 makes a batch containing `run_checks`
