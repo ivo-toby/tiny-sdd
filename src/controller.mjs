@@ -534,6 +534,31 @@ function validateTaskShape(id, task) {
   }
 }
 
+// An accepted prerequisite whose candidate files a dependent's apply rewrote.
+// candidateDigest is the prerequisite's candidate snapshot right after that apply.
+function validateExtendedBy(id, extendedBy) {
+  const label = `task ${id} review extendedBy`;
+  if (!Array.isArray(extendedBy) || extendedBy.length === 0) throw tinyError('STATE_MALFORMED', `${label} must be a nonempty array`);
+  for (const entry of extendedBy) {
+    assertPlainObject(entry, 'STATE_MALFORMED', `${label} entry`);
+    try {
+      validateTaskId(entry.taskId);
+    } catch {
+      throw tinyError('STATE_MALFORMED', `${label} taskId is invalid`);
+    }
+    if (typeof entry.runId !== 'string' || !RUN_ID_PATTERN.test(entry.runId)) throw tinyError('STATE_MALFORMED', `${label} runId must be a worker run id`);
+    if (typeof entry.extendedAt !== 'string' || entry.extendedAt.trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} extendedAt must be a nonempty string`);
+    if (typeof entry.candidateDigest !== 'string' || !/^[0-9a-f]{64}$/.test(entry.candidateDigest)) throw tinyError('STATE_MALFORMED', `${label} candidateDigest must be a digest`);
+    let canonical = Array.isArray(entry.paths) && entry.paths.length > 0 && entry.paths.every((path) => typeof path === 'string');
+    try {
+      canonical &&= entry.paths.every((path) => normalizeProjectRelative(path, `${label} path`) === path) && new Set(entry.paths).size === entry.paths.length;
+    } catch {
+      canonical = false;
+    }
+    if (!canonical) throw tinyError('STATE_MALFORMED', `${label} paths must be a nonempty array of canonical unique paths`);
+  }
+}
+
 function validateRevisions(id, revisions) {
   if (!Array.isArray(revisions)) throw tinyError('STATE_MALFORMED', `task ${id} revisions must be an array`);
   for (const revision of revisions) {
@@ -564,6 +589,10 @@ function validateState(value) {
     if (task.revisions !== undefined) validateRevisions(id, task.revisions);
     if (task.closure !== undefined) validateClosure(id, task.closure);
     if (task.applied !== undefined) validateApplied(id, task.applied);
+    if (task.review?.extendedBy !== undefined) {
+      if (task.review.verdict !== 'accepted') throw tinyError('STATE_MALFORMED', `task ${id} review extendedBy is only valid for an accepted review`);
+      validateExtendedBy(id, task.review.extendedBy);
+    }
     // Only an accepted review binds the applied files. A revision or blocked
     // verdict can precede a later apply whose candidate adds paths.
     if (task.review?.verdict === 'accepted' && task.review.candidatePaths !== undefined && task.applied?.actualPaths !== undefined) {
@@ -681,6 +710,28 @@ async function inspectSliceTestReviewFreshness(projectRoot, task) {
   }
 }
 
+// The candidate files still hold what the operator accepted, or what the last
+// apply of a dependent left there while this acceptance was current. Any other
+// change, including one after that apply, matches neither digest.
+function acceptedCandidateMatches(review, allowedDigest) {
+  if (allowedDigest === undefined) return false;
+  return (review.candidateDigest ?? review.allowedDigest) === allowedDigest
+    || review.extendedBy?.at(-1)?.candidateDigest === allowedDigest;
+}
+
+function transitiveDependencies(state, id) {
+  const found = new Set();
+  const visit = (taskId) => {
+    for (const dependency of state.tasks[taskId]?.dependsOn ?? []) {
+      if (found.has(dependency)) continue;
+      found.add(dependency);
+      visit(dependency);
+    }
+  };
+  visit(id);
+  return found;
+}
+
 async function inspectTask(projectRoot, state, task, seen = new Set()) {
   if (seen.has(task.id)) throw tinyError('STATE_MALFORMED', `dependency cycle reaches ${task.id}`);
   const nextSeen = new Set(seen).add(task.id);
@@ -743,7 +794,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
       && task.review.approvalDigest === approval.approvalDigest
       && task.review.briefDigest === briefDigest
       && task.review.evidenceDigest === evidenceDigest
-      && (task.review.candidateDigest ?? task.review.allowedDigest) === allowedDigest,
+      && acceptedCandidateMatches(task.review, allowedDigest),
   );
   const acceptanceDigest = acceptedCurrent ? task.review.acceptanceDigest : undefined;
   const blockedBy = dependencyStates.filter((item) => !item.acceptanceDigest).map((item) => item.id);
@@ -821,6 +872,7 @@ function publicTask(task, stateInfo) {
       reviewedAt: task.review.reviewedAt,
       current: task.review.verdict === 'accepted' ? Boolean(stateInfo.acceptanceDigest) : undefined,
       ...(task.review.appliedFromRun ? { appliedFromRun: { ...task.review.appliedFromRun } } : {}),
+      ...(task.review.extendedBy ? { extendedBy: task.review.extendedBy.map(({ taskId, runId, extendedAt, paths }) => ({ taskId, runId, extendedAt, paths: [...paths] })) } : {}),
     } : undefined,
     ...(task.applied ? { applied: { runId: task.applied.runId, appliedAt: task.applied.appliedAt, files: task.applied.files.length } } : {}),
     ...(task.closure ? { closure: publicClosure(task.closure) } : {}),
@@ -1475,9 +1527,27 @@ async function applyTaskWithinState(root, state, task, { id, by, runId, exclude 
     files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
     ...(exclude.length > 0 ? { excluded: [...exclude] } : {}),
   };
+  // Accepted tasks whose candidate files this apply rewrites. A prerequisite
+  // keeps its acceptance and records that this dependent extended those files;
+  // any other accepted task goes stale, and the result says so.
+  const writtenPaths = plan.filter((item) => item.status === 'written').map((item) => item.path);
+  const prerequisites = transitiveDependencies(state, id);
+  const touched = [];
+  for (const other of Object.values(state.tasks)) {
+    if (other.id === id || other.closure || other.review?.verdict !== 'accepted') continue;
+    const candidatePaths = candidatePathsForTask(other);
+    const paths = writtenPaths.filter((path) => candidatePaths.some((candidate) => pathsOverlap(path, candidate, { caseInsensitive, unicodeInsensitive, filesystemAliases })));
+    if (paths.length === 0 || (await inspectTask(root, state, other)).status !== 'accepted') continue;
+    touched.push({ task: other, paths, prerequisite: prerequisites.has(other.id) });
+  }
+  const extension = (paths, candidateDigest) => ({ taskId: id, runId: finalRun.id, extendedAt: applied.appliedAt, paths, candidateDigest });
   // Refuse a record the state would reject before the first write.
   const probe = structuredClone(state);
   probe.tasks[id].applied = applied;
+  for (const item of touched.filter((entry) => entry.prerequisite)) {
+    const review = probe.tasks[item.task.id].review;
+    review.extendedBy = [...(review.extendedBy ?? []), extension(item.paths, '0'.repeat(64))];
+  }
   validateState(probe);
   const toWrite = plan.filter((item) => item.status === 'written');
   const createdDirectories = new Set();
@@ -1493,7 +1563,24 @@ async function applyTaskWithinState(root, state, task, { id, by, runId, exclude 
   applied.allowedDigest = await allowedFilesDigest(root, task.allow);
   applied.actualDigest = await allowedFilesDigest(root, actualPaths);
   task.applied = applied;
-  return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
+  const extended = [];
+  const staled = [];
+  for (const item of touched) {
+    if (item.prerequisite) {
+      const entry = extension(item.paths, await allowedFilesDigest(root, candidatePathsForTask(item.task)));
+      item.task.review.extendedBy = [...(item.task.review.extendedBy ?? []), entry];
+      extended.push({ taskId: item.task.id, paths: [...item.paths] });
+    } else {
+      staled.push({ taskId: item.task.id, paths: [...item.paths] });
+    }
+  }
+  const warnings = staled.map((item) => `applying run ${finalRun.id} made the acceptance of task ${item.taskId} stale: it rewrote ${item.paths.join(', ')}, and ${item.taskId} is not a prerequisite of ${id}; re-check and accept ${item.taskId} again, then re-approve the tasks that depend on it`);
+  return {
+    task: publicTask(task, await inspectTask(root, state, task)),
+    applied: structuredClone(task.applied),
+    ...(extended.length > 0 ? { extended } : {}),
+    ...(staled.length > 0 ? { staled, warnings } : {}),
+  };
 }
 
 export async function applyTask(projectRoot, options = {}) {
