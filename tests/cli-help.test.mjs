@@ -35,7 +35,7 @@ test('top-level help is grouped by phase, shows the normal flow and fits on one 
     const result = await invoke('--project', root, '--help');
     assert.equal(result.status, 0);
     assert.ok(result.stdout.split('\n').length <= 80, `top-level help should fit on one screen, got ${result.stdout.split('\n').length} lines`);
-    assert.match(result.stdout, /Normal flow: setup → init → task add → task approve → worker start → worker status → task review/u);
+    assert.match(result.stdout, /Normal flow: setup → init → task add → task approve → worker start → worker status → task apply → task review/u);
     for (const group of ['Setup', 'Tasks', 'Worker', 'Bench', 'Usage', 'Slice tests', 'Phases']) {
       assert.match(result.stdout, new RegExp(`^${group} \\(`, 'mu'), `missing group ${group}`);
     }

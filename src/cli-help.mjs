@@ -12,8 +12,9 @@ const COMMANDS = [
   {
     command: 'setup',
     group: 'Setup',
-    summary: 'Install the matching release: global skills links and the profile registry. Global; no --project.',
-    usage: 'tinysdd setup',
+    summary: 'Check prerequisites and install the matching release: global skills links and the profile registry. Global; no --project.',
+    usage: 'tinysdd [--json] setup',
+    global: true,
     flags: [],
     example: 'tinysdd setup',
   },
@@ -22,6 +23,7 @@ const COMMANDS = [
     group: 'Setup',
     summary: 'Replace the installed skills with this CLI version\'s release. Global; run after upgrading.',
     usage: 'tinysdd [--json] skills update',
+    global: true,
     flags: [],
     example: 'tinysdd skills update',
   },
@@ -30,6 +32,7 @@ const COMMANDS = [
     group: 'Setup',
     summary: 'Replace the installed profile registry with this CLI version\'s release. Global; run after upgrading.',
     usage: 'tinysdd [--json] profiles update',
+    global: true,
     flags: [],
     example: 'tinysdd profiles update',
   },
@@ -45,7 +48,7 @@ const COMMANDS = [
       { flag: '--parallel N', description: 'parallel server slots' },
       { flag: '--max-tokens N', description: 'max response tokens (Pi maxTokens)' },
       { flag: '--timeout-ms N', description: 'worker timeout in ms' },
-      { flag: '--thinking LEVEL', description: 'thinking level (off, low, medium, high, xhigh)' },
+      { flag: '--thinking LEVEL', description: 'thinking level (off, minimal, low, medium, high)' },
       { flag: '--family NAME', description: 'model family, e.g. gemma4-26b-a4b' },
       { flag: '--quantization NAME', description: 'quantization, e.g. Q4_K_M' },
       { flag: '--server NAME', description: 'inference server, e.g. llama.cpp' },
@@ -66,7 +69,7 @@ const COMMANDS = [
     summary: 'Create .tinysdd/config.json for the project and select the profile measured on the worker\'s model route.',
     usage: 'tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID [--profile ID|PATH]]',
     flags: [
-      { flag: '--worker NAME', description: 'worker name to configure, default: defaultWorker' },
+      { flag: '--worker NAME', description: 'worker name to configure; give with --provider and --model' },
       { flag: '--provider ID', description: 'provider id for the worker' },
       { flag: '--model ID', description: 'model id; the profile is matched on this exact route' },
       { flag: '--profile ID|PATH', description: 'explicit profile, required when several match the route' },
@@ -120,7 +123,7 @@ const COMMANDS = [
       { flag: '--change PATH', description: 'path to the change file', required: true },
       { flag: '--ready', description: 'require the change to be ready for registration' },
     ],
-    example: 'tinysdd change validate --change changes/reservations.json --ready',
+    example: 'tinysdd change validate --change changes/reservations/change.json --ready',
   },
   {
     command: 'change export',
@@ -132,7 +135,7 @@ const COMMANDS = [
       { flag: '--slice ID', description: 'slice of the change to export', required: true },
       { flag: '--out DIR', description: 'output directory for the bundle', required: true },
     ],
-    example: 'tinysdd change export --change changes/reservations.json --slice validation --out .tinysdd/export/validation',
+    example: 'tinysdd change export --change changes/reservations/change.json --slice validation --out /tmp/tinysdd-export/validation',
   },
   {
     command: 'task add',
@@ -279,7 +282,7 @@ const COMMANDS = [
   {
     command: 'worker status',
     group: 'Worker',
-    summary: 'Poll a detached launch: running, finished, failed or stopped, with its evidence.',
+    summary: 'Poll a detached launch: running, stopping, finished (with its result) or interrupted.',
     usage: 'tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID',
     flags: [{ flag: '--id LAUNCH_ID', description: 'launch identifier returned by worker start', required: true }],
     example: 'tinysdd worker status --id launch-0123abcd-...',
@@ -331,12 +334,12 @@ const COMMANDS = [
     summary: 'Assess benchmark results against qualification targets and write a qualification record.',
     usage: 'tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]',
     flags: [
-      { flag: '--results PATH[,PATH]', description: 'benchmark result files', required: true },
+      { flag: '--results PATH[,PATH]', description: 'retained benchmark invocation directories', required: true },
       { flag: '--suite PATH', description: 'benchmark suite the results belong to' },
       { flag: '--worker NAME', description: 'worker the results are for' },
       { flag: '--target ROLE=NUMBER,...', description: 'qualification targets per role (repeatable)' },
     ],
-    example: 'tinysdd bench qualify --results .tinysdd/bench/run/results.json --worker coder',
+    example: 'tinysdd bench qualify --results .tinysdd/bench/write-tests-v1/INVOCATION --suite bench/write-tests-suite --target write-tests=0.8',
   },
   {
     command: 'bench rescore',
@@ -347,7 +350,7 @@ const COMMANDS = [
       { flag: '--record PATH', description: 'qualification record to re-score', required: true },
       { flag: '--target ROLE=NUMBER,...', description: 'qualification targets per role (repeatable)' },
     ],
-    example: 'tinysdd bench rescore --record .tinysdd/qualification/record.json --target coder=0.8',
+    example: 'tinysdd bench rescore --record .tinysdd/qualifications/DIGEST.json --target implement-slice=0.8',
   },
   {
     command: 'bench qualification show',
@@ -359,7 +362,7 @@ const COMMANDS = [
       { flag: '--suite PATH', description: 'filter by suite' },
       { flag: '--worker NAME', description: 'filter by worker' },
     ],
-    example: 'tinysdd bench qualification show --record .tinysdd/qualification/record.json',
+    example: 'tinysdd bench qualification show --record .tinysdd/qualifications/DIGEST.json',
   },
   {
     command: 'usage record',
@@ -438,10 +441,10 @@ const COMMANDS = [
   {
     command: 'slice-tests status',
     group: 'Slice tests',
-    summary: 'Show the review status of one slice-test event.',
+    summary: 'Show the slice-test review status of one task.',
     usage: 'tinysdd [--json] [--project PATH] slice-tests status --id ID',
-    flags: [{ flag: '--id ID', description: 'slice-test event id', required: true }],
-    example: 'tinysdd slice-tests status --id st-1',
+    flags: [{ flag: '--id ID', description: 'task id whose slice tests are reviewed', required: true }],
+    example: 'tinysdd slice-tests status --id validation',
   },
   {
     command: 'slice-tests assess',
@@ -449,34 +452,34 @@ const COMMANDS = [
     summary: 'Assess a slice-test change with the configured producer model.',
     usage: 'tinysdd [--json] [--project PATH] slice-tests assess --id ID --run RUN --change PATH --implementer ID --producer ID --provider-config PATH --credential-env NAME',
     flags: [
-      { flag: '--id ID', description: 'slice-test event id', required: true },
+      { flag: '--id ID', description: 'task id whose slice tests are reviewed', required: true },
       { flag: '--run RUN', description: 'run the change belongs to', required: true },
-      { flag: '--change PATH', description: 'path to the change under review', required: true },
+      { flag: '--change PATH', description: 'change file (changes/ID/change.json) the slice belongs to', required: true },
       { flag: '--implementer ID', description: 'implementer worker id', required: true },
       { flag: '--producer ID', description: 'producer model id used for the assessment', required: true },
       { flag: '--provider-config PATH', description: 'provider configuration file (max 64 KiB)', required: true },
       { flag: '--credential-env NAME', description: 'environment variable holding the provider credential', required: true },
     ],
-    example: 'tinysdd slice-tests assess --id st-1 --run run-1 --change src/validation.ts --implementer coder --producer frontier/model --provider-config provider.json --credential-env PROVIDER_KEY',
+    example: 'tinysdd slice-tests assess --id validation --run run-1 --change changes/reservations/change.json --implementer coder --producer frontier/model --provider-config provider.json --credential-env PROVIDER_KEY',
   },
   {
     command: 'slice-tests check',
     group: 'Slice tests',
-    summary: 'Run the deterministic checks for a slice-test event.',
+    summary: 'Run the task\'s approved slice checks independently for an assessment event.',
     usage: 'tinysdd [--json] [--project PATH] slice-tests check --id ID --event EVENT',
     flags: [
-      { flag: '--id ID', description: 'slice-test event id', required: true },
+      { flag: '--id ID', description: 'task id whose slice tests are reviewed', required: true },
       { flag: '--event EVENT', description: 'event to check', required: true },
     ],
-    example: 'tinysdd slice-tests check --id st-1 --event change',
+    example: 'tinysdd slice-tests check --id validation --event EVENT_ID',
   },
   {
     command: 'slice-tests review',
     group: 'Slice tests',
-    summary: 'Record a human review verdict for a slice-test event.',
+    summary: 'Record an attested strong review verdict for a slice-test check event.',
     usage: 'tinysdd [--json] [--project PATH] slice-tests review --id ID --event EVENT --input-digest SHA --reviewer ID --strength strong --attested true --verdict accepted|rejected --evidence PATH',
     flags: [
-      { flag: '--id ID', description: 'slice-test event id', required: true },
+      { flag: '--id ID', description: 'task id whose slice tests are reviewed', required: true },
       { flag: '--event EVENT', description: 'event being reviewed', required: true },
       { flag: '--input-digest SHA', description: 'digest of the reviewed input', required: true },
       { flag: '--reviewer ID', description: 'reviewer id', required: true },
@@ -485,15 +488,15 @@ const COMMANDS = [
       { flag: '--verdict accepted|rejected', description: 'review verdict', required: true },
       { flag: '--evidence PATH', description: 'path to the review evidence', required: true },
     ],
-    example: 'tinysdd slice-tests review --id st-1 --event change --input-digest sha256:... --reviewer operator --strength strong --attested true --verdict accepted --evidence docs/reviews/st-1.md',
+    example: 'tinysdd slice-tests review --id validation --event CHECK_EVENT_ID --input-digest SHA256 --reviewer frontier/model --strength strong --attested true --verdict accepted --evidence docs/reviews/validation-tests.md',
   },
   {
     command: 'phase record',
     group: 'Phases',
     summary: 'Record an approval for the research phase of a feature.',
-    usage: 'tinysdd [--json] [--project PATH] phase record|research --phase research --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID]',
+    usage: 'tinysdd [--json] [--project PATH] phase record|research [--phase research] --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID] [--worker NAME]',
     flags: [
-      { flag: '--phase research', description: 'phase being recorded', required: true },
+      { flag: '--phase research', description: 'phase being recorded, default: research' },
       { flag: '--feature NAME', description: 'feature the phase belongs to', required: true },
       { flag: '--proposal PATH', description: 'path to the research proposal', required: true },
       { flag: '--context PATH', description: 'path to the research context', required: true },
@@ -508,7 +511,7 @@ const COMMANDS = [
     command: 'phase status',
     group: 'Phases',
     summary: 'Show the phase statuses of a feature.',
-    usage: 'tinysdd [--json] [--project PATH] phase status --feature NAME',
+    usage: 'tinysdd [--json] [--project PATH] phase status --feature NAME [--worker NAME]',
     flags: [
       { flag: '--feature NAME', description: 'feature to show', required: true },
       { flag: '--worker NAME', description: 'worker attributed with the phase work' },
@@ -519,7 +522,7 @@ const COMMANDS = [
     command: 'phase advance',
     group: 'Phases',
     summary: 'Advance a feature from one phase to the next (research to plan) with an approval.',
-    usage: 'tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID]',
+    usage: 'tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID] [--worker NAME]',
     flags: [
       { flag: '--from research', description: 'phase to advance from', required: true },
       { flag: '--to plan', description: 'phase to advance to', required: true },
@@ -543,7 +546,7 @@ const GROUPS = [
   { name: 'Phases', blurb: 'research/plan phase policy' },
 ];
 
-const FLOW = 'setup → init → task add → task approve → worker start → worker status → task review';
+const FLOW = 'setup → init → task add → task approve → worker start → worker status → task apply → task review';
 
 const NOTE = [
   'Usage phases: specify, research, plan, slice, write-tests, review, rescue.',
@@ -616,7 +619,7 @@ function renderCommand(entry) {
     }
     lines.push('');
   }
-  lines.push('Global flags: --json, --project PATH, --help, --version.');
+  lines.push(entry.global ? 'Global flags: --json, --help, --version. This command is global and refuses --project.' : 'Global flags: --json, --project PATH, --help, --version.');
   lines.push('');
   lines.push(`Example: ${entry.example}`);
   return `${lines.join('\n')}\n`;
