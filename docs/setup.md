@@ -142,6 +142,12 @@ shape is:
 }
 ```
 
+A worker with `"type": "opencode"` does not read Pi's `models.json`. It names
+its own OpenCode config file with `opencodeConfig`, an absolute path. The file
+must define the provider and model the worker uses. Setup does not install or
+check OpenCode; the worker identifies the pinned 2.1.4 binary at launch and
+refuses any other version. The worker runs `~/.opencode/bin/opencode`.
+
 Use the [setup workflow reference](../skills/tinysdd/assets/setup/references/setup-workflow.md)
 for the exact Pi layout and provider/model boundary. Keep API keys and other
 credential values in the environment references used by Pi; setup does not
