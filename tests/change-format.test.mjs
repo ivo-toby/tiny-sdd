@@ -269,3 +269,28 @@ test('buildRegistrationPlan is read-only and reports preparation identity', asyn
     await cleanup(root);
   }
 });
+
+test('a slice may declare several named checks, each slice test covered by at least one', async () => {
+  const root = await fixtureProject();
+  try {
+    const checksPath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/checks.json');
+    const testPath = 'examples/artifact-format/tests/s1-errors.test.mjs';
+    const checks = JSON.parse(await readFile(checksPath, 'utf8'));
+    checks.checks = [
+      { id: 's1-tests', argv: ['node', testPath], timeoutMs: 120000, criteria: ['C1'] },
+      { id: 's1-lint', argv: ['node', 'examples/artifact-format/lint.mjs', testPath], timeoutMs: 30000 },
+    ];
+    await writeFile(checksPath, JSON.stringify(checks));
+    const result = await validateChange(root, 'examples/artifact-format/changes/broker-recut/change.json');
+    assert.equal(result.readiness.ready, true);
+    const slice = result.slices.find((item) => item.value.id === 'broker-s1');
+    assert.deepEqual(slice.parsedChecks.checks.map((check) => check.id), ['s1-tests', 's1-lint']);
+
+    checks.checks = [{ id: 's1-lint', argv: ['node', 'examples/artifact-format/lint.mjs', 'examples/artifact-format/src/s1-errors.mjs'], timeoutMs: 30000 }];
+    await writeFile(checksPath, JSON.stringify(checks));
+    const uncovered = await validateChange(root, 'examples/artifact-format/changes/broker-recut/change.json');
+    assert.ok(uncovered.readiness.issues.some((issue) => issue.code === 'SLICE_TEST_NOT_CHECKED' && issue.message.includes(testPath)));
+  } finally {
+    await cleanup(root);
+  }
+});

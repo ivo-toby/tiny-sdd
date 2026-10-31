@@ -948,7 +948,8 @@ keeps the no-check tool surface. `worker start` and `worker run` repeat the
 same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
 one JSON result. Dependency mounts cannot overlap allowed
 paths. `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
-check. Budget exhaustion, unknown ids and runner unavailability throw tool
+check, so size it for the number of declared checks: a slice declaring `test`,
+`lint` and `typecheck` spends 3 runs per all-checks call. Budget exhaustion, unknown ids and runner unavailability throw tool
 errors and do not end the worker. Pi 1.4.0 makes a batch containing `run_checks`
 sequential in assistant source order: `[write, run_checks]` sees the write;
 `[run_checks, write]` sees the earlier candidate. No sibling reordering occurs.
@@ -960,7 +961,10 @@ counts toward the worker deadline; checks are cancelled when the worker ends.
 Inspect `checks.jsonl`, bounded check-output artifacts and
 `result.workerObservedChecks`. The observations identify the checked input
 digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
-independent operator verification remains required. When the client is
+independent operator verification remains required. A checks file may declare
+several named checks (e.g. `test`, `lint`, `typecheck`), each with its own argv
+and timeout; the worker prompt lists every declared check by id and each
+result is reported by id. When the client is
 available, the worker contract makes the named host tool explicit and directs
 an edit → `run_checks` → fix loop after each eligible ordinary file write or edit.
 Failures are fixed only within the approved task boundaries; the worker stops and reports when the
