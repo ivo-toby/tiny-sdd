@@ -28,6 +28,8 @@ export function openCodeBubblewrapInvocation({ nodeRoot, binaryPath, stateDir, a
     launcher: `${OPENCODE_SANDBOX_NODE_ROOT}/bin/node`,
     argv: [OPENCODE_SANDBOX_BINARY, ...args],
     env,
+    // Bun, which the OpenCode binary embeds, needs a procfs. Pi does not set this.
+    procfs: true,
     mounts: [
       { source: nodeRoot, target: OPENCODE_SANDBOX_NODE_ROOT, writable: false },
       { source: binaryPath, target: OPENCODE_SANDBOX_BINARY, writable: false },

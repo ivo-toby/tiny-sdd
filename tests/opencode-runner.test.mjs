@@ -15,6 +15,7 @@ import {
 } from "../src/opencode-environment.mjs";
 import { buildMacosSandboxProfile } from "../src/macos-sandbox.mjs";
 import { openCodeBubblewrapInvocation, openCodeRunner, openCodeSeatbeltInvocation, parseEvents } from "../src/runners/opencode.mjs";
+import { piBubblewrapInvocation } from "../src/runners/pi.mjs";
 import { buildBubblewrapArgs, runWorker } from "../src/worker.mjs";
 
 // The OpenCode worker runs through the test runtime only: a fake executable that
@@ -211,6 +212,25 @@ describe("OpenCode isolation", () => {
     assert.equal(args[stateAt - 1], "--bind");
     assert.equal(args[stateAt + 1], "/opencode-state");
     assert.equal(args.some((value) => value === "/etc/opencode" || value.startsWith("/etc/opencode/")), false);
+  });
+
+  test("only the OpenCode sandbox gets a fresh procfs; Pi's bubblewrap args still have none", () => {
+    const inference = { forwarder: "/tmp/forwarder.mjs", socketDir: "/tmp/socket", socketName: "relay.sock" };
+    const opencode = buildBubblewrapArgs({
+      workspace: "/tmp/tinysdd-workspace-x",
+      invocation: openCodeBubblewrapInvocation({ nodeRoot: "/usr", binaryPath: "/home/worker/.opencode/bin/opencode", stateDir: "/tmp/state-x", args: ["run"], env: { HOME: "/opencode-state/home" } }),
+      inference,
+    });
+    const pi = buildBubblewrapArgs({
+      workspace: "/tmp/tinysdd-workspace-x",
+      invocation: piBubblewrapInvocation({ nodeRoot: "/usr", stateDir: "/tmp/state-x", args: ["--print"] }),
+      inference,
+    });
+    const procAt = opencode.indexOf("--proc");
+    assert.ok(procAt >= 0, "OpenCode sandbox needs a procfs");
+    assert.equal(opencode[procAt + 1], "/proc");
+    assert.equal(pi.includes("--proc"), false, "Pi keeps no /proc mount");
+    assert.equal(pi.includes("/proc"), false);
   });
 
   test("Seatbelt denies the macOS managed configuration locations", () => {

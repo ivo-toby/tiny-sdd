@@ -1137,8 +1137,14 @@ export function buildBubblewrapArgs({ workspace, invocation, checkChannel, compa
   // the forwarder and the bind-mounted Unix socket.
   const args = ["--die-with-parent", "--unshare-user", "--unshare-pid", "--unshare-net", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--dir", "/etc"];
   for (const mount of requiredMounts) args.push("--ro-bind", mount, mount);
-  // There is intentionally no /proc mount: worker read tools must not be able
-  // to inspect process environments.
+  // The default sandbox has no /proc mount, so worker read tools cannot inspect
+  // process environments. Only a runner that asks for it gets one (see below).
+  // OpenCode's Bun runtime needs a real procfs (/proc/self/maps, statm, exe). The
+  // new procfs belongs to the sandbox's own pid namespace (--unshare-pid), so only
+  // sandbox processes are listed; their environments hold only the per-run relay
+  // token, never a provider credential, and OpenCode's external_directory deny keeps
+  // the read tool inside /work.
+  if (invocation.procfs === true) args.push("--proc", "/proc");
   args.push("--ro-bind-try", "/etc/localtime", "/etc/localtime");
   args.push("--dir", "/opt");
   for (const mount of invocation.mounts) if (!mount.writable) args.push("--ro-bind", mount.source, mount.target);
@@ -1764,7 +1770,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       childEnv = { ...invocation.env, TINYSDD_WORKSPACE: "/work", TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
       inferenceUrl = inferenceBaseUrl;
       args = buildBubblewrapArgs({ workspace, invocation, checkChannel, compactionBundle, inference: { forwarder, socketDir, socketName: "relay.sock", port: LINUX_INFERENCE_PORT } });
-      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, inferenceDestination: inferenceBaseUrl };
+      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, inferenceDestination: inferenceBaseUrl, ...(invocation.procfs === true ? { procfs: true } : {}) };
       await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
     }
     if (runner.inferenceEnvironment) {
