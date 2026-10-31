@@ -23,7 +23,7 @@ import {
   writeCompactionBundle,
 } from "./compaction-runtime.mjs";
 import { createApprovedPacketAnchor } from "./deterministic-compaction.mjs";
-import { profileIdentityDigest } from "./model-registry.mjs";
+import { applyProfileLimits, profileIdentityDigest } from "./model-registry.mjs";
 
 const MAX_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -1525,6 +1525,7 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
       inferenceNetwork: true,
     },
     limits: prepared.metadata ? { timeoutMs: prepared.metadata.timeoutMs, maxToolCalls: prepared.metadata.maxToolCalls, maxCheckRuns: prepared.metadata.maxCheckRuns, firstWriteMs: prepared.metadata.firstWriteMs, maxRawOutputBytes: MAX_RAW_OUTPUT_BYTES } : null,
+    ...(prepared.metadata?.limitProvenance ? { limitProvenance: prepared.metadata.limitProvenance } : {}),
     accounting: {
       maxToolCallsIncludesRunChecks: true,
       firstWriteMsIncludesRunChecks: false,
@@ -1557,12 +1558,21 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const inputPaths = taskInputPaths(normalizedPacket);
   const runner = workerRunner(worker?.type);
   if (!runner) throw new WorkerError(`Unsupported worker adapter: ${String(worker?.type ?? "missing")}`, { code: "UNSUPPORTED_WORKER" });
-  const limits = runner.validateWorker(worker);
+  const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
+  // A profile's limits are measured defaults, not binding ones (#174): the
+  // worker's explicit limits win, and both values are recorded with sources.
+  let effectiveWorker = worker;
+  let limitProvenance;
+  if (resolvedProfile.value?.limits) {
+    const applied = applyProfileLimits(runner.validateWorker(worker), resolvedProfile.value.limits, Object.keys(worker?.limits ?? {}), { worker: worker?.model ?? "worker", profile: resolvedProfile.value.id });
+    effectiveWorker = { ...worker, limits: applied.limits };
+    limitProvenance = applied.provenance;
+  }
+  const limits = runner.validateWorker(effectiveWorker);
   const selectedAllowed = normalizedPacket.allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
   const frozenBaseline = await resolveFrozenBaseline(sourceRoot, baselineRunId, normalizedPacket.taskId);
   const workerSelection = workerSelectionRecord(selection, await resolveEscalationSource(sourceRoot, escalatedFrom, normalizedPacket.taskId));
   const executionSource = frozenBaseline?.root ?? sourceRoot;
-  const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
   const runtimeChoice = await chooseRuntime(runtime, runner);
   const checksDeclared = normalizedPacket.checks !== null;
   const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime, runner) : { available: false, reason: null, testInjected: false };
@@ -1612,7 +1622,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const prompt = buildPrompt({ packet: { ...normalizedPacket, briefText: brief.text }, profile: resolvedProfile.value, review, compiledContext, agents, skills, instructions, builtInPrompt, checkAvailability, checkManifest });
   const inlineProfileResource = resolvedProfile.resource || (resolvedProfile.value ? { path: "<inline-profile>", text: JSON.stringify(resolvedProfile.value) } : null);
   const contextResources = [brief.resource, inlineProfileResource, builtInPrompt, review?.evidence, ...agents, ...skills, ...instructions].filter(Boolean).map(({ text, ...digest }) => ({ ...digest, sha256: digest.sha256 ?? createHash("sha256").update(text).digest("hex"), bytes: digest.bytes ?? Buffer.byteLength(text) }));
-  const prepared = await runner.prepareEnvironment({ worker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
+  const prepared = await runner.prepareEnvironment({ worker: effectiveWorker, profile: resolvedProfile.value, sourceAgentDir: runtimeChoice.sourceAgentDir, sourceEnv: runtimeChoice.sourceEnv });
+  if (limitProvenance) prepared.metadata.limitProvenance = limitProvenance;
 
   let piPackage;
   let piVersion;

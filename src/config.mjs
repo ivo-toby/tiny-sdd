@@ -375,7 +375,9 @@ async function validateReferencedPaths(projectRoot, workers, explicitLimits = {}
       worker.profileData = loaded.data;
       worker.profileSource = loaded.source;
       if (loaded.data.limits) {
-        worker.limits = applyProfileLimits(worker.limits, loaded.data.limits, explicitLimits[name] ?? [], { worker: name, profile: loaded.data.id });
+        const applied = applyProfileLimits(worker.limits, loaded.data.limits, explicitLimits[name] ?? [], { worker: name, profile: loaded.data.id });
+        worker.limits = applied.limits;
+        worker.profileLimitProvenance = applied.provenance;
       }
     }
     for (const skill of worker.skills ?? []) {
@@ -463,18 +465,22 @@ export async function resolveConfig(projectRoot, options = {}) {
       ...(effectiveWorkers[name].profileSource ? {
         profile: { ...effectiveWorkers[name].profileSource, selectedBy: name === selectedWorkerName && options.profile !== undefined ? 'argument' : 'config' },
       } : {}),
+      ...(effectiveWorkers[name].profileLimitProvenance === undefined ? {} : { limitProvenance: effectiveWorkers[name].profileLimitProvenance }),
     }])),
   };
   const publicWorkers = Object.fromEntries(Object.entries(effectiveWorkers).map(([name, worker]) => {
     const copy = { ...worker };
     delete copy.profileData;
     delete copy.profileSource;
+    delete copy.profileLimitProvenance;
     return [name, copy];
   }));
   const selectedPublic = selectedWorker ? { ...selectedWorker } : undefined;
+  const selectedLimitProvenance = selectedWorker?.profileLimitProvenance;
   if (selectedPublic) {
     delete selectedPublic.profileData;
     delete selectedPublic.profileSource;
+    delete selectedPublic.profileLimitProvenance;
   }
   return {
     projectRoot: root,
@@ -485,6 +491,7 @@ export async function resolveConfig(projectRoot, options = {}) {
     workerName: selectedWorkerName,
     worker: selectedPublic,
     profile: selectedWorker?.profileData,
+    ...(selectedLimitProvenance === undefined ? {} : { limitProvenance: selectedLimitProvenance }),
   };
 }
 
