@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createCheckChannel } from '../src/check-channel.mjs';
+import { createCheckChannel, identifyDependencyMounts } from '../src/check-channel.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
 
@@ -346,6 +346,85 @@ test('run_checks extension writes a request and returns the channel response', a
     if (previousDeadline === undefined) delete process.env.TINYSDD_CHECK_DEADLINE;
     else process.env.TINYSDD_CHECK_DEADLINE = previousDeadline;
     await channel.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const mountManifest = { schemaVersion: 1, dependencyMounts: ['node_modules'], checks: [{ id: 'unit', argv: ['node'], timeoutMs: 1000 }] };
+
+test('dependency identity accepts workspace links that stay inside the project', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-workspace-link-'));
+  try {
+    await mkdir(join(root, 'packages', 'pkg'), { recursive: true });
+    await mkdir(join(root, 'cli'), { recursive: true });
+    await mkdir(join(root, 'node_modules', '@scope'), { recursive: true });
+    await symlink('../../packages/pkg', join(root, 'node_modules', '@scope', 'pkg'));
+    await symlink('../cli', join(root, 'node_modules', 'cli'));
+    const { mounts, dependencyIdentity } = await identifyDependencyMounts({ manifest: mountManifest, sourceRoot: root, allowedPaths: ['src/allowed.txt'] });
+    assert.deepEqual(mounts, [{ source: join(root, 'node_modules'), target: 'node_modules' }]);
+    assert.equal(dependencyIdentity.mounts[0].entries, 3);
+    await rm(join(root, 'node_modules', 'cli'));
+    await symlink('../packages/pkg', join(root, 'node_modules', 'cli'));
+    const retargeted = await identifyDependencyMounts({ manifest: mountManifest, sourceRoot: root, allowedPaths: [] });
+    assert.notEqual(retargeted.dependencyIdentity.sha256, dependencyIdentity.sha256);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('dependency identity is unavailable, not a configuration error, for links that leave the project', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-escape-'));
+  const outside = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-outside-'));
+  try {
+    await mkdir(join(root, 'node_modules'), { recursive: true });
+    await symlink(outside, join(root, 'node_modules', 'escape'));
+    await assert.rejects(
+      identifyDependencyMounts({ manifest: mountManifest, sourceRoot: root, allowedPaths: [] }),
+      (error) => error.code === 'DEPENDENCY_IDENTITY_UNAVAILABLE' && /symlink escapes the project: escape/u.test(error.message),
+    );
+    await assert.rejects(
+      identifyDependencyMounts({ manifest: { ...mountManifest, dependencyMounts: ['missing'] }, sourceRoot: root, allowedPaths: [] }),
+      (error) => error.code !== 'DEPENDENCY_IDENTITY_UNAVAILABLE',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('dependency identity covers a node_modules tree above the old 20k entry limit', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-entries-'));
+  try {
+    const packages = join(root, 'node_modules', 'many');
+    await mkdir(packages, { recursive: true });
+    const names = Array.from({ length: 20050 }, (_, index) => `f${index}`);
+    for (let index = 0; index < names.length; index += 500) {
+      await Promise.all(names.slice(index, index + 500).map((name) => writeFile(join(packages, name), '')));
+    }
+    const { dependencyIdentity } = await identifyDependencyMounts({ manifest: mountManifest, sourceRoot: root, allowedPaths: [] });
+    assert.equal(dependencyIdentity.mounts[0].entries, 20051);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('dependency identity for an in-mount link keeps its sha256-tree-v1 serialization', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-compat-'));
+  try {
+    const mount = join(root, 'node_modules');
+    await mkdir(join(mount, 'a'), { recursive: true });
+    await writeFile(join(mount, 'a', 'index.js'), 'x\n');
+    await symlink('a', join(mount, 'b'));
+    const mode = async (path) => (await lstat(path)).mode & 0o7777;
+    const records = [
+      { path: 'a', kind: 'directory', mode: await mode(join(mount, 'a')) },
+      { path: 'a/index.js', kind: 'file', mode: await mode(join(mount, 'a', 'index.js')), bytes: 2, sha256: createHash('sha256').update('x\n').digest('hex') },
+      { path: 'b', kind: 'symlink', target: 'a' },
+    ];
+    const { dependencyIdentity } = await identifyDependencyMounts({ manifest: mountManifest, sourceRoot: root, allowedPaths: [] });
+    assert.equal(dependencyIdentity.mounts[0].algorithm, 'sha256-tree-v1');
+    assert.equal(dependencyIdentity.mounts[0].sha256, createHash('sha256').update(JSON.stringify(records)).digest('hex'));
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

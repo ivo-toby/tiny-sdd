@@ -1465,6 +1465,36 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("accepts workspace links and turns run_checks off when a dependency mount cannot be identified", async () => {
+    const project = await realpath(await makeProject());
+    const outside = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-outside-"));
+    try {
+      await mkdir(join(project, "packages", "pkg"), { recursive: true });
+      await mkdir(join(project, "node_modules", "@scope"), { recursive: true });
+      await writeFile(join(project, "packages", "pkg", "package.json"), '{"name":"@scope/pkg"}\n');
+      await symlink("../../packages/pkg", join(project, "node_modules", "@scope", "pkg"));
+      const checksText = JSON.stringify({ schemaVersion: 1, dependencyMounts: ["node_modules"], checks: [{ id: "unit", argv: ["node", "-e", "0"], timeoutMs: 1000 }] });
+      const checks = { path: ".tinysdd/tasks/checks.json", text: checksText, sha256: createHash("sha256").update(checksText).digest("hex") };
+      const checkRuntime = { ...runtime(undefined, "complete"), checkRunner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok", tail: "ok", totalBytes: 2, truncated: false } }) };
+      const linked = await runWorker({ projectRoot: project, packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime });
+      assert.equal(linked.runChecks.available, true);
+      assert.match(await readFile(linked.artifactPaths.prompt, "utf8"), /run_checks/u);
+
+      await symlink(outside, join(project, "node_modules", "escape"));
+      const degraded = await runWorker({ projectRoot: project, packet: { ...packet(), checks }, worker: worker(), runtime: checkRuntime });
+      const degradedRuntime = JSON.parse(await readFile(degraded.artifactPaths.runtime, "utf8"));
+      assert.equal(degradedRuntime.runChecks.declared, true);
+      assert.equal(degradedRuntime.runChecks.available, false);
+      assert.match(degradedRuntime.runChecks.reason, /^dependency mount identity unavailable: dependency mount symlink escapes the project: escape$/u);
+      assert.equal(degradedRuntime.runChecks.dependencyIdentity, undefined);
+      assert.equal(degradedRuntime.capabilities.tools.includes("run_checks"), false);
+      assert.doesNotMatch(await readFile(degraded.artifactPaths.prompt, "utf8"), /run_checks/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   test("runs individual and all checks through the Pi channel and retains budget errors", async () => {
     const project = await makeProject();
     const calls = [];

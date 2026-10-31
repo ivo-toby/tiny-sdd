@@ -20,10 +20,12 @@ const inside = (root, candidate) => {
   return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !path.startsWith(sep));
 };
 
-const MAX_IDENTITY_ENTRIES = 20000;
+// Sized for an ordinary npm-workspaces node_modules (#195: 30k entries).
+const MAX_IDENTITY_ENTRIES = 250000;
 const MAX_IDENTITY_BYTES = 512 * 1024 * 1024;
+const identityUnavailable = (message) => Object.assign(new Error(message), { code: 'DEPENDENCY_IDENTITY_UNAVAILABLE' });
 
-async function fingerprintDirectory(source) {
+async function fingerprintDirectory(source, projectRoot) {
   const records = [];
   let bytes = 0;
   let entryCount = 0;
@@ -38,7 +40,7 @@ async function fingerprintDirectory(source) {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       const absolute = join(current, entry.name);
       const info = await lstat(absolute);
-      if (++entryCount > MAX_IDENTITY_ENTRIES) throw new Error('dependency mount exceeds the identity entry limit');
+      if (++entryCount > MAX_IDENTITY_ENTRIES) throw identityUnavailable('dependency mount exceeds the identity entry limit');
       if (info.isDirectory()) {
         records.push({ path, kind: 'directory', mode: info.mode & 0o7777 });
         await visit(absolute, path);
@@ -46,7 +48,7 @@ async function fingerprintDirectory(source) {
         const input = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         try {
           const opened = await input.stat();
-          if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev) throw new Error('dependency mount changed while fingerprinting');
+          if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev) throw identityUnavailable('dependency mount changed while fingerprinting');
           const hash = createHash('sha256');
           const buffer = Buffer.alloc(64 * 1024);
           let position = 0;
@@ -55,7 +57,7 @@ async function fingerprintDirectory(source) {
             if (!bytesRead) break;
             position += bytesRead;
             bytes += bytesRead;
-            if (bytes > MAX_IDENTITY_BYTES) throw new Error('dependency mount exceeds the identity byte limit');
+            if (bytes > MAX_IDENTITY_BYTES) throw identityUnavailable('dependency mount exceeds the identity byte limit');
             hash.update(buffer.subarray(0, bytesRead));
           }
           records.push({ path, kind: 'file', mode: info.mode & 0o7777, bytes: opened.size, sha256: hash.digest('hex') });
@@ -65,10 +67,14 @@ async function fingerprintDirectory(source) {
       } else if (info.isSymbolicLink()) {
         const target = await readlink(absolute);
         const resolvedTarget = resolve(dirname(absolute), target);
-        if (!inside(source, resolvedTarget)) throw new Error(`dependency mount symlink escapes its source: ${path}`);
+        // Workspace links (node_modules/@scope/pkg -> ../../packages/pkg) stay
+        // inside the project. In the check sandbox they resolve to the frozen
+        // candidate or to a path the sandbox does not grant, so the link text
+        // is their identity. Links that leave the project are not identified.
+        if (!inside(projectRoot, resolvedTarget)) throw identityUnavailable(`dependency mount symlink escapes the project: ${path}`);
         records.push({ path, kind: 'symlink', target });
       } else {
-        throw new Error(`dependency mount contains an unsupported entry: ${path}`);
+        throw identityUnavailable(`dependency mount contains an unsupported entry: ${path}`);
       }
     }
   }
@@ -159,7 +165,10 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
   };
 }
 
-export async function createCheckChannel({ manifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths, maxCheckRuns, runner = runCheck, nodeRoot }) {
+// Validates the declared mounts and fingerprints them. Configuration errors
+// throw plainly; an error with code DEPENDENCY_IDENTITY_UNAVAILABLE means the
+// mounts are valid but cannot be identified, so run_checks must stay off.
+export async function identifyDependencyMounts({ manifest, sourceRoot, allowedPaths }) {
   for (const [index, target] of manifest.dependencyMounts.entries()) {
     for (const other of manifest.dependencyMounts.slice(index + 1)) {
       if (overlaps(target, other)) throw new Error(`dependency mount targets must not overlap: ${target}, ${other}`);
@@ -175,7 +184,7 @@ export async function createCheckChannel({ manifest, sourceRoot, workspace, arti
   }
   const mountIdentities = [];
   for (const mount of mounts) {
-    const tree = await fingerprintDirectory(mount.source);
+    const tree = await fingerprintDirectory(mount.source, sourceRoot);
     mountIdentities.push({ target: mount.target, source: mount.source, ...tree });
   }
   const dependencyIdentity = {
@@ -184,6 +193,11 @@ export async function createCheckChannel({ manifest, sourceRoot, workspace, arti
     mounts: mountIdentities,
     sha256: digest(JSON.stringify(mountIdentities.map(({ target, algorithm, sha256, entries, bytes }) => ({ target, algorithm, sha256, entries, bytes })))),
   };
+  return { mounts, dependencyIdentity };
+}
+
+export async function createCheckChannel({ manifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths, maxCheckRuns, runner = runCheck, nodeRoot, dependencies }) {
+  const { mounts, dependencyIdentity } = dependencies ?? await identifyDependencyMounts({ manifest, sourceRoot, allowedPaths });
   const root = await mkdtemp(join(tempRoot, 'tinysdd-channel-'));
   const requests = join(root, 'requests');
   const responses = join(root, 'responses');
