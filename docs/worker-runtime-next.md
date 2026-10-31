@@ -358,7 +358,22 @@ where the host has it. The runner refuses to start if it cannot apply the
 configured limits.
 
 **Check runner (`src/check-runner.mjs`, #26).** The host-side runner exists and
-nothing calls it yet. It follows the sketch above, with these differences:
+nothing calls it yet. It follows the sketch above on Linux (bubblewrap) and with
+a Seatbelt backend on macOS (#176), with these differences:
+
+- On macOS the check runs through `sandbox-exec -f <profile>` with a profile from
+  `buildSeatbeltCheckProfile` (`src/macos-sandbox.mjs`): `(deny default)` denies
+  all network, the spawn uses `env -i` with only `PATH`, `HOME`, `TMPDIR`, `CI`,
+  `LANG` and `PWD`, the Node root and dependency mounts are read-only, and only
+  the scratch work copy plus its home and tmp directories are writable. The
+  candidate is copied into a real scratch `work` directory (bounded by
+  `scratchBytes` at copy time) with the dependency mounts linked in as symlinks,
+  so writes outside the scratch are denied. There is no `prlimit` equivalent, so
+  the address-space, process-count and file-size limits are not applied on macOS;
+  the wall-clock deadline with process-group kill still is. Seatbelt has no
+  privilege drop, so a root caller is refused (`CHECK_RUNNER_UNAVAILABLE`) instead
+  of running the check as root. The result reports `sandbox.runner: "seatbelt"`
+  (versus `"linux-bubblewrap"`) so the two backends are never confused.
 
 - The check never runs as root. A root caller drops to an unprivileged uid
   first (`runAs`, default 65534:65534) with
@@ -756,6 +771,7 @@ contexts grow.
 | `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |
 | Timeout candidate state | **Implemented** (#11) | Non-completed results report allowed paths touched and untouched; S4 timed out with a complete candidate. |
 | macOS worker sandbox | **Implemented** (#13), `code-local` qualified on macOS | Seatbelt with disposable-only writes, trusted-runtime reads, source/home isolation and a per-run inference-only relay. Provider credentials stay outside Pi. Offline tests, native escape checks and a live Pi 0.87.1 `code-local` smoke passed: the candidate changed as requested, the source stayed unchanged and there were no scope violations. MLX and LM Studio qualification remains pending. Linux bubblewrap is unchanged. |
+| Seatbelt check runner on macOS (#176) | **Implemented; live Seatbelt behavior unverified** | `run_checks` and `feature accept` work on macOS through `sandbox-exec` with a `(deny default)` profile: no network, `env -i` scrubbed environment, read-only Node root and dependency mounts, and only the scratch work copy writable. A root caller is refused because Seatbelt cannot drop privileges. Results report `sandbox.runner: "seatbelt"`. Offline tests cover availability, profile content, spawn shape, evidence labeling and child cleanup on the darwin path with a stubbed `sandbox-exec`; live macOS Seatbelt enforcement (network denial, write denial, timeout kill) was not observed on a Mac. |
 | Linux worker network isolation (#152) | **Implemented; live bubblewrap/Pi behavior unverified** | bubblewrap adds `--unshare-net` and drops the DNS, hosts and CA mounts. The per-run inference relay listens on a Unix socket in a run-owned read-only mount; a fixed launcher forwards in-sandbox `127.0.0.1:41434` to it, then runs Pi with its exit status passed through. Pi gets a relay-based `models.json` and only the relay token; provider credentials stay on the host. Non-`openai-completions` providers fail closed on Linux. The setup probe also checks `--unshare-net`. |
 | Worker runner interface (#154) | **Implemented (refactor); live bubblewrap/Seatbelt/Pi behavior unverified** | `worker.type` selects a runner from `src/runners/index.mjs`; Pi (`src/runners/pi.mjs`) is the only one. The runner locates and identifies its executable, prepares its state, builds its arguments and its sandbox mounts and environment, points its configuration at the inference relay and parses its events, which `captureProcess` also uses for live limits. Copying, snapshots, patches, scope checks, the check channel, the relay and the bubblewrap and Seatbelt wrappers stay in the worker. `runtime.json`, `result.json`, controller state and qualification identity are unchanged; an unknown `worker.type` is still `UNSUPPORTED_WORKER`. |
 | Shared briefs going stale | **Implemented** (#16) | One brief per slice, shared spec cited by line range. Approval binds the cited excerpts, not the whole file: the compiled text no longer carries `Source sha256:`. Older approvals keep binding the whole file through a legacy digest until re-approved. Addenda stay on hold. |
