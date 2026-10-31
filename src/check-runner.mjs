@@ -50,7 +50,8 @@ const DEFAULT_DROP_ID = 65534;
 const MAX_ID = 4294967294;
 // bwrap adds PWD itself when --chdir is used and it cannot be unset.
 const SANDBOX_ENV = Object.freeze(['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
-const SEATBELT_ENV = Object.freeze(['PATH', 'HOME', 'TMPDIR', 'CI', 'LANG']);
+// The shell sets PWD itself.
+const SEATBELT_ENV = Object.freeze(['PATH', 'HOME', 'TMPDIR', 'CI', 'LANG', 'PWD']);
 // The candidate is bound read-only at /input and copied into the /work tmpfs
 // here, so what the check writes is bounded by the tmpfs size. The script is
 // fixed text: the check's argv reaches the shell only as "$@", never as script.
@@ -68,8 +69,10 @@ const usernsProbes = new Map();
 // macOS has no prlimit, so the fixed shell script sets the limits itself before
 // the exec: $1 is the process limit, $2 the file size limit in 512-byte blocks
 // (the unit of POSIX sh). A process limit above the hard limit cannot be set, so
-// it is capped there. The check's argv again reaches the shell only as "$@".
-const SEATBELT_LIMITS_AND_EXEC = `n=$1; f=$2; shift 2; h=$(ulimit -H -u 2>/dev/null) || h=unlimited; if [ "$h" != unlimited ] && [ "$n" -gt "$h" ]; then n=$h; fi; ulimit -u "$n" 2>/dev/null || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }; ulimit -f "$f" 2>/dev/null || { printf '${SETUP_PREFIX}setting the file size limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }; exec "$@"`;
+// it is capped there. bash and zsh name that limit -u and dash names it -p (in
+// bash -p is the pipe size), and /bin/sh on macOS can be any of them. The
+// check's argv again reaches the shell only as "$@".
+const SEATBELT_LIMITS_AND_EXEC = `n=$1; f=$2; shift 2; if ulimit -H -u >/dev/null 2>&1; then o=-u; else o=-p; fi; h=$(ulimit -H $o 2>/dev/null) || h=unlimited; if [ "$h" != unlimited ] && [ "$n" -gt "$h" ]; then n=$h; fi; ulimit $o "$n" 2>/dev/null || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }; ulimit -f "$f" 2>/dev/null || { printf '${SETUP_PREFIX}setting the file size limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }; exec "$@"`;
 const MAX_PS_OUTPUT_BYTES = 4 * MIB;
 
 function invalid(message, details = undefined) {

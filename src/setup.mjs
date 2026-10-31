@@ -718,10 +718,21 @@ export async function inspectSandbox({ platform = process.platform, privileged =
   }
   if (platform === 'darwin') {
     const sandboxExec = await firstExecutable(executablePaths.sandboxExec ? [executablePaths.sandboxExec] : ['/usr/bin/sandbox-exec']);
+    // The check runner counts the uid's processes with ps for its process limit.
+    const ps = await firstExecutable(executablePaths.ps ? [executablePaths.ps] : ['/bin/ps']);
+    const checksReason = !sandboxExec
+      ? 'the macOS check runner requires sandbox-exec'
+      : !ps
+        ? 'the macOS check runner requires /bin/ps to set its process limit'
+        : privileged
+          ? 'the macOS check runner will not run checks as root'
+          : null;
     return {
       platform,
       worker: sandboxExec ? { supported: true, sandbox: 'seatbelt', executable: sandboxExec.path } : { supported: false, sandbox: 'seatbelt', executable: null, reason: 'macOS sandbox-exec is not available at /usr/bin/sandbox-exec' },
-      checks: { available: false, runner: 'linux-bubblewrap', reason: 'run_checks is unavailable on macOS by design' },
+      checks: checksReason
+        ? { available: false, runner: 'macos-seatbelt', reason: checksReason }
+        : { available: true, runner: 'macos-seatbelt', sandboxExec: sandboxExec.path, ps: ps.path },
     };
   }
   return {
@@ -1213,7 +1224,7 @@ function setupInstructions(checks) {
     instructions.push(`Linux run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing bubblewrap, prlimit or setpriv executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
   }
   if (!checks.models.usable) instructions.push(`Add an explicit provider/model entry to ${checks.models.modelsPath}; credentials remain environment references and are not inspected: ${SETUP_DOCS_URL}`);
-  if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin') instructions.push(`macOS worker setup is supported; run_checks is Linux-only: ${SETUP_DOCS_URL}`);
+  if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin' && checks.sandbox.worker.supported) instructions.push(`macOS run_checks is unavailable (${checks.sandbox.checks.reason}); run setup as your own user with /bin/ps present: ${SETUP_DOCS_URL}`);
   if (instructions.length === 0) {
     instructions.push(
       'Start a fresh Claude or Codex session in the intended project, then invoke /tinysdd-setup in Claude or $tinysdd-setup in Codex.',

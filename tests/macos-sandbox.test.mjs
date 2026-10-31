@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
-import { buildMacosSandboxProfile as buildProfile } from "../src/macos-sandbox.mjs";
+import { buildMacosCheckProfile, buildMacosSandboxProfile as buildProfile } from "../src/macos-sandbox.mjs";
 import { piSeatbeltInvocation } from "../src/runners/pi.mjs";
 import { inferenceRelayHandler, relayPiProvider } from "../src/inference-relay.mjs";
 
@@ -16,8 +16,8 @@ const sandbox = {
   inferencePort: 54321,
 };
 // The fixtures name Pi's paths; the profile builder receives them as the Pi runner's invocation.
-function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, inferencePort, ...pi }) {
-  return buildProfile({ workspace, sourceRoot, compactionBundle, inferencePort, invocation: piSeatbeltInvocation(pi) });
+function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle, inferencePort, checkChannel, ...pi }) {
+  return buildProfile({ workspace, sourceRoot, compactionBundle, inferencePort, checkChannel, invocation: piSeatbeltInvocation(pi) });
 }
 const model = { id: "exact-model", maxTokens: 1024, headers: { "X-Model": "$TINYSDD_PI_SECRET_2" } };
 const provider = { api: "openai-completions", baseUrl: "https://inference.example/v1", apiKey: "$TINYSDD_PI_SECRET_0", headers: { "X-Provider": "$TINYSDD_PI_SECRET_1" }, models: [model, { id: "other-model" }] };
@@ -56,6 +56,46 @@ test("Seatbelt validates paths and ports and escapes profile syntax", () => {
   for (const inferencePort of [0, 65536, "54321", 1.5]) assert.throws(() => buildMacosSandboxProfile({ ...sandbox, inferencePort }), /relay port/u);
   assert.throws(() => buildMacosSandboxProfile({ ...sandbox, piExecutable: "/other/pi.js" }), /installed package/u);
   assert.match(buildMacosSandboxProfile({ ...sandbox, workspace: '/private/tmp/quoted"(allow default)' }), /quoted\\"\(allow default\)/u);
+});
+
+const channel = { requests: "/private/tmp/channel/requests", responses: "/private/tmp/channel/responses", extension: "/private/tmp/channel/run-checks.mjs" };
+
+test("Seatbelt lets the worker write check requests and read responses and the check tool only", () => {
+  const without = buildMacosSandboxProfile(sandbox);
+  assert.doesNotMatch(without, /channel/u);
+  const profile = buildMacosSandboxProfile({ ...sandbox, checkChannel: channel });
+  const writes = profile.split("\n").filter((line) => line.startsWith("(allow file-read* file-write*"));
+  assert.deepEqual(writes, ['(allow file-read* file-write* (subpath "/private/tmp/candidate"))', '(allow file-read* file-write* (subpath "/private/tmp/pi-state"))', '(allow file-read* file-write* (subpath "/private/tmp/channel/requests"))']);
+  const reads = profile.split("\n").find((line) => line.startsWith("(allow file-read* (subpath"));
+  assert.ok(reads.includes('(subpath "/private/tmp/channel/responses")') && reads.includes('(subpath "/private/tmp/channel/run-checks.mjs")'));
+  assert.doesNotMatch(profile, /\(subpath "\/private\/tmp\/channel"\)/u);
+  assert.throws(() => buildMacosSandboxProfile({ ...sandbox, checkChannel: { ...channel, requests: "/private/tmp/candidate/requests" } }), /separate/u);
+  assert.throws(() => buildMacosSandboxProfile({ ...sandbox, checkChannel: { ...channel, responses: "/Users/operator/project/responses" } }), /overlap/u);
+});
+
+const check = { scratch: "/private/tmp/tinysdd-check-1", nodeRoot: "/opt/node", dependencySources: ["/Users/operator/project/node_modules"] };
+
+test("the check profile has no network and writes only its scratch directory", () => {
+  const profile = buildMacosCheckProfile(check);
+  const lines = profile.split("\n");
+  assert.deepEqual(lines.slice(0, 2), ["(version 1)", "(deny default)"]);
+  assert.doesNotMatch(profile, /network|mach-lookup|\(allow default\)|\(allow sysctl-read\)/u);
+  assert.deepEqual(lines.filter((line) => /file-write/u.test(line)), ['(allow file-read* file-write* (subpath "/private/tmp/tinysdd-check-1") (literal "/dev/null"))']);
+  const reads = lines.find((line) => line.startsWith("(allow file-read* (subpath"));
+  for (const path of ["/opt/node", "/Users/operator/project/node_modules", "/bin", "/usr/bin", "/usr/lib"]) assert.ok(reads.includes(`(subpath "${path}")`), path);
+  // The source project itself and home are only metadata ancestors of the mount.
+  assert.doesNotMatch(profile, /\(subpath "\/Users\/operator(?:\/project)?"\)/u);
+  assert.match(profile, /\(allow file-read-metadata [^\n]*\(literal "\/Users\/operator\/project"\)/u);
+  assert.match(profile, /^\(allow process-fork\)$/mu);
+  assert.match(profile, /^\(allow signal \(target same-sandbox\)\)$/mu);
+  assert.match(profile, /^\(allow process-exec\* \(subpath "\/bin"\) \(subpath "\/usr\/bin"\) \(subpath "\/opt\/node"\) \(subpath "\/Users\/operator\/project\/node_modules"\) \(subpath "\/private\/tmp\/tinysdd-check-1"\)\)$/mu);
+});
+
+test("the check profile refuses overlapping and malformed paths", () => {
+  assert.throws(() => buildMacosCheckProfile({ ...check, dependencySources: ["/private/tmp/tinysdd-check-1/node_modules"] }), /overlap/u);
+  assert.throws(() => buildMacosCheckProfile({ ...check, nodeRoot: "/private/tmp" }), /overlap/u);
+  for (const scratch of ["relative", "/private/tmp/../x", "/private/tmp/x\n"]) assert.throws(() => buildMacosCheckProfile({ ...check, scratch }), /absolute paths/u);
+  assert.match(buildMacosCheckProfile({ ...check, scratch: '/private/tmp/q"(allow default)' }), /q\\"\(allow default\)/u);
 });
 
 test("temporary Pi configuration has only the relay credential and selected model", () => {

@@ -342,7 +342,7 @@ test('bubblewrap startup probe can spawn a deterministic executable and cleans a
   }
 });
 
-test('sandbox inspection reports macOS inference support with Linux-only check limitation', async () => {
+test('sandbox inspection reports worker and check-runner support on Linux and macOS', async () => {
   const home = await temporary('tinysdd-sandbox-');
   try {
     const bwrap = join(home, 'bwrap');
@@ -363,10 +363,16 @@ test('sandbox inspection reports macOS inference support with Linux-only check l
     assert.equal(blocked.worker.supported, false);
     assert.equal(blocked.worker.probe.status, 'failed-empty-stderr');
     assert.equal(blocked.checks.available, false);
-    const mac = await inspectSandbox({ platform: 'darwin', executablePaths: { sandboxExec: bwrap } });
+    const mac = await inspectSandbox({ platform: 'darwin', privileged: false, executablePaths: { sandboxExec: bwrap, ps: prlimit } });
     assert.equal(mac.worker.supported, true);
-    assert.equal(mac.checks.available, false);
-    assert.match(mac.checks.reason, /macOS|Linux/u);
+    assert.deepEqual(mac.checks, { available: true, runner: 'macos-seatbelt', sandboxExec: bwrap, ps: prlimit });
+    const macRoot = await inspectSandbox({ platform: 'darwin', privileged: true, executablePaths: { sandboxExec: bwrap, ps: prlimit } });
+    assert.equal(macRoot.checks.available, false);
+    assert.match(macRoot.checks.reason, /as root/u);
+    const macNoPs = await inspectSandbox({ platform: 'darwin', privileged: false, executablePaths: { sandboxExec: bwrap, ps: join(home, 'missing-ps') } });
+    assert.equal(macNoPs.worker.supported, true);
+    assert.equal(macNoPs.checks.available, false);
+    assert.match(macNoPs.checks.reason, /ps/u);
   } finally {
     await cleanup(home);
   }
@@ -492,7 +498,7 @@ test('runSetup installs a version-matched archive and reports metadata-only read
     assert.equal(result.checks.models.status, 'ready');
     assert.equal(result.checks.sandbox.worker.supported, true);
     assert.equal(result.checks.authentication.status, 'unknown');
-    assert.match(result.nextSteps.join('\n'), /Linux-only|authorized worker smoke|metadata/u);
+    assert.match(result.nextSteps.join('\n'), /macOS run_checks is unavailable|authorized worker smoke|metadata/u);
     const linuxResult = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'linux', sandbox: { privileged: false, executablePaths: { bwrap: pi.pi, prlimit: join(home, 'missing-prlimit') }, probe: { spawnImpl: fakeProbe().spawnImpl } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(linuxResult.ready, true);
     assert.equal(linuxResult.checks.sandbox.checks.available, false);

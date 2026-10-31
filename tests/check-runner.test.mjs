@@ -1100,14 +1100,15 @@ describe('check runner', { skip: SKIP }, () => {
       assert.equal(real[10], '/usr/bin/bwrap');
     });
 
-    test('the runner is unavailable off Linux', async () => {
+    test('the runner is unavailable off Linux and macOS', async () => {
       const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
       const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      Object.defineProperty(process, 'platform', { value: 'freebsd' });
       try {
         const availability = checkRunnerAvailable();
         assert.equal(availability.available, false);
-        assert.match(availability.reason, /requires Linux/u);
+        assert.equal(availability.runner, null);
+        assert.match(availability.reason, /requires Linux or macOS/u);
         await assert.rejects(run(candidate, {}), { code: 'CHECK_RUNNER_UNAVAILABLE' });
       } finally {
         Object.defineProperty(process, 'platform', platform);
@@ -1276,8 +1277,201 @@ test('without POSIX identity APIs the runner reports unavailable and this file s
     assert.deepEqual(JSON.parse(stdout), { available: false, code: 'CHECK_RUNNER_UNAVAILABLE' });
     const suite = await execFileAsync(process.execPath, ['--import', preload, '--test', '--test-reporter=tap', fileURLToPath(import.meta.url)], { env });
     assert.match(suite.stdout, /^# fail 0$/mu);
-    assert.match(suite.stdout, /check runner unavailable: the check runner requires Linux \(this is win32\)/u);
+    assert.match(suite.stdout, /check runner unavailable: the check runner requires Linux or macOS \(this is win32\)/u);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// The macOS runner runs here with process.platform set to darwin and a fake
+// sandbox-exec that drops the profile and executes the rest of its argv, so the
+// copy, the dependency symlinks, the shell limits, the environment and the
+// process-group cleanup run for real. Seatbelt itself does not: whether the
+// profile is accepted and enforced is only observable on macOS.
+const PS = ['/bin/ps', '/usr/bin/ps'].find((path) => existsSync(path));
+const DARWIN_SKIP = process.env.TINYSDD_NO_POSIX_IDS === '1'
+  ? 'no POSIX identity APIs'
+  : process.platform !== 'linux' && process.platform !== 'darwin' ? `no POSIX host (${process.platform})` : !PS ? 'ps is unavailable' : false;
+// The runner gives sandbox-exec an empty environment, so a dump path is part of the script.
+const fakeSandboxExecScript = (dump = '/dev/null') => `#!/bin/sh
+[ "$1" = "-p" ] || { echo "sandbox-exec: unexpected arguments" >&2; exit 64; }
+printf '%s' "$2" > '${dump}'
+shift 2
+exec "$@"
+`;
+
+describe('macOS check runner (fake sandbox-exec)', { skip: DARWIN_SKIP }, () => {
+  let fixtures;
+  let scratchRoot;
+  let probe;
+  let fakeSandboxExec;
+  let counter = 0;
+
+  before(async () => {
+    fixtures = await mkdtemp(join(await realpath(tmpdir()), 'tinysdd-check-runner-darwin-'));
+    await chmod(fixtures, 0o777);
+    scratchRoot = join(fixtures, 'scratch');
+    await mkdir(scratchRoot);
+    await chmod(scratchRoot, 0o777);
+    fakeSandboxExec = join(fixtures, 'sandbox-exec');
+    await writeFile(fakeSandboxExec, fakeSandboxExecScript(), { mode: 0o755 });
+    // The runner refuses a root caller on macOS, so the probe runs as TARGET.
+    probe = join(fixtures, 'probe.mjs');
+    await writeFile(probe, [
+      "Object.defineProperty(process, 'platform', { value: 'darwin' });",
+      `const { runCheck, checkRunnerAvailable } = await import(${JSON.stringify(new URL('../src/check-runner.mjs', import.meta.url).href)});`,
+      'const options = JSON.parse(process.argv[2]);',
+      'const out = { availability: checkRunnerAvailable(options) };',
+      'const controller = new AbortController();',
+      'if (options.abortAfterMs) setTimeout(() => controller.abort(), options.abortAfterMs);',
+      'const { abortAfterMs, ...runOptions } = options;',
+      'try { out.result = await runCheck({ ...runOptions, ...(abortAfterMs ? { signal: controller.signal } : {}) }); }',
+      'catch (error) { out.error = { code: error.code, message: error.message, details: error.details }; }',
+      'console.log(JSON.stringify(out));',
+      '',
+    ].join('\n'), { mode: 0o644 });
+  });
+
+  after(async () => {
+    await rm(fixtures, { recursive: true, force: true });
+  });
+
+  afterEach(async () => {
+    assert.deepEqual(await readdir(scratchRoot), [], 'scratch directories were left behind');
+  });
+
+  async function makeDir(files = {}) {
+    counter += 1;
+    const root = join(fixtures, `fixture-${counter}`);
+    await mkdir(root, { mode: 0o755 });
+    for (const [path, content] of Object.entries(files)) {
+      const target = join(root, path);
+      await mkdir(dirname(target), { recursive: true, mode: 0o755 });
+      await writeFile(target, content, { mode: 0o644 });
+    }
+    return root;
+  }
+
+  async function runDarwin(candidateDir, check = {}, extra = {}) {
+    const options = {
+      candidateDir,
+      check: { ...VALID_CHECK, ...check },
+      tempRoot: scratchRoot,
+      sandboxExecPath: fakeSandboxExec,
+      psPath: PS,
+      ...extra,
+    };
+    const { stdout } = await execFileAsync(process.execPath, [probe, JSON.stringify(options)], { ...AS_TARGET, env: { PATH: '/usr/bin:/bin', TINYSDD_SECRET_PROBE: 'leak' }, timeout: 60000 });
+    return JSON.parse(stdout);
+  }
+
+  test('selects the macos-seatbelt runner and needs sandbox-exec and ps', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const ready = await runDarwin(candidate);
+    assert.deepEqual(ready.availability, { available: true, reason: null, runner: 'macos-seatbelt' });
+    assert.equal(ready.result.sandbox.runner, 'macos-seatbelt');
+    const missing = await runDarwin(candidate, {}, { sandboxExecPath: join(fixtures, 'missing') });
+    assert.equal(missing.availability.available, false);
+    assert.equal(missing.availability.runner, 'macos-seatbelt');
+    assert.match(missing.availability.reason, /sandbox-exec is not an executable file/u);
+    assert.equal(missing.error.code, 'CHECK_RUNNER_UNAVAILABLE');
+    const noPs = await runDarwin(candidate, {}, { psPath: join(fixtures, 'missing') });
+    assert.match(noPs.availability.reason, /ps is not an executable file/u);
+  });
+
+  test('refuses a root caller instead of running unbounded', { skip: AS_ROOT ? false : 'needs a root caller' }, () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    try {
+      const availability = checkRunnerAvailable({ sandboxExecPath: '/bin/sh', psPath: PS });
+      assert.equal(availability.available, false);
+      assert.match(availability.reason, /will not run checks as root/u);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
+  test('passes and fails like the Linux runner, with a cleared environment', async () => {
+    const env = "import test from 'node:test';\ntest('env', () => { console.log('ENV ' + JSON.stringify(process.env)); });\n";
+    const passed = await runDarwin(await makeDir({ 't.test.mjs': env }));
+    assert.equal(passed.result.exitCode, 0);
+    assert.equal(passed.result.timedOut, false);
+    const seen = JSON.parse(/ENV (\{.*\})/u.exec(passed.result.output.text)[1]);
+    // NODE_TEST_CONTEXT is node --test's own variable for its child.
+    assert.deepEqual(Object.keys(seen).filter((name) => name !== 'NODE_TEST_CONTEXT').sort(), ['CI', 'HOME', 'LANG', 'PATH', 'PWD', 'TMPDIR']);
+    assert.ok(seen.HOME.startsWith(`${scratchRoot}/tinysdd-check-`));
+    assert.ok(seen.PWD.endsWith('/work'));
+    assert.deepEqual(passed.result.sandbox.env, ['PATH', 'HOME', 'TMPDIR', 'CI', 'LANG', 'PWD']);
+    assert.equal(passed.result.sandbox.network, 'none');
+    assert.ok(Number.isInteger(passed.result.sandbox.processBaseline));
+    assert.deepEqual(passed.result.sandbox.runAs, TARGET);
+    const failed = await runDarwin(await makeDir({ 't.test.mjs': FAILING_TEST }));
+    assert.notEqual(failed.result.exitCode, 0);
+    assert.match(failed.result.output.tail, /two plus one is three/u);
+  });
+
+  test('hands the profile to sandbox-exec and keeps the argv out of the script', async () => {
+    const dump = join(fixtures, 'profile.sb');
+    const dumping = join(fixtures, 'dumping-sandbox-exec');
+    await writeFile(dumping, fakeSandboxExecScript(dump), { mode: 0o755 });
+    await writeFile(dump, '', { mode: 0o666 });
+    await chmod(dump, 0o666);
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const dependency = await makeDir({ 'node_modules/dep/index.js': 'module.exports = 7;\n' });
+    const run = await runDarwin(candidate, {}, { sandboxExecPath: dumping, dependencyMounts: [{ source: join(dependency, 'node_modules'), target: 'node_modules' }] });
+    assert.equal(run.result.exitCode, 0);
+    const profile = await readFile(dump, 'utf8');
+    assert.match(profile, /^\(version 1\)\n\(deny default\)\n/u);
+    assert.match(profile, new RegExp(`\\(allow file-read\\* file-write\\* \\(subpath "${scratchRoot}/tinysdd-check-[^"]+"\\) \\(literal "/dev/null"\\)\\)`, 'u'));
+    assert.ok(profile.includes(`(subpath "${join(dependency, 'node_modules')}")`));
+    assert.doesNotMatch(profile, /network|mach-lookup/u);
+    assert.doesNotMatch(profile, new RegExp(`subpath "${candidate}"`, 'u'));
+  });
+
+  test('a dependency mount is a symlink to its read-only source and cannot also exist in the candidate', async () => {
+    const dependency = await makeDir({ 'node_modules/dep/index.js': 'module.exports = 7;\n' });
+    const uses = "import test from 'node:test';\nimport { createRequire } from 'node:module';\nimport { lstatSync } from 'node:fs';\nconst require = createRequire(import.meta.url);\ntest('dep', () => { if (require('dep') !== 7 || !lstatSync('node_modules').isSymbolicLink()) throw new Error('dependency mount missing'); });\n";
+    const mounts = [{ source: join(dependency, 'node_modules'), target: 'node_modules' }];
+    const run = await runDarwin(await makeDir({ 't.test.mjs': uses }), {}, { dependencyMounts: mounts });
+    assert.equal(run.result.exitCode, 0, run.result.output.tail);
+    const clash = await runDarwin(await makeDir({ 't.test.mjs': uses, 'node_modules/x.js': '' }), {}, { dependencyMounts: mounts });
+    assert.equal(clash.error.code, 'CHECK_INVALID');
+    assert.match(clash.error.message, /already exists in candidateDir/u);
+    const program = await runDarwin(await makeDir({ 't.test.mjs': PASSING_TEST }), { argv: ['node_modules/dep/index.js'] }, { dependencyMounts: mounts });
+    assert.equal(program.error, undefined);
+  });
+
+  test('applies the process and file size limits through the shell', async () => {
+    const limits = "import test from 'node:test';\nimport { execFileSync } from 'node:child_process';\ntest('limits', () => { console.log('LIMITS ' + execFileSync('/bin/sh', ['-c', 'if ulimit -H -u >/dev/null 2>&1; then ulimit -u; else ulimit -p; fi; ulimit -f']).toString().split('\\n').join(' ')); });\n";
+    const run = await runDarwin(await makeDir({ 't.test.mjs': limits }), {}, { limits: { maxProcesses: 77, fileSizeBytes: 512 * 1000 } });
+    assert.equal(run.result.exitCode, 0, run.result.output.tail);
+    const [processes, blocks] = /LIMITS (\S+) (\S+)/u.exec(run.result.output.text).slice(1);
+    assert.equal(Number(processes), run.result.sandbox.processBaseline + 77);
+    assert.equal(blocks, '1000');
+  });
+
+  test('kills background processes when the check exits and on timeout', async () => {
+    const leaves = "import { spawn } from 'node:child_process';\nspawn('/bin/sleep', ['30'], { stdio: 'inherit' }).unref();\nconsole.log('left a sleeper');\n";
+    const started = Date.now();
+    const exited = await runDarwin(await makeDir({ 'leave.mjs': leaves }), { argv: ['node', 'leave.mjs'] });
+    assert.equal(exited.result.timedOut, false);
+    assert.equal(exited.result.exitCode, 0);
+    assert.ok(Date.now() - started < 20000, 'the sleeper kept the run open');
+    const hangs = await runDarwin(await makeDir({ 'hang.mjs': 'setInterval(() => {}, 1000);\n' }), { argv: ['node', 'hang.mjs'], timeoutMs: 1000 });
+    assert.equal(hangs.result.timedOut, true);
+  });
+
+  test('a sandbox-exec failure is CHECK_RUNNER_UNAVAILABLE, not a failed check', async () => {
+    const broken = join(fixtures, 'broken-sandbox-exec');
+    await writeFile(broken, "#!/bin/sh\necho 'sandbox-exec: sandbox_apply: Operation not permitted' >&2\nexit 71\n", { mode: 0o755 });
+    const run = await runDarwin(await makeDir({ 't.test.mjs': PASSING_TEST }), {}, { sandboxExecPath: broken });
+    assert.equal(run.error.code, 'CHECK_RUNNER_UNAVAILABLE');
+    assert.match(run.error.details.output, /sandbox_apply/u);
+  });
+
+  test('cancellation stops a running check', async () => {
+    const run = await runDarwin(await makeDir({ 'hang.mjs': 'setInterval(() => {}, 1000);\n' }), { argv: ['node', 'hang.mjs'], timeoutMs: 30000 }, { abortAfterMs: 1500 });
+    assert.equal(run.result.signal, 'SIGKILL');
+    assert.equal(run.result.timedOut, false);
+  });
 });

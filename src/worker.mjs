@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { DEFAULT_TIMEOUT_MS, DEFAULT_TOOL_LIMIT, MAX_TIMEOUT_MS, MAX_TOOL_LIMIT } from "./pi-environment.mjs";
 import { workerRunner } from "./runners/index.mjs";
 import { WorkerError, executablePath, fail, writeJson } from "./worker-host.mjs";
-import { checkRunnerAvailable } from "./check-runner.mjs";
+import { CHECK_RUNNERS, checkRunnerAvailable } from "./check-runner.mjs";
 import { parseChecksManifest } from "./checks-manifest.mjs";
 import { createCheckChannel } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
@@ -1006,7 +1006,7 @@ function runChecksMetadata({ declared, availability, maxCheckRuns, checkChannel,
     declared,
     available: declared && availability.available,
     ...(declared && !availability.available ? { reason: availability.reason } : {}),
-    ...(declared && availability.available ? { maxCheckRuns, runner: availability.testInjected ? "test-injected" : "linux-bubblewrap" } : {}),
+    ...(declared && availability.available ? { maxCheckRuns, runner: availability.testInjected ? "test-injected" : availability.runner ?? CHECK_RUNNERS.linux } : {}),
     ...(checkChannel ? { dependencyIdentity: checkChannel.dependencyIdentity } : {}),
   };
   if (baseline) current.baselineComparison = compareRunChecks(baseline, current);
@@ -1736,7 +1736,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       let sandboxProfile;
       try {
         inferenceRelay = await startInferenceRelay({ provider: target.provider, model: target.model, env: prepared.env });
-        sandboxProfile = buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle: compactionBundle?.directory, inferencePort: inferenceRelay.port, invocation: invocation.seatbelt });
+        sandboxProfile = buildMacosSandboxProfile({ workspace, sourceRoot, compactionBundle: compactionBundle?.directory, inferencePort: inferenceRelay.port, invocation: invocation.seatbelt, checkChannel });
       } catch (error) {
         fail(`Cannot prepare macOS sandbox: ${error instanceof Error ? error.message : String(error)}`);
       }
