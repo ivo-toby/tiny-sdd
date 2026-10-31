@@ -762,6 +762,15 @@ limit exceeded, a special file), the run starts without `run_checks` and
 `runtime.json.runChecks.reason` starts with `dependency mount identity
 unavailable:`.
 
+Pi 1.4.0 silently drops an unregistered name from `--tools`, so the worker
+checks the tool list Pi announces before the first turn against
+`runtime.json.capabilities.tools`. When a contract tool such as `run_checks` is
+missing, the worker stops Pi and the run fails with the warning `Pi did not
+declare run_checks to the model; the run was stopped and failed.`
+`result.json.observed.toolLoadout` records `expected`, `announced` and
+`missing`. Under Seatbelt the profile grants the check channel: the client and
+its `responses` directory read-only, its `requests` directory writable.
+
 When neither the worker's `limits` nor its profile's measured `limits` set
 `timeoutMs` and `maxToolCalls`, each worker gets 600000 ms (10 minutes) and 100
 tool calls. Explicit values remain bounded by the existing 3600000 ms and
