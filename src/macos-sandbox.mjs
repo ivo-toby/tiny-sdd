@@ -63,22 +63,26 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
 }
 
 // Seatbelt profile for one check run (src/check-runner.mjs): no network, a
-// scrubbed spawn environment, read-only Node root and dependency mounts, and
-// only the scratch work directory plus its home and tmp directories writable.
-// `work` holds the host-made copy of the candidate with symlinks to the
-// dependency mount sources, so writes outside it are denied. Like the Linux
-// runner's /usr and /bin binds, /bin and /usr/bin stay executable so shebangs
-// (`#!/usr/bin/env node`), /bin/sh and child_process.exec keep working; network
-// stays denied by (deny default).
-export function buildSeatbeltCheckProfile({ work, home, tmp, nodeRoot, mounts = [] }) {
+// scrubbed spawn environment, the Node executable and dependency mounts
+// read-only, and only the scratch work directory plus its home and tmp
+// directories writable. `work` holds the host-made copy of the candidate with
+// symlinks to the dependency mount sources, so writes outside it are denied.
+// Like the Linux runner's /usr and /bin binds, /bin and /usr/bin stay
+// executable so shebangs (`#!/usr/bin/env node`), /bin/sh and
+// child_process.exec keep working; network stays denied by (deny default).
+// Only the Node executable is granted, not its installation root, which is
+// /usr/local with the macOS installer. Signals may reach any process in the
+// same sandbox: the check's process-group watchdog and test runners that stop
+// their own children need that, and nothing outside the sandbox is reachable.
+export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [] }) {
   const writable = [work, home, tmp];
   const writableFiles = ["/dev/null"];
-  const readable = [...SYSTEM_READ_ROOTS, "/bin", "/usr/bin", nodeRoot, ...mounts.map((mount) => mount.source)];
-  const executables = ["/bin", "/usr/bin", nodeRoot, work, ...mounts.map((mount) => mount.source)];
-  for (const path of [...writable, ...readable, ...executables]) pathString(path);
+  const readable = [...SYSTEM_READ_ROOTS, "/bin", "/usr/bin", ...mounts.map((mount) => mount.source)];
+  const executables = ["/bin", "/usr/bin", work, ...mounts.map((mount) => mount.source)];
+  for (const path of [...writable, ...readable, ...executables, nodeExecutable]) pathString(path);
   for (const writablePath of writable) {
     if (writablePath === tmp) continue;
-    for (const granted of [...readable, ...executables]) {
+    for (const granted of [...readable, ...executables, nodeExecutable]) {
       // work is executable and writable at once: the check runs scripts from it.
       if (granted === writablePath) continue;
       if (inside(granted, writablePath) || inside(writablePath, granted)) {
@@ -87,18 +91,19 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeRoot, mounts = 
     }
   }
   const ancestors = new Set(["/"]);
-  for (const path of [...writable, ...readable, ...executables]) {
+  for (const path of [...writable, ...readable, ...executables, nodeExecutable]) {
     for (let parent = dirname(path); parent !== "/"; parent = dirname(parent)) ancestors.add(parent);
   }
+  const node = `(literal ${pathString(nodeExecutable)})`;
   return [
     "(version 1)",
     "(deny default)",
-    `(allow process-exec ${executables.map((path) => `(subpath ${pathString(path)})`).join(" ")})`,
+    `(allow process-exec ${executables.map((path) => `(subpath ${pathString(path)})`).join(" ")} ${node})`,
     "(allow process-fork)",
-    "(allow signal (target self))",
+    "(allow signal (target same-sandbox))",
     '(allow sysctl-read (sysctl-name-prefix "hw.") (sysctl-name "kern.ostype") (sysctl-name "kern.osrelease") (sysctl-name "kern.osversion") (sysctl-name "kern.hostname") (sysctl-name "kern.version"))',
     `(allow file-read-metadata ${[...ancestors].map((path) => `(literal ${pathString(path)})`).join(" ")})`,
-    `(allow file-read* ${readable.map((path) => `(subpath ${pathString(path)})`).join(" ")} ${[...SYSTEM_READ_FILES, ...writableFiles].map((path) => `(literal ${pathString(path)})`).join(" ")})`,
+    `(allow file-read* ${readable.map((path) => `(subpath ${pathString(path)})`).join(" ")} ${node} ${[...SYSTEM_READ_FILES, ...writableFiles].map((path) => `(literal ${pathString(path)})`).join(" ")})`,
     ...writable.map((path) => `(allow file-read* file-write* (subpath ${pathString(path)}))`),
     ...writableFiles.map((path) => `(allow file-read* file-write* (literal ${pathString(path)}))`),
     ...writable.map((path) => `(deny file-write-unlink (literal ${pathString(path)}))`),
