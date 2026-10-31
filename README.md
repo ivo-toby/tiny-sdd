@@ -115,9 +115,10 @@ tinysdd profiles update
 `skills update` replaces `~/.agents/tinysdd` with the new version's skills and
 docs and restores missing skill links; `profiles update` replaces the installed
 registry. Local profiles in `~/.config/tiny-sdd/profiles/` and project
-configuration are left alone. Rerunning `setup` after an upgrade reports a
-conflict instead, because the installed files differ from the new release.
-Start a fresh agent session afterwards so it loads the updated skills. See
+configuration are left alone. Running only `setup` after an upgrade reports a
+conflict, because the installed files differ from the new release; after both
+updates it succeeds and rechecks the prerequisites. Start a fresh agent session
+afterwards so it loads the updated skills. See
 [the setup guide](docs/setup.md#upgrading).
 
 ## Building a feature
