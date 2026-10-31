@@ -13,15 +13,17 @@ refuses an unavailable or version-mismatched release; it never falls back to
 automatic OIDC-backed releases are described in the [release guide](releases.md).
 
 `tinysdd setup` is global onboarding. Run it from any directory without
-`--project`; it does not require or inspect a project. Use
-`tinysdd init --project /path/to/project` later for project configuration. The
-command performs deterministic metadata checks and installs the matching
-skills bundle and the profile registry (`~/.config/tiny-sdd/registry/`) without
-changing the current project. After upgrading the CLI, run `tinysdd skills
-update` and `tinysdd profiles update`: they replace the installed skills and
-registry with the new version's archive, where setup would report a conflict. It does not install Node,
-Pi, bubblewrap, a model, or a service;
-read a keychain or Pi `auth.json`; select a provider/model; or run inference.
+`--project` (it is refused with `SETUP_PROJECT_UNSUPPORTED`); it does not
+require or inspect a project. Use `tinysdd init --project /path/to/project`
+later for project configuration. The command performs deterministic metadata
+checks, downloads the `v<version>` source archive for its own version from
+GitHub (`codeload.github.com`), and installs the matching skills bundle and the
+profile registry without changing the current project. The registry goes to
+`<config>/registry/`, where `<config>` is `$TINYSDD_CONFIG_DIR`, else
+`$XDG_CONFIG_HOME/tiny-sdd`, else `~/.config/tiny-sdd`. After upgrading the
+CLI, see [Upgrading](#upgrading). It does not install Node, Pi, bubblewrap, a
+model, or a service; read a keychain or Pi `auth.json`; select a
+provider/model; or run inference.
 
 The checks cover Node **>=22.19.0**, the Pi **1.4.0** executable beside the
 Node executable running the CLI, and the supported worker sandbox:
@@ -29,7 +31,7 @@ Node executable running the CLI, and the supported worker sandbox:
 | Host | Worker sandbox | Check runner |
 | --- | --- | --- |
 | Linux | `/usr/bin/bwrap` or `/bin/bwrap`, with a passing startup probe | bubblewrap plus `prlimit` and, for root callers, `setpriv` |
-| macOS | `/usr/bin/sandbox-exec` | Seatbelt via `sandbox-exec`, when available |
+| macOS | `/usr/bin/sandbox-exec` | Seatbelt via `sandbox-exec`; refused for root callers |
 
 Setup does not install any of these prerequisites. For Node, use the [official
 Node downloads](https://nodejs.org/en/download) and rerun `tinysdd setup` with
@@ -51,8 +53,10 @@ For Linux check-runner support, Debian/Ubuntu operators can install
 documentation](https://github.com/containers/bubblewrap) and the
 [util-linux manual](https://man7.org/linux/man-pages/man1/prlimit.1.html)
 describe those host tools. macOS `sandbox-exec` is an operating-system
-facility; TinySDD reports `run_checks` as unavailable there while the worker
-Seatbelt path can remain supported.
+facility. On macOS the check runner (`run_checks` and the
+`featureIntegration` check of `feature accept`) is unavailable only when
+`sandbox-exec` is missing or the caller is root, because Seatbelt has no
+privilege drop.
 
 ### Linux bubblewrap startup failures
 
@@ -149,7 +153,9 @@ check OpenCode; the worker identifies the pinned 2.1.4 binary at launch and
 refuses any other version. The worker runs `~/.opencode/bin/opencode`. On
 Linux its bubblewrap sandbox mounts a fresh procfs for that binary, which Pi's
 sandbox does not do. A provider header other than `User-Agent` is refused;
-set the key in `options.apiKey` as an `{env:NAME}` reference instead.
+set the key in `options.apiKey` as an `{env:NAME}` reference instead. The
+OpenCode runner has no `run_checks` tool yet; declared checks are reported
+unavailable.
 
 Use the [setup workflow reference](../skills/tinysdd/assets/setup/references/setup-workflow.md)
 for the exact Pi layout and provider/model boundary. Keep API keys and other
@@ -183,8 +189,9 @@ bundle tree, and skill entries that are not links or point elsewhere, remain
 conflicts. A symlink whose target directory does not exist yet (a fresh
 dotfiles checkout) is followed and the target is created. Before
 `skills update` replaces a non-empty bundle root, the root must be a TinySDD
-bundle (`package.json` with the TinySDD package name and the product skill);
-otherwise it is a conflict and nothing is deleted.
+bundle: only `package.json`, `skills/` and `docs/` at the top level, the
+TinySDD package name and the product skill. Anything else, such as a source
+checkout, is a conflict and nothing is deleted.
 
 After setup, start a fresh Claude or Codex session in the intended project so
 it rescans the global skill directory. Invoke `/tinysdd-setup` in Claude or
@@ -196,3 +203,35 @@ harness discovery is not claimed.
 For the worker route, exact Pi provider/model configuration and the
 environment-referenced credential boundary, see
 [the quickstart](quickstart.md) and the [setup skill](../skills/tinysdd/assets/setup/SKILL.md).
+
+## Upgrading
+
+```sh
+npm install --global tinysdd@latest
+tinysdd --version
+tinysdd skills update
+tinysdd profiles update
+tinysdd setup
+```
+
+Setup never overwrites. After an upgrade the installed bundle (at least its
+`package.json`) and usually the registry differ from the new release, so
+`setup` run before the updates stops with `SETUP_CONFLICT` and replaces
+nothing. The two update commands are global (`--project` is refused) and
+download the archive for the installed CLI version:
+
+- `skills update` replaces `~/.agents/tinysdd` as a whole, so files dropped
+  by the new release and local edits inside the bundle are removed. It
+  recreates missing skill links; an entry that is not a link or points
+  elsewhere is still a conflict, as is a bundle root that is not a TinySDD
+  bundle.
+- `profiles update` replaces `<config>/registry/` and its `.registry.json`
+  manifest, or reports it already current. Profiles in `<config>/profiles/`
+  and a project's `.tinysdd/profiles/` are not touched.
+
+Neither changes a project's `.tinysdd/` files. The final `setup` then installs
+nothing new and reruns the prerequisite checks for the new version, such as a
+changed Pi pin. A registry left stale shows up as a `tinysdd models` warning,
+or as `PROFILE_AMBIGUOUS` when a registry profile differs from the copy shipped
+with the CLI; both name `tinysdd profiles update`. Start a fresh Claude or Codex
+session afterwards so it loads the updated skills.

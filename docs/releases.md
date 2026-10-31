@@ -7,20 +7,32 @@ unset variable keeps the checks and package smoke available while reporting
 that npm publication has not been configured.
 
 The workflow uses Node 24 with npm **>=11.5.1**, GitHub hosted OIDC and no
-long-lived npm token. Only the release job receives `contents: write` and
-`id-token: write`; the package tests, `npm pack` and the isolated global
-install smoke run with inherited npm authentication removed. The trusted
-publisher is configured for direct `npm publish` by the GitHub Actions
-workflow.
+long-lived npm token. Workflow permissions are empty; its single `release` job
+receives `contents: write` and `id-token: write`. Inside that job the package
+tests, `npm pack` and the isolated global install smoke run with inherited npm
+authentication removed. The trusted publisher is configured for direct
+`npm publish --provenance` by the GitHub Actions workflow.
 
-## First package bootstrap
+The bootstrap below is complete: `v0.1.0` is the manually published baseline,
+and later versions (for example `v0.14.0`, with npm provenance) were published
+by the workflow, which also pushes the generated `chore(release): vX.Y.Z`
+commit to `main`.
 
+To preview the next version from a checkout, run
+`node scripts/release-plan.mjs` (add `--json` for the full plan). It plans from
+the tags reachable from `HEAD`, so fetch the full history and tags first; a
+shallow or tagless clone reports `bootstrap`.
+
+## First package bootstrap (done)
+
+These steps are kept for re-creating the package or its trusted publisher.
 The first package and trusted publisher setup require the npm account owner.
 Do these steps manually from a clean, reviewed checkout; the workflow does
-not invent an initial version or create the first tag:
+not invent an initial version or create the first tag (with no reachable
+release tag it reports `bootstrap` and publishes nothing):
 
 1. Review the current `package.json` version and run the test and package
-   smoke checks. For the current bootstrap, that reviewed version is `0.1.0`.
+   smoke checks. The original bootstrap version was `0.1.0`.
 2. Create the matching immutable tag at the reviewed `main` commit and push
    that tag before the first npm publication:
 
