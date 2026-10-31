@@ -182,6 +182,7 @@ function parseFlags(tokens, allowed) {
     const name = equals === -1 ? token.slice(2) : token.slice(2, equals);
     if (!allowed.has(name)) throw cliError(`unknown option: --${name}`);
     if (allowed.get(name) === 'flag') {
+      if (equals !== -1) throw cliError(`--${name} does not take a value`);
       values[name] = true;
       continue;
     }
@@ -1327,7 +1328,14 @@ function writeResult(result, json) {
   if (result.presentation === 'change-validate') {
     const report = result.data;
     process.stdout.write(`Change ${report.changeId}: ${report.readiness.ready ? 'ready' : 'not ready'} (${report.metrics.sliceCount} slice(s), ${report.metrics.deltaCount} delta(s)).\n`);
-    for (const issue of report.readiness.issues ?? []) process.stderr.write(`Warning: ${typeof issue === 'string' ? issue : issue.message ?? JSON.stringify(issue)}\n`);
+    for (const warning of report.warnings ?? []) {
+      const text = typeof warning === 'string' ? warning : warning.message ?? warning.code ?? JSON.stringify(warning);
+      process.stderr.write(`Warning: ${text}\n`);
+    }
+    for (const issue of report.readiness.issues ?? []) {
+      const text = typeof issue === 'string' ? issue : issue.message ?? issue.code ?? JSON.stringify(issue);
+      process.stderr.write(`Not ready: ${text}\n`);
+    }
     return;
   }
   if (result.presentation === 'change-export') {

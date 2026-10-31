@@ -145,6 +145,31 @@ test('change export writes the approved slice bundle without touching controller
   }
 });
 
+test('change validate human mode prints warnings and readiness issues with distinct prefixes', async () => {
+  const root = await project();
+  try {
+    const slicePath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s2/slice.json');
+    const slice = JSON.parse(await readFile(slicePath, 'utf8'));
+    slice.implementationFiles = ['a.mjs', 'b.mjs', 'c.mjs', 'd.mjs'];
+    await writeFile(slicePath, `${JSON.stringify(slice, null, 2)}\n`);
+    await writeFile(join(root, 'examples/artifact-format/changes/broker-recut/slices/s2/brief.md'), '# draft slice\n');
+    const result = await exec(process.execPath, [cli, '--project', root, 'change', 'validate', '--change', CHANGE_PATH], {
+      env: { ...process.env, TYPESAFE_API_KEY: 'stub' },
+    });
+    assert.match(result.stdout, /Change broker-recut: not ready/u);
+    assert.match(result.stderr, /Warning: slice broker-s2 expects 4 implementation files/u);
+    assert.match(result.stderr, /Not ready: /u);
+    assert.doesNotMatch(result.stderr, /Warning: .*not ready|Warning: change broker-recut is not export-ready/u);
+
+    const flagValue = await invoke(root, 'change', 'validate', '--change', CHANGE_PATH, '--ready=false');
+    assert.equal(flagValue.status, 1);
+    assert.equal(parseSingleJson(flagValue).error.code, 'INVALID_ARGUMENT');
+    assert.match(parseSingleJson(flagValue).error.message, /--ready does not take a value/u);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('npm pack --dry-run --json lists the packaged change entrypoints', async () => {
   let pack;
   try {

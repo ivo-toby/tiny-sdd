@@ -57,19 +57,20 @@ Copy the templates into that layout:
 The example values intentionally point at a hypothetical feature. They are
 placeholders until the paths exist in the target repository. For a complete
 filled and runnable reference, use examples/artifact-format/ from the TinySDD
-checkout. Set the target root explicitly, even when it is the same checkout;
-the `tinysdd` command comes from the installed CLI:
+checkout. Point the target root at that checkout for this reference example
+(the fixture lives only there); the `tinysdd` command comes from the installed
+CLI, so no checkout path is needed to run it:
 
-    TARGET_PROJECT=/absolute/path/to/project
+    TARGET_PROJECT=/absolute/path/to/tiny-sdd-checkout
     CHANGE_RELATIVE=examples/artifact-format/changes/broker-recut/change.json
     tinysdd --project "$TARGET_PROJECT" change validate \
       --change "$CHANGE_RELATIVE" \
       --ready --json
 
 The validator is read-only. It reports advisory implementation and slice-test
-budget warnings separately from readiness errors. For another target project, set `TARGET_PROJECT` to
-the canonical target root; keep `CHANGE_RELATIVE` project-relative. The
-`tinysdd` command comes from the installed CLI and always matches the
+budget warnings separately from readiness errors. For a real target project, set
+`TARGET_PROJECT` to its canonical root; keep `CHANGE_RELATIVE` project-relative.
+The `tinysdd` command comes from the installed CLI and always matches the
 installed version. Materialize
 exact brief, context and checks bytes at the target `registrationPlan` paths,
 pass every plan allow/protect/preparation/dependsOn value to task add, and
