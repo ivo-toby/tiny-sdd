@@ -535,6 +535,8 @@ After the feature is explicitly accepted and its integration proof is still
 fresh, archive its living-spec change with the standalone script:
 
 ```sh
+TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
+TARGET_PROJECT=/absolute/path/to/project
 node "$TINYSDD_CHECKOUT/scripts/archive-change.mjs" \
   --project "$TARGET_PROJECT" \
   --change changes/reservations/change.json \
