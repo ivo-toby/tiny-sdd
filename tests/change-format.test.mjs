@@ -163,6 +163,30 @@ test('file-count budgets and planned ownership overlaps are warnings', async () 
   }
 });
 
+test('TypeScript slice without a typecheck check warns, and a typecheck check clears it', async () => {
+  const root = await fixtureProject();
+  try {
+    const slicePath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/slice.json');
+    const slice = JSON.parse(await readFile(slicePath, 'utf8'));
+    slice.implementationFiles.push('examples/artifact-format/src/s1-ts.ts');
+    await writeFile(join(root, 'examples/artifact-format/src/s1-ts.ts'), 'export const ts = true;\n');
+    await writeFile(slicePath, JSON.stringify(slice));
+    const changePath = 'examples/artifact-format/changes/broker-recut/change.json';
+    const first = await validateChange(root, changePath);
+    const firstWarning = first.warnings.find((warning) => warning.code === 'TS_NO_TYPECHECK');
+    assert.ok(firstWarning, 'expected a TS_NO_TYPECHECK warning');
+    assert.match(firstWarning.message, /tsc --noEmit/u);
+    const checksPath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/checks.json');
+    const checks = JSON.parse(await readFile(checksPath, 'utf8'));
+    checks.checks.push({ id: 'typecheck', argv: ['node', 'node_modules/typescript/bin/tsc', '--noEmit'] });
+    await writeFile(checksPath, JSON.stringify(checks));
+    const second = await validateChange(root, changePath);
+    assert.ok(!second.warnings.some((warning) => warning.code === 'TS_NO_TYPECHECK'));
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('protected preparation overlap and compiled context budget remain hard failures', async () => {
   const root = await fixtureProject();
   try {

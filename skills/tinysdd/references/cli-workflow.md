@@ -696,6 +696,12 @@ launch only waits.
 Every non-completed worker result includes `candidateState`, which reports the
 allowed paths changed and the sorted allowed paths left untouched. If any
 allowed path changed, review the candidate before discarding it.
+A scope-clean `timeout` or `tool_limit` run is also a valid `--base-run`: the
+revision continues from its retained candidate and records the incomplete
+outcome in `result.baseRun.outcome` (and on its `baseRun.chain` entry). `apply`
+still refuses the incomplete run itself; only a completed revision built on it
+applies. `failed`, `stopped`, `no_progress` and output-limit runs are refused as
+bases.
 
 The offline [research selection scorer](../../../docs/research-scoring.md) is a
 preparation helper for the research phase. It compiles a candidate and a gold
@@ -904,7 +910,8 @@ read the failure. `not_run` checks cannot pass or qualify a worker. The reader s
 coverage, check IDs, definition digests, config identity and artifact hashes,
 and rejects edited or missing roster records.
 
-For a review revision, reuse a prior completed, scope-clean candidate explicitly:
+For a review revision, reuse a prior completed (or `timeout`/`tool_limit`),
+scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays every retained eligible actual change from that prior run into
 the new disposable workspace and records the lineage; it never changes the
@@ -1021,7 +1028,13 @@ digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
 independent operator verification remains required. A checks file may declare
 several named checks (e.g. `test`, `lint`, `typecheck`), each with its own argv
 and timeout; the worker prompt lists every declared check by id and each
-result is reported by id. When the client is
+result is reported by id. For a TypeScript/Vue/Svelte slice, one of those
+checks must run a typecheck (`tsc --noEmit` or the repository equivalent):
+test runners such as Vitest and tsx strip types, so a green test run does not
+prove the slice compiles. `change validate` warns when a slice writes typed
+files and no declared check runs a typecheck; `task add`, `task update` and
+`task approve` warn for the same condition on a task's allowed files (only
+when a checks file is declared). When the client is
 available, the worker contract makes the named host tool explicit and directs
 an edit → `run_checks` → fix loop after each eligible ordinary file write or edit.
 Failures are fixed only within the approved task boundaries; the worker stops and reports when the

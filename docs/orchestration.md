@@ -4,7 +4,7 @@ This is the runbook for the agent that orchestrates work on this repository: it
 plans the issue queue, writes implementation notes, dispatches implementers,
 reviews their PRs and keeps the operator informed. Implementers only need
 `AGENTS.md`. The state below is a snapshot from 2026-10-31 (`main` at
-`3a8c084`, v0.14.0); check GitHub before acting on it.
+`939c5e6`, v0.15.0); check GitHub before acting on it.
 
 ## Roles
 
@@ -26,7 +26,9 @@ SDD skills). Since then: the profile registry (#123), the OpenCode harness kind
 (#153) and worker type (#155), the Linux relay-only network (#152), the runner
 interface (#154), Pi 1.4.0, per-task workers and escalation, grouped help
 (#173), `change validate|export` (#175), the macOS Seatbelt check runner (#176),
-profile limits as defaults (#174) and multiple named checks per slice (#181).
+profile limits as defaults (#174), multiple named checks per slice (#181), the
+TypeScript typecheck advisory (#187) and incomplete runs as revision bases
+(#189).
 `git log` has the details.
 
 Open PRs:
@@ -34,8 +36,6 @@ Open PRs:
 | PR | Issue |
 | --- | --- |
 | #188 | #182 `run_checks` for OpenCode workers (the macOS half landed in #176) |
-| #192 | #187 warn when TypeScript slices lack a typecheck check |
-| #193 | #189 allow timeout and tool-limit runs as revision bases |
 
 ## Queue
 
@@ -46,7 +46,9 @@ issue for notes and the files it touches before dispatching.
 
 - **Bugs:** #179 (secret-path rule blocks `.env.example`), #180 (worker aborts
   on a tracked symlink), #190 (`task review` accepts a task with no applied
-  run). #190 changes what acceptance binds: get the operator's decision first.
+  run), #195 (worker cannot start with workspace symlinks or more than 20k
+  entries in `node_modules`). #190 changes what acceptance binds: get the
+  operator's decision first.
 - **Enhancements:** #191 (run copies under `.tinysdd/runs` break repo-wide
   tools), plus the open PRs above.
 - **Experiments (operator-run, live models):** #110 to #117, #9, #33, #41.

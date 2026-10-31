@@ -312,7 +312,7 @@ function retainedChanges(before, after) {
   });
 }
 
-async function writeRetainedRun(root, runId, { taskId = "task-worker-test", before = {}, after = {}, baseRun, changedPaths } = {}) {
+async function writeRetainedRun(root, runId, { taskId = "task-worker-test", outcome = "completed", before = {}, after = {}, baseRun, changedPaths, scopeViolations = [] } = {}) {
   const directory = join(root, ".tinysdd", "runs", runId);
   await mkdir(join(directory, "workspace-before"), { recursive: true });
   await mkdir(join(directory, "workspace-after"), { recursive: true });
@@ -329,10 +329,10 @@ async function writeRetainedRun(root, runId, { taskId = "task-worker-test", befo
   const claimed = changedPaths === undefined ? changes : changedPaths.map((change) => ({ ...changes.find((entry) => entry.path === change.path), ...change }));
   await writeFile(join(directory, "result.json"), JSON.stringify({
     taskId,
-    outcome: "completed",
+    outcome,
     ...(baseRun ? { baseRun } : {}),
     changedPaths: claimed,
-    scopeViolations: [],
+    scopeViolations,
     fileScope: { mode: "ordinary-create-modify", actualPaths: changes.map(({ path }) => path).sort(), ordinaryCreateModify: true, deletions: false },
   }));
 }
@@ -1000,6 +1000,91 @@ describe("Pi worker capture and scope", () => {
       });
       assert.equal(await readFile(join(result.artifactPaths.candidate, "src", "allowed.txt"), "utf8"), "ancestor edit\n");
       assert.equal(await readFile(join(result.artifactPaths.candidate, "src", "other.txt"), "utf8"), "parent edit\n");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts a scope-clean timeout or tool_limit run as a revision base and records its outcome", async () => {
+    for (const outcome of ["timeout", "tool_limit"]) {
+      const project = await makeProject();
+      const baseRunId = "worker-2026-09-06T00-00-00-000Z-cutoff001";
+      try {
+        await writeRetainedRun(project, baseRunId, {
+          outcome,
+          before: { "src/allowed.txt": "before\n" },
+          after: { "src/allowed.txt": "nearly done\n" },
+        });
+        const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), baseRunId, runtime: runtime(undefined, "complete") });
+        assert.equal(result.outcome, "completed", outcome);
+        assert.deepEqual(result.baseRun, { id: baseRunId, outcome, paths: ["src/allowed.txt"] }, outcome);
+        const recorded = JSON.parse(await readFile(join(result.artifactPaths.directory, "base-run.json"), "utf8"));
+        assert.deepEqual(recorded, { id: baseRunId, outcome, paths: ["src/allowed.txt"], chain: [{ id: baseRunId, outcome, paths: ["src/allowed.txt"] }] }, outcome);
+        assert.equal(await readFile(join(result.artifactPaths.candidate, "src", "allowed.txt"), "utf8"), "nearly done\n", outcome);
+        assert.equal(await readFile(join(project, "src", "allowed.txt"), "utf8"), "before\n", outcome);
+      } finally {
+        await rm(project, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("records an incomplete ancestor in the revision chain", async () => {
+    const project = await makeProject();
+    const ancestorId = "worker-2026-09-06T00-00-00-000Z-timeout001";
+    const parentId = "worker-2026-09-06T00-00-01-000Z-complete01";
+    try {
+      await writeFile(join(project, "src", "other.txt"), "source other\n");
+      await writeRetainedRun(project, ancestorId, {
+        outcome: "timeout",
+        before: { "src/allowed.txt": "before\n" },
+        after: { "src/allowed.txt": "ancestor edit\n" },
+      });
+      await writeRetainedRun(project, parentId, {
+        before: { "src/allowed.txt": "ancestor edit\n", "src/other.txt": "source other\n" },
+        after: { "src/allowed.txt": "ancestor edit\n", "src/other.txt": "parent edit\n" },
+        baseRun: { id: ancestorId, outcome: "timeout", paths: ["src/allowed.txt"] },
+      });
+      const result = await runWorker({ projectRoot: project, packet: packet(["src/allowed.txt", "src/other.txt"]), worker: worker(), baseRunId: parentId, runtime: runtime(undefined, "complete") });
+      assert.deepEqual(result.baseRun, {
+        id: parentId,
+        paths: ["src/allowed.txt", "src/other.txt"],
+        chain: [
+          { id: ancestorId, outcome: "timeout", paths: ["src/allowed.txt"] },
+          { id: parentId, paths: ["src/other.txt"] },
+        ],
+      });
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses other incomplete outcomes and a timeout base with a scope violation", async () => {
+    const baseRunId = "worker-2026-09-06T00-00-00-000Z-refused01";
+    for (const outcome of ["failed", "stopped", "no_progress", "response_token_limit", "raw_output_limit", null]) {
+      const project = await makeProject();
+      try {
+        await writeRetainedRun(project, baseRunId, { outcome, before: { "src/allowed.txt": "before\n" }, after: { "src/allowed.txt": "partial\n" } });
+        await assert.rejects(
+          runWorker({ projectRoot: project, packet: packet(), worker: worker(), baseRunId, runtime: runtime(undefined, "complete") }),
+          /base run must be a completed, timeout or tool_limit, scope-clean TinySDD worker result/u,
+          String(outcome),
+        );
+      } finally {
+        await rm(project, { recursive: true, force: true });
+      }
+    }
+    const project = await makeProject();
+    try {
+      await writeRetainedRun(project, baseRunId, {
+        outcome: "timeout",
+        before: { "src/allowed.txt": "before\n" },
+        after: { "src/allowed.txt": "partial\n" },
+        scopeViolations: [{ path: "src/protected.txt", change: "modified", reason: "protected path" }],
+      });
+      await assert.rejects(
+        runWorker({ projectRoot: project, packet: packet(), worker: worker(), baseRunId, runtime: runtime(undefined, "complete") }),
+        /scope-clean/u,
+      );
     } finally {
       await rm(project, { recursive: true, force: true });
     }

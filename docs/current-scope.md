@@ -1,6 +1,6 @@
 # TinySDD current scope
 
-Updated: 2026-10-31 (v0.14.0)
+Updated: 2026-10-31 (v0.15.0)
 Status: CLI published on npm and usable for supervised trials; production
 reliability not established.
 
@@ -19,7 +19,7 @@ progression and acceptance; approval and review are deliberate parts of the
 product, not overhead to remove. WDD is a conceptual comparison, not a
 dependency.
 
-## State on main (2026-10-31, v0.14.0)
+## State on main (2026-10-31, v0.15.0)
 
 The [README](../README.md) is the authority for current features and limits;
 GitHub issues track open work. In short, `main` has:
@@ -32,14 +32,16 @@ GitHub issues track open work. In short, `main` has:
   manually with `tinysdd init`.
 - **Preparation.** Constitution, specify, research, plan and slice skills for
   the outer agent; the portable change format with `tinysdd change validate`
-  and `change export`; cited context manifests; several named checks per slice.
+  and `change export`; cited context manifests; several named checks per slice,
+  with a warning when a TypeScript/Vue/Svelte slice declares no typecheck.
 - **Controller.** `task add/update/approve/packet/apply/review/close/supersede`,
   `status` and `next`, with approval freshness, protected inputs and
   dependencies. The operator records every approval and verdict; nothing is
   accepted automatically.
 - **Workers.** Pi 1.4.0 or OpenCode 2.1.4 in sandboxed disposable copies
   (bubblewrap with a relay-only network on Linux, Seatbelt on macOS), with
-  per-task worker choice and suggested escalation. Registry profiles are
+  per-task worker choice and suggested escalation; a scope-clean `timeout` or
+  `tool_limit` run can be the base of a revision. Registry profiles are
   selected by `init --model`; their limits are defaults that worker limits
   override.
 - **Checks.** The host check runner works on Linux and macOS: Pi workers get
@@ -53,8 +55,8 @@ GitHub issues track open work. In short, `main` has:
   source-checkout scripts (`scripts/`), not installed subcommands.
 
 Open as of this date: the end-to-end and live experiments (#110–#117) and
-benchmark calibration (#33); bugs #179, #180 and #190; enhancements #182,
-#187, #189 and #191; and the product decisions on engagement levels (#38) and
+benchmark calibration (#33); bugs #179, #180, #190 and #195; enhancements #182
+and #191; and the product decisions on engagement levels (#38) and
 plan-level approval (#39). Live Pi, OpenCode, bubblewrap and Seatbelt behavior
 of several recent changes is unverified; see the section 3.7 table in
 [worker-runtime-next.md](worker-runtime-next.md).
