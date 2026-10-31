@@ -2361,6 +2361,20 @@ test('a three-run chain applies from the earliest run', async () => {
   }
 });
 
+test('a completed revision of a timed-out base applies from the timed-out root', async () => {
+  const root = await applyProject({ 'src/a.ts': 'v0\n' });
+  try {
+    await fakeRun(root, RUN_ONE, { outcome: 'timeout', before: { 'src/a.ts': 'v0\n' }, after: { 'src/a.ts': 'nearly\n' } });
+    await assert.rejects(apply(root, RUN_ONE), { code: 'RUN_INCOMPLETE', details: { runId: RUN_ONE, outcome: 'timeout' } });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'nearly\n' }, after: { 'src/a.ts': 'v1\n' }, baseRun: { id: RUN_ONE, outcome: 'timeout', paths: ['src/a.ts'] } });
+    const { applied } = await apply(root, RUN_TWO);
+    assert.equal(applied.rootRunId, RUN_ONE);
+    assert.equal(await readProject(root, 'src/a.ts'), 'v1\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('apply plans only the paths the lineage recorded as changed, whatever the project held at a later dispatch', async () => {
   // B changed in the project between the two dispatches, so the revision's
   // workspaces carry the new B although neither run touched it.
