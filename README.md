@@ -27,16 +27,16 @@ or a small model pilot does not establish reliable delivery across projects.
 | --- | --- | --- |
 | Onboarding | Global CLI, prerequisite checks, Linux sandbox startup probe, explicit Pi model discovery, version-matched Claude/Codex skill installation | Setup does not install prerequisites, authenticate models or run inference. |
 | SDD preparation | Constitution entry check; specify, research, plan and slice skills; portable change artifacts and cited context | The skills guide the outer agent. They are not an automatic end-to-end planner. |
-| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**, OpenCode to **2.1.4**. Linux provides the check runner for Pi; macOS does not, and OpenCode workers do not have `run_checks` yet. |
+| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; per-task worker choice; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**, OpenCode to **2.1.4**. Pi workers get `run_checks` on Linux (bubblewrap) and macOS (Seatbelt); OpenCode workers do not have it yet ([#182](https://github.com/ivo-toby/tiny-sdd/issues/182)). `worker stop` is Linux-only. |
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
-| Model registry | Profiles in `profiles/` per exact model configuration (route, context, `maxTokens`, timeout, thinking) with aggregate polyglot benchmark results ([#123](https://github.com/ivo-toby/tiny-sdd/issues/123)); developer benchmark in `bench/polyglot` (not shipped in the npm package) | Worker runs apply the profile's context window, `maxTokens` and limits; the server must actually serve that configuration. `setup` installs the registry, `init --model` selects the matching profile, `tinysdd models` lists them and `tinysdd profiles new` creates a local one. |
+| Model registry | Profiles in `profiles/` per exact model configuration (route, context, `maxTokens`, timeout, thinking) with aggregate polyglot benchmark results; `setup` installs the registry, `init --model` selects the matching profile, `tinysdd models` lists them, `tinysdd profiles new` creates a local one and `tinysdd profiles update` refreshes the registry. The developer benchmark in `bench/polyglot` is not shipped in the npm package. | Worker runs apply the profile's context window, `maxTokens` and limits; the server must actually serve that configuration. A registry score describes that exact configuration, not the model in general. |
 
-Other open work includes [registry profile selection and updates](https://github.com/ivo-toby/tiny-sdd/issues/123),
-[full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
-[benchmark oracle fixes](https://github.com/ivo-toby/tiny-sdd/issues/120) and
-[incomplete-result reporting](https://github.com/ivo-toby/tiny-sdd/issues/124).
+Other open work includes [full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
+[`run_checks` for OpenCode workers](https://github.com/ivo-toby/tiny-sdd/issues/182),
+[benchmark score calibration](https://github.com/ivo-toby/tiny-sdd/issues/33) and the
+[open bug reports](https://github.com/ivo-toby/tiny-sdd/issues?q=is%3Aissue+is%3Aopen+label%3Abug).
 The dated experiment reports are historical evidence, not a current model ranking.
 
 ## Installation and first use
@@ -49,11 +49,12 @@ Prerequisites:
 - Or, for an OpenCode worker: **OpenCode 2.1.4** (exact pin), a single binary at
   `~/.opencode/bin/opencode`, and an OpenCode config file that defines the provider.
   See [OpenCode workers](#opencode-workers).
-- **Linux:** bubblewrap and util-linux, with working user namespaces. In an
-  LXC/Incus container, host/container policy can prevent sandbox startup even
-  when bubblewrap is installed.
-- **macOS:** `/usr/bin/sandbox-exec` for worker isolation. The host `run_checks`
-  tool is unavailable, and `worker stop` requires Linux `/proc`.
+- **Linux:** bubblewrap and util-linux (`prlimit`, `setpriv` for the check
+  runner), with working user namespaces. In an LXC/Incus container,
+  host/container policy can prevent sandbox startup even when bubblewrap is
+  installed.
+- **macOS:** `/usr/bin/sandbox-exec` (Seatbelt) for worker isolation and the
+  check runner. `worker stop` requires Linux `/proc` and is refused on macOS.
 
 ```sh
 npm install --global tinysdd
@@ -61,12 +62,15 @@ tinysdd --version
 tinysdd setup
 ```
 
-Setup downloads the matching release's skills and documentation, installs them
-under `~/.agents/tinysdd`, and registers `tinysdd` and `tinysdd-setup` in
-`~/.agents/skills` and `~/.claude/skills`. It runs globally: do not pass
-`--project`. Existing conflicting files are reported rather than overwritten.
-See the [setup guide](docs/setup.md) for exact prerequisite installation,
-Pi model configuration and container troubleshooting.
+Setup checks the prerequisites, downloads the matching release's skills and
+documentation, installs them under `~/.agents/tinysdd`, and registers `tinysdd`
+and `tinysdd-setup` in `~/.agents/skills` and `~/.claude/skills`. It also
+installs the model-profile registry under `~/.config/tiny-sdd/registry`
+(`$XDG_CONFIG_HOME` and `$TINYSDD_CONFIG_DIR` are honored). It runs globally: do
+not pass `--project`. Existing conflicting files are reported rather than
+overwritten, and missing prerequisites are reported with instructions, not
+installed. See the [setup guide](docs/setup.md) for exact prerequisite
+installation, Pi model configuration and container troubleshooting.
 
 Then open a **fresh coding-agent session in your target project**:
 
@@ -91,9 +95,30 @@ tinysdd config validate --worker local
 tinysdd worker settings --worker local --entry-kind real
 ```
 
-Initialization creates project configuration; it does not configure Pi or prove
-that inference works. Read the settings report before running a model. A requested
-thinking level may not be transmitted by Pi or honored by the server.
+`init` writes `.tinysdd/config.json` and a `.tinysdd/.gitignore` that keeps
+`runs/`, `launches/` and `config.local.json` out of version control. With
+`--model` it selects the registry profile measured on that exact route; pass
+`--profile ID|PATH` when several match, and see `tinysdd models --route MODEL_ID`.
+Initialization does not configure Pi or prove that inference works. Read the
+settings report before running a model. A requested thinking level may not be
+transmitted by Pi or honored by the server.
+
+### Upgrading
+
+```sh
+npm install --global tinysdd@latest
+tinysdd --version
+tinysdd skills update
+tinysdd profiles update
+```
+
+`skills update` replaces `~/.agents/tinysdd` with the new version's skills and
+docs and restores missing skill links; `profiles update` replaces the installed
+registry. Local profiles in `~/.config/tiny-sdd/profiles/` and project
+configuration are left alone. Rerunning `setup` after an upgrade reports a
+conflict instead, because the installed files differ from the new release.
+Start a fresh agent session afterwards so it loads the updated skills. See
+[the setup guide](docs/setup.md#upgrading).
 
 ## Building a feature
 
@@ -137,8 +162,9 @@ in the supported environment references rather than project files.
 | `limits.maxCheckRuns` | `12` | 1–20 |
 | `limits.firstWriteMs` | Disabled | Positive, below `timeoutMs` |
 
-Thinking, output-token limits and context limits come from Pi/model/profile
-configuration; the runtime timeout does not set them. Use `worker settings` to
+A worker's profile can set these limits as defaults; values in the worker's own
+`limits` win. Thinking, output-token limits and context limits come from
+Pi/model/profile configuration; the runtime timeout does not set them. Use `worker settings` to
 inspect their effective values. Live benchmarks require confirmation of the
 current settings digest and any named findings. Ordinary worker runs do not add
 that benchmark confirmation step.
@@ -180,7 +206,9 @@ limits and escalation behavior explicitly. See the
 
 ## CLI reference
 
-Use `tinysdd --help` for the installed version. In the signatures below,
+Use `tinysdd --help` for the installed version, and `tinysdd COMMAND --help` (or
+`tinysdd help COMMAND [SUB]`) for one command's flags and an example. In the
+signatures below,
 `[ ... ]` means optional, `a|b` means choose one, and uppercase names are
 placeholders. Quote values containing spaces. List options accept comma-separated
 values; they may also be repeated. Paths stored in task/configuration artifacts
@@ -192,30 +220,51 @@ are project-relative unless their schema says otherwise.
 | --- | --- |
 | `--help`, `-h` | Print help without executing a command. |
 | `--version`, `-v` | Print the installed CLI version. |
-| `--project PATH` | Select the target project; defaults to the current directory. Not accepted with `setup`. |
+| `--project PATH` | Select the target project; defaults to the current directory. Not accepted with `setup`, `skills update` or `profiles update`. |
 | `--json` | Emit one JSON result on stdout; progress/warnings go to stderr. |
 
 Command options accept both `--name value` and `--name=value`. The global
 `--project` option also supports both forms.
 
-### Setup, configuration and status
+### Setup, profiles, configuration and status
 
 ```text
 tinysdd setup
-tinysdd init [--worker NAME --provider ID --model ID]
-tinysdd config show|validate [--worker NAME]
+tinysdd skills update
+tinysdd profiles update
+tinysdd profiles new --route MODEL [--id ID] [--context-window N] [--parallel N] [--max-tokens N] [--timeout-ms N] [--thinking LEVEL] [--family NAME] [--quantization NAME] [--server NAME]
+tinysdd models [--route MODEL]
+tinysdd init [--worker NAME --provider ID --model ID [--profile ID|PATH]]
+tinysdd config show|validate [--worker NAME] [--profile ID|PATH]
 tinysdd status [--feature NAME]
 tinysdd next
 ```
 
-`status` shows the task/dependency state. `next` reports eligible work; it does
-not dispatch or approve tasks.
+`setup`, `skills update` and `profiles update` are global and refuse
+`--project`. `profiles new` writes a configuration-only profile to
+`~/.config/tiny-sdd/profiles/` and asks for missing values on a terminal.
+Profiles resolve from the project's `.tinysdd/profiles/`, then the user
+profiles, the installed registry and the package's bundled profiles; the same id
+with different content in two places is an error. `status` shows the
+task/dependency state. `next` reports eligible work; it does not dispatch or
+approve tasks.
+
+### Change artifacts
+
+```text
+tinysdd change validate --change PATH [--ready]
+tinysdd change export --change PATH --slice ID --out DIR
+```
+
+`validate` checks a portable change/slice artifact and prints its registration
+plan; `--ready` requires it to be ready for registration. `export` writes one
+prepared slice bundle. See the [artifact format](docs/artifact-format.md).
 
 ### Task lifecycle
 
 ```text
-tinysdd task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME]
-tinysdd task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]]
+tinysdd task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME] [--worker NAME [--worker-reason TEXT]]
+tinysdd task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--worker NAME] [--worker-reason TEXT]
 tinysdd task approve --id ID --by LABEL --reason TEXT
 tinysdd task packet --id ID
 tinysdd task apply --id ID --run RUN_ID --by LABEL
@@ -228,6 +277,8 @@ tinysdd task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
   `--protect` binds files that must remain unchanged.
 - `--brief`, `--context`, `--checks` and `--preparation` identify the approved
   task inputs. Bound changes require fresh approval.
+- `--worker` names the task's preferred worker; `worker run|start` uses it
+  unless `--worker` is given there.
 - `--by` and `--reason` record attribution and intent; labels do not authenticate
   the operator or grant permission.
 - Review the isolated candidate before `task apply`. Apply before recording
@@ -238,24 +289,28 @@ tinysdd task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
 ### Worker execution and settings
 
 ```text
-tinysdd worker settings --worker NAME --entry-kind real|synthetic [--observed-reasoning-tokens N]
-tinysdd worker run --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
-tinysdd worker start --task ID [--worker NAME] [--base-run RUN_ID] [--baseline-run RUN_ID]
+tinysdd worker settings --worker NAME [--profile ID|PATH] --entry-kind real|synthetic [--observed-reasoning-tokens N]
+tinysdd worker run --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID] [--escalated-from RUN_ID]
+tinysdd worker start --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID] [--escalated-from RUN_ID]
 tinysdd worker status --id LAUNCH_ID
 tinysdd worker stop --id LAUNCH_ID [--wait-ms N]
 ```
 
 `run` waits for completion. `start` detaches the worker from the caller's shell;
-use it for long model calls from a coding agent and poll with `status`.
+use it for long model calls from a coding agent and poll with `status`, which
+reports `running`, `stopping`, `finished` (with the result) or `interrupted`.
 `--base-run` continues from a retained candidate; `--baseline-run` uses an
 immutable baseline for controlled replay. These are distinct operations with
 freshness/identity checks, not permission to reuse arbitrary output.
+`--escalated-from` records the failed run this one escalates from. When a run
+does not complete and `workerTiers` lists a stronger worker, the result suggests
+that command; the controller never starts it itself.
 `stop` preserves evidence and finalizes a stopped run; it is Linux-only.
 
 ### Benchmarks and qualification
 
 ```text
-tinysdd bench run --worker NAME [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
+tinysdd bench run --worker NAME [--profile ID|PATH] [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
 tinysdd bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
 tinysdd bench rescore --record PATH [--target ROLE=NUMBER,...]
 tinysdd bench qualification show --record PATH [--suite PATH] [--worker NAME]
@@ -320,8 +375,6 @@ not shipped in the npm package.
 
 | Script | Purpose |
 | --- | --- |
-| `tinysdd change validate --change PATH [--ready] [--json]` | Validate portable change/slice artifacts and print the registration plan (installed subcommand). |
-| `tinysdd change export --change PATH --slice ID --out DIR [--json]` | Export a prepared slice bundle (installed subcommand). |
 | `node scripts/research.mjs --help` | Prepare bounded research packets and validate selections. |
 | `node scripts/harness-adapter.mjs --help` | Begin/finalize retained Claude Code, OpenCode or interactive Pi runs. |
 | `node scripts/archive-change.mjs --help` | Archive a freshly accepted change and merge its living specs. |
