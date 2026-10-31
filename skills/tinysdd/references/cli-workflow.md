@@ -964,11 +964,13 @@ digests and are labeled `acceptanceEvidence: false`. They are worker feedback;
 independent operator verification remains required. A checks file may declare
 several named checks (e.g. `test`, `lint`, `typecheck`), each with its own argv
 and timeout; the worker prompt lists every declared check by id and each
-result is reported by id. For a TypeScript slice, one of those checks must run
-a typecheck (`tsc --noEmit` or the repository equivalent): test runners such as
-Vitest and tsx strip types, so a green test run does not prove the slice
-compiles. `change validate` and `task add` warn when a slice touches `.ts`
-files and no declared check runs a typecheck. When the client is
+result is reported by id. For a TypeScript/Vue/Svelte slice, one of those
+checks must run a typecheck (`tsc --noEmit` or the repository equivalent):
+test runners such as Vitest and tsx strip types, so a green test run does not
+prove the slice compiles. `change validate` warns when a slice writes typed
+files and no declared check runs a typecheck; `task add`, `task update` and
+`task approve` warn for the same condition on a task's allowed files (only
+when a checks file is declared). When the client is
 available, the worker contract makes the named host tool explicit and directs
 an edit → `run_checks` → fix loop after each eligible ordinary file write or edit.
 Failures are fixed only within the approved task boundaries; the worker stops and reports when the

@@ -21,7 +21,7 @@ import {
   supersedeTask,
 } from '../src/controller.mjs';
 import * as controller from '../src/controller.mjs';
-import { checkRunsTypecheck, checksRunTypecheck, isTypeScriptPath } from '../src/checks-manifest.mjs';
+import { checkRunsTypecheck, checksRunTypecheck, isTypecheckRelevantPath } from '../src/checks-manifest.mjs';
 import { compileContext } from '../src/context-compiler.mjs';
 import { digestJson, sha256 } from '../src/fs-utils.mjs';
 import { detectFilesystemAliases } from '../src/file-scope.mjs';
@@ -478,19 +478,24 @@ test('old approvals without checks fields remain fresh for tasks without checks'
 test('typecheck detection recognizes named and binary typecheck checks', () => {
   assert.equal(checkRunsTypecheck({ id: 'typecheck', argv: ['node', 'scripts/typecheck.mjs'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'tsc', argv: ['node', 'x'] }), true);
+  assert.equal(checkRunsTypecheck({ id: 'tsc-strict', argv: ['node', 'x'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node_modules/.bin/tsc', '--noEmit'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node', 'node_modules/typescript/bin/tsc', '--noEmit'] }), true);
+  assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node', 'node_modules/typescript/lib/tsc.js', '--noEmit'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node_modules/.bin/vue-tsc', '--noEmit'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node_modules/.bin/vitest', 'run'] }), false);
   assert.equal(checkRunsTypecheck({ id: 'lint', argv: ['node_modules/.bin/eslint', 'src'] }), false);
+  assert.equal(checkRunsTypecheck({ id: 'lint-tsconfig', argv: ['node', 'x'] }), false);
   assert.equal(checksRunTypecheck([{ id: 'test', argv: ['node', 'tests/a.test.mjs'] }, { id: 'typecheck', argv: ['node', 'scripts/tc.mjs'] }]), true);
   assert.equal(checksRunTypecheck([{ id: 'test', argv: ['node', 'tests/a.test.mjs'] }]), false);
-  assert.equal(isTypeScriptPath('src/foo.ts'), true);
-  assert.equal(isTypeScriptPath('src/foo.tsx'), true);
-  assert.equal(isTypeScriptPath('src/foo.mts'), true);
-  assert.equal(isTypeScriptPath('src/foo.cts'), true);
-  assert.equal(isTypeScriptPath('src/foo.mjs'), false);
-  assert.equal(isTypeScriptPath('src/foo.js'), false);
+  assert.equal(isTypecheckRelevantPath('src/foo.ts'), true);
+  assert.equal(isTypecheckRelevantPath('src/foo.tsx'), true);
+  assert.equal(isTypecheckRelevantPath('src/foo.mts'), true);
+  assert.equal(isTypecheckRelevantPath('src/foo.cts'), true);
+  assert.equal(isTypecheckRelevantPath('src/foo.vue'), true);
+  assert.equal(isTypecheckRelevantPath('src/foo.svelte'), true);
+  assert.equal(isTypecheckRelevantPath('src/foo.mjs'), false);
+  assert.equal(isTypecheckRelevantPath('src/foo.js'), false);
 });
 
 test('task add warns when TypeScript allow has no typecheck check', async () => {
@@ -523,6 +528,29 @@ test('task add warns when TypeScript allow has no typecheck check', async () => 
     assert.ok(!added3.sizing.warnings.some((warning) => warning.includes('typecheck')));
     const added4 = await addTask(root, { id: 'nochecks', brief: 'docs/brief.md', allow: ['src/new-file.ts'] });
     assert.ok(!added4.sizing.warnings.some((warning) => warning.includes('typecheck')));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('task update and approve warn when TypeScript allow has no typecheck check', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+    const checksPath = '.tinysdd/tasks/ts.checks.json';
+    await writeFile(join(root, ...checksPath.split('/')), JSON.stringify({
+      schemaVersion: 1,
+      dependencyMounts: ['node_modules'],
+      checks: [
+        { id: 'test', argv: ['node_modules/.bin/vitest', 'run'] },
+      ],
+    }));
+    await addTask(root, { id: 'tsu', brief: 'docs/brief.md', checks: checksPath, allow: ['src/a.ts'] });
+    const updated = await updateTask(root, { id: 'tsu', by: 'operator', reason: 'added a file', brief: 'docs/brief.md', checks: checksPath, allow: ['src/a.ts', 'src/b.ts'] });
+    assert.ok(updated.sizing.warnings.some((warning) => warning.includes('typecheck')));
+    await addTask(root, { id: 'tsa', brief: 'docs/brief.md', checks: checksPath, allow: ['src/c.ts'] });
+    const approved = await approveTask(root, { id: 'tsa', by: 'operator', reason: 'checked scope' });
+    assert.ok(approved.sizing.warnings.some((warning) => warning.includes('typecheck')));
   } finally {
     await cleanup(root);
   }

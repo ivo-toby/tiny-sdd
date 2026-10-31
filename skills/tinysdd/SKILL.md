@@ -129,11 +129,11 @@ installed version and the two or three exact accessors the repository uses.
 For example, state require-await when async code is in scope, and distinguish
 neverthrow's .value from ts-results' .val when that is the relevant API.
 
-For a TypeScript project, a slice's checks must include a typecheck
+For a TypeScript/Vue/Svelte project, a slice's checks must include a typecheck
 (`tsc --noEmit` or the repository equivalent). Test runners such as Vitest and
 tsx strip types, so a green test run does not prove the slice compiles; the
-validator and `task add` warn when a slice touches `.ts` files and no declared
-check runs a typecheck.
+validator and `task add`/`update`/`approve` warn when a slice or task touches
+typed files and no declared check runs a typecheck.
 
 ## Phase authority and gates
 

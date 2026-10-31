@@ -32,7 +32,7 @@ import {
 } from './config.mjs';
 import { profilesForRoute } from './profile-catalog.mjs';
 import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
-import { checksRunTypecheck, isTypeScriptPath, parseChecksManifest } from './checks-manifest.mjs';
+import { checksRunTypecheck, isTypecheckRelevantPath, parseChecksManifest } from './checks-manifest.mjs';
 import {
   extractAcceptanceCriteria,
   extractEvidenceChecks,
@@ -323,8 +323,10 @@ function taskSizing(allow, compiled, checks) {
   }
   const recommended = reasons.length > 0;
   if (recommended) warnings.push(`behavior split recommended (${reasons.join('; ')}): separate the sequential core from the async edge, each with its own test file; fewer files alone will not help`);
-  if (checks && allow.some(isTypeScriptPath) && !checksRunTypecheck(checks.checks)) {
-    warnings.push('TypeScript files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit) because test runners strip types');
+  // Only warn when a checks file is declared: a task with no checks has a
+  // separate gap (no verification at all), not a missing typecheck.
+  if (checks && allow.some(isTypecheckRelevantPath) && !checksRunTypecheck(checks.checks)) {
+    warnings.push('TypeScript/Vue/Svelte files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit) because test runners strip types');
   }
   return { ...metrics, behaviorSplit: { recommended, reasons }, thresholds: { ...TASK_SIZE_THRESHOLDS, ...BEHAVIOR_SPLIT_THRESHOLDS }, warnings };
 }

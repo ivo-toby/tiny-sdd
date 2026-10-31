@@ -107,16 +107,27 @@ export function parseChecksManifest(text) {
 // typechecker. Test runners such as Vitest and tsx strip types, so a green
 // test run does not prove the slice compiles.
 const TYPECHECK_BASENAMES = new Set(['tsc', 'tsgo', 'vue-tsc', 'svelte-check']);
+// `tsc` is matched as a word so ids like `lint-tsconfig` are not treated as a typecheck.
+const TYPECHECK_ID = /type[-_]?check|\btsc\b/u;
+
+function argvBaseRunsTypecheck(argument) {
+  const base = argument.split(/[\\/]/u).pop();
+  // `tsc` may be invoked as a script (node .../tsc.js), so also match the
+  // extension-less basename.
+  return TYPECHECK_BASENAMES.has(base) || TYPECHECK_BASENAMES.has(base.replace(/\.(js|cjs|mjs)$/u, ''));
+}
 
 export function checkRunsTypecheck(check) {
-  if (/type[-_]?check|tsc/u.test(check.id)) return true;
-  return check.argv.some((argument) => TYPECHECK_BASENAMES.has(argument.split(/[\\/]/u).pop()));
+  if (TYPECHECK_ID.test(check.id)) return true;
+  return check.argv.some(argvBaseRunsTypecheck);
 }
 
 export function checksRunTypecheck(checks) {
   return checks.some(checkRunsTypecheck);
 }
 
-export function isTypeScriptPath(path) {
-  return /\.(ts|tsx|mts|cts)$/u.test(path);
+// A path needs a typecheck to prove it compiles: TypeScript, plus Vue and
+// Svelte, which use vue-tsc / svelte-check.
+export function isTypecheckRelevantPath(path) {
+  return /\.(ts|tsx|mts|cts|vue|svelte)$/u.test(path);
 }
