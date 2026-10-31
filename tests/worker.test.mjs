@@ -1244,6 +1244,9 @@ describe("Pi worker capture and scope", () => {
       assert.match(availablePrompt, /## Declared checks \(run_checks\)/u);
       assert.match(availablePrompt, /- first \(timeout 1000 ms\): "node" "-e" "0"/u);
       assert.match(availablePrompt, /- second \(timeout 1000 ms\): "node" "-e" "0"/u);
+      assert.match(availablePrompt, /Each executed check consumes one run from a budget of 12/u);
+      assert.match(availablePrompt, /without an id runs and charges all 2 checks/u);
+      assert.match(availablePrompt, /re-run only the failing check by id/u);
       assert.match(availablePrompt, /After each written or edited allowed file, call `run_checks`/u);
       assert.match(availablePrompt, /fix reported failures within the approved scope/u);
       assert.match(availablePrompt, /do not simulate checks in reasoning/u);

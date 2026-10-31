@@ -946,7 +946,8 @@ keeps the no-check tool surface. `worker start` and `worker run` repeat the
 same `run_checks unavailable: ...` warning on stderr; `--json` keeps stdout to
 one JSON result. Dependency mounts cannot overlap allowed
 paths. `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
-check. Budget exhaustion, unknown ids and runner unavailability throw tool
+check, so size it for the number of declared checks: a slice declaring `test`,
+`lint` and `typecheck` spends 3 runs per all-checks call. Budget exhaustion, unknown ids and runner unavailability throw tool
 errors and do not end the worker. Pi 1.4.0 makes a batch containing `run_checks`
 sequential in assistant source order: `[write, run_checks]` sees the write;
 `[run_checks, write]` sees the earlier candidate. No sibling reordering occurs.

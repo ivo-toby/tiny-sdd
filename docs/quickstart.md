@@ -687,7 +687,9 @@ one JSON result.
 
 `limits.maxCheckRuns` defaults to 12 and accepts integers from 1 to 20 when the
 tool is available. Each individual check consumes one run, including checks
-requested by an all-checks call. Exhaustion, unknown ids and runner
+requested by an all-checks call, so size the budget for the number of declared
+checks (a slice declaring `test`, `lint` and `typecheck` spends 3 runs per
+all-checks call). Exhaustion, unknown ids and runner
 unavailability throw tool errors while
 the worker continues. Pi 1.4.0 executes a batch containing `run_checks`
 sequentially in assistant source order: `[write, run_checks]` observes that
