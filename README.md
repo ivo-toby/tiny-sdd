@@ -268,7 +268,7 @@ tinysdd task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--ch
 tinysdd task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--worker NAME] [--worker-reason TEXT]
 tinysdd task approve --id ID --by LABEL --reason TEXT
 tinysdd task packet --id ID
-tinysdd task apply --id ID --run RUN_ID --by LABEL
+tinysdd task apply --id ID --run RUN_ID --by LABEL [--exclude FILE[,FILE]]
 tinysdd task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL [--candidate-paths FILE[,FILE]]
 tinysdd task close --id ID --by LABEL --reason TEXT
 tinysdd task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT

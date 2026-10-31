@@ -2271,6 +2271,119 @@ test('apply includes ordinary extra files and preserves unchanged paths', async 
   }
 });
 
+test('an extra path in a revision candidate is applied and reviewed like in a first run', async () => {
+  const files = { 'src/a.ts': 'v0\n' };
+  const root = await applyProject(files, ['src/a.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'v1\n' } });
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.candidatePaths, ['src/a.ts']);
+    await fakeRun(root, RUN_TWO, {
+      before: { 'src/a.ts': 'v1\n' },
+      after: { 'src/a.ts': 'v2\n', 'src/extra.ts': 'extra\n' },
+      baseRun: { id: RUN_ONE, paths: ['src/a.ts'] },
+    });
+    const { applied } = await apply(root, RUN_TWO);
+    assert.deepEqual(applied.actualPaths, ['src/a.ts', 'src/extra.ts']);
+    assert.equal(await readProject(root, 'src/extra.ts'), 'extra\n');
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    const task = (await rawState(root)).tasks.one;
+    assert.deepEqual(task.review.candidatePaths, ['src/a.ts', 'src/extra.ts']);
+    assert.equal(task.applied.runId, RUN_TWO);
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an accepted review that omits applied paths is still malformed state', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'a\n', 'src/extra.ts': 'extra\n' } });
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    const statePath = join(root, '.tinysdd', 'runs', 'controller.json');
+    const state = await rawState(root);
+    state.tasks.one.review.candidatePaths = ['src/a.ts', 'src/b.ts'];
+    await writeFile(statePath, JSON.stringify(state));
+    await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED', message: /candidatePaths omit applied paths: src\/extra\.ts/u });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply restores the project when recording the apply fails', async () => {
+  const files = { 'src/b.ts': 'old b\n' };
+  const root = await applyProject(files, ['src/a.ts', 'src/b.ts']);
+  const saved = { test: process.env.TINYSDD_SLICE_TEST_REVIEW_TEST, fail: process.env.TINYSDD_SLICE_TEST_REVIEW_FAIL_CONTROLLER_SAVE };
+  try {
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/b.ts': 'new b\n', 'src/new/a.ts': 'new a\n' } });
+    process.env.TINYSDD_SLICE_TEST_REVIEW_TEST = '1';
+    process.env.TINYSDD_SLICE_TEST_REVIEW_FAIL_CONTROLLER_SAVE = '1';
+    await assert.rejects(apply(root), { code: 'WRITE_FAILED' });
+    await assertNothingApplied(root, { 'src/b.ts': 'old b\n', 'src/new/a.ts': null });
+    await assert.rejects(stat(join(root, 'src', 'new')), { code: 'ENOENT' });
+  } finally {
+    for (const [key, name] of [['test', 'TINYSDD_SLICE_TEST_REVIEW_TEST'], ['fail', 'TINYSDD_SLICE_TEST_REVIEW_FAIL_CONTROLLER_SAVE']]) {
+      if (saved[key] === undefined) delete process.env[name];
+      else process.env[name] = saved[key];
+    }
+    await cleanup(root);
+  }
+});
+
+test('apply --exclude leaves an extra path out of the project and the record', async () => {
+  const files = { 'src/a.ts': 'one\n', 'src/stray.ts': 'operator edit\n' };
+  const root = await applyProject(files, ['src/a.ts']);
+  try {
+    await fakeRun(root, RUN_ONE, {
+      before: { 'src/a.ts': 'one\n', 'src/stray.ts': 'original\n' },
+      after: { 'src/a.ts': 'two\n', 'src/stray.ts': 'stray\n', 'src/keep.ts': 'keep\n' },
+    });
+    // The project left the lineage start for src/stray.ts.
+    await assert.rejects(apply(root), { code: 'APPLY_CONFLICT' });
+    await assert.rejects(apply(root, RUN_ONE, { exclude: ['src/nope.ts'] }), { code: 'APPLY_EXCLUDE_UNKNOWN', message: /src\/nope\.ts/u });
+    await assert.rejects(apply(root, RUN_ONE, { exclude: ['src/a.ts', 'src/stray.ts'] }), { code: 'APPLY_EXCLUDE_ALLOWED', message: /src\/a\.ts/u });
+    await assertNothingApplied(root, { ...files, 'src/keep.ts': null });
+
+    const { applied } = await apply(root, RUN_ONE, { exclude: ['src/stray.ts', 'src/stray.ts'] });
+    assert.equal(await readProject(root, 'src/a.ts'), 'two\n');
+    assert.equal(await readProject(root, 'src/keep.ts'), 'keep\n');
+    assert.equal(await readProject(root, 'src/stray.ts'), 'operator edit\n');
+    assert.deepEqual(applied.excluded, ['src/stray.ts']);
+    assert.deepEqual(applied.actualPaths, ['src/a.ts', 'src/keep.ts']);
+    assert.deepEqual(applied.files.map(({ path }) => path), ['src/a.ts', 'src/keep.ts']);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.candidatePaths, ['src/a.ts', 'src/keep.ts']);
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+
+    // The record is optional and checked like actualPaths.
+    const statePath = join(root, '.tinysdd', 'runs', 'controller.json');
+    const state = await rawState(root);
+    for (const excluded of [['../x'], ['src/stray.ts', 'src/stray.ts'], 'src/stray.ts', ['./src/stray.ts']]) {
+      await writeFile(statePath, JSON.stringify({ ...state, tasks: { one: { ...state.tasks.one, applied: { ...state.tasks.one.applied, excluded } } } }));
+      await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED', message: /applied excluded/u }, JSON.stringify(excluded));
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task apply --exclude names the excluded paths', async () => {
+  const files = { 'src/a.ts': 'one\n' };
+  const root = await applyProject(files, ['src/a.ts']);
+  try {
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    await fakeRun(root, RUN_ONE, { before: files, after: { 'src/a.ts': 'two\n', 'src/x.ts': 'x\n', 'src/y.ts': 'y\n' } });
+    const human = await exec(process.execPath, [bin, '--project', root, 'task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator', '--exclude', 'src/y.ts,src/x.ts']);
+    assert.equal(human.stdout, `one: applied 1 file(s) from ${RUN_ONE} (excluded src/x.ts, src/y.ts)\n`);
+    assert.deepEqual((await rawState(root)).tasks.one.applied.excluded, ['src/x.ts', 'src/y.ts']);
+    await assert.rejects(readProject(root, 'src/x.ts'), { code: 'ENOENT' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('apply preserves the file mode of the candidate', async () => {
   const root = await applyProject({});
   try {
@@ -2872,14 +2985,14 @@ test('CLI task apply prints one line, reports already-applied files and returns 
     assert.deepEqual(parsed.data.applied.files.map((file) => file.status), ['already-applied', 'already-applied']);
     const again = await cli('task', 'apply', '--id', 'one', '--run', RUN_ONE, '--by', 'operator');
     assert.equal(again.stdout, `one: applied 2 file(s) from ${RUN_ONE} (2 already applied)\n`);
-    assert.match((await cli('--help', 'task', 'apply')).stdout, /task apply --id ID --run RUN_ID --by LABEL\n/u);
+    assert.match((await cli('--help', 'task', 'apply')).stdout, /task apply --id ID --run RUN_ID --by LABEL \[--exclude FILE\[,FILE\]\]\n/u);
     assert.doesNotMatch((await cli('--help', 'task', 'apply')).stdout, /allow-incomplete/u);
   } finally {
     await cleanup(root);
   }
 });
 
-test('CLI task apply reports refusals and has no flags beyond id, run and by', async () => {
+test('CLI task apply reports refusals and has no flags beyond id, run, by and exclude', async () => {
   const root = await applyProject({});
   try {
     const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
