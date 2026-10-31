@@ -273,8 +273,8 @@ The supported worker sandbox matrix is:
 | Other | none | unsupported | Worker refuses an unsandboxed run. |
 
 The check runner also requires a real Node root with `bin/node`; it does not
-perform `PATH` lookup. An OpenCode worker has no `run_checks` on either host
-yet. Missing sandbox or check-runner support is an explicit capability result.
+perform `PATH` lookup. An OpenCode worker gets `run_checks` through a local
+TinySDD plugin on the same hosts. Missing sandbox or check-runner support is an explicit capability result.
 Do not install a system package, start a local model server, or alter global
 configuration from this skill; ask the operator for that separate action when
 needed.
