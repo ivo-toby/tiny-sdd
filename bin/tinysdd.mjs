@@ -843,13 +843,15 @@ async function run(argv) {
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
   if (help || args[0] === 'help') {
     const topic = args[0] === 'help' ? args.slice(1) : args;
-    const text = topic.length === 0
+    const firstFlag = topic.findIndex((token) => token.startsWith('-'));
+    const words = firstFlag === -1 ? topic : topic.slice(0, firstFlag);
+    const text = words.length === 0
       ? topLevelHelp(VERSION)
-      : commandHelp(topic[0], topic.slice(1).join(' '));
+      : commandHelp(words[0], words.slice(1).join(' '));
     if (text === undefined) {
-      const error = topic.length === 1
-        ? unknownCommandHelp(topic[0])
-        : unknownSubcommandHelp(topic[0], topic.slice(1).join(' '));
+      const error = words.length === 1
+        ? unknownCommandHelp(words[0])
+        : unknownSubcommandHelp(words[0], words.slice(1).join(' '));
       throw cliError(error, 'UNKNOWN_COMMAND');
     }
     return { ok: true, data: { help: text }, presentation: 'help' };

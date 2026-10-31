@@ -431,7 +431,7 @@ const COMMANDS = [
       { flag: '--change PATH', description: 'path to the change under review', required: true },
       { flag: '--implementer ID', description: 'implementer worker id', required: true },
       { flag: '--producer ID', description: 'producer model id used for the assessment', required: true },
-      { flag: '--provider-config PATH', description: 'provider configuration file (max 64 KiB)' },
+      { flag: '--provider-config PATH', description: 'provider configuration file (max 64 KiB)', required: true },
       { flag: '--credential-env NAME', description: 'environment variable holding the provider credential', required: true },
     ],
     example: 'tinysdd slice-tests assess --id st-1 --run run-1 --change src/validation.ts --implementer coder --producer frontier/model --provider-config provider.json --credential-env PROVIDER_KEY',
@@ -477,15 +477,19 @@ const COMMANDS = [
       { flag: '--by LABEL', description: 'operator label recording', required: true },
       { flag: '--reason TEXT', description: 'recording rationale', required: true },
       { flag: '--predecessor ID', description: 'record this one supersedes' },
+      { flag: '--worker NAME', description: 'worker attributed with the phase work' },
     ],
     example: 'tinysdd phase record --phase research --feature reservations --proposal docs/research.md --context docs/context.md --by operator --reason "reviewed"',
   },
   {
     command: 'phase status',
     group: 'Phases',
-    summary: 'Show the phase statuses of a feature (or all features).',
+    summary: 'Show the phase statuses of a feature.',
     usage: 'tinysdd [--json] [--project PATH] phase status --feature NAME',
-    flags: [{ flag: '--feature NAME', description: 'feature to show; omit for all features', required: true }],
+    flags: [
+      { flag: '--feature NAME', description: 'feature to show', required: true },
+      { flag: '--worker NAME', description: 'worker attributed with the phase work' },
+    ],
     example: 'tinysdd phase status --feature reservations',
   },
   {
@@ -500,6 +504,7 @@ const COMMANDS = [
       { flag: '--by LABEL', description: 'operator label advancing', required: true },
       { flag: '--reason TEXT', description: 'advancement rationale', required: true },
       { flag: '--record ID', description: 'research record this advancement is based on' },
+      { flag: '--worker NAME', description: 'worker attributed with the phase work' },
     ],
     example: 'tinysdd phase advance --from research --to plan --feature reservations --by operator --reason "plan approved"',
   },
@@ -642,7 +647,6 @@ export function closestSubcommand(command, subcommand) {
 
 export function unknownCommandHelp(command) {
   const closest = closestCommand(command);
-  const entry = COMMANDS.find((candidate) => candidate.command.split(' ')[0] === closest);
   return `unknown command: ${command}. Did you mean \`${closest}\`?\n\n${commandHelp(closest)}`;
 }
 
