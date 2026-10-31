@@ -74,6 +74,14 @@ test('a subcommand has its own help with usage, flag defaults and an example', a
   const stopJson = await invokeJson('--json', 'help', 'worker', 'stop');
   assert.equal(stopJson.parsed.ok, true);
   assert.match(stopJson.parsed.data.help, /worker stop --id LAUNCH_ID/u);
+
+  // --help after other flags still resolves to the command's help.
+  const midCommand = await invoke('task', 'add', '--id', 'x', '--allow', 'src/a.ts', '--help');
+  assert.equal(midCommand.status, 0, midCommand.stderr);
+  assert.equal(midCommand.stdout, (await invoke('help', 'task', 'add')).stdout);
+  const midCommandJson = await invokeJson('--json', 'task', 'add', '--id', 'x', '--help');
+  assert.equal(midCommandJson.parsed.ok, true);
+  assert.match(midCommandJson.parsed.data.help, /task add --id ID/u);
 });
 
 test('a command with subcommands lists them and points at per-subcommand help', async () => {
