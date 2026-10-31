@@ -184,8 +184,9 @@ test('npm pack --dry-run --json lists the packaged change entrypoints', async ()
   for (const dependency of ['src/change-format.mjs', 'src/slice-bundle.mjs']) {
     assert.ok(paths.has(dependency), `${dependency} must be packaged so change validate/export resolve after install`);
   }
-  const cliSource = await readFile(join(REPO, 'bin', 'tinysdd.mjs'), 'utf8');
+  const helpSource = await readFile(join(REPO, 'src', 'cli-help.mjs'), 'utf8');
   for (const usageLine of ['change validate --change PATH', 'change export --change PATH']) {
-    assert.ok(cliSource.includes(usageLine), `packaged CLI must advertise ${usageLine}`);
+    assert.ok(helpSource.includes(usageLine), `packaged CLI must advertise ${usageLine}`);
   }
+  assert.ok(paths.has('src/cli-help.mjs'), 'src/cli-help.mjs must be packaged so help resolves after install');
 });
