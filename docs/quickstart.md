@@ -315,8 +315,8 @@ BRIEF_SOURCE_RELATIVE=changes/example/slices/s1/brief.md
 CONTEXT_SOURCE_RELATIVE=changes/example/slices/s1/context.json
 CHECKS_SOURCE_RELATIVE=changes/example/slices/s1/checks.json
 
-node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
-  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+tinysdd --project "$TARGET_PROJECT" change validate \
+  --change "$CHANGE_RELATIVE" \
   --json
 ```
 
@@ -361,8 +361,8 @@ where it is an alias); the exporter refuses symlinked output parents.
 
 ```sh
 BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
-node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-  --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+tinysdd --project "$TARGET_PROJECT" change export \
+  --change "$CHANGE_RELATIVE" \
   --slice "$SLICE_ID" \
   --out "$BUNDLE_OUT" \
   --json

@@ -48,10 +48,10 @@ existing context budget and pass both files through preparation and protection.
 ## Command roots
 
 The phase files and templates are prompt assets; they do not bundle the
-TinySDD CLI, scripts, parsers, schemas or repository docs. Run the command
-recipes from any working directory after setting these roots:
+TinySDD CLI, parsers, schemas or repository docs. Run the command recipes
+from any working directory after setting these roots (the `tinysdd` command
+comes from the installed CLI, so no checkout is needed):
 
-    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
     TARGET_PROJECT=/absolute/path/to/project
     CHANGE_ROOT_RELATIVE=changes/FEATURE
     CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
@@ -62,7 +62,7 @@ recipes from any working directory after setting these roots:
     CONTEXT_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/context.json
     CHECKS_SOURCE_RELATIVE=changes/FEATURE/slices/SLICEDIR/checks.json
 
-`TINYSDD_CHECKOUT` supplies `bin/`, `scripts/`, schemas and docs. The canonical
+The canonical
 `TARGET_PROJECT` owns the descriptor set and `.tinysdd/` state. Keep
 `CHANGE_RELATIVE` project-relative because the validator rejects an absolute
 `--change` value; all TinySDD CLI calls select `TARGET_PROJECT` explicitly. Set
@@ -99,14 +99,14 @@ caller, return to research and mark the gap UNKNOWN rather than guessing.
 
 The current phase CLI implements only the human research handler:
 
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       phase record --phase research --feature FEATURE \
       --proposal "$CHANGE_ROOT_RELATIVE/proposal.md" \
       --context "$CHANGE_ROOT_RELATIVE/research.context.json" \
       --by OPERATOR --reason 'Reviewed the cited research inputs'
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       phase status --feature FEATURE
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       phase advance --from research --to plan --feature FEATURE \
       --by OPERATOR --reason 'Research is current and complete'
 
@@ -174,8 +174,8 @@ to the reviewer.
 
 Run the existing validator before registration:
 
-    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --ready --json
+    tinysdd --project "$TARGET_PROJECT" change validate \
+      --change "$CHANGE_RELATIVE" --ready --json
 
 Treat readiness errors as blockers. Treat expected-file ownership or advisory
 budget warnings as preparation feedback, then resolve them or carry them into
@@ -190,7 +190,7 @@ shorten the lists by hand:
     cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
     cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
     cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add \
+    tinysdd --project "$TARGET_PROJECT" task add \
       --id "$SLICE_ID" --feature FEATURE \
       --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
       --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
@@ -202,8 +202,8 @@ Export only after the selected task and its accepted dependencies are freshly
 approved:
 
     BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
-    node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --slice "$SLICE_ID" \
+    tinysdd --project "$TARGET_PROJECT" change export \
+      --change "$CHANGE_RELATIVE" --slice "$SLICE_ID" \
       --out "$BUNDLE_OUT" --json
 
 The validator and exporter are read-only with respect to source code and
@@ -262,7 +262,7 @@ specify, research, plan, slice, write-tests, review and rescue. Record an
 observed frontier row only when model identity, attribution and nonnegative
 token counts are known:
 
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       usage record --phase plan --model frontier/model \
       --input INPUT --output OUTPUT --reasoning REASONING --feature FEATURE
 

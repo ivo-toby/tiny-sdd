@@ -59,19 +59,19 @@ manifest. Retain the compiled excerpts and their digests. Do not cite a
 directory listing, copy an entire file when a range is enough, or replace an
 excerpt with your interpretation.
 
-If the project enables the optional research phase policy, set the TinySDD
-checkout and canonical target project roots from any working directory. Put the
-reviewed proposal and manifest in the target paths passed to the human gate:
+If the project enables the optional research phase policy, set the canonical
+target project root from any working directory. Put the reviewed proposal and
+manifest in the target paths passed to the human gate (the `tinysdd` command
+comes from the installed CLI, so no checkout is needed):
 
-    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
     TARGET_PROJECT=/absolute/path/to/project
 
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       phase record --phase research --feature FEATURE \
       --proposal changes/FEATURE/proposal.md \
       --context changes/FEATURE/research.context.json \
       --by OPERATOR --reason 'Reviewed the cited research inputs'
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       phase status --feature FEATURE
 
 Only the configured human research handler is implemented. A frontier,

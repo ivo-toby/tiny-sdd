@@ -145,9 +145,9 @@ consumes a slice. Run the read-only validator and use every value from its
 registrationPlan entry. Materialize exact descriptor bytes at the fixed
 controller paths, then register dependencies in topological order:
 
-Set these roots once before running the commands, from any working directory:
+Set these roots once before running the commands, from any working directory
+(the `tinysdd` command comes from the installed CLI, so no checkout is needed):
 
-    TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
     TARGET_PROJECT=/absolute/path/to/project
     CHANGE_ROOT_RELATIVE=changes/feature
     CHANGE_RELATIVE="$CHANGE_ROOT_RELATIVE/change.json"
@@ -158,22 +158,22 @@ Set these roots once before running the commands, from any working directory:
     CONTEXT_SOURCE_RELATIVE=changes/feature/slices/SLICEDIR/context.json
     CHECKS_SOURCE_RELATIVE=changes/feature/slices/SLICEDIR/checks.json
 
-`TINYSDD_CHECKOUT` contains the CLI, scripts and schemas. `TARGET_PROJECT` is
+`TARGET_PROJECT` is
 the canonical target checkout that owns the descriptor set and `.tinysdd/`
 state. Keep `CHANGE_RELATIVE` project-relative: the validator rejects an
 absolute `--change` value even when `--project` is absolute. Set the three
 `*_SOURCE_RELATIVE` values from the selected slice descriptor's actual
 `brief`, `context` and `checks` paths; do not derive a folder from `SLICE_ID`.
 
-    node "$TINYSDD_CHECKOUT/scripts/validate-change.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" --ready --json
+    tinysdd --project "$TARGET_PROJECT" change validate \
+      --change "$CHANGE_RELATIVE" --ready --json
 
     mkdir -p "$TASK_ROOT"
     cp "$TARGET_PROJECT/$BRIEF_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.md"
     cp "$TARGET_PROJECT/$CONTEXT_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.context.json"
     cp "$TARGET_PROJECT/$CHECKS_SOURCE_RELATIVE" "$TASK_ROOT/$SLICE_ID.checks.json"
 
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" task add \
+    tinysdd --project "$TARGET_PROJECT" task add \
       --id "$SLICE_ID" --feature FEATURE_ID \
       --brief "$TASK_ROOT_RELATIVE/$SLICE_ID.md" \
       --context "$TASK_ROOT_RELATIVE/$SLICE_ID.context.json" \
@@ -183,7 +183,7 @@ absolute `--change` value even when `--project` is absolute. Set the three
       --preparation PLAN_PREPARATION_PATHS \
       --depends-on PLAN_DEPENDENCY_IDS
 
-    node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" \
+    tinysdd --project "$TARGET_PROJECT" \
       task approve --id "$SLICE_ID" --by OPERATOR --reason 'Reviewed the slice packet'
 
 Copy every allow, protect, preparation and dependsOn value from the exact plan;
@@ -193,8 +193,8 @@ empty. When the plan entry has `worker`, add `--worker PLAN_WORKER` and
 task. Export only a freshly approved task and accepted dependency closure:
 
     BUNDLE_OUT="/absolute/canonical/tmp/${SLICE_ID}-bundle"
-    node "$TINYSDD_CHECKOUT/scripts/export-slice.mjs" \
-      --project "$TARGET_PROJECT" --change "$CHANGE_RELATIVE" \
+    tinysdd --project "$TARGET_PROJECT" change export \
+      --change "$CHANGE_RELATIVE" \
       --slice "$SLICE_ID" --out "$BUNDLE_OUT" --json
 
 The foreign harness is a consumer of the packet. It does not create a new
