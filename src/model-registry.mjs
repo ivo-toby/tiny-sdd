@@ -267,18 +267,21 @@ export async function findProfileById(projectRoot, id, { env = process.env } = {
   return matches[0];
 }
 
-// The profile's limits are the measured configuration. A worker that sets the
-// same limit to a different value is a conflict, never a silent choice.
+// A profile's limits are the measured configuration, not a binding one (#174):
+// they become defaults, and a worker's explicit limits win. The
+// firstWriteMs < timeoutMs invariant still holds for the merged result.
+// `limits` are already validated, so defaulted keys can be present without
+// being explicit; only `explicitKeys` count as worker choices.
 export function applyProfileLimits(limits, profileLimits, explicitKeys, { worker, profile }) {
   const merged = { ...limits };
+  const provenance = {};
   for (const [key, value] of Object.entries(profileLimits)) {
-    if (explicitKeys.includes(key) && limits[key] !== value) {
-      throw tinyError('PROFILE_LIMIT_CONFLICT', `worker ${worker} sets limits.${key} ${limits[key]} but profile ${profile} requires ${value}; remove one or select another profile`);
-    }
-    merged[key] = value;
+    const explicit = explicitKeys.includes(key);
+    merged[key] = explicit ? limits[key] : value;
+    provenance[key] = { measured: value, effective: merged[key], source: explicit ? 'worker' : 'profile' };
   }
-  if (merged.firstWriteMs !== undefined && merged.firstWriteMs >= merged.timeoutMs) {
-    throw tinyError('PROFILE_LIMIT_CONFLICT', `worker ${worker}: firstWriteMs must stay below timeoutMs ${merged.timeoutMs} from profile ${profile}`);
+  if (merged.firstWriteMs !== undefined && merged.timeoutMs !== undefined && merged.firstWriteMs >= merged.timeoutMs) {
+    throw tinyError('PROFILE_LIMIT_CONFLICT', `worker ${worker}: firstWriteMs ${merged.firstWriteMs} must stay below timeoutMs ${merged.timeoutMs} (profile ${profile})`);
   }
-  return merged;
+  return { limits: merged, provenance };
 }

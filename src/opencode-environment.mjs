@@ -344,10 +344,8 @@ export async function preflightOpenCodeWorker({ worker, profile = null, sourceEn
  * catalog and the relay target. The caller must call `cleanup()` in a finally block.
  */
 export async function prepareOpenCodeEnvironment({ worker, profile = null, sourceEnv = process.env } = {}) {
+  // A profile's limits are measured defaults, not binding ones (#174).
   const limits = validateOpenCodeWorker(worker);
-  for (const [key, value] of Object.entries(profile?.limits ?? {})) {
-    if (limits[key] !== value) fail(`Worker limits.${key} is ${limits[key]} but profile ${profile.id} requires ${value}; resolve the profile through the project config`);
-  }
   const preflight = await preflightOpenCodeWorker({ worker, profile, sourceEnv });
   if (preflight.errors.length > 0) fail(`Worker preflight failed: ${preflight.errors.join("; ")}`);
   const provider = await readOperatorProvider({ worker, sourceEnv });
@@ -390,6 +388,7 @@ export async function prepareOpenCodeEnvironment({ worker, profile = null, sourc
     maxToolCalls: limits.maxToolCalls,
     firstWriteMs: limits.firstWriteMs,
     maxCheckRuns: limits.maxCheckRuns,
+    ...(profile?.limits ? { limitProvenance: Object.fromEntries(Object.entries(profile.limits).map(([key, value]) => [key, { measured: value, effective: limits[key] ?? value, source: (limits[key] ?? value) !== value ? "worker" : "profile" }])) } : {}),
     credentialEnvironmentNames: [],
     generatedCredentialReferenceCount: 0,
     preflight: {

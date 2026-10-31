@@ -563,10 +563,25 @@ describe("Pi environment filtering", () => {
       preparePiEnvironment({ worker: worker(), profile: { ...profile, model: { route: "fake/other-model" } }, sourceAgentDir, sourceEnv }),
       /measured on route fake\/other-model, but worker.model is fake\/exact-model/u,
     );
-    await assert.rejects(
-      preparePiEnvironment({ worker: worker(), profile: { ...profile, limits: { timeoutMs: 900000 } }, sourceAgentDir, sourceEnv }),
-      /limits.timeoutMs is .* but profile registry requires 900000/u,
-    );
+    // Profile limits are measured defaults, not binding ones (#174): a worker
+    // value wins and both values are recorded with their source.
+    const overridden = await preparePiEnvironment({ worker: { ...worker(), limits: { timeoutMs: 900000, maxToolCalls: 4 } }, profile: { ...profile, limits: { timeoutMs: 600000, maxToolCalls: 100 } }, sourceAgentDir, sourceEnv });
+    try {
+      assert.equal(overridden.metadata.timeoutMs, 900000);
+      assert.deepEqual(overridden.metadata.limitProvenance, {
+        timeoutMs: { measured: 600000, effective: 900000, source: "worker" },
+        maxToolCalls: { measured: 100, effective: 4, source: "worker" },
+      });
+    } finally {
+      await overridden.cleanup();
+    }
+    const defaulted = await preparePiEnvironment({ worker: worker(), profile: { ...profile, limits: { timeoutMs: 600000 } }, sourceAgentDir, sourceEnv });
+    try {
+      assert.equal(defaulted.metadata.timeoutMs, 2_000);
+      assert.deepEqual(defaulted.metadata.limitProvenance, { timeoutMs: { measured: 600000, effective: 2_000, source: "worker" } });
+    } finally {
+      await defaulted.cleanup();
+    }
   });
 
   test("writes opt-in deterministic compaction settings and refuses an undersized reserve", async () => {
@@ -686,6 +701,33 @@ describe("Pi worker capture and scope", () => {
         },
         { timeoutMs: 600000, maxToolCalls: 100, maxCheckRuns: 12, firstWriteMs: null },
       );
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("a profile's limits are measured defaults: the worker value wins and runtime.json records both (#174)", async () => {
+    const project = await makeProject();
+    try {
+      const profile = { schemaVersion: 1, id: "measured", model: { route: "fake/exact-model" }, limits: { timeoutMs: 600000, maxToolCalls: 100, maxCheckRuns: 12 } };
+      const result = await runWorker({
+        projectRoot: project,
+        packet: packet(),
+        worker: worker({ timeoutMs: 2_000, maxToolCalls: 4 }),
+        profile,
+        runtime: runtime(undefined, "allowed"),
+      });
+      assert.equal(result.outcome, "completed");
+      const runtimeRecord = JSON.parse(await readFile(result.artifactPaths.runtime, "utf8"));
+      assert.deepEqual(
+        { timeoutMs: runtimeRecord.limits.timeoutMs, maxToolCalls: runtimeRecord.limits.maxToolCalls, maxCheckRuns: runtimeRecord.limits.maxCheckRuns },
+        { timeoutMs: 2_000, maxToolCalls: 4, maxCheckRuns: 12 },
+      );
+      assert.deepEqual(runtimeRecord.limitProvenance, {
+        timeoutMs: { measured: 600000, effective: 2_000, source: "worker" },
+        maxToolCalls: { measured: 100, effective: 4, source: "worker" },
+        maxCheckRuns: { measured: 12, effective: 12, source: "profile" },
+      });
     } finally {
       await rm(project, { recursive: true, force: true });
     }

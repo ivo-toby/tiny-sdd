@@ -186,18 +186,38 @@ test('--profile replaces the selected worker profile and is recorded as the argu
   await assert.rejects(resolveConfig(root, { profile: '../x.txt' }), { code: 'INVALID_PATH' });
 });
 
-test('a worker limit that contradicts the profile is a conflict; an equal one is allowed', async (t) => {
+test('a worker limit that differs from the profile wins and both values are recorded (#174)', async (t) => {
   const { root, bundled, put } = await registryProject(t, { limits: { timeoutMs: 300000 } });
   await put(bundled, 'gemma-test-v1.json', registryProfile());
-  await assert.rejects(resolveConfig(root), { code: 'PROFILE_LIMIT_CONFLICT' });
+  const resolved = await resolveConfig(root);
+  assert.equal(resolved.worker.limits.timeoutMs, 300000);
+  assert.deepEqual(resolved.limitProvenance, { timeoutMs: { measured: 600000, effective: 300000, source: 'worker' } });
+  assert.deepEqual(resolved.provenance.workers.gemma.limitProvenance, { timeoutMs: { measured: 600000, effective: 300000, source: 'worker' } });
+  assert.equal(Object.hasOwn(resolved.worker, 'profileLimitProvenance'), false);
+});
+
+test('profile limits stay defaults for workers that do not set them, and equal values are allowed', async (t) => {
+  const { root, bundled, put } = await registryProject(t);
+  await put(bundled, 'gemma-test-v1.json', registryProfile());
+  const resolved = await resolveConfig(root);
+  assert.equal(resolved.worker.limits.timeoutMs, 600000);
+  assert.equal(resolved.worker.limits.maxToolCalls, 100);
+  assert.deepEqual(resolved.limitProvenance, { timeoutMs: { measured: 600000, effective: 600000, source: 'profile' } });
   await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
     schemaVersion: 1,
     defaultWorker: 'gemma',
     workers: { gemma: { type: 'pi', provider: 'litellm', model: 'titan/llamacpp/gemma', profile: 'gemma-test-v1', limits: { timeoutMs: 600000, maxToolCalls: 50 } } },
   }));
-  const resolved = await resolveConfig(root);
-  assert.equal(resolved.worker.limits.timeoutMs, 600000);
-  assert.equal(resolved.worker.limits.maxToolCalls, 50);
+  const explicit = await resolveConfig(root);
+  assert.equal(explicit.worker.limits.timeoutMs, 600000);
+  assert.equal(explicit.worker.limits.maxToolCalls, 50);
+  assert.deepEqual(explicit.limitProvenance, { timeoutMs: { measured: 600000, effective: 600000, source: 'worker' } });
+});
+
+test('an impossible merged limit pair still fails with PROFILE_LIMIT_CONFLICT', async (t) => {
+  const { root, bundled, put } = await registryProject(t, { limits: { firstWriteMs: 400000 } });
+  await put(bundled, 'gemma-test-v1.json', registryProfile({ limits: { timeoutMs: 300000 } }));
+  await assert.rejects(resolveConfig(root), { code: 'PROFILE_LIMIT_CONFLICT' });
 });
 
 test('the profile identity ignores evidence-only fields', () => {
