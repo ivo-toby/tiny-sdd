@@ -41,7 +41,7 @@ function fail(message) {
   throw new PiEnvironmentError(message);
 }
 
-function stripJsonComments(text) {
+export function stripJsonComments(text) {
   let result = "";
   let inString = false;
   let escaped = false;
