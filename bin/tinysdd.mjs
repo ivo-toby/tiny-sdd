@@ -53,81 +53,10 @@ import { buildQualificationRecord, rescoreQualificationRecord, summarizeConfigur
 import { CLI_VERSION, runSetup, updateProfiles, updateSkills } from '../src/setup.mjs';
 import { THINKING_LEVELS, buildLocalProfile, defaultProfileId, listProfiles, readRegistryInfo, writeLocalProfile } from '../src/profile-catalog.mjs';
 import { isProfileId } from '../src/model-registry.mjs';
+import { STOP_WAIT_MS_DEFAULT, STOP_WAIT_MS_MAX, commandHelp, topLevelHelp, unknownCommandHelp, unknownSubcommandHelp, usageHintForArgs } from '../src/cli-help.mjs';
 
 
 const VERSION = CLI_VERSION;
-const HELP = `TinySDD ${VERSION}
-
-Usage:
-  tinysdd setup
-  tinysdd [--json] skills update
-  tinysdd [--json] profiles update
-  tinysdd [--json] profiles new [--route MODEL] [--id ID] [--context-window N] [--parallel N] [--max-tokens N] [--timeout-ms N] [--thinking LEVEL] [--family NAME] [--quantization NAME] [--server NAME]
-  tinysdd [--json] [--project PATH] models [--route MODEL]
-  tinysdd [--json] [--project PATH] init [--worker NAME --provider ID --model ID [--profile ID|PATH]]
-  tinysdd [--json] [--project PATH] config show|validate [--worker NAME] [--profile ID|PATH]
-  tinysdd [--json] [--project PATH] status [--feature NAME]
-  tinysdd [--json] [--project PATH] next
-  tinysdd [--json] [--project PATH] task add --id ID --brief PATH --allow FILE[,FILE] [--context PATH] [--checks PATH] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--feature NAME] [--worker NAME [--worker-reason TEXT]]
-  tinysdd [--json] [--project PATH] task update --id ID --by LABEL --reason TEXT [--brief PATH] [--context PATH] [--checks PATH] [--allow FILE[,FILE]] [--protect FILE[,FILE]] [--preparation FILE[,FILE]] [--depends-on ID[,ID]] [--worker NAME] [--worker-reason TEXT]
-  tinysdd [--json] [--project PATH] task approve --id ID --by LABEL --reason TEXT
-  tinysdd [--json] [--project PATH] task packet --id ID
-  tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL
-  tinysdd [--json] [--project PATH] task review --id ID --verdict accepted|revision|blocked --evidence PATH --by LABEL [--candidate-paths FILE[,FILE]]
-  tinysdd [--json] [--project PATH] task close --id ID --by LABEL --reason TEXT
-  tinysdd [--json] [--project PATH] task supersede --id ID --with ID[,ID] --by LABEL --reason TEXT
-  tinysdd [--json] [--project PATH] worker run --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID] [--escalated-from RUN_ID]
-  tinysdd [--json] [--project PATH] worker start --task ID [--worker NAME] [--profile ID|PATH] [--base-run RUN_ID] [--baseline-run RUN_ID] [--escalated-from RUN_ID]
-  tinysdd [--json] [--project PATH] worker status --id LAUNCH_ID
-  tinysdd [--json] [--project PATH] worker stop --id LAUNCH_ID [--wait-ms N]
-  tinysdd [--json] [--project PATH] worker settings --worker NAME [--profile ID|PATH] --entry-kind real|synthetic [--observed-reasoning-tokens N]
-  tinysdd [--json] [--project PATH] bench run --worker NAME [--profile ID|PATH] [--suite PATH] [--repeat K] --entry-kind real|synthetic --confirm-settings DIGEST [--ack-finding CODE] [--observed-reasoning-tokens N]
-  tinysdd [--json] [--project PATH] bench qualify --results PATH[,PATH] [--suite PATH] [--worker NAME] [--target ROLE=NUMBER,...]
-  tinysdd [--json] [--project PATH] bench rescore --record PATH [--target ROLE=NUMBER,...]
-  tinysdd [--json] [--project PATH] bench qualification show --record PATH [--suite PATH] [--worker NAME]
-  tinysdd [--json] [--project PATH] usage record --phase PHASE --model MODEL --input N --output N [--reasoning N] [--cache-read N] [--cache-write N] [--total N] [--task ID] [--feature NAME]
-  tinysdd [--json] [--project PATH] usage import --file PATH
-  tinysdd [--json] [--project PATH] usage report --feature NAME
-  tinysdd [--json] [--project PATH] feature accept --feature NAME --by LABEL --reason TEXT
-  tinysdd [--json] [--project PATH] feature report --feature NAME
-  tinysdd [--json] [--project PATH] slice-tests report [--feature NAME]
-  tinysdd [--json] [--project PATH] slice-tests dataset --partition train|validation|test [--feature NAME]
-  tinysdd [--json] [--project PATH] slice-tests status --id ID
-  tinysdd [--json] [--project PATH] slice-tests assess --id ID --run RUN --change PATH --implementer ID --producer ID --provider-config PATH --credential-env NAME
-  tinysdd [--json] [--project PATH] slice-tests check --id ID --event EVENT
-  tinysdd [--json] [--project PATH] slice-tests review --id ID --event EVENT --input-digest SHA --reviewer ID --strength strong --attested true --verdict accepted|rejected --evidence PATH
-  tinysdd [--json] [--project PATH] phase record|research --phase research --feature NAME --proposal PATH --context PATH --by LABEL --reason TEXT [--predecessor ID]
-  tinysdd [--json] [--project PATH] phase status --feature NAME
-  tinysdd [--json] [--project PATH] phase advance --from research --to plan --feature NAME --by LABEL --reason TEXT [--record ID]
-
-Usage phases: specify, research, plan, slice, write-tests, review, rescue.
-
-Retired (closed or superseded) tasks leave \`next\`, cannot be approved, reviewed or
-dispatched, and are refused while open tasks depend on them.
-\`task update\` keeps shape history and requires explicit reapproval after bound
-inputs change. Accepted tasks cannot be updated; \`task supersede\` still refuses
-a current acceptance and open dependents.
-Workers return isolated candidates and patches; they never apply or accept them.
-\`task apply\` copies a reviewed run's retained eligible actual files into the project and records the
-run; apply before \`task review\`, because acceptance binds the project's files.
-Use \`worker start\` for real model calls from an agent: it detaches the controller
-from short-lived interactive shells. Poll it with \`worker status\`.
-Stopping a launch with \`worker stop\` finalizes the run with outcome \`stopped\`,
-keeping its evidence and candidate.
-Use --json for machine-readable results, including failed worker evidence.
-Feature acceptance requires featureIntegration in .tinysdd/config.json; TinySDD
-executes that typed command through the host check runner before recording an event.
-
-\`setup\` checks the supported Node/Pi/sandbox layout, downloads the matching
-versioned release archive, installs global Codex and Claude skill links and the
-profile registry (~/.config/tiny-sdd/registry/). It does not install
-prerequisites, inspect credentials, start services or run a model.
-\`skills update\` and \`profiles update\` replace the installed skills or registry
-with this CLI version's release; run them after upgrading the CLI.
-\`init --model\` selects the profile measured on that exact route; with several
-matches, pass --profile. \`profiles new\` writes a configuration-only profile to
-~/.config/tiny-sdd/profiles/ and asks for missing values on a terminal.
-`;
 
 function cliError(message, code = 'INVALID_ARGUMENT') {
   const error = new Error(message);
@@ -165,7 +94,7 @@ function extractGlobals(argv) {
   return { args, json, help, version, project, projectSpecified };
 }
 
-function parseFlags(tokens, allowed) {
+function parseFlags(tokens, allowed, usageHint) {
   const values = {};
   const positional = [];
   for (let index = 0; index < tokens.length; index += 1) {
@@ -176,12 +105,12 @@ function parseFlags(tokens, allowed) {
     }
     const equals = token.indexOf('=');
     const name = equals === -1 ? token.slice(2) : token.slice(2, equals);
-    if (!allowed.has(name)) throw cliError(`unknown option: --${name}`);
+    if (!allowed.has(name)) throw cliError(`unknown option: --${name}${usageHint ? `\n\n${usageHint}` : ''}`);
     let value;
     if (equals !== -1) {
       value = token.slice(equals + 1);
     } else {
-      if (tokens[index + 1] === undefined || tokens[index + 1].startsWith('--')) throw cliError(`--${name} requires a value`);
+      if (tokens[index + 1] === undefined || tokens[index + 1].startsWith('--')) throw cliError(`--${name} requires a value${usageHint ? `\n\n${usageHint}` : ''}`);
       value = tokens[++index];
     }
     if (allowed.get(name) === 'list') {
@@ -194,48 +123,49 @@ function parseFlags(tokens, allowed) {
 }
 
 function parseCommand(args) {
-  if (args.length === 0) throw cliError('a command is required');
+  if (args.length === 0) throw cliError(`a command is required. Run \`tinysdd --help\` for the grouped command list.`);
   const [command, subcommand, ...rest] = args;
+  const hintFor = (sub) => usageHintForArgs(sub === undefined ? [command] : [command, sub], VERSION);
   if (command === 'init') {
     const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([
       ['worker', 'value'], ['provider', 'value'], ['model', 'value'], ['profile', 'value'],
-    ]));
+    ]), hintFor());
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
   }
   if (command === 'setup') {
-    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map());
+    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map(), hintFor());
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
   }
   if (command === 'models') {
-    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['route', 'value']]));
+    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['route', 'value']]), hintFor());
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
   }
   if (command === 'skills') {
-    if (subcommand !== 'update') throw cliError('skills requires update');
-    const { positional } = parseFlags(rest, new Map());
+    if (subcommand !== 'update') throw cliError(`skills requires update.\n\n${commandHelp('skills')}`);
+    const { positional } = parseFlags(rest, new Map(), hintFor('update'));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values: {} };
   }
   if (command === 'profiles') {
-    if (!['new', 'update'].includes(subcommand)) throw cliError('profiles requires new or update');
+    if (!['new', 'update'].includes(subcommand)) throw cliError(`profiles requires new or update.\n\n${commandHelp('profiles')}`);
     const allowed = subcommand === 'new'
       ? new Map(PROFILE_WIZARD_FIELDS.map((field) => [field.flag, 'value']))
       : new Map();
-    const { values, positional } = parseFlags(rest, allowed);
+    const { values, positional } = parseFlags(rest, allowed, hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'config') {
-    if (!['show', 'validate'].includes(subcommand)) throw cliError('config requires show or validate');
-    const { values, positional } = parseFlags(rest, new Map([['worker', 'value'], ['profile', 'value']]));
+    if (!['show', 'validate'].includes(subcommand)) throw cliError(`config requires show or validate.\n\n${commandHelp('config')}`);
+    const { values, positional } = parseFlags(rest, new Map([['worker', 'value'], ['profile', 'value']]), hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'task') {
-    if (!['add', 'update', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError('task requires add, update, approve, packet, apply, review, close, or supersede');
+    if (!['add', 'update', 'approve', 'packet', 'apply', 'review', 'close', 'supersede'].includes(subcommand)) throw cliError(`task requires add, update, approve, packet, apply, review, close, or supersede.\n\n${commandHelp('task')}`);
     const allowedByCommand = {
       add: new Map([['id', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['depends-on', 'list'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['feature', 'value'], ['worker', 'value'], ['worker-reason', 'value']]),
       update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['depends-on', 'list'], ['worker', 'value'], ['worker-reason', 'value']]),
@@ -247,12 +177,12 @@ function parseCommand(args) {
       supersede: new Map([['id', 'value'], ['with', 'list'], ['by', 'value'], ['reason', 'value']]),
     };
     const allowed = allowedByCommand[subcommand];
-    const { values, positional } = parseFlags(rest, allowed);
+    const { values, positional } = parseFlags(rest, allowed, hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'worker') {
-    if (!['run', 'start', 'status', 'stop', 'settings'].includes(subcommand)) throw cliError('worker requires run, start, status, stop, or settings');
+    if (!['run', 'start', 'status', 'stop', 'settings'].includes(subcommand)) throw cliError(`worker requires run, start, status, stop, or settings.\n\n${commandHelp('worker')}`);
     const allowedBySubcommand = {
       settings: new Map([['worker', 'value'], ['profile', 'value'], ['entry-kind', 'value'], ['observed-reasoning-tokens', 'value']]),
       status: new Map([['id', 'value']]),
@@ -260,7 +190,7 @@ function parseCommand(args) {
     };
     const allowed = allowedBySubcommand[subcommand]
       ?? new Map([['task', 'value'], ['worker', 'value'], ['profile', 'value'], ['base-run', 'value'], ['baseline-run', 'value'], ['escalated-from', 'value']]);
-    const { values, positional } = parseFlags(rest, allowed);
+    const { values, positional } = parseFlags(rest, allowed, hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     if (subcommand === 'stop') values['wait-ms'] = parseWaitMs(values['wait-ms']);
     return { command, subcommand, values };
@@ -268,25 +198,25 @@ function parseCommand(args) {
   if (command === 'bench') {
     if (subcommand === 'qualification') {
       const [action, ...actionRest] = rest;
-      if (action !== 'show') throw cliError('bench qualification requires show');
+      if (action !== 'show') throw cliError(`bench qualification requires show.\n\n${commandHelp('bench', 'qualification show')}`);
       const { values, positional } = parseFlags(actionRest, new Map([
         ['record', 'value'], ['suite', 'value'], ['worker', 'value'],
-      ]));
+      ]), hintFor('qualification show'));
       if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
       return { command, subcommand, action, values };
     }
-    if (!['run', 'qualify', 'rescore'].includes(subcommand)) throw cliError('bench requires run, qualify, or rescore');
+    if (!['run', 'qualify', 'rescore'].includes(subcommand)) throw cliError(`bench requires run, qualify, or rescore.\n\n${commandHelp('bench')}`);
     const allowedBySubcommand = {
       run: new Map([['worker', 'value'], ['profile', 'value'], ['suite', 'value'], ['repeat', 'value'], ['entry-kind', 'value'], ['confirm-settings', 'value'], ['ack-finding', 'list'], ['observed-reasoning-tokens', 'value']]),
       qualify: new Map([['results', 'list'], ['suite', 'value'], ['worker', 'value'], ['target', 'list']]),
       rescore: new Map([['record', 'value'], ['target', 'list']]),
     };
-    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
+    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand], hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'usage') {
-    if (!['record', 'import', 'report'].includes(subcommand)) throw cliError('usage requires record, import, or report');
+    if (!['record', 'import', 'report'].includes(subcommand)) throw cliError(`usage requires record, import, or report.\n\n${commandHelp('usage')}`);
     const allowedBySubcommand = {
       record: new Map([
         ['phase', 'value'], ['model', 'value'], ['input', 'value'], ['output', 'value'],
@@ -296,28 +226,28 @@ function parseCommand(args) {
       import: new Map([['file', 'value']]),
       report: new Map([['feature', 'value']]),
     };
-    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
+    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand], hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'feature') {
-    if (!['accept', 'report'].includes(subcommand)) throw cliError('feature requires accept or report');
+    if (!['accept', 'report'].includes(subcommand)) throw cliError(`feature requires accept or report.\n\n${commandHelp('feature')}`);
     const allowed = subcommand === 'accept'
       ? new Map([['feature', 'value'], ['by', 'value'], ['reason', 'value']])
       : new Map([['feature', 'value']]);
-    const { values, positional } = parseFlags(rest, allowed);
+    const { values, positional } = parseFlags(rest, allowed, hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'phase') {
-    if (!['record', 'research', 'status', 'advance'].includes(subcommand)) throw cliError('phase requires record, research, status, or advance');
+    if (!['record', 'research', 'status', 'advance'].includes(subcommand)) throw cliError(`phase requires record, research, status, or advance.\n\n${commandHelp('phase')}`);
     const allowedBySubcommand = {
       record: new Map([['phase', 'value'], ['feature', 'value'], ['proposal', 'value'], ['context', 'value'], ['by', 'value'], ['reason', 'value'], ['predecessor', 'value'], ['worker', 'value']]),
       research: new Map([['phase', 'value'], ['feature', 'value'], ['proposal', 'value'], ['context', 'value'], ['by', 'value'], ['reason', 'value'], ['predecessor', 'value'], ['worker', 'value']]),
       status: new Map([['feature', 'value'], ['worker', 'value']]),
       advance: new Map([['from', 'value'], ['to', 'value'], ['feature', 'value'], ['record', 'value'], ['by', 'value'], ['reason', 'value'], ['worker', 'value']]),
     };
-    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand]);
+    const { values, positional } = parseFlags(rest, allowedBySubcommand[subcommand], hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
@@ -327,13 +257,13 @@ function parseCommand(args) {
       assess: ['id', 'run', 'change', 'implementer', 'producer', 'provider-config', 'credential-env'],
       review: ['id', 'event', 'input-digest', 'reviewer', 'strength', 'attested', 'verdict', 'evidence'],
     };
-    if (!Object.hasOwn(flags, subcommand)) throw cliError('slice-tests requires assess, status, check, review, report, or dataset');
-    const { values, positional } = parseFlags(rest, new Map(flags[subcommand].map((flag) => [flag, 'value'])));
+    if (!Object.hasOwn(flags, subcommand)) throw cliError(`slice-tests requires assess, status, check, review, report, or dataset.\n\n${commandHelp('slice-tests')}`);
+    const { values, positional } = parseFlags(rest, new Map(flags[subcommand].map((flag) => [flag, 'value'])), hintFor(subcommand));
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, subcommand, values };
   }
   if (command === 'status') {
-    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['feature', 'value']]));
+    const { values, positional } = parseFlags([subcommand, ...rest].filter((value) => value !== undefined), new Map([['feature', 'value']]), hintFor());
     if (positional.length) throw cliError(`unexpected argument: ${positional[0]}`);
     return { command, values };
   }
@@ -341,11 +271,11 @@ function parseCommand(args) {
     if (subcommand !== undefined) throw cliError(`unexpected argument: ${subcommand}`);
     return { command, values: {} };
   }
-  throw cliError(`unknown command: ${command}`);
+  throw cliError(unknownCommandHelp(command), 'UNKNOWN_COMMAND');
 }
 
-const DEFAULT_STOP_WAIT_MS = 30_000;
-const MAX_STOP_WAIT_MS = 600_000;
+const DEFAULT_STOP_WAIT_MS = STOP_WAIT_MS_DEFAULT;
+const MAX_STOP_WAIT_MS = STOP_WAIT_MS_MAX;
 
 function parseWaitMs(value) {
   if (value === undefined) return DEFAULT_STOP_WAIT_MS;
@@ -911,7 +841,19 @@ function renderModels(data) {
 async function run(argv) {
   const { args, json, help, version, project, projectSpecified } = extractGlobals(argv);
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
-  if (help) return { ok: true, data: { help: HELP }, presentation: 'help' };
+  if (help || args[0] === 'help') {
+    const topic = args[0] === 'help' ? args.slice(1) : args;
+    const text = topic.length === 0
+      ? topLevelHelp(VERSION)
+      : commandHelp(topic[0], topic.slice(1).join(' '));
+    if (text === undefined) {
+      const error = topic.length === 1
+        ? unknownCommandHelp(topic[0])
+        : unknownSubcommandHelp(topic[0], topic.slice(1).join(' '));
+      throw cliError(error, 'UNKNOWN_COMMAND');
+    }
+    return { ok: true, data: { help: text }, presentation: 'help' };
+  }
   const parsed = parseCommand(args);
   let data;
   let presentation;
@@ -1209,7 +1151,7 @@ function writeResult(result, json) {
     return;
   }
   if (result.presentation === 'help') {
-    process.stdout.write(`${HELP}`);
+    process.stdout.write(result.data.help);
     return;
   }
   if (result.presentation === 'setup') {
