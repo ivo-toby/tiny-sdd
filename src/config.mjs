@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import {
   assertExactKeys,
@@ -23,7 +23,7 @@ export const DEFAULT_MAX_TOOL_CALLS = 100;
 // Sanity ceiling only; productive runs may need far more than the old 100-call cap.
 export const MAX_TOOL_CALLS = 10_000;
 
-const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits', 'modelMetadata'];
+const WORKER_KEYS = ['type', 'provider', 'model', 'profile', 'skills', 'instructions', 'limits', 'modelMetadata', 'opencodeConfig'];
 const MODEL_METADATA_KEYS = ['quantization', 'server'];
 const MODEL_SERVER_KEYS = ['id', 'version'];
 const QUALIFICATION_KEYS = ['mode', 'suite'];
@@ -133,6 +133,15 @@ function validateWorker(raw, name, label = `workers.${name}`) {
     model: assertString(raw.model, `${label}.model`),
     limits: validateLimits(raw.limits, `${label}.limits`),
   };
+  // The OpenCode runner reads its provider from this explicitly named file; no other host config is read.
+  if (raw.type === 'opencode') {
+    if (typeof raw.opencodeConfig !== 'string' || !isAbsolute(raw.opencodeConfig)) {
+      throw tinyError('CONFIG_INVALID', `${label}.opencodeConfig must be an absolute path to an OpenCode config file`);
+    }
+    worker.opencodeConfig = raw.opencodeConfig;
+  } else if (raw.opencodeConfig !== undefined) {
+    throw tinyError('CONFIG_INVALID', `${label}.opencodeConfig is only valid for type "opencode"`);
+  }
   if (raw.profile !== undefined) worker.profile = validateProfileReference(raw.profile, `${label}.profile`);
   if (raw.skills !== undefined) worker.skills = validateStringArray(raw.skills, `${label}.skills`, 'SKILL.md');
   if (raw.instructions !== undefined) worker.instructions = validateStringArray(raw.instructions, `${label}.instructions`);

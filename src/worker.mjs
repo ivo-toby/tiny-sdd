@@ -954,7 +954,10 @@ async function chooseRuntime(runtime, runner) {
   return { test: false, executable, bwrap, sourceAgentDir: undefined, sourceEnv: undefined };
 }
 
-function probeCheckRunner(runtimeChoice, runtime) {
+function probeCheckRunner(runtimeChoice, runtime, runner) {
+  // A runner without a TinySDD check tool reports declared checks unavailable,
+  // even when a test injects a check runner.
+  if (runner.checks === false) return { available: false, reason: runner.checksUnavailableReason, testInjected: false };
   if (runtimeChoice.test) {
     if (typeof runtime?.checkRunner === "function") return { available: true, reason: null, testInjected: true };
     const availability = checkRunnerAvailable();
@@ -1010,7 +1013,7 @@ function runChecksMetadata({ declared, availability, maxCheckRuns, checkChannel,
   return current;
 }
 
-function qualificationRuntimeFacts({ prepared, worker, profile, runtimeChoice, limits, runChecks, piVersion }) {
+function qualificationRuntimeFacts({ prepared, worker, profile, runtimeChoice, limits, runChecks, piVersion, runnerType }) {
   const preflight = prepared.metadata.preflight;
   const profileDigest = profile === undefined || profile === null ? UNKNOWN : profileIdentityDigest(profile);
   const modelMetadata = worker.modelMetadata && typeof worker.modelMetadata === "object" && !Array.isArray(worker.modelMetadata)
@@ -1045,7 +1048,9 @@ function qualificationRuntimeFacts({ prepared, worker, profile, runtimeChoice, l
         endpointFingerprint: preflight.endpointFingerprint ?? UNKNOWN,
       },
     },
-    pi: { version: piVersion ?? UNKNOWN },
+    // The Pi version is the Pi identity; other runners leave it unknown and carry their own runner identity.
+    pi: { version: runnerType === "pi" ? piVersion ?? UNKNOWN : UNKNOWN },
+    runner: { type: runnerType ?? "pi", version: runnerType === "pi" ? UNKNOWN : piVersion ?? UNKNOWN },
     runChecks: {
       declared: runChecks.declared,
       available: runChecks.available,
@@ -1085,6 +1090,9 @@ function qualificationRuntimeMismatches(qualification, actual) {
     ["worker.settings.effectiveCompat", expected.worker?.settings?.effectiveCompat, actual.worker.settings.effectiveCompat],
     ["worker.settings.endpointFingerprint", expected.worker?.settings?.endpointFingerprint, actual.worker.settings.endpointFingerprint],
     ["pi.version", expected.pi?.version, actual.pi.version],
+    // Qualification records written before runner identity existed are Pi records.
+    ["runner.type", expected.runner?.type ?? "pi", actual.runner.type],
+    ["runner.version", expected.runner?.version ?? UNKNOWN, actual.runner.version],
     ["runChecks.declared", expected.runChecks?.declared, actual.runChecks.declared],
     ["runChecks.available", expected.runChecks?.available, actual.runChecks.available],
     ["runChecks.budget", expected.runChecks?.budget, actual.runChecks.budget],
@@ -1116,6 +1124,8 @@ function invalidatedQualification(qualification, changedFields) {
 // Inside the sandbox's own network namespace this port is free; it is only the
 // forwarder's listening address, never a host port.
 export const LINUX_INFERENCE_PORT = 41_434;
+const TEST_INFERENCE_URL = "http://127.0.0.1:9/test-runtime";
+const TEST_INFERENCE_TOKEN = "test-runtime-token";
 const SANDBOX_INFERENCE_DIR = "/opt/tinysdd/inference";
 const SANDBOX_FORWARDER = "/opt/tinysdd/inference-forward.mjs";
 
@@ -1127,8 +1137,14 @@ export function buildBubblewrapArgs({ workspace, invocation, checkChannel, compa
   // the forwarder and the bind-mounted Unix socket.
   const args = ["--die-with-parent", "--unshare-user", "--unshare-pid", "--unshare-net", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--dir", "/etc"];
   for (const mount of requiredMounts) args.push("--ro-bind", mount, mount);
-  // There is intentionally no /proc mount: worker read tools must not be able
-  // to inspect process environments.
+  // The default sandbox has no /proc mount, so worker read tools cannot inspect
+  // process environments. Only a runner that asks for it gets one (see below).
+  // OpenCode's Bun runtime needs a real procfs (/proc/self/maps, statm, exe). The
+  // new procfs belongs to the sandbox's own pid namespace (--unshare-pid), so only
+  // sandbox processes are listed; their environments hold only the per-run relay
+  // token, never a provider credential, and OpenCode's external_directory deny keeps
+  // the read tool inside /work.
+  if (invocation.procfs === true) args.push("--proc", "/proc");
   args.push("--ro-bind-try", "/etc/localtime", "/etc/localtime");
   args.push("--dir", "/opt");
   for (const mount of invocation.mounts) if (!mount.writable) args.push("--ro-bind", mount.source, mount.target);
@@ -1474,8 +1490,9 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
     sandboxRequired: true,
     provider: worker.provider,
     model: worker.model,
-    piExecutable: runtime.test ? "test-harness" : pi.path,
-    piVersion,
+    ...(runner.type === "pi"
+      ? { piExecutable: runtime.test ? "test-harness" : pi.path, piVersion }
+      : { runnerExecutable: runtime.test ? "test-harness" : pi.path, runnerVersion: piVersion }),
     bubblewrap: bwrap?.path ?? null,
     ...(runtime.sandbox === "seatbelt" ? { sandboxExec: runtime.sandboxExec.path } : {}),
     // `thinking` is the requested level; effectiveThinkingControl says whether
@@ -1519,6 +1536,7 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
     generatedCredentialReferenceCount: prepared.metadata.generatedCredentialReferenceCount,
     ...(qualificationValue === undefined ? {} : { qualification: qualificationValue, warnings: qualificationValue.warnings }),
     compaction,
+    ...(prepared.metadata.runtimeFacts ? { runnerFacts: prepared.metadata.runtimeFacts } : {}),
   };
 }
 
@@ -1547,7 +1565,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
   const runtimeChoice = await chooseRuntime(runtime, runner);
   const checksDeclared = normalizedPacket.checks !== null;
-  const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime) : { available: false, reason: null, testInjected: false };
+  const checkAvailability = checksDeclared ? probeCheckRunner(runtimeChoice, runtime, runner) : { available: false, reason: null, testInjected: false };
   // The manifest defines immutable dependency mounts even when this host
   // cannot execute the declared checker.
   const checkManifest = checksDeclared ? parseChecksManifest(normalizedPacket.checks.text) : null;
@@ -1605,7 +1623,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const preparedRunChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel: null, baseline: null });
     const qualificationMismatches = qualificationRuntimeMismatches(
       qualification,
-      qualificationRuntimeFacts({ prepared, worker, profile: resolvedProfile.value, runtimeChoice, limits, runChecks: preparedRunChecks, piVersion }),
+      qualificationRuntimeFacts({ prepared, worker, profile: resolvedProfile.value, runtimeChoice, limits, runChecks: preparedRunChecks, piVersion, runnerType: runner.type }),
     );
     if (qualificationMismatches.length > 0) {
       const invalidated = invalidatedQualification(qualification, qualificationMismatches);
@@ -1627,6 +1645,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let workspace;
   let baseline;
   let inferenceRelay;
+  let inferenceUrl;
   let inferenceStage;
   let checkChannel;
   let compactionStage;
@@ -1705,6 +1724,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     if (sandbox === "test") {
       [command, ...args] = invocation.argv;
       childEnv = { ...invocation.env, PATH: process.env.PATH || "/usr/bin:/bin", TINYSDD_TEST_WORKSPACE: workspace };
+      // The test runtime has no relay; its inference URL is never contacted.
+      inferenceUrl = TEST_INFERENCE_URL;
       if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
       for (const [key, value] of Object.entries(runtime?.testEnv ?? {})) {
         if (!key.startsWith("TINYSDD_TEST_")) fail("Test runtime may only add TINYSDD_TEST_* environment values");
@@ -1725,6 +1746,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.sandboxExec.path;
       args = ["-f", sandboxPath, ...invocation.argv];
       childEnv = { ...invocation.env, TINYSDD_WORKSPACE: workspace, TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
+      inferenceUrl = inferenceRelay.baseUrl;
       if (compactionBundle) childEnv[COMPACTION_ANCHOR_ENV] = compactionBundle.anchorPath;
       runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, sandboxProfile: sandboxPath, inferenceDestination: `localhost:${inferenceRelay.port}` };
       await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
@@ -1746,9 +1768,14 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       command = runtimeChoice.bwrap.path;
       // Provider credentials stay with the host relay; the runner gets only the per-run token.
       childEnv = { ...invocation.env, TINYSDD_WORKSPACE: "/work", TINYSDD_INFERENCE_TOKEN: inferenceRelay.token };
+      inferenceUrl = inferenceBaseUrl;
       args = buildBubblewrapArgs({ workspace, invocation, checkChannel, compactionBundle, inference: { forwarder, socketDir, socketName: "relay.sock", port: LINUX_INFERENCE_PORT } });
-      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, inferenceDestination: inferenceBaseUrl };
+      runtimeRecord = { ...runtimeRecord, generatedCredentialReferenceCount: 0, inferenceDestination: inferenceBaseUrl, ...(invocation.procfs === true ? { procfs: true } : {}) };
       await writeJson(join(artifactDir, "runtime.json"), runtimeRecord);
+    }
+    if (runner.inferenceEnvironment) {
+      // Runners whose configuration names the relay get that configuration here, after the relay exists.
+      childEnv = { ...childEnv, ...runner.inferenceEnvironment({ prepared, worker, baseUrl: inferenceUrl, token: inferenceRelay?.token ?? TEST_INFERENCE_TOKEN }) };
     }
     if (checkChannel) {
       childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";

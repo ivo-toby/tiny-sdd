@@ -5,6 +5,7 @@ import { buildMacosSandboxProfile } from '../src/macos-sandbox.mjs';
 import { preflightPiWorker, preparePiEnvironment, validatePiWorker } from '../src/pi-environment.mjs';
 import { WORKER_TYPES, registeredRunners, workerRunner } from '../src/runners/index.mjs';
 import { piBubblewrapInvocation, piRunner, piSeatbeltInvocation } from '../src/runners/pi.mjs';
+import { openCodeRunner } from '../src/runners/opencode.mjs';
 import { buildBubblewrapArgs, runWorker } from '../src/worker.mjs';
 
 // Captured from buildBubblewrapArgs and buildMacosSandboxProfile on main before
@@ -12,11 +13,12 @@ import { buildBubblewrapArgs, runWorker } from '../src/worker.mjs';
 const MAIN_BUBBLEWRAP_ARGS = ["--die-with-parent","--unshare-user","--unshare-pid","--unshare-net","--dev","/dev","--tmpfs","/tmp","--tmpfs","/home","--dir","/etc","--ro-bind","/usr","/usr","--ro-bind","/bin","/bin","--ro-bind","/lib","/lib","--ro-bind","/lib64","/lib64","--ro-bind-try","/etc/localtime","/etc/localtime","--dir","/opt","--ro-bind","/opt/pi-node","/opt/node","--dir","/work","--bind","/tmp/candidate","/work","--dir","/pi-state","--bind","/tmp/state","/pi-state","--chdir","/work","--dir","/opt/tinysdd","--ro-bind","/tmp/f.mjs","/opt/tinysdd/inference-forward.mjs","--ro-bind","/tmp/sock","/opt/tinysdd/inference","--dir","/tinysdd","--bind","/tmp/req","/tinysdd/requests","--ro-bind","/tmp/res","/tinysdd/responses","--ro-bind","/tmp/run-checks.mjs","/opt/tinysdd/run-checks.mjs","--dir","/opt/tinysdd/compaction","--ro-bind","/tmp/bundle","/opt/tinysdd/compaction","--setenv","HOME","/home","--setenv","PI_CODING_AGENT_DIR","/pi-state","--setenv","PATH","/opt/node/bin:/usr/bin:/bin","--setenv","TINYSDD_COMPACTION_ANCHOR","/opt/tinysdd/compaction/anchor.json","/opt/node/bin/node","/opt/tinysdd/inference-forward.mjs","41434","/opt/tinysdd/inference/relay.sock","/opt/node/bin/pi","--offline","@/pi-state/task-prompt.txt"];
 const MAIN_SEATBELT_PROFILE = "(version 1)\n(deny default)\n(allow process-exec (literal \"/opt/node/bin/node\"))\n(allow sysctl-read (sysctl-name-prefix \"hw.\") (sysctl-name \"kern.ostype\") (sysctl-name \"kern.osrelease\") (sysctl-name \"kern.osversion\") (sysctl-name \"kern.hostname\") (sysctl-name \"kern.version\"))\n(allow file-read-metadata (literal \"/System\") (literal \"/usr\") (literal \"/opt/node/lib/node_modules\") (literal \"/opt/node/lib\") (literal \"/opt/node\") (literal \"/opt\") (literal \"/private/tmp\") (literal \"/private\") (literal \"/opt/node/bin\"))\n(allow file-read* (subpath \"/System/Library\") (subpath \"/usr/lib\") (subpath \"/usr/share\") (subpath \"/opt/node/lib/node_modules/pi\") (subpath \"/private/tmp/bundle\") (literal \"/\") (literal \"/dev/null\") (literal \"/dev/random\") (literal \"/dev/urandom\") (literal \"/private/etc/hosts\") (literal \"/private/etc/localtime\") (literal \"/opt/node/bin/node\"))\n(allow file-read* file-write* (subpath \"/private/tmp/candidate\"))\n(allow file-read* file-write* (subpath \"/private/tmp/pi-state\"))\n(deny file-write-unlink (literal \"/private/tmp/candidate\"))\n(deny file-write-unlink (literal \"/private/tmp/pi-state\"))\n(deny file-read* file-write* (subpath \"/Users/operator/project\") (subpath \"/Users/operator/.pi/agent\"))\n(allow network-outbound (remote ip \"localhost:54321\"))\n";
 
-test('the registry maps worker.type "pi" to the Pi runner and nothing else', () => {
-  assert.deepEqual(WORKER_TYPES, ['pi']);
+test('the registry maps worker.type "pi" and "opencode" to their runners and nothing else', () => {
+  assert.deepEqual(WORKER_TYPES, ['pi', 'opencode']);
   assert.deepEqual(registeredRunners().map((runner) => runner.type), WORKER_TYPES);
   assert.equal(workerRunner('pi'), piRunner);
-  for (const type of ['opencode', 'other', 'constructor', '__proto__', '', undefined, null]) assert.equal(workerRunner(type), null);
+  assert.equal(workerRunner('opencode'), openCodeRunner);
+  for (const type of ['other', 'constructor', '__proto__', '', undefined, null]) assert.equal(workerRunner(type), null);
 });
 
 test('the Pi runner exposes the existing Pi functions unchanged', () => {
@@ -31,15 +33,15 @@ test('the Pi runner exposes the existing Pi functions unchanged', () => {
 
 test('an unknown worker.type stays UNSUPPORTED_WORKER with the same message', () => {
   assert.throws(
-    () => validateConfigDocument({ schemaVersion: 1, workers: { local: { type: 'opencode', provider: 'p', model: 'm' } } }),
-    (error) => error.code === 'UNSUPPORTED_WORKER' && error.message === 'config.workers.local.type must be "pi"',
+    () => validateConfigDocument({ schemaVersion: 1, workers: { local: { type: 'unregistered', provider: 'p', model: 'm' } } }),
+    (error) => error.code === 'UNSUPPORTED_WORKER' && error.message === 'config.workers.local.type must be "pi" or "opencode"',
   );
 });
 
 test('runWorker refuses an unregistered worker.type before touching the project', async () => {
   await assert.rejects(
-    runWorker({ projectRoot: process.cwd(), packet: { schemaVersion: 1, taskId: 'task', briefText: 'x', allowedPaths: ['a.txt'] }, worker: { type: 'opencode', provider: 'p', model: 'm' } }),
-    (error) => error.name === 'WorkerError' && error.code === 'UNSUPPORTED_WORKER' && error.message === 'Unsupported worker adapter: opencode',
+    runWorker({ projectRoot: process.cwd(), packet: { schemaVersion: 1, taskId: 'task', briefText: 'x', allowedPaths: ['a.txt'] }, worker: { type: 'unregistered', provider: 'p', model: 'm' } }),
+    (error) => error.name === 'WorkerError' && error.code === 'UNSUPPORTED_WORKER' && error.message === 'Unsupported worker adapter: unregistered',
   );
 });
 

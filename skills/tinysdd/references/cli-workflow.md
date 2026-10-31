@@ -473,6 +473,14 @@ tinysdd task supersede --id broker-contract --with broker-s1,broker-s2 --by oper
 tinysdd task close --id scratch --by operator --reason 'no longer needed'
 ```
 
+A worker's `type` is `pi` or `opencode`. An `opencode` worker needs an absolute
+`opencodeConfig` path to the OpenCode config file that defines its provider
+(`@ai-sdk/openai-compatible`, see `docs/quickstart.md`). A `pi` worker must not
+set it. The OpenCode runner has no `run_checks` tool, so declared checks are
+reported unavailable for it, and it has no deterministic compaction. On Linux
+its sandbox gets a procfs that Pi's sandbox does not have. Provider headers
+other than `User-Agent` are refused; use an `{env:NAME}` API key instead.
+
 Worker setup when config does not yet exist:
 
 ```sh

@@ -751,6 +751,41 @@ Profile `instructions` may be an explicitly empty string when the baseline needs
 to preserve an empty instruction value; non-string values remain invalid.
 Other machines must use their own exact configured IDs. No fallback is automatic.
 
+### OpenCode worker
+
+`"type": "opencode"` runs the worker through OpenCode 2.1.4 (the pinned
+version). The provider comes from an OpenCode config file that you name
+explicitly with an absolute `opencodeConfig` path. TinySDD reads only the named
+provider and model from that file:
+
+```json
+{
+  "workers": {
+    "oc": {
+      "type": "opencode",
+      "provider": "titan",
+      "model": "gemma4-26b-a4b-256k",
+      "opencodeConfig": "/home/you/.config/opencode/opencode.json",
+      "limits": { "timeoutMs": 600000, "maxToolCalls": 100 }
+    }
+  }
+}
+```
+
+The provider must use `@ai-sdk/openai-compatible` (`npm`, or `package` in the
+native form), an `options.baseURL` (or `settings.baseURL`) and an
+`{env:NAME}` API key reference, or no key. The relay sends that key as
+`Authorization: Bearer`. A literal key, another package, or any header other
+than `User-Agent` (which is ignored with a warning) is refused before the run
+starts; the refusal names the header and never shows its value. On Linux the
+OpenCode sandbox gets its own procfs, which the OpenCode binary needs; the Pi
+sandbox still has none, and the new procfs lists only sandbox processes. The worker's OpenCode configuration
+comes only from TinySDD: no project, global, managed or wellknown OpenCode
+configuration is read. The run is headless (`--standalone`, `--format json`),
+allows only read and edit, and has automatic compaction off. Declared
+`run_checks` are reported unavailable for this runner. This runner is
+unverified against a live model or a live sandbox.
+
 ### Model registry profiles
 
 Profiles in `profiles/` named after a host and route (for example
