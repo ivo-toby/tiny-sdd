@@ -206,6 +206,42 @@ test('a run uses the approved task worker and records why it was chosen', async 
   }
 });
 
+test('a dispatched run records profile-defaulted limits as source "profile" in runtime.json (#174)', async () => {
+  const fixture = await dispatchFixture();
+  try {
+    await mkdir(join(fixture.root, '.tinysdd', 'profiles'), { recursive: true });
+    await writeFile(join(fixture.root, '.tinysdd', 'profiles', 'measured-v1.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: 'measured-v1',
+      model: { route: 'fake/model' },
+      limits: { timeoutMs: 600000, maxToolCalls: 100 },
+    }));
+    await writeFile(join(fixture.root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultWorker: 'fast',
+      workers: {
+        fast: { type: 'pi', provider: 'fake', model: 'fake/model', profile: 'measured-v1', limits: { timeoutMs: 900000 } },
+        strong: { type: 'pi', provider: 'fake', model: 'fake/model', profile: 'measured-v1', limits: { timeoutMs: 900000 } },
+      },
+      workerTiers: ['fast', 'strong'],
+    }));
+    await withWorkerTest(async () => {
+      await addTask(fixture.root, { id: 'one', brief: 'docs/brief.md', allow: ['src/index.mjs'] });
+      await approveTask(fixture.root, { id: 'one', by: 'operator', reason: 'checked scope' });
+      const result = await dispatchWorker(fixture.root, { taskId: 'one', runtime: fixture.runtime });
+      assert.equal(result.outcome, 'completed');
+      const runtime = JSON.parse(await readFile(result.artifactPaths.runtime, 'utf8'));
+      assert.equal(runtime.limits.timeoutMs, 900000);
+      assert.deepEqual(runtime.limitProvenance, {
+        timeoutMs: { measured: 600000, effective: 900000, source: 'worker' },
+        maxToolCalls: { measured: 100, effective: 100, source: 'profile' },
+      });
+    });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('a failed run suggests the next tier, and the escalated run records where it came from', async () => {
   const fixture = await dispatchFixture({ failing: true });
   try {

@@ -818,7 +818,10 @@ selected profile:
   limits than the measured ones is therefore visibly not the benchmarked
   configuration, which the qualification digest covers. The
   `firstWriteMs < timeoutMs` invariant still applies to the merged limits and
-  still fails with `PROFILE_LIMIT_CONFLICT`.
+  still fails with `PROFILE_LIMIT_CONFLICT`. Because the qualification digest
+  covers the effective limits, raising a limit in `enforce` qualification mode
+  makes the worker no longer qualified (`MODEL_NOT_QUALIFIED`) until it is
+  re-qualified.
 - `model.route` must equal `worker.model`; otherwise the run fails before any
   model call.
 

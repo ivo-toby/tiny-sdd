@@ -1548,7 +1548,7 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
  * harness explicitly enables it.  Production callers use the four documented
  * arguments and therefore require Linux bubblewrap or macOS Seatbelt.
  */
-export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal, qualification, selection, escalatedFrom } = {}) {
+export async function runWorker({ projectRoot, packet, worker, profile, runtime, baseRunId, baselineRunId, signal, qualification, selection, escalatedFrom, limitProvenance: providedLimitProvenance } = {}) {
   const { absolute: sourceRoot } = await ensureRoot(projectRoot);
   const tempRoot = await temporaryRoot();
   const normalizedPacket = normalizePacket(packet);
@@ -1561,9 +1561,12 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   const resolvedProfile = await resolveProfile(sourceRoot, worker, profile);
   // A profile's limits are measured defaults, not binding ones (#174): the
   // worker's explicit limits win, and both values are recorded with sources.
+  // Callers that resolved the worker through the project config pass the
+  // provenance from resolveConfig; its worker.limits are already merged, so
+  // explicit keys cannot be re-derived from them.
   let effectiveWorker = worker;
-  let limitProvenance;
-  if (resolvedProfile.value?.limits) {
+  let limitProvenance = providedLimitProvenance;
+  if (resolvedProfile.value?.limits && limitProvenance === undefined) {
     const applied = applyProfileLimits(runner.validateWorker(worker), resolvedProfile.value.limits, Object.keys(worker?.limits ?? {}), { worker: worker?.model ?? "worker", profile: resolvedProfile.value.id });
     effectiveWorker = { ...worker, limits: applied.limits };
     limitProvenance = applied.provenance;
