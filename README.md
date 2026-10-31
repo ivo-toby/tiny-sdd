@@ -27,14 +27,13 @@ or a small model pilot does not establish reliable delivery across projects.
 | --- | --- | --- |
 | Onboarding | Global CLI, prerequisite checks, Linux sandbox startup probe, explicit Pi model discovery, version-matched Claude/Codex skill installation | Setup does not install prerequisites, authenticate models or run inference. |
 | SDD preparation | Constitution entry check; specify, research, plan and slice skills; portable change artifacts and cited context | The skills guide the outer agent. They are not an automatic end-to-end planner. |
-| Workers | Pi execution in disposable sandboxed copies; protected inputs; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**. Linux provides the check runner; macOS does not. |
+| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**, OpenCode to **2.1.4**. Linux provides the check runner for Pi; macOS does not, and OpenCode workers do not have `run_checks` yet. |
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
 | Model registry | Profiles in `profiles/` per exact model configuration (route, context, `maxTokens`, timeout, thinking) with aggregate polyglot benchmark results ([#123](https://github.com/ivo-toby/tiny-sdd/issues/123)); developer benchmark in `bench/polyglot` (not shipped in the npm package) | Worker runs apply the profile's context window, `maxTokens` and limits; the server must actually serve that configuration. `setup` installs the registry, `init --model` selects the matching profile, `tinysdd models` lists them and `tinysdd profiles new` creates a local one. |
 
 Other open work includes [registry profile selection and updates](https://github.com/ivo-toby/tiny-sdd/issues/123),
-[Pi 1.4.0 live qualification](https://github.com/ivo-toby/tiny-sdd/issues/100),
 [full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
 [benchmark oracle fixes](https://github.com/ivo-toby/tiny-sdd/issues/120) and
 [incomplete-result reporting](https://github.com/ivo-toby/tiny-sdd/issues/124).
@@ -47,6 +46,9 @@ Prerequisites:
 - **Node.js >= 22.19.0**.
 - **Pi 1.4.0** (`@earendil-works/pi-coding-agent`, exact pin; 1.0.0 is refused), installed beside the Node
   executable used by TinySDD, with an explicit provider/model in Pi's `models.json`.
+- Or, for an OpenCode worker: **OpenCode 2.1.4** (exact pin), a single binary at
+  `~/.opencode/bin/opencode`, and an OpenCode config file that defines the provider.
+  See [OpenCode workers](#opencode-workers).
 - **Linux:** bubblewrap and util-linux, with working user namespaces. In an
   LXC/Incus container, host/container policy can prevent sandbox startup even
   when bubblewrap is installed.
@@ -124,7 +126,7 @@ See the [quickstart](docs/quickstart.md),
 ## Configuration and defaults
 
 Project configuration lives in `.tinysdd/config.json`; machine-specific overrides
-belong in `.tinysdd/config.local.json`. Named workers select a Pi provider/model,
+belong in `.tinysdd/config.local.json`. Named workers select a Pi or OpenCode provider/model,
 an optional runtime profile, instructions, skills and limits. Keep credentials
 in the supported environment references rather than project files.
 
@@ -140,6 +142,34 @@ configuration; the runtime timeout does not set them. Use `worker settings` to
 inspect their effective values. Live benchmarks require confirmation of the
 current settings digest and any named findings. Ordinary worker runs do not add
 that benchmark confirmation step.
+
+### OpenCode workers
+
+For environments that allow OpenCode but not Pi, a worker can use
+`type: "opencode"`. TinySDD then builds the whole OpenCode configuration itself.
+No project, global, system/MDM or wellknown OpenCode configuration from the host
+reaches the worker. Only read and edit tools are allowed; shell, web, subagents
+and paths outside the candidate are denied.
+
+```json
+"workers": {
+  "oc": {
+    "type": "opencode",
+    "provider": "titan",
+    "model": "titan/llamacpp/qwen3.8-pi-q4km-128k",
+    "opencodeConfig": "/home/me/.config/opencode/tinysdd-providers.json"
+  }
+}
+```
+
+The named file is read on the host for that one provider and model. The provider
+must use `@ai-sdk/openai-compatible` with `options.baseURL`, and `options.apiKey`
+must be an `{env:NAME}` reference. A `User-Agent` header is ignored; other
+headers are refused. The worker itself only sees the inference relay and a
+per-run token. On Linux the OpenCode sandbox gets its own `/proc`, which the
+binary needs; Pi workers do not. OpenCode runs record their own runner identity,
+so they never reuse a Pi qualification. See
+[the quickstart](docs/quickstart.md#opencode-worker) for details.
 
 Feature acceptance requires `featureIntegration` in the project configuration:
 a typed command, protected test paths and the supported host check runner. The
