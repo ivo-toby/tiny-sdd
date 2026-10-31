@@ -100,6 +100,9 @@ function unsupportedPlatform(platform = process.platform) {
 function locateBinaries({ platform = process.platform, bwrapPath, prlimitPath, setprivPath, sandboxExecPath } = {}) {
   if (platform !== 'linux' && platform !== 'darwin') return { reason: `the check runner requires Linux or macOS (this is ${platform})` };
   if (platform === 'darwin') {
+    // Seatbelt has no privilege drop: a root caller would be refused per run,
+    // so availability refuses it up front and never advertises run_checks.
+    if (isPrivileged()) return { reason: 'the check runner will not run checks as root: Seatbelt has no privilege drop, so run the worker as an unprivileged user' };
     const candidates = sandboxExecPath === undefined ? SANDBOX_EXEC_DEFAULTS : [sandboxExecPath];
     const sandboxExec = findExecutable(candidates);
     if (!sandboxExec) return { reason: `sandbox-exec is not an executable file (tried ${candidates.join(', ')})` };
@@ -183,10 +186,9 @@ function parseRunAs(runAs) {
       }
     }
   }
-  // Seatbelt has no setpriv equivalent: a macOS caller always runs as itself,
-  // and a root caller is refused below instead of running the check as root.
+  // Seatbelt has no setpriv equivalent: a macOS caller always runs as itself.
+  // A root caller never gets here: locateBinaries refuses it first.
   if (process.platform === 'darwin') {
-    if (isPrivileged()) return { uid: 0, gid: 0, drop: false, root: true };
     const own = { uid: process.getuid(), gid: process.getgid() };
     if (runAs !== undefined && (runAs.uid !== own.uid || runAs.gid !== own.gid)) {
       throw invalid(`runAs must be absent or the current uid and gid (${own.uid}:${own.gid}); an unprivileged process cannot switch users`);
@@ -386,6 +388,28 @@ async function assertMountPointsFree(input, mounts, signal, deadline) {
   }
 }
 
+// Darwin has no /proc: ps lists every process with its uid and thread count,
+// so the baseline sums the threads of the uid the check runs as, like the
+// Linux /proc scan does.
+async function countDarwinUserTasks(uid, signal, deadline) {
+  checkPreparation(signal, deadline);
+  const { stdout } = await new Promise((resolve, reject) => {
+    const child = spawn('/bin/ps', ['-A', '-o', 'uid=,thcount='], { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve({ stdout: out }) : reject(new Error(`ps exited ${code}`))));
+    setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }, 10000).unref();
+  });
+  let tasks = 0;
+  for (const line of stdout.split('\n')) {
+    checkPreparation(signal, deadline);
+    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
+    if (match && Number(match[1]) === uid) tasks += Number(match[2]);
+  }
+  return tasks;
+}
+
 // RLIMIT_NPROC counts every task of the real uid on the host, threads
 // included, not only the sandbox's. A fixed limit would stop a busy account
 // from starting the sandbox at all, so the limit is this baseline plus the
@@ -502,22 +526,26 @@ async function linkMountPoints(work, mounts) {
 }
 
 // Seatbelt argument vector: the profile is written next to the scratch copy and
-// sandbox-exec runs `env -i` with the scrubbed values, then the check's argv.
-// There is no network rule to allow: (deny default) already denies all outbound
-// traffic, and env -i means nothing of the host environment leaks in.
-function seatbeltArguments({ binaries, profilePath, work, home, tmp, check }) {
-  return [
-    '-f', profilePath,
-    '/usr/bin/env', '-i',
-    `PATH=${join(binaries.nodeRoot, 'bin')}:/usr/bin:/bin`,
-    `HOME=${home}`,
-    `TMPDIR=${tmp}`,
-    'CI=1',
-    'LANG=C.UTF-8',
-    'PWD=' + work,
-    check.executable === '/opt/node/bin/node' ? join(binaries.nodeRoot, 'bin', 'node') : join(work, check.executable.replace(/^\/work\//u, '')),
-    ...check.argv.slice(1),
-  ];
+// sandbox-exec execs the check's argv directly. The scrubbed environment goes
+// through spawn's env (sandbox-exec keeps it), so no env(1) is launched inside
+// the sandbox. There is no network rule to allow: (deny default) already denies
+// all outbound traffic.
+function seatbeltArguments({ binaries, profilePath, work, check, shell }) {
+  const executable = check.executable === '/opt/node/bin/node' ? join(binaries.nodeRoot, 'bin', 'node') : join(work, check.executable.replace(/^\/work\//u, ''));
+  if (!shell) return ['-f', profilePath, executable, ...check.argv.slice(1)];
+  // The argv reaches the shell only as "$@", never as script text.
+  return ['-f', profilePath, ...shell, executable, ...check.argv.slice(1)];
+}
+
+function seatbeltEnvironment({ binaries, work, home, tmp }) {
+  return Object.freeze({
+    PATH: `${join(binaries.nodeRoot, 'bin')}:/usr/bin:/bin`,
+    HOME: home,
+    TMPDIR: tmp,
+    CI: '1',
+    LANG: 'C.UTF-8',
+    PWD: work,
+  });
 }
 
 function sandboxArguments({ binaries, nodeRoot, input, mounts, limits, check, processLimit, nestedUserns }) {
@@ -596,7 +624,7 @@ function summarizeOutput(capture, limits) {
   };
 }
 
-function runSandbox({ command, args, cwd, timeoutMs, capture, signal }) {
+function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
     let settled = false;
@@ -620,9 +648,9 @@ function runSandbox({ command, args, cwd, timeoutMs, capture, signal }) {
     try {
       // env: {} so prlimit and bwrap inherit nothing from the host, and
       // detached so the whole group can be killed on timeout. The Seatbelt
-      // backend scrubs the environment itself with env -i, so it passes the
-      // scrubbed values as argv instead of through spawn env.
-      child = spawn(command, args, { env: {}, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      // backend passes its scrubbed values through env instead, because
+      // sandbox-exec keeps its environment and launches the argv directly.
+      child = spawn(command, args, { env: env ?? {}, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }));
       return;
@@ -681,9 +709,6 @@ export async function runCheck(options) {
   const binaries = locateBinaries(options);
   if (binaries.reason) throw unavailable(binaries.reason);
   const seatbelt = binaries.kind === 'seatbelt';
-  if (seatbelt && request.runAs.root) {
-    throw unavailable('the check runner will not run checks as root: Seatbelt has no privilege drop, so run the worker as an unprivileged user');
-  }
 
   await assertRealDirectory(request.candidateDir, 'candidateDir');
   for (const mount of request.mounts) {
@@ -741,10 +766,22 @@ export async function runCheck(options) {
       checkPreparation(options.signal, setupDeadline);
       // sandbox-exec runs its command with the process working directory, so
       // cwd makes the check start in the scratch work copy like --chdir /work.
+      // RLIMIT_FSIZE and RLIMIT_NPROC both work on Darwin; like prlimit on
+      // Linux they are set through a fixed /bin/sh wrapper, with NPROC counted
+      // per uid the check runs as. RLIMIT_AS has no Darwin equivalent that
+      // covers everything node maps, so addressSpaceBytes stays unenforced.
+      const processBaseline = await countDarwinUserTasks(runAs.uid, options.signal, setupDeadline);
       const run = await runSandbox({
         command: binaries.sandboxExec,
-        args: seatbeltArguments({ binaries: { ...binaries, nodeRoot: request.nodeRoot }, profilePath, work, home, tmp, check: request.check }),
+        args: seatbeltArguments({
+          binaries: { ...binaries, nodeRoot: request.nodeRoot },
+          profilePath,
+          work,
+          check: request.check,
+          shell: ['/bin/sh', '-c', `ulimit -f ${Math.floor(request.limits.fileSizeBytes / 512)}; ulimit -u ${processBaseline + request.limits.maxProcesses}; exec "$@"`, 'tinysdd-check'],
+        }),
         cwd: work,
+        env: seatbeltEnvironment({ binaries: { ...binaries, nodeRoot: request.nodeRoot }, work, home, tmp }),
         timeoutMs: remainingTimeout,
         capture,
         signal: options.signal,
@@ -767,6 +804,9 @@ export async function runCheck(options) {
           env: [...SANDBOX_ENV],
           runAs: { uid: runAs.uid, gid: runAs.gid },
           profile: 'check.sb',
+          limitsApplied: ['fileSizeBytes', 'maxProcesses', 'scratchBytes', 'storedOutputBytes', 'returnedTailBytes'],
+          limitsNotApplied: ['addressSpaceBytes', 'tmpfsBytes'],
+          processBaseline,
         },
       };
     }

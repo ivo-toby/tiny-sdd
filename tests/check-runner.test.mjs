@@ -1,7 +1,7 @@
 import { afterEach, after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1263,7 +1263,7 @@ describe('check runner', { skip: SKIP }, () => {
 // the scratch work directory. What is verified here is the runner's own
 // behavior: availability, profile content, spawn shape, evidence labeling and
 // child cleanup. Live Seatbelt enforcement on macOS is not verified here.
-describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: process.env.TINYSDD_NO_POSIX_IDS === '1' ? 'win32 emulation: no tmpdir' : false }, () => {
+describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (process.env.TINYSDD_NO_POSIX_IDS === '1' ? 'win32 emulation: no tmpdir' : false) || (AS_ROOT ? 'a root caller is refused before any run' : false) }, () => {
   const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
   let fixtures;
   let scratchRoot;
@@ -1297,23 +1297,23 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
     return root;
   }
 
-  // A stub sandbox-exec: records argv, reads the profile passed with -f, then
-  // runs the remaining command with the scrubbed env it was given.
-  async function stubSandboxExec(script = '') {
+  // A stub sandbox-exec: records argv and the profile passed with -f, then
+  // execs the remaining command (the stub ignores the profile, like the real
+  // binary applies it only to the exec it performs).
+  async function stubSandboxExec() {
     counter += 1;
     const path = join(fixtures, `sandbox-exec-${counter}.sh`);
     const dump = join(fixtures, `sb-args-${counter}.txt`);
     await writeFile(path, [
       '#!/bin/sh',
       `printf '%s\\n' "$@" > '${dump}'`,
-      `profile=''`,
+      'profile=""',
       'while [ "$#" -gt 0 ]; do',
       '  if [ "$1" = "-f" ]; then profile="$2"; shift 2; continue; fi',
       '  break',
       'done',
       `printf '%s\\n' "$profile" >> '${dump}'`,
       `cat "$profile" >> '${dump}'`,
-      script,
       'exec "$@"',
       '',
     ].join('\n'));
@@ -1328,6 +1328,20 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
       tempRoot: scratchRoot,
       ...extra,
     });
+  }
+
+  // The stub prints argv, then the profile path again, then the profile text.
+  function parseDump(dump) {
+    const lines = readFileSync(dump, 'utf8').split('\n').filter(Boolean);
+    let profilePathIndex = -1;
+    for (let index = lines.length - 1; index > 0; index -= 1) {
+      if (lines[index].endsWith('/check.sb')) { profilePathIndex = index; break; }
+    }
+    assert.ok(profilePathIndex > 0, dump);
+    return {
+      args: lines.slice(0, profilePathIndex),
+      profile: lines.slice(profilePathIndex + 1).join('\n'),
+    };
   }
 
   test('availability reports the seatbelt runner and a missing sandbox-exec reason', () => {
@@ -1352,27 +1366,42 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
     assert.equal(result.sandbox.network, 'none');
     assert.deepEqual(result.sandbox.env, ['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
     assert.deepEqual(result.sandbox.runAs, { uid: process.getuid(), gid: process.getgid() });
-    // The stub recorded argv: -f <profile>, /usr/bin/env -i, the scrubbed
-    // values, then the check argv with the host node.
-    const args = (await readFile(stub.dump, 'utf8')).split('\n').filter(Boolean);
-    const profilePath = args[1];
-    assert.ok(profilePath.endsWith('/check.sb'), profilePath);
-    assert.equal(args[2], '/usr/bin/env');
-    assert.equal(args[3], '-i');
-    assert.ok(args.includes(`PATH=${join(dirname(dirname(process.execPath)), 'bin')}:/usr/bin:/bin`));
-    assert.ok(args.some((value) => value.startsWith('HOME=')));
-    assert.ok(args.some((value) => value.startsWith('TMPDIR=')));
-    assert.ok(args.includes('CI=1'));
-    assert.ok(args.includes('LANG=C.UTF-8'));
-    assert.ok(args.some((value) => value.startsWith('PWD=')));
-    assert.equal(args[args.indexOf('LANG=C.UTF-8') + 2], join(dirname(dirname(process.execPath)), 'bin', 'node'));
-    assert.deepEqual(args.slice(args.indexOf('LANG=C.UTF-8') + 3, args.findIndex((value, index) => index > 10 && value.endsWith('/check.sb'))), ['--test', 't.test.mjs']);
-    // The profile content recorded after the argv is the written profile.
-    const profile = args.slice(args.findIndex((value, index) => index > 10 && value.endsWith('/check.sb')) + 1).join('\n');
+    assert.deepEqual(result.sandbox.limitsApplied, ['fileSizeBytes', 'maxProcesses', 'scratchBytes', 'storedOutputBytes', 'returnedTailBytes']);
+    assert.deepEqual(result.sandbox.limitsNotApplied, ['addressSpaceBytes', 'tmpfsBytes']);
+    assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
+    // The stub recorded argv: -f <profile>, then the fixed /bin/sh wrapper whose
+    // argv follows it as "$@", then the check argv with the host node.
+    const { args, profile } = parseDump(stub.dump);
+    assert.ok(args[1].endsWith('/check.sb'), args[1]);
+    assert.deepEqual(args.slice(2, 5), ['/bin/sh', '-c', args[4]]);
+    assert.match(args[4], /^ulimit -f \d+; ulimit -u \d+; exec "\$@"$/u);
+    assert.equal(args[5], 'tinysdd-check');
+    assert.equal(args[6], join(dirname(dirname(process.execPath)), 'bin', 'node'));
+    assert.deepEqual(args.slice(7), ['--test', 't.test.mjs']);
+    // The recorded profile is the written one: deny default, no network allow.
     assert.match(profile, /^\(version 1\)\n\(deny default\)/u);
-    assert.doesNotMatch(profile, /network-outbound/u, 'no network rule is allowed');
-    assert.match(profile, /\(allow process-exec /u);
+    assert.doesNotMatch(profile, /network/u, 'no network rule is allowed');
     assert.match(profile, /\(deny file-write-unlink /u);
+  });
+
+  test('whatever follows -f <profile> is covered by a process-exec rule', async () => {
+    // The launcher and the profile must not drift apart: sandbox-exec checks
+    // its own execvp against process-exec, so the first argv entry after the
+    // profile has to be allowed.
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const stub = await stubSandboxExec();
+    const result = await run(candidate, {}, { sandboxExecPath: stub.path });
+    assert.equal(result.exitCode, 0);
+    const { args, profile } = parseDump(stub.dump);
+    const execRule = /^\(allow process-exec (.+)\)$/mu.exec(profile);
+    assert.ok(execRule, profile);
+    const allowed = [...execRule[1].matchAll(/\((?:subpath|literal) ("(?:[^"\\]|\\.)*")\)/gu)].map((match) => JSON.parse(match[1]));
+    for (const launched of [args[2], args[6]]) {
+      assert.ok(allowed.some((path) => launched === path || launched.startsWith(`${path}/`)), `${launched} is not covered by process-exec: ${allowed.join(', ')}`);
+    }
+    // /bin/sh (the wrapper) and the shebang interpreter /usr/bin/env stay
+    // executable, matching what the Linux runner allows from /usr and /bin.
+    assert.ok(allowed.includes('/bin') && allowed.includes('/usr/bin'), allowed.join(', '));
   });
 
   test('the seatbelt profile denies network and writes outside the scratch', () => {
@@ -1387,7 +1416,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
     assert.doesNotMatch(profile, /network/u);
     assert.match(profile, /\(allow file-read\* file-write\* \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\)\)/u);
     assert.match(profile, /\(subpath "\/proj\/node_modules"\)/u);
-    assert.match(profile, /\(allow process-exec \(subpath "\/opt\/node"\) \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\) \(subpath "\/proj\/node_modules"\)\)/u);
+    assert.match(profile, /\(allow process-exec \(subpath "\/bin"\) \(subpath "\/usr\/bin"\) \(subpath "\/opt\/node"\) \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\) \(subpath "\/proj\/node_modules"\)\)/u);
     // Nothing outside the scratch is writable.
     const writeRules = profile.split('\n').filter((line) => line.includes('file-write*'));
     for (const rule of writeRules) {
@@ -1403,21 +1432,17 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
     const result = await run(candidate, { argv: ['pkg/cli.js'] }, { sandboxExecPath: stub.path, dependencyMounts: [{ source: join(dependencies, 'pkg'), target: 'pkg' }] });
     assert.equal(result.exitCode, 0);
     assert.match(result.output.text, /pkg ran/u);
-    const args = (await readFile(stub.dump, 'utf8')).split('\n').filter(Boolean);
-    const workDir = args.find((value) => value.startsWith('PWD=')).slice(4);
-    assert.equal(args[args.indexOf('LANG=C.UTF-8') + 2], join(workDir, 'pkg/cli.js'));
-    assert.deepEqual(args.slice(args.indexOf('LANG=C.UTF-8') + 3, args.findIndex((value, index) => index > 10 && value.endsWith('/check.sb'))), []);
+    const { args } = parseDump(stub.dump);
+    // argv[0] inside a mount is launched from the work copy path.
+    assert.match(args[6], /\/work\/pkg\/cli\.js$/u, args.join(' '));
   });
 
-  test('a write outside the scratch is denied by the profile (host path check)', async () => {
-    // The profile only grants writes under the scratch; verify the rule list
-    // does not contain the candidate or fixture roots as writable.
+  test('a write outside the scratch is not granted by the profile', async () => {
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
     const stub = await stubSandboxExec();
     const result = await run(candidate, {}, { sandboxExecPath: stub.path });
     assert.equal(result.exitCode, 0);
-    const args = (await readFile(stub.dump, 'utf8')).split('\n').filter(Boolean);
-    const profile = args.slice(args.findIndex((value, index) => index > 10 && value.endsWith('/check.sb')) + 1).join('\n');
+    const { profile } = parseDump(stub.dump);
     assert.doesNotMatch(profile, new RegExp(`file-write\\* \\(subpath "${candidate.replace(/[/.]/gu, '\\$&')}"\\)`, 'u'));
   });
 
@@ -1429,9 +1454,12 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
       const stub = await stubSandboxExec();
       const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path });
       assert.equal(result.exitCode, 0);
-      const environment = JSON.parse(result.output.text.trim());
+      // The sh wrapper's own ulimit complaint goes to stderr; the check's JSON is last.
+      const environment = JSON.parse(result.output.text.trim().split('\n').filter((line) => line.startsWith('{')).pop());
       assert.equal(environment.TINYSDD_SECRET_PROBE, undefined);
       assert.deepEqual(Object.keys(environment).sort(), ['CI', 'HOME', 'LANG', 'PATH', 'PWD', 'TMPDIR'].sort());
+      assert.ok(environment.HOME.includes('/home'), environment.HOME);
+      assert.ok(environment.TMPDIR.includes('/tmp'), environment.TMPDIR);
     } finally {
       if (previous === undefined) delete process.env.TINYSDD_SECRET_PROBE;
       else process.env.TINYSDD_SECRET_PROBE = previous;
@@ -1481,12 +1509,18 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: pr
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
     await assert.rejects(run(candidate, {}, { sandboxExecPath: '/nonexistent/sandbox-exec' }), { code: 'CHECK_RUNNER_UNAVAILABLE' });
   });
+});
 
-  test('a root caller is refused on darwin: Seatbelt cannot drop privileges', { skip: AS_ROOT ? false : 'only a root caller is refused this way' }, async () => {
-    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
-    const stub = await stubSandboxExec();
-    await assert.rejects(run(candidate, {}, { sandboxExecPath: stub.path }), /will not run checks as root/u);
-  });
+test('a root caller is refused at availability on darwin: Seatbelt cannot drop privileges', { skip: AS_ROOT ? false : 'only a root caller is refused this way' }, () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  try {
+    const availability = checkRunnerAvailable({ sandboxExecPath: process.execPath });
+    assert.equal(availability.available, false);
+    assert.match(availability.reason, /will not run checks as root/u);
+  } finally {
+    Object.defineProperty(process, 'platform', platform);
+  }
 });
 
 // Windows has no process.getuid, geteuid or getgid. This host has them, so a

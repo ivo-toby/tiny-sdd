@@ -60,12 +60,15 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
 // scrubbed spawn environment, read-only Node root and dependency mounts, and
 // only the scratch work directory plus its home and tmp directories writable.
 // `work` holds the host-made copy of the candidate with symlinks to the
-// dependency mount sources, so writes outside it are denied.
+// dependency mount sources, so writes outside it are denied. Like the Linux
+// runner's /usr and /bin binds, /bin and /usr/bin stay executable so shebangs
+// (`#!/usr/bin/env node`), /bin/sh and child_process.exec keep working; network
+// stays denied by (deny default).
 export function buildSeatbeltCheckProfile({ work, home, tmp, nodeRoot, mounts = [] }) {
   const writable = [work, home, tmp];
   const writableFiles = ["/dev/null"];
   const readable = [...SYSTEM_READ_ROOTS, "/bin", "/usr/bin", nodeRoot, ...mounts.map((mount) => mount.source)];
-  const executables = [nodeRoot, work, ...mounts.map((mount) => mount.source)];
+  const executables = ["/bin", "/usr/bin", nodeRoot, work, ...mounts.map((mount) => mount.source)];
   for (const path of [...writable, ...readable, ...executables]) pathString(path);
   for (const writablePath of writable) {
     if (writablePath === tmp) continue;
