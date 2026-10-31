@@ -44,7 +44,9 @@ acceptance evidence on its own.
 
 Use a canonical directory outside the source project for the bundle and
 candidate parent. The paths below are literal placeholders; replace them with
-the paths selected by the operator. The command does not execute a harness:
+the paths selected by the operator. `change export` is an installed subcommand;
+`scripts/harness-adapter.mjs` runs from a TinySDD source checkout, because
+`scripts/` is not in the npm package. Neither command executes a harness:
 
 ```text
 tinysdd --project /absolute/project change export \

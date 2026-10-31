@@ -2,20 +2,21 @@
 
 This is an early local prototype. The controller does not require a model.
 Spawned workers require Linux with bubblewrap or macOS with `sandbox-exec`, and
-an existing Pi installation with the exact provider/model configured. Missing
-sandbox support fails closed. The package is prepared for publication as a
-dependency-free npm CLI; install its published release with
-`npm install --global tinysdd`. See [releases](releases.md) for the reviewed
-bootstrap tag and the later automatic Trusted Publisher workflow.
-Node24 is the development/test environment.
+an existing Pi installation with the exact provider/model configured (or the
+pinned OpenCode version, see [OpenCode worker](#opencode-worker)). Missing
+sandbox support fails closed. TinySDD is published on npm as the
+dependency-free `tinysdd` CLI: install it with `npm install --global tinysdd`,
+then run `tinysdd setup` ([guided setup](#guided-setup-for-an-existing-project)).
+[Releases](releases.md) describes how versions are published.
+CI runs the test suite on Node 22.19.0 and Node 24.
 The fixed check client targets Pi 1.4.0, an exact pin (1.0.0 is refused),
 which requires Node >=22.19.0; its live sandbox loading and Titan smoke still
 require qualification.
 The first adapter expects Pi in the same installation's `bin` directory as the
 Node executable running this CLI; other installation layouts are not qualified.
-Workers create disposable candidate directories under `/tmp` by default. Set
-`TINYSDD_TMPDIR` to an existing real directory on a volume with enough free
-space when `/tmp` is small or shared; the worker removes its candidates after it
+Workers create disposable candidate directories under `$TMPDIR` (or `/tmp`) by
+default. Set `TINYSDD_TMPDIR` to an existing real directory on a volume with
+enough free space when `/tmp` is small or shared; the worker removes its candidates after it
 has retained the run artifacts under the project.
 On Linux and macOS, the ambient `TMPDIR` (or `/tmp` fallback) is resolved through
 host aliases before scratch directories are created. An explicit
@@ -25,9 +26,13 @@ The macOS adapter uses Seatbelt with read access to system libraries, the Node
 executable and the installed Pi package. The candidate and temporary Pi state
 are writable. The source project, original Pi state and other home files are
 inaccessible, including through symlinks. Pi receives read/write/edit; process
-forks and shell execution are denied. The Linux check runner is unavailable on
-macOS, so a declared checks packet records that condition and runs without
-`run_checks`.
+forks and shell execution are denied. Declared checks run outside that sandbox
+in TinySDD's separate Seatbelt check runner (no network, only a scratch copy of
+the candidate writable), so a checks-bearing packet gets `run_checks` and
+`feature accept` can run its integration check; results record
+`sandbox.runner: "seatbelt"`. The macOS check runner refuses a root caller,
+because Seatbelt cannot drop privileges. Live Seatbelt enforcement of checks has
+not been observed on a Mac yet.
 
 macOS currently supports the `openai-completions` API with an explicit HTTP(S)
 base URL. A temporary loopback relay forwards only `POST /chat/completions` for
@@ -56,7 +61,9 @@ the Pi installation's `bin/` directory.
 `runtime.json` records `sandbox: "seatbelt"`, the executable, relay destination
 and retained `sandbox.sb` profile on macOS. Linux keeps `sandbox: "bubblewrap"` and records the in-sandbox relay address as
 `inferenceDestination`.
-Run the separate native escape qualification with the same Node installation:
+Run the separate native escape qualification with the same Node installation,
+from a source checkout (`scripts/` is not part of the npm package; the same
+holds for every `node scripts/...` command in this guide):
 
 ```sh
 node scripts/qualify-macos-sandbox.mjs
@@ -80,15 +87,31 @@ npm install --global tinysdd
 tinysdd setup
 ```
 
-`setup` downloads the matching versioned Git archive, validates its package and
-resource tree, checks Node/Pi/sandbox/model metadata, and installs the complete
-skills bundle for Claude and Codex. It refuses an unavailable release instead
-of falling back to an unpinned branch. It does not install prerequisites, read
-credentials, start services or run inference. Repeatable setup preserves
-identical files and refuses conflicting paths. A symlinked skills directory
-(`~/.claude/skills`, `~/.agents/skills`) or bundle root (`~/.agents/tinysdd`)
-is resolved to its real path, so dotfiles-managed layouts work. See the
-[setup guide](setup.md) for the global layout and release prerequisite.
+`setup` downloads the matching versioned Git archive (tag `v<version>`),
+validates its package and resource tree, checks Node/Pi/sandbox/model metadata,
+installs the complete skills bundle for Claude and Codex, and installs the
+shared profile registry into `~/.config/tiny-sdd/registry/` (see
+[choosing a registry entry](#choosing-a-registry-entry)). It refuses an
+unavailable release instead of falling back to an unpinned branch. It does not
+install prerequisites, read credentials, start services or run inference.
+Repeatable setup preserves identical files and refuses conflicting paths. A
+symlinked skills directory (`~/.claude/skills`, `~/.agents/skills`) or bundle
+root (`~/.agents/tinysdd`) is resolved to its real path, so dotfiles-managed
+layouts work. See the [setup guide](setup.md) for the global layout and release
+prerequisite.
+
+To upgrade, install the new CLI and replace both installed copies with that
+release's; re-running `setup` instead fails with `SETUP_CONFLICT` once the
+installed files differ:
+
+```sh
+npm install --global tinysdd@latest
+tinysdd skills update
+tinysdd profiles update
+```
+
+Your own profiles in `~/.config/tiny-sdd/profiles/` are not touched. See
+[upgrading](setup.md#upgrading) in the setup guide.
 
 On Linux, setup also runs a bounded direct bubblewrap startup probe using the
 worker's user/PID/network namespace and core mount shape with `/usr/bin/true`. A passing
@@ -155,14 +178,17 @@ keep credentials as environment references and inspect the retained
 From this checkout:
 
 ```sh
-npm test
+TYPESAFE_API_KEY=stub npm test
 node bin/tinysdd.mjs --help
 ```
 
+The suite stubs the semantic-gate judge; without `TYPESAFE_API_KEY` set, five
+semantic-gate tests fail before the stub is called.
+
 `tinysdd --help` lists the commands grouped by phase with one-line
 descriptions and the normal flow (`setup → init → task add → task approve →
-worker start → worker status → task review`). Every command has its own help
-with usage, flag meanings and defaults, and an example:
+worker start → worker status → task apply → task review`). Every command has
+its own help with usage, flag meanings and defaults, and an example:
 `tinysdd worker stop --help` or `tinysdd help worker stop`.
 
 The offline decision-evaluation foundation is documented in
@@ -222,13 +248,16 @@ cases. It verifies evidence before writing new `train.jsonl`,
 training and calibration recipe; it does not run Python, Laya, inference, or
 training.
 
-Use `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs` wherever the examples below
-say `tinysdd`. `--project /path/to/project` selects the target explicitly;
-otherwise commands use the current directory. No global npm/Pi setup is changed.
+The examples below use the global `tinysdd` command. From a source checkout
+without the global installation, use
+`node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs` wherever they say `tinysdd`;
+that changes no global npm/Pi setup. `--project /path/to/project` selects the
+target explicitly; otherwise commands use the current directory.
 
 ## Use it inside your coding agent
 
-From a session started in this checkout, invoke `/tinysdd` in Claude or
+From a session started in the target project after global setup (or in this
+checkout), invoke `/tinysdd` in Claude or
 `$tinysdd` in Codex and ask it to prepare one bounded feature. The skill covers
 either implementation inside that agent or delegation to a named worker.
 Product decisions and review remain with you or the authority you explicitly
@@ -325,7 +354,9 @@ tinysdd --project "$TARGET_PROJECT" change validate \
 ```
 
 With `--json` the CLI prints the standard `{ ok, data }` envelope, so the plan
-is at `.data.registrationPlan`. The plan is read-only. Read the selected slice descriptor's actual `brief`,
+is at `.data.registrationPlan` and the readiness issues at `.data.readiness`.
+Add `--ready` to fail unless the change is export-ready. The plan is read-only.
+Read the selected slice descriptor's actual `brief`,
 `context` and `checks` paths; do not derive a source folder from its ID. Before
 registering each slice, copy those exact descriptor bytes to the fixed target
 task paths shown by the plan, then use those paths for `task add` and approval.
@@ -348,7 +379,9 @@ tinysdd --project "$TARGET_PROJECT" task add --id "$SLICE_ID" --feature example 
 Repeat this materialization in topological order for dependent slices. The
 explicit copy preserves the approved brief, context and checks bytes; carry every
 `allow`, `protect`, `preparation` and `dependsOn` value from the plan, using
-`--depends-on` for dependencies. Preparation entries are immutable identity
+`--depends-on` for dependencies (plan `preparation` entries are objects: pass
+their `path` values), and its optional `worker`/`workerReason` with `--worker`
+and `--worker-reason`. Preparation entries are immutable identity
 evidence; an absent entry remains an absence check and is not added to
 `--protect` until it exists. Validation does not create these controller inputs.
 
@@ -515,16 +548,16 @@ tests and the entrypoints must exist:
 ```
 
 `feature accept` runs this command through TinySDD's bounded host check runner on
-retained project and dependency bytes. Missing configuration, an unavailable
-Linux sandbox, a failed or timed out check, and project/configuration drift all
+retained project and dependency bytes (bubblewrap on Linux, Seatbelt on macOS).
+Missing configuration, an unavailable check runner, a failed or timed out
+check, and project/configuration drift all
 refuse acceptance. A successful run retains its result, command identity,
 tested bytes and dependency identities; `feature report --json` marks the proof
 stale when any of those inputs changes. Every active accepted task scope must
 protect the declared test paths. The retained projection accepts regular files
 and directories only: symlinks (including common `node_modules/.bin` links) and
 special files are refused, and each copied tree is bounded to 20,000 entries
-and 512 MiB (manifest bytes are bounded to 512 KiB). macOS currently reports
-the runner as unavailable.
+and 512 MiB (manifest bytes are bounded to 512 KiB).
 
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'
@@ -683,7 +716,23 @@ and uncalibrated, pending the talon reruns; warnings never block.
 
 When a task has fixed checks, declare them in a reviewed JSON file under
 `.tinysdd/tasks/` and pass it with `--checks`. TinySDD validates and binds the
-declaration into approval and the worker packet. When the host check runner is
+declaration into approval and the worker packet:
+
+```json
+{
+  "schemaVersion": 1,
+  "dependencyMounts": ["node_modules"],
+  "checks": [
+    { "id": "test", "argv": ["node", "--test", "tests/example.test.mjs"], "timeoutMs": 120000 },
+    { "id": "lint", "argv": ["node_modules/.bin/eslint", "src/example.mjs"] }
+  ]
+}
+```
+
+A manifest declares 1 to 16 checks with unique ids. `argv` is typed argv,
+never shell text; `argv[0]` is `node` or a project-relative executable inside a
+declared dependency mount (at most 8 mounts). `timeoutMs` defaults to 120000
+and accepts 1000 to 600000. When the host check runner is
 available, packets expose the fixed `run_checks` tool: an optional `checkId`
 selects one declared check; omitting it runs them in declaration order. The
 separate host sandbox runner (bubblewrap on Linux, Seatbelt via `sandbox-exec`
@@ -706,9 +755,12 @@ reorder sibling writes. Checks share
 the worker wall-clock deadline and are cancelled when the worker ends. Declared
 dependency mounts cannot overlap any allowed path.
 
-When `limits.timeoutMs` and `limits.maxToolCalls` are omitted, each worker gets
-600000 ms (10 minutes) and 100 tool calls. Explicit values remain bounded by
-the existing 3600000 ms and 10000-call caps; `firstWriteMs` remains opt-in.
+When neither the worker's `limits` nor its profile's measured `limits` set
+`timeoutMs` and `maxToolCalls`, each worker gets 600000 ms (10 minutes) and 100
+tool calls. Explicit values remain bounded by the existing 3600000 ms and
+10000-call caps; `firstWriteMs` remains opt-in. See
+[model registry profiles](#model-registry-profiles) for how profile limits
+become defaults.
 
 `checks.jsonl` and bounded output artifacts retain host observations, including
 the digests of the candidate bytes checked. `result.workerObservedChecks` labels
@@ -803,7 +855,8 @@ sandbox still has none, and the new procfs lists only sandbox processes. The wor
 comes only from TinySDD: no project, global, managed or wellknown OpenCode
 configuration is read. The run is headless (`--standalone`, `--format json`),
 allows only read and edit, and has automatic compaction off. Declared
-`run_checks` are reported unavailable for this runner. This runner is
+`run_checks` are reported unavailable for this runner on every platform (#182).
+This runner is
 unverified against a live model or a live sandbox.
 
 ### Model registry profiles
@@ -813,8 +866,10 @@ Profiles in `profiles/` named after a host and route (for example
 records one exact configuration and its measured results:
 
 - `status`: `proposed`, `baseline`, `tested-improved` or `tested-inconclusive`;
-- `model`: `route`, `family`, `quantization`, `server`, `contextWindow`, `parallel`;
-- `limits.timeoutMs` and `responseBudget.maxTokens`: the settings it was measured with;
+- `model`: `route`, `family`, `quantization`, `server` (`id`, `version`),
+  `contextWindow`, `parallel`, `note`;
+- `limits` (`timeoutMs`, `maxToolCalls`, `maxCheckRuns`, `firstWriteMs`) and
+  `responseBudget.maxTokens`: the settings it was measured with;
 - `benchmarks[]`: aggregate cards (suite, date, settings, pass@1, pass@2,
   minutes per task, per-language rates, and a keep/reject decision for tested
   candidates). Cards never hold prompts, traces or test output.
@@ -856,7 +911,9 @@ An id is looked up, most specific first, in `.tinysdd/profiles/`,
 profiles shipped with TinySDD. `TINYSDD_CONFIG_DIR` (or `XDG_CONFIG_HOME`)
 moves the `~/.config/tiny-sdd` part. The same id with different content in two
 places fails with `PROFILE_AMBIGUOUS`; an unknown id fails with
-`PROFILE_NOT_FOUND`. There is no fallback.
+`PROFILE_NOT_FOUND`. There is no fallback. After a CLI upgrade, the registry
+installed from the old release can differ from the profiles shipped with the
+new CLI; `tinysdd profiles update` resolves that `PROFILE_AMBIGUOUS`.
 
 To use another profile for one command, pass `--profile ID|PATH` to `config
 show`, `worker run`, `worker start`, `worker settings` or `bench run`. The
@@ -982,10 +1039,16 @@ resolution before dispatch:
 tinysdd config validate
 tinysdd config show --worker qwen --json
 tinysdd worker start --task first-change --worker qwen --json
-# Poll the returned launch id until data.status is "finished".
+# Poll the returned launch id while data.status is "running" or "stopping".
 # data.request.launchStatus is the launch-time snapshot, not current state.
 tinysdd worker status --id LAUNCH_ID --json
 ```
+
+`data.status` is `running`, `stopping` (a stop was requested), `finished` or
+`interrupted` (the launcher exited without writing a result). A `finished`
+launch carries the launch result in `data.result`: `{ ok: true, data }`, or
+`{ ok: false, error, data }` for a failed outcome or scope violation, with the
+run's outcome at `data.result.data.outcome`.
 
 ### Worker per task and escalation
 
@@ -1006,17 +1069,20 @@ makes the approval stale. `--worker=` clears it.
 `result.json` and `runtime.json` record the choice as `workerSelection`
 (`workerName`, `source` of `option`, `task` or `default`, and the reason).
 
-Optional `workerTiers` in the config lists workers from fast to strong:
+Optional `workerTiers` in the config lists configured workers from fast to
+strong; an undefined name is a `CONFIG_INVALID` error:
 
 ```json
 { "workerTiers": ["fast", "strong"] }
 ```
 
-When a run ends with a failed outcome, the result includes an `escalation`
-suggestion with the next tier and the command to run it. TinySDD never starts
-that run itself. The operator, or an orchestrating agent after the operator
-agrees, runs it with `--escalated-from RUN_ID`, and the new run records the
-failed run under `workerSelection.escalatedFrom`.
+When a run of a listed worker other than the last ends with any outcome other
+than `completed`, the `worker run` result (and the `worker status` launch
+result) includes an `escalation` suggestion with the next tier and the command
+to run it. TinySDD never starts that run itself. The operator, or an
+orchestrating agent after the operator agrees, runs it with
+`--escalated-from RUN_ID`, and the new run records the failed run under
+`workerSelection.escalatedFrom`.
 
 Qualification dispatch uses the current worker, the current benchmark suite,
 and the effective verifier and runtime facts. Set an optional project suite and
@@ -1043,7 +1109,11 @@ the candidate like any other failed outcome. `--wait-ms N` (0 to 600000, default
 longer, `data.status` is `stopping`; poll `worker status` until it is `finished`.
 `worker stop` signals only a process it can verify is that launch's launcher
 (Linux `/proc`), and otherwise fails with `LAUNCH_NOT_OURS` without sending a
-signal. Stopping an already stopping launch only waits.
+signal. Outside Linux (including macOS) it fails with `UNSUPPORTED_PLATFORM`
+while the launch is still running, because there is no `/proc` to verify the
+launcher; the run then ends at its own limits. Stopping an already stopping
+launch only waits; a launch that already finished or was interrupted is
+reported as such.
 
 Every non-completed worker result includes `candidateState`: the number of
 allowed paths changed and the sorted allowed paths left untouched. A non-completed
@@ -1061,8 +1131,9 @@ itself; only a completed revision built on it applies. Other outcomes
 Use the benchmark command for an operator-selected suite of runnable
 `implement-slice`, `stop-and-ask`, or `write-tests` challenges. A suite directory
 contains `suite.json`, fixture snapshots, packet resources, and verifier-only
-resources. The default suite path is `bench`; pass the directory or its
-`suite.json` explicitly when it is elsewhere:
+resources. Without `--suite`, `bench run` uses `qualification.suite` when it is
+configured and otherwise `bench`, relative to the project; pass the directory
+or its `suite.json` explicitly when it is elsewhere:
 
 ```sh
 tinysdd worker settings --worker qwen --entry-kind real --json
@@ -1118,6 +1189,7 @@ benchmark records verifier unavailability separately and never turns it into a
 passing check. It does not apply files, change controller task state, record
 acceptance, or qualify a model.
 
+The suites below ship in the source repository, not in the npm package.
 This checkout includes the challenge data at `bench/implement-slice-suite`. It
 contains nine runnable `implement-slice` challenges (two new-module, two
 brownfield, two bug-fix, one async-heavy, one library-API, and one lint-rule)

@@ -8,9 +8,10 @@ prompt. Preparation invokes no provider, model, service, or source code.
 
 ## Prepare a packet
 
-Run the script from any working directory and provide absolute project and
-output paths. The output directory must be new, canonical, and outside the
-project:
+Run the script from a TinySDD source checkout (`scripts/` is not in the npm
+package; there is no `tinysdd research` subcommand), from any working
+directory, and provide absolute project and output paths. The output directory
+must be new, canonical, and outside the project:
 
 ```sh
 node /absolute/path/to/tiny-sdd/scripts/research.mjs prepare \

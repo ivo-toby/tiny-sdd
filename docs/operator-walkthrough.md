@@ -1,71 +1,86 @@
 # The intended TinySDD experience
 
-Status: proposed operator walkthrough, informed by the first feature pilot.
-Real human use of this sequence has not yet been evaluated. The candidate
-skills are experiment-local and are not installed or registered globally.
+Status: operator walkthrough, first written after the 2026-09 feature pilot and
+updated for the installed CLI and skills. A complete operator trial of this
+sequence on a real feature is still open
+([#110](https://github.com/ivo-toby/tiny-sdd/issues/110),
+[#117](https://github.com/ivo-toby/tiny-sdd/issues/117)).
 
-TinySDD should be usable in your normal coding-agent conversation. The
-experiment's capture CLI is not how you are expected to build a product.
+TinySDD is used from your normal coding-agent conversation. Install the CLI
+with `npm install --global tinysdd` and run `tinysdd setup`. Then open a fresh
+Claude Code or Codex session in the target project and run `/tinysdd-setup`
+(Codex: `$tinysdd-setup`) once, and `/tinysdd` (`$tinysdd`) for feature work.
+The [quickstart](quickstart.md) and [setup guide](setup.md) have the details.
+The pilot's experiment-local skills under `experiments/003-idempotent-reservations/`
+are historical material, not the installed workflow.
 
 ## Prepare with a strong model
 
-Supply the request and relevant repository to Astra/Sol, with the candidate
-[preparation instructions](../experiments/003-idempotent-reservations/skills/tinysdd-prepare/SKILL.md).
-For example:
+Give the request to the strong model running the `tinysdd` skill. It runs the
+constitution entry check, then the frontier phase skills (specify, research,
+plan, slice). For example:
 
 > Prepare this small feature for implementation by Qwen. Read the existing code
 > first. Show me the behavior, decisions that need my input, acceptance criteria
 > and a few bounded tasks. Do not implement or dispatch tasks yet.
 
-The output is one feature specification and a few short task packets, not a
-mandatory stack of planning documents. Review the product decisions and shared
-interfaces. Approve or revise them in the conversation. For a tricky stateful
-requirement, ask for a concrete before/action/after example and check its expected
-result yourself or with strong-model review.
+The output is a short brief or, for a multi-slice feature, one
+`changes/<change-id>/` directory in the [artifact format](artifact-format.md),
+with a few bounded slices. It is not a mandatory stack of planning documents.
+Review the product decisions and shared interfaces. Approve or revise them in
+the conversation. For a tricky stateful requirement, ask for a concrete
+before/action/after example and check its expected result yourself or with
+strong-model review. Slices are registered with `tinysdd task add` and become
+dispatchable only after `tinysdd task approve`.
 
 ## Implement one approved task
 
-Use Qwen or Gemma with the approved feature, the next task packet, repository
-access, and the candidate
-[task instructions](../experiments/003-idempotent-reservations/skills/tinysdd-task/SKILL.md).
-For example:
+Dispatch the approved task to a configured small-model worker, or implement it
+in the current harness. For example:
 
-> I approve task 01 against FEATURE.md. Implement only its allowed changes.
-> Read the referenced code and tests, verify the missing behavior before editing
-> production code where applicable, then run the checks and return your diff and
-> evidence. Stop after this task.
+> I approve task 01. Dispatch it to the `local` worker and report the outcome,
+> the changed files and the observed check results. Do not apply or review it
+> yet, and stop after this task.
 
-The participant uses normal read, write, edit and shell tools. The on-disk packet
-supports a fresh conversation; it does not itself prove operator approval.
-Missing facts or contradictory prerequisites return to you rather than becoming
-silent scope changes.
+`tinysdd worker start --task ID` launches the worker (poll it with
+`tinysdd worker status`); `worker run` is the foreground form. The worker works
+in a sandboxed disposable copy with file read, write and edit tools and no
+shell; Pi workers also get `run_checks` for the task's declared checks. It
+returns a retained candidate and patch and never changes the project. Missing facts or contradictory
+prerequisites come back to you rather than becoming silent scope changes. The
+on-disk task and packet support a fresh conversation; the CLI records an
+approval but does not authenticate who gave it.
 
 ## Review, then decide
 
-Ask the strong model to review the captured diff against the specification and
+Ask the strong model to review the candidate against the specification and
 actual checks. Use the repository's existing tests, compiler and lint checks when
 available, plus acceptance checks that do not merely repeat the implementer's
-assumptions. The [review lessons](feature-review-lessons.md) show why test names,
-counts and a self-review statement are insufficient.
+assumptions. Worker-visible checks are feedback, not acceptance evidence. The
+[review lessons](feature-review-lessons.md) show why test names, counts and a
+self-review statement are insufficient.
 
 > Review task 01 against the approved behavior. Inspect its code and test
 > expectations, confirm original tests and unrelated files are preserved, and
 > distinguish observed checks from claims. Give me concrete findings. Do not
 > silently repair the implementer's code or start task 02.
 
-You accept the task, request a scoped revision, or revise the specification.
-Only then authorize the next task. At the end, verify the complete feature
-through its public interface and decide whether to accept it.
+You then apply the candidate (`tinysdd task apply`) and record a verdict
+(`tinysdd task review --verdict accepted|revision|blocked`), or revise the
+specification. Only then authorize the next task. At the end, verify the
+complete feature through its public interface and decide whether to accept it;
+`tinysdd feature accept` runs the configured integration check first.
 
 The pilot's two-invocation/six-minute task budget was an experimental bound,
-not a proposed product requirement. Real task and review budgets should be
-chosen openly for the repository and feature; an incomplete handoff stays
-incomplete even if the retained code passes checks.
+not a product requirement. Worker limits come from the worker's profile and
+configuration; choose task and review budgets openly for the repository and
+feature. An incomplete handoff stays incomplete even if the retained code
+passes checks.
 
 ## What remains to validate
 
 The pilot tested consumption of a carefully prepared synthetic feature. It did
 not establish repeatable strong-model preparation, operator usability, cost
-savings, or production reliability. Nemotron is a target runtime but has not
-completed this feature experiment. The next test should use an operator-selected
-held-out feature and include the preparation conversation itself.
+savings, or production reliability. The next test should use an
+operator-selected held-out feature and include the preparation conversation
+itself ([#110](https://github.com/ivo-toby/tiny-sdd/issues/110)).

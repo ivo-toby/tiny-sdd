@@ -6,8 +6,8 @@ contracts; it does not add another configuration format.
 
 ## 1. Published package route (primary)
 
-The package is dependency-free and has no build step. After an operator
-publishes a reviewed package and matching Git tag, use:
+The package is dependency-free and has no build step. It is published on npm
+as `tinysdd`, with a matching Git tag `vX.Y.Z` for every version:
 
 ```sh
 npm install --global tinysdd
@@ -22,8 +22,8 @@ project-configuration command.
 
 ### Source checkout alternative (development only)
 
-The current repository has no npm publication or version tag. Until that
-release prerequisite is completed, use an operator-authorized source checkout:
+Use a source checkout only for TinySDD development or when the operator
+authorizes it:
 
 ```sh
 TINYSDD_CHECKOUT=/absolute/path/to/tiny-sdd
@@ -38,8 +38,10 @@ needed for the source-checkout alternative. Published-package users use
 setup is run without `--project`; `init` remains the project-scoped
 configuration command.
 The setup archive is pinned to the CLI version and validated for package name,
-version, safe paths and required resources. An unavailable tag is an actionable
-release error; setup never falls back to `main` or another unpinned source.
+version, safe paths and required resources. Setup from a checkout therefore
+installs the tagged release for the checkout's `package.json` version, not its
+working tree. An unavailable tag is an actionable `SETUP_RELEASE_UNAVAILABLE`
+error; setup never falls back to `main` or another unpinned source.
 The development suite is separate from user setup and, when run, uses
 `TYPESAFE_API_KEY=stub npm test` as described by the repository instructions.
 
@@ -56,22 +58,38 @@ both `setup` and `skills update`.
 Setup also installs the shared profile registry from the same archive into
 `~/.config/tiny-sdd/registry/` (`$TINYSDD_CONFIG_DIR` or `$XDG_CONFIG_HOME`
 move it). A registry that differs from the release is a conflict, not
-something setup overwrites. After upgrading the CLI, refresh both from the new
-version's archive:
+something setup overwrites.
+
+### Upgrading
+
+After `npm install --global tinysdd@latest`, the installed bundle and usually
+the registry differ from the new release, so `setup` stops with
+`SETUP_CONFLICT` and replaces nothing. Refresh both from the new version's
+archive, then rerun setup to recheck prerequisites (for example a changed Pi
+pin):
 
 ```sh
+tinysdd --version
 tinysdd skills update
 tinysdd profiles update
+tinysdd setup
 ```
 
-Both replace only TinySDD-managed paths. Local profiles in
-`~/.config/tiny-sdd/profiles/` and project profiles are never touched.
+`skills update` replaces the whole bundle root, including any local edits in
+it, and recreates missing links; a skill entry that is not a link or points
+elsewhere, or a bundle root that is not a TinySDD bundle (such as a source
+checkout), is still a conflict. `profiles update` replaces only the registry.
+Local profiles in `~/.config/tiny-sdd/profiles/`, project profiles and project
+`.tinysdd/` files are never touched. A stale registry shows up as a
+`tinysdd models` warning or a `PROFILE_AMBIGUOUS` error naming
+`tinysdd profiles update`. Start a fresh session to load the updated skills.
 
 ## 2. Load the skills explicitly
 
-The skill files are project-local prompt assets. This checkout tracks relative
-directory registrations for the two entrypoints in both native repository
-locations:
+After `tinysdd setup`, the two entrypoints are linked globally (section 1),
+so a fresh Claude or Codex session in any project can load them. A TinySDD
+source checkout also tracks relative directory registrations for the two
+entrypoints in both native repository locations:
 
 ```text
 <checkout>/.agents/skills/tinysdd       -> ../../skills/tinysdd
@@ -91,8 +109,9 @@ frontier router and selected phase. Codex may list nested `SKILL.md` entries
 reached through the linked product tree; for a harness that does not list one,
 use its explicit path.
 
-For a harness without native repository discovery, use the direct project-local
-paths and retain the relative files beside the selected entrypoint:
+For a harness without native skill discovery, use the direct paths (under
+`~/.agents/tinysdd/` for a global install) and retain the relative files beside
+the selected entrypoint:
 
 ```text
 <checkout>/skills/tinysdd/SKILL.md
@@ -240,9 +259,9 @@ missing sibling executable and leave the project and Node installation alone.
 The current target is Pi **1.4.0**, an exact pin, and its fixed check-client
 surface requires Node **>=22.19.0**. The package declares Node >=22, but use the
 stricter 22.19.0 floor for a worker readiness attempt. Setup walks from the
-resolved executable to a nearby `package.json` and refuses any other version,
-including 1.0.0, so stop and replace the package when it reports
-`unsupported-version`. A successful `pi --version` by itself is discovery, not
+resolved executable to a nearby `package.json` and reports any other version,
+including 1.0.0, as `unsupported-version` and not ready, so stop and replace
+the package. A successful `pi --version` by itself is discovery, not
 a worker observation.
 
 The supported worker sandbox matrix is:
@@ -250,20 +269,21 @@ The supported worker sandbox matrix is:
 | Host | Worker sandbox | Required executable(s) | `run_checks` |
 | --- | --- | --- | --- |
 | Linux | bubblewrap | `/usr/bin/bwrap` or `/bin/bwrap` | Available only when Linux bubblewrap, `prlimit`, and (when privileged) `setpriv` are available. |
-| macOS | Seatbelt | `/usr/bin/sandbox-exec` | Available when `sandbox-exec` is present: checks run in a Seatbelt profile with no network, a scrubbed environment and read-only mounts. |
+| macOS | Seatbelt | `/usr/bin/sandbox-exec` | Available when `sandbox-exec` is present and the caller is not root (Seatbelt has no privilege drop): checks run in a Seatbelt profile with no network, a scrubbed environment and read-only mounts. |
 | Other | none | unsupported | Worker refuses an unsandboxed run. |
 
 The check runner also requires a real Node root with `bin/node`; it does not
-perform `PATH` lookup. Missing sandbox or check-runner support is an explicit
-capability result. Do not install a system package, start a local model server,
-or alter global configuration from this skill; ask the operator for that
-separate action when needed.
+perform `PATH` lookup. An OpenCode worker has no `run_checks` on either host
+yet. Missing sandbox or check-runner support is an explicit capability result.
+Do not install a system package, start a local model server, or alter global
+configuration from this skill; ask the operator for that separate action when
+needed.
 
 ## 4. Inspect and initialize project configuration
 
-Use the installed `tinysdd` command against the target project. If the release
-prerequisite is not available, use the source-checkout prefix shown below.
-These operations are controller-only and do not call a model:
+Commands shown here with the source-checkout prefix work the same with the
+published package: replace `node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs"` with
+`tinysdd`. These operations are controller-only and do not call a model:
 
 ```sh
 node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$TARGET_PROJECT" init
@@ -309,18 +329,22 @@ tinysdd --project "$TARGET_PROJECT" models --route EXACT_PI_MODEL
 `PROFILE_ROUTE_MISMATCH`. Never pick a profile for the operator, and never
 present benchmark numbers from one route as evidence for another.
 
-The named worker uses `type: "pi"`, an exact `provider`, an exact `model`, and
-optional project-relative profile, skill, instruction, model metadata and
-limits fields. TinySDD's config has no credential or endpoint field. The
-effective config can be selected with `--worker NAME`; this does not rewrite
-the project config. A `.tinysdd/config.local.json` override replaces each
+The named worker uses `type: "pi"` (what `init` writes; `type: "opencode"`
+also needs an absolute `opencodeConfig`), an exact `provider`, an exact
+`model`, and optional profile (a profile id or a project-relative JSON path),
+skill, instruction, model metadata and limits fields. TinySDD's config has no
+credential or endpoint field. The effective config can be selected with
+`--worker NAME`; this does not rewrite the project config. A `.tinysdd/config.local.json` override replaces each
 named worker as a whole rather than deep-merging it, so inspect the effective
 result before dispatch. Preserve an existing worker and ask before changing
 its route or limits.
 
-When the worker omits limits, TinySDD applies a 600000 ms (10 minute) timeout,
-100 tool calls and 12 check runs. `firstWriteMs` remains opt-in; set explicit
-limits deliberately for a bounded readiness or implementation run.
+Each limit the worker sets explicitly wins. A limit it omits comes from the
+selected profile's measured `limits` when the profile has one, otherwise from
+the TinySDD defaults: a 600000 ms (10 minute) timeout, 100 tool calls and 12
+check runs. `config show` reports the source of each profile-derived limit.
+`firstWriteMs` remains opt-in; set explicit limits deliberately for a bounded
+readiness or implementation run.
 
 `featureIntegration` is optional setup for later feature acceptance. Add it
 only after choosing a real application entrypoint, its protected integration
@@ -405,7 +429,8 @@ Neither form changes task approval or acceptance.
 
 Thinking lives in the worker profile's `runtime.thinking`:
 `off|minimal|low|medium|high`; the TinySDD default is `off`.
-Set the worker's `profile` to that project-relative JSON file and validate it.
+Set the worker's `profile` to that profile's id or project-relative JSON path
+and validate it.
 For OpenAI-compatible routes, `reasoning: true`, `compat.thinkingFormat`, and
 `thinkingLevelMap` determine what Pi sends. With OpenAI thinking format, `off`
 is sent only with a string `thinkingLevelMap.off` and reasoning-effort support;
@@ -629,7 +654,8 @@ node "$TINYSDD_CHECKOUT/bin/tinysdd.mjs" --project "$READY_PROJECT" \
 ```
 
 Poll with `worker status --json` until it is finished or the chosen bound
-requires `worker stop`. Do not apply or accept the candidate. Inspect the
+requires `worker stop` (Linux only; elsewhere it fails with
+`UNSUPPORTED_PLATFORM`). Do not apply or accept the candidate. Inspect the
 retained paths named by the result and compare these fields:
 
 - `result.json.outcome` is `completed` and `scopeViolations` is empty.
@@ -649,8 +675,8 @@ retained paths named by the result and compare these fields:
 - If `runtime.json.runChecks.available` is true, a retained
   `workerObservedChecks.runs` entry shows the `readiness` check with exit code
   zero. If it is false, record its exact `unavailableReason`; on macOS that
-  means `sandbox-exec` is missing. An unavailable check runner is
-  distinct from a failed check.
+  means `sandbox-exec` is missing or the worker runs as root. An unavailable
+  check runner is distinct from a failed check.
 
 This smoke observes one authenticated inference path, sandbox startup and a
 bounded candidate edit only when the live stage is explicitly authorized and
@@ -665,7 +691,7 @@ Use a short report with one row per capability:
 
 | Capability | Discovery | Observed in smoke | Next action |
 | --- | --- | --- | --- |
-| CLI source | checkout path and `--version` | command executed | keep checkout pinned or ask for source access |
+| CLI source | installed package or checkout path and `--version` | command executed | upgrade as in section 1, keep the checkout pinned, or ask for source access |
 | Node/Pi layout | executable paths and versions | `runtime.json.piVersion` and `runtime.json.sandbox`; Node/platform from discovery or qualification facts | authorize the pinned package in the exact Node root, or fix the observed target mismatch |
 | provider/model | exact configured route and Pi model entry | `runtime.json.provider`/`.model` plus inference result | fix that exact route; no fallback |
 | effective model settings | confirmed digest, real/synthetic entry, reasoning/map, requested/default/effective thinking, cap/source and context window | compare `runtime.json.effectiveThinkingControl`, `.effectiveThinkingReason`, `.effectiveMaxTokens`, `.maxTokensSource`; retain named acknowledgements | stop and reconfirm on changes; never reuse the offline placeholders |

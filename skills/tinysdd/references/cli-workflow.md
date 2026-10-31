@@ -7,17 +7,37 @@ its own help with usage, flag meanings, defaults and an example, via
 source checkout use
 `node /absolute/path/to/tiny-sdd/bin/tinysdd.mjs`; run it from the target project
 or select `--project /path/to/project`. Add `--json` for machine-readable output.
+Commands written as `node scripts/<name>.mjs` below are repository scripts: they
+are not part of the installed CLI, the npm package or the global skills bundle,
+so run them from a TinySDD source checkout.
 
-For global onboarding from a reviewed release, run `tinysdd setup` without
-`--project`. It checks Node/Pi/sandbox/model metadata, downloads the matching
-versioned archive, and installs the complete global skills resource tree for
-Codex and Claude plus the profile registry (`~/.config/tiny-sdd/registry/`). It
+For global onboarding from a reviewed release, install the CLI with
+`npm install --global tinysdd` and run `tinysdd setup` without `--project`
+(`setup`, `skills update` and `profiles update` are global and refuse
+`--project` with `SETUP_PROJECT_UNSUPPORTED`). It checks Node/Pi/sandbox/model
+metadata, downloads the matching versioned archive, and installs the complete
+global resource tree (`skills/` and `docs/` under `~/.agents/tinysdd`, linked
+as `tinysdd` and `tinysdd-setup` from `~/.agents/skills` and `~/.claude/skills`)
+plus the profile registry (`~/.config/tiny-sdd/registry/`). It
 does not install prerequisites, inspect credentials, start services or run
 inference; use `init` separately for project configuration. A symlinked
 `~/.claude/skills`, `~/.agents/skills` or `~/.agents/tinysdd` (dotfiles setups)
-is resolved to its real path before the conflict checks run. After a CLI
-upgrade, `tinysdd skills update` and `tinysdd profiles update` replace the
-installed skills and registry with the new version's archive. The
+is resolved to its real path before the conflict checks run. To upgrade:
+
+```sh
+npm install --global tinysdd@latest
+tinysdd --version
+tinysdd skills update
+tinysdd profiles update
+```
+
+`skills update` and `profiles update` replace the installed skills bundle and
+registry with the new version's archive; local profiles in
+`~/.config/tiny-sdd/profiles/` and project configuration are left alone.
+Rerunning `setup` after an upgrade fails with `SETUP_CONFLICT` instead, because
+the installed files differ from the new release. `tinysdd models` warns when
+the installed registry is from another version. Start a fresh agent session
+afterwards so it loads the updated skills. The
 initial version/tag bootstrap and the automatic OIDC-backed release workflow
 are described in [the release guide](../../../docs/releases.md).
 
@@ -188,8 +208,9 @@ slice tests cannot substitute for a real-entrypoint integration test. The #82
 ordinary-create-modify scope allows ordinary extra files, while file lists and
 budgets remain advisory and deletion remains ineligible.
 
-The pure #81 transition helper is offline; the active `slice-tests` commands
-invoke only an explicitly configured Jev provider.
+The pure #81 transition helper is offline; of the active `slice-tests`
+commands, only `slice-tests assess` invokes a provider, and only the explicitly
+configured one.
 Negative assessments use only an explicit bounded revision policy; every
 positive assessment requires independent strong review of identical bytes;
 exhaustion escalates. Thresholds and uncertain/unavailable routes have no
@@ -244,7 +265,9 @@ not create controller files.
 The plan reports separate writable slice-test and protected feature-test roles,
 advisory file sizing and the current default `runtimeScope` (ordinary
 create/modify). To export a freshly
-approved slice, use a new directory under an existing canonical parent; the
+approved slice, use a new directory under an existing canonical parent outside
+the source project (an output inside it fails with `BUNDLE_OUTPUT_COLLISION`; a
+relative `--out` resolves against the current directory, not `--project`); the
 exporter checks packet identity and writes no project files or controller state:
 
 ```sh
@@ -387,7 +410,8 @@ protected feature tests while `entrypoints` identifies real files. For example:
 
 `feature accept` executes the configured command on retained isolated bytes and
 records its bounded result and identities in the acceptance event. It refuses
-when configuration, the Linux sandbox, the check, the protected test, the
+when configuration, the host check sandbox (bubblewrap on Linux, Seatbelt on
+macOS), the check, the protected test, the
 entrypoint, or any retained project/dependency bytes are unavailable or stale.
 Every active accepted task scope must protect the declared test paths. Retained
 project and dependency trees are regular-file-only: symlinks (including common
@@ -406,7 +430,9 @@ visible only after an explicit re-acceptance; current membership or task
 freshness changes mark the frozen snapshot stale while preserving its numbers.
 Unknown or partial observations remain `UNKNOWN` with their provenance.
 
-Archive a living-spec change only after this explicit acceptance remains fresh:
+Archive a living-spec change only after this explicit acceptance remains fresh.
+There is no `tinysdd` archive subcommand; run the repository script from a
+TinySDD checkout:
 
 ```sh
 node scripts/archive-change.mjs --project /path/to/project \
@@ -446,11 +472,12 @@ To revise an open task's shape, use `task update` with `--by` and `--reason`:
 tinysdd task update --id validation --allow src/validation.ts --protect tests/contract.test.ts --by operator --reason 'keep the contract fixed'
 ```
 
-`--brief`, `--context`, `--checks`, `--allow`, `--protect` and `--depends-on`
-validate like `task add`; omitted fields stay unchanged. Use `--context=`,
-`--checks=`, `--protect=` or `--depends-on=` to clear an optional field;
-`--allow` must stay nonempty. Each effective update keeps the previous shape and
-any apply record in `revisions[]`, with attribution, reason and timestamp, shown
+`--brief`, `--context`, `--checks`, `--allow`, `--protect`, `--preparation`,
+`--depends-on`, `--worker` and `--worker-reason` validate like `task add`;
+omitted fields stay unchanged. Use `--context=`, `--checks=`, `--protect=`,
+`--preparation=`, `--depends-on=` or `--worker=` (which also drops the worker
+reason) to clear an optional field; `--allow` must stay nonempty. Each
+effective update keeps the previous shape and any apply record in `revisions[]`, with attribution, reason and timestamp, shown
 by `status --json`. It leaves recorded approvals and reviews intact; changes to
 bound shape or digests make approval stale, requiring explicit reapproval.
 A later review cannot attribute the revised task to an apply under its old shape.
@@ -479,9 +506,11 @@ tinysdd task supersede --id broker-contract --with broker-s1,broker-s2 --by oper
 tinysdd task close --id scratch --by operator --reason 'no longer needed'
 ```
 
-A worker's `type` is `pi` or `opencode`. An `opencode` worker needs an absolute
+A worker's `type` is `pi` or `opencode` (`init` writes `pi` workers; add an
+`opencode` worker by editing the config). An `opencode` worker needs an absolute
 `opencodeConfig` path to the OpenCode config file that defines its provider
-(`@ai-sdk/openai-compatible`, see `docs/quickstart.md`). A `pi` worker must not
+(`@ai-sdk/openai-compatible`, see `docs/quickstart.md`), and the exact pinned
+OpenCode 2.1.4 at `~/.opencode/bin/opencode`. A `pi` worker must not
 set it. The OpenCode runner has no `run_checks` tool, so declared checks are
 reported unavailable for it, and it has no deterministic compaction. On Linux
 its sandbox gets a procfs that Pi's sandbox does not have. Provider headers
@@ -529,7 +558,10 @@ failed run under `workerSelection.escalatedFrom`.
 
 Existing config is preserved: edit it deliberately to add named workers.
 Optional `.tinysdd/config.local.json` replaces entire workers by name; it does
-not deep-merge partial worker fields. Inspect effective configuration before
+not deep-merge partial worker fields. It may also replace `defaultWorker`,
+`qualification`, `phaseGates`, `testReview`, `featureIntegration` and
+`workerTiers` as whole values; `semanticGate` is read only from
+`.tinysdd/config.json`. Inspect effective configuration before
 dispatch. Copy a suitable profile into the project and set its relative path
 on the selected worker when needed. Profile `instructions` may be an explicitly
 empty string for an empty baseline; non-string values remain invalid. Profiles
@@ -540,8 +572,10 @@ state; the operator's Pi config is unchanged), and `model.route` must equal
 `worker.model`. `worker.profile` may be a project-relative JSON path or a
 profile id, looked up in `.tinysdd/profiles/`, `~/.config/tiny-sdd/profiles/`,
 `~/.config/tiny-sdd/registry/` and the shipped profiles; duplicates with
-different content fail. Pass `--profile ID|PATH` to `config show`, `worker
-run|start|settings` or `bench run` to select another profile for one command.
+different content fail with `PROFILE_AMBIGUOUS`. The user and registry
+directories move with `$XDG_CONFIG_HOME` (or `TINYSDD_CONFIG_DIR`). Pass
+`--profile ID|PATH` to `config show|validate`, `worker run|start|settings` or
+`bench run` to select another profile for one command.
 A profile's `limits` are measured defaults, not binding ones (#174): the
 worker's explicit limits win, and `config show` plus the run's `runtime.json`
 record each limit as `{ measured, effective, source }` (`profile` or `worker`)
@@ -557,15 +591,19 @@ location, settings and the newest whole-suite baseline pass@1/pass@2. `init
 `tinysdd profiles new` asks configuration questions only (or takes `--route`,
 `--id`, `--context-window`, `--parallel`, `--max-tokens`, `--timeout-ms`,
 `--thinking`, `--family`, `--quantization`, `--server`) and writes a `proposed`
-profile to `~/.config/tiny-sdd/profiles/`; an id that already exists fails
-with `PROFILE_EXISTS`.
+profile to `~/.config/tiny-sdd/profiles/`; the route is required (with `--json` or
+without a terminal, pass `--route`), and an id
+that already exists in any profile location fails with `PROFILE_EXISTS`.
+`--thinking` accepts `off`, `minimal`, `low`, `medium` or `high`.
 
 If a worker omits `limits.timeoutMs` or `limits.maxToolCalls`, the effective
-defaults are 600000 ms (10 minutes) and 100 tool calls. `limits.maxCheckRuns`
-defaults to 12; `firstWriteMs` remains opt-in. Inspect the resolved values before
+defaults are 600000 ms (10 minutes; range 1–3600000) and 100 tool calls (range
+1–10000). `limits.maxCheckRuns` defaults to 12 (range 1–20); `firstWriteMs`
+remains opt-in and must stay below `timeoutMs`. Inspect the resolved values before
 dispatch when a project uses an explicit budget.
 
-Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`, Pi in
+Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`; a `pi`
+worker also needs Pi in
 the same installation as the CLI's Node executable, and the exact model in Pi's
 configured models. The exact Pi pin is 1.4.0 (1.0.0 is refused), which requires
 Node >=22.19.0; its fixed check-client integration still needs live qualification. Missing sandbox support fails closed. It uses
@@ -636,7 +674,9 @@ with no fallback to host networking. `runtime.json` keeps `sandbox:
 Use `worker start` for real model calls from an orchestrating agent. It launches
 the controller in a detached process so short-lived agent shells cannot send an
 unintended SIGTERM to a still-working model. `worker run` is foreground mode for
-local debugging only. Poll `worker status` until `data.status` is `finished`; an
+local debugging only. `worker status` reports `data.status` as `running`,
+`stopping`, `finished` or `interrupted`. Poll until it is `finished` (the
+result is then under `data.result`); an
 `interrupted` launch has no usable candidate result and must be recorded as such.
 Read only the top-level `data.status`: `data.request` is the launch-time snapshot
 and its `launchStatus` stays `running` after the worker ends.
@@ -649,7 +689,10 @@ the candidate like any other failed outcome. `--wait-ms N` (0 to 600000, default
 longer, `data.status` is `stopping`; keep polling `worker status` until it is
 `finished`. `worker stop` signals only a process it can verify is that launch's
 launcher (Linux `/proc`), and otherwise fails with `LAUNCH_NOT_OURS` without
-sending a signal. Stopping an already stopping launch only waits.
+sending a signal. It is Linux-only: on macOS a still-running launch fails with
+`UNSUPPORTED_PLATFORM` and nothing is signalled (an already finished or
+interrupted launch still reports its status). Stopping an already stopping
+launch only waits.
 Every non-completed worker result includes `candidateState`, which reports the
 allowed paths changed and the sorted allowed paths left untouched. If any
 allowed path changed, review the candidate before discarding it.
@@ -956,8 +999,12 @@ its immediate parent run, and older artifacts without an identity compare as
 
 Declare fixed task checks in a reviewed JSON file under `.tinysdd/tasks/` and
 pass it to `task add` with `--checks PATH`. The controller validates and binds
-the declaration into approval and the packet. When the host runner is available,
-a checks-bearing packet exposes `run_checks` with optional `checkId` (omitted
+the declaration into approval and the packet. The file has `schemaVersion: 1`,
+`dependencyMounts` (at most 8) and 1–16 `checks`, each with an `id`, an `argv`
+array (never a shell string) whose first item is `node` or a project-relative
+executable inside a declared dependency mount, an optional `timeoutMs`
+(1000–600000, default 120000) and optional `criteria` (`C<n>` ids). When the
+host runner is available, a checks-bearing packet exposes `run_checks` with optional `checkId` (omitted
 means all checks in order). It uses the separate host sandbox runner
 (bubblewrap on Linux, Seatbelt on macOS), without network or credentials.
 An unavailable host records the reason and
@@ -999,8 +1046,8 @@ For retained #81 test-review measurements, use `tinysdd --json slice-tests repor
 with optional `--feature NAME`. Keep the reported denominators and `UNKNOWN`s:
 unreviewed negatives are not false-rejection labels, replay latency is not live
 inference, and whole-slice reviews do not label every individual criterion.
-Reporting does not invoke a provider or grant acceptance. The active review and
-revision controller flow is still follow-up work.
+Reporting does not invoke a provider or grant acceptance; the active review and
+revision flow is described next.
 
 For active review, configure explicit `testReview` positive/negative boundaries,
 revision limit, `uncertainRoute: "escalation"` and an unavailable route. Follow
