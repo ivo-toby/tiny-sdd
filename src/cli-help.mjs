@@ -202,11 +202,12 @@ const COMMANDS = [
     command: 'task apply',
     group: 'Tasks',
     summary: 'Copy a reviewed run\'s retained eligible files into the project; apply before task review.',
-    usage: 'tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL',
+    usage: 'tinysdd [--json] [--project PATH] task apply --id ID --run RUN_ID --by LABEL [--exclude FILE[,FILE]]',
     flags: [
       { flag: '--id ID', description: 'task identifier', required: true },
       { flag: '--run RUN_ID', description: 'worker run whose candidate to apply', required: true },
       { flag: '--by LABEL', description: 'operator label applying', required: true },
+      { flag: '--exclude FILE[,FILE]', description: 'extra (not allowed) candidate paths to leave out of the project' },
     ],
     example: 'tinysdd task apply --id validation --run run-1 --by operator',
   },

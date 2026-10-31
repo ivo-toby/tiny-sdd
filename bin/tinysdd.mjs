@@ -187,7 +187,7 @@ function parseCommand(args) {
       update: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value'], ['brief', 'value'], ['context', 'value'], ['checks', 'value'], ['allow', 'list'], ['protect', 'list'], ['preparation', 'list'], ['depends-on', 'list'], ['worker', 'value'], ['worker-reason', 'value']]),
       approve: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       packet: new Map([['id', 'value']]),
-      apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value']]),
+      apply: new Map([['id', 'value'], ['run', 'value'], ['by', 'value'], ['exclude', 'list']]),
       review: new Map([['id', 'value'], ['by', 'value'], ['verdict', 'value'], ['evidence', 'value'], ['candidate-paths', 'list']]),
       close: new Map([['id', 'value'], ['by', 'value'], ['reason', 'value']]),
       supersede: new Map([['id', 'value'], ['with', 'list'], ['by', 'value'], ['reason', 'value']]),
@@ -982,6 +982,7 @@ async function run(argv) {
     id: parsed.values.id,
     run: parsed.values.run,
     by: parsed.values.by,
+    exclude: parsed.values.exclude,
   });
   else if (parsed.command === 'task' && parsed.subcommand === 'review') data = await reviewTask(project, {
     id: parsed.values.id,
@@ -1307,7 +1308,8 @@ function writeResult(result, json) {
       if (Object.hasOwn(data, 'next')) process.stdout.write(data.next ? `Next: ${data.next.taskId} — ${data.next.action}\n` : 'No pending task.\n');
     } else if (Array.isArray(data?.applied?.files)) {
       const already = data.applied.files.filter((file) => file.status === 'already-applied').length;
-      process.stdout.write(`${data.task.id}: applied ${data.applied.files.length} file(s) from ${data.applied.runId}${already > 0 ? ` (${already} already applied)` : ''}\n`);
+      const notes = [...(already > 0 ? [`${already} already applied`] : []), ...(data.applied.excluded?.length > 0 ? [`excluded ${data.applied.excluded.join(', ')}`] : [])];
+      process.stdout.write(`${data.task.id}: applied ${data.applied.files.length} file(s) from ${data.applied.runId}${notes.length > 0 ? ` (${notes.join('; ')})` : ''}\n`);
     } else if (data?.task?.id) {
       process.stdout.write(`${data.task.id}: ${describeTask(data.task)}\n`);
       for (const warning of data.sizing?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);

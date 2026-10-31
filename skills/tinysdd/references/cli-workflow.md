@@ -968,6 +968,19 @@ adds `appliedFromRun` with `identical: false` if any planned or actual candidate
 file differs from what apply left. Apply is neither verification nor acceptance.
 It also refuses with `RUN_APPROVAL_MISMATCH` when the final run packet was dispatched under a different approval digest; dispatch a fresh run after re-approval.
 
+Apply is all or nothing: when anything fails after the first write, including the
+state save, it restores what it wrote and removes what it created before it
+reports the error. An extra (not allowed) path in a revision candidate is applied
+and shown to the next review exactly like one in a first run. Leave a stray extra
+path out with `--exclude FILE[,FILE]`: it is not written or reviewed, and is listed
+under `applied.excluded`. `--exclude` refuses a path the lineage did not change
+(`APPLY_EXCLUDE_UNKNOWN`) and an allowed path (`APPLY_EXCLUDE_ALLOWED`), writing
+nothing, and never lifts the refusal of a deletion or other ineligible change.
+
+```sh
+tinysdd task apply --id validation --run WORKER_RUN_ID --by operator --exclude src/stray.tmp
+```
+
 After an apply the approval keeps binding the context the worker started from
 (the cited lines of a file apply wrote are read from the first run's starting
 copy), so applying does not stale it and nothing re-approves the new source. Every

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { constants as fsConstants } from 'node:fs';
-import { lstat, open, readFile, readdir } from 'node:fs/promises';
+import { chmod, lstat, open, readFile, readdir, rmdir, unlink } from 'node:fs/promises';
 import {
   assertInternalPath,
   assertPlainObject,
@@ -446,6 +446,15 @@ function validateApplied(id, applied) {
     const normalized = applied.actualPaths.map((path) => normalizeProjectRelative(path, `${label} actual path`));
     if (normalized.some((path, index) => path !== applied.actualPaths[index]) || new Set(normalized).size !== normalized.length) throw tinyError('STATE_MALFORMED', `${label} actualPaths must be canonical and unique`);
   }
+  if (applied.excluded !== undefined) {
+    let canonical = Array.isArray(applied.excluded) && applied.excluded.every((path) => typeof path === 'string');
+    try {
+      canonical &&= applied.excluded.every((path) => normalizeProjectRelative(path, `${label} excluded path`) === path) && new Set(applied.excluded).size === applied.excluded.length;
+    } catch {
+      canonical = false;
+    }
+    if (!canonical) throw tinyError('STATE_MALFORMED', `${label} excluded must be an array of canonical unique paths`);
+  }
   if (!Array.isArray(applied.files)) throw tinyError('STATE_MALFORMED', `${label} files must be an array`);
   for (const file of applied.files) {
     assertPlainObject(file, 'STATE_MALFORMED', `${label} file`);
@@ -555,7 +564,9 @@ function validateState(value) {
     if (task.revisions !== undefined) validateRevisions(id, task.revisions);
     if (task.closure !== undefined) validateClosure(id, task.closure);
     if (task.applied !== undefined) validateApplied(id, task.applied);
-    if (task.review?.candidatePaths !== undefined && task.applied?.actualPaths !== undefined) {
+    // Only an accepted review binds the applied files. A revision or blocked
+    // verdict can precede a later apply whose candidate adds paths.
+    if (task.review?.verdict === 'accepted' && task.review.candidatePaths !== undefined && task.applied?.actualPaths !== undefined) {
       const missing = task.applied.actualPaths.filter((path) => !task.review.candidatePaths.includes(path));
       if (missing.length > 0) throw tinyError('STATE_MALFORMED', `task ${id} review candidatePaths omit applied paths: ${missing.join(', ')}`);
     }
@@ -601,17 +612,25 @@ async function readState(layoutInfo) {
 async function mutateState(projectRoot, callback) {
   const info = await layout(projectRoot, { create: true });
   return withExclusiveLock(info.lock, async () => {
-    const state = await readState(info);
-    const result = await callback(state, info);
-    validateState(state);
-    state.updatedAt = nowIso();
-    if (process.env[SLICE_TEST_REVIEW_TEST_ENV] === '1'
-      && process.env[SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV] === '1') {
-      delete process.env[SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV];
-      throw tinyError('WRITE_FAILED', 'synthetic controller state save failure');
+    // Undo steps a callback registers run, still under the lock, when the
+    // mutation fails after it touched the project, so project and state agree.
+    const undo = [];
+    try {
+      const state = await readState(info);
+      const result = await callback(state, info, (step) => undo.push(step));
+      validateState(state);
+      state.updatedAt = nowIso();
+      if (process.env[SLICE_TEST_REVIEW_TEST_ENV] === '1'
+        && process.env[SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV] === '1') {
+        delete process.env[SLICE_TEST_REVIEW_CONTROLLER_SAVE_FAILURE_ENV];
+        throw tinyError('WRITE_FAILED', 'synthetic controller state save failure');
+      }
+      await atomicWriteJson(info.state, state);
+      return result;
+    } catch (error) {
+      for (const step of undo.reverse()) await step(error);
+      throw error;
     }
-    await atomicWriteJson(info.state, state);
-    return result;
   });
 }
 
@@ -1346,7 +1365,41 @@ function sameContent(left, right) {
   return left.bytes.equals(right.bytes);
 }
 
-async function applyTaskWithinState(root, state, task, { id, by, runId }) {
+// Restores what apply wrote when the apply is not recorded. Raises
+// APPLY_ROLLBACK_FAILED, naming the paths, if the project could not be restored.
+function applyRollback(written, createdDirectories) {
+  return async (cause) => {
+    const failed = [];
+    for (const item of [...written].reverse()) {
+      try {
+        if (item.previous === null) await unlink(item.absolute);
+        else {
+          await atomicWriteFile(item.absolute, item.previous.bytes, { mode: item.previous.mode });
+          await chmod(item.absolute, item.previous.mode);
+        }
+      } catch (error) {
+        if (!(item.previous === null && error?.code === 'ENOENT')) failed.push(item.path);
+      }
+    }
+    for (const directory of [...createdDirectories].sort((left, right) => right.length - left.length)) {
+      await rmdir(directory).catch(() => {});
+    }
+    if (failed.length > 0) {
+      throw tinyError('APPLY_ROLLBACK_FAILED', `task apply failed (${cause?.code ?? 'error'}) and could not restore: ${failed.join(', ')}`, { paths: failed, cause: cause?.code });
+    }
+  };
+}
+
+async function missingDirectories(root, absolute) {
+  const missing = [];
+  for (let directory = dirname(absolute); directory.startsWith(`${root}/`); directory = dirname(directory)) {
+    if (await lstat(directory).then(() => true, (error) => (error?.code === 'ENOENT' ? false : Promise.reject(error)))) break;
+    missing.push(directory);
+  }
+  return missing;
+}
+
+async function applyTaskWithinState(root, state, task, { id, by, runId, exclude = [], onAbort = () => {} }) {
   if (!RUN_ID_PATTERN.test(runId)) throw tinyError('INVALID_RUN_ID', 'run id must be a TinySDD worker run id such as worker-2026-01-01T00-00-00-000Z-0a1b2c3d');
   const lineage = await loadApplyLineage(root, task, runId);
   const rootRun = lineage[0];
@@ -1359,9 +1412,18 @@ async function applyTaskWithinState(root, state, task, { id, by, runId }) {
   // write. A revision's workspaces carry the project held at its dispatch;
   // only the retained lineage union is applicable.
   const recorded = new Set(lineage.flatMap((run) => run.result.changedPaths.map((change) => change.path)));
+  const unknown = exclude.filter((path) => !recorded.has(path));
+  if (unknown.length > 0) {
+    throw tinyError('APPLY_EXCLUDE_UNKNOWN', `--exclude names paths run ${finalRun.id} did not change: ${unknown.join(', ')}; nothing was written`, { paths: unknown, runId: finalRun.id });
+  }
+  const excludedAllowed = exclude.filter((path) => task.allow.includes(path));
+  if (excludedAllowed.length > 0) {
+    throw tinyError('APPLY_EXCLUDE_ALLOWED', `--exclude applies only to extra paths, not allowed paths of task ${id}: ${excludedAllowed.join(', ')}; nothing was written`, { paths: excludedAllowed, runId: finalRun.id });
+  }
+  const applicable = [...recorded].filter((path) => !exclude.includes(path)).sort();
   const plan = [];
   const conflicts = [];
-  for (const path of [...recorded].sort()) {
+  for (const path of applicable) {
     const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
     const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
     if (sameContent(before, after)) continue;
@@ -1372,7 +1434,7 @@ async function applyTaskWithinState(root, state, task, { id, by, runId }) {
       if (sameContent(current, after)) applyStatus = 'already-applied';
       else conflicts.push(path);
     }
-    plan.push({ path, absolute, change: after === null ? 'deleted' : before === null ? 'created' : 'modified', after, digest: after === null ? null : sha256(after.bytes), status: applyStatus });
+    plan.push({ path, absolute, change: after === null ? 'deleted' : before === null ? 'created' : 'modified', after, previous: current, digest: after === null ? null : sha256(after.bytes), status: applyStatus });
   }
   if (conflicts.length > 0) {
     throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
@@ -1400,21 +1462,37 @@ async function applyTaskWithinState(root, state, task, { id, by, runId }) {
   }
   // The digest below reads every allowed file; refuse an unreadable or
   // symlinked one now rather than after the writes.
-  await snapshotProjectFiles(root, [...new Set([...task.allow, ...(task.protect ?? []), ...recorded])]);
-  for (const item of plan) {
-    if (item.status !== 'written') continue;
-    await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
-  }
-  task.applied = {
+  await snapshotProjectFiles(root, [...new Set([...task.allow, ...(task.protect ?? []), ...applicable])]);
+  const actualPaths = [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort();
+  const applied = {
     runId: finalRun.id,
     rootRunId: rootRun.id,
     appliedAt: nowIso(),
     by,
-    allowedDigest: await allowedFilesDigest(root, task.allow),
-    actualPaths: [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort(),
-    actualDigest: await allowedFilesDigest(root, [...new Set([...task.allow, ...plan.map((item) => item.path)])].sort()),
+    allowedDigest: '0'.repeat(64),
+    actualPaths,
+    actualDigest: '0'.repeat(64),
     files: plan.map((item) => ({ path: item.path, change: item.change, sha256: item.digest, status: item.status })),
+    ...(exclude.length > 0 ? { excluded: [...exclude] } : {}),
   };
+  // Refuse a record the state would reject before the first write.
+  const probe = structuredClone(state);
+  probe.tasks[id].applied = applied;
+  validateState(probe);
+  const toWrite = plan.filter((item) => item.status === 'written');
+  const createdDirectories = new Set();
+  for (const item of toWrite) {
+    if (item.previous === null) for (const directory of await missingDirectories(root, item.absolute)) createdDirectories.add(directory);
+  }
+  const written = [];
+  onAbort(applyRollback(written, createdDirectories));
+  for (const item of toWrite) {
+    written.push(item);
+    await atomicWriteFile(item.absolute, item.after.bytes, { mode: item.after.mode });
+  }
+  applied.allowedDigest = await allowedFilesDigest(root, task.allow);
+  applied.actualDigest = await allowedFilesDigest(root, actualPaths);
+  task.applied = applied;
   return { task: publicTask(task, await inspectTask(root, state, task)), applied: structuredClone(task.applied) };
 }
 
@@ -1422,14 +1500,15 @@ export async function applyTask(projectRoot, options = {}) {
   const id = validateTaskId(options.id);
   const by = requireText(options.by, 'apply by');
   const runId = requireText(options.run, 'run id');
+  const exclude = options.exclude === undefined ? [] : normalizeTaskPaths(options.exclude, 'exclude');
   const root = await canonicalProjectRoot(projectRoot);
-  return mutateState(root, async (state) => {
+  return mutateState(root, async (state, _info, onAbort) => {
     if (!Object.hasOwn(state.tasks, id)) throw tinyError('TASK_NOT_FOUND', `unknown task: ${id}`);
     const task = state.tasks[id];
     assertOpen(task);
     const status = await inspectTask(root, state, task);
     if (status.status !== 'ready') throw tinyError('TASK_NOT_READY', `task ${id} is ${status.status}`, { status: status.status, blockedBy: status.blockedBy });
-    return withSliceTestApplyGate(root, { id, run: runId }, () => applyTaskWithinState(root, state, task, { id, by, runId }));
+    return withSliceTestApplyGate(root, { id, run: runId }, () => applyTaskWithinState(root, state, task, { id, by, runId, exclude, onAbort }));
   });
 }
 

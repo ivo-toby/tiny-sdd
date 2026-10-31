@@ -1401,6 +1401,22 @@ candidate file differs from what apply left. Applying is not verification or
 acceptance.
 It also refuses with `RUN_APPROVAL_MISMATCH` when the final run packet was dispatched under a different approval digest; dispatch a fresh run after re-approval.
 
+Apply is all or nothing: if anything fails after the first file is written,
+including saving the controller state, apply restores the files it wrote and
+removes the files and directories it created before it reports the error. An
+extra (not allowed) path in a revision candidate is applied and shown to the next
+review like one in a first run. To leave a stray extra path out, name it with
+`--exclude`; it is not written, not reviewed and listed under `applied.excluded`:
+
+```sh
+tinysdd task apply --id first-change --run WORKER_RUN_ID --by ivo \
+  --exclude changes/004-feature-core/.keep-check-trigger
+```
+
+`--exclude` refuses a path the lineage did not change (`APPLY_EXCLUDE_UNKNOWN`)
+and an allowed path of the task (`APPLY_EXCLUDE_ALLOWED`), writing nothing. It
+does not lift the refusal of a deletion or other ineligible change.
+
 After an apply the approval keeps binding the context the worker started from:
 the cited lines of a file apply wrote are read from the first run's starting copy,
 so applying does not make the approval stale, and nothing re-approves the new
