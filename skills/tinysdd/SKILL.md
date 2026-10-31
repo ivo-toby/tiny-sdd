@@ -16,9 +16,12 @@ same workflow for any harness: specify, research, plan, tasks/slices, implement,
 verify and review.
 
 For a fresh project or worker runtime, load the harness-independent
-[setup skill](assets/setup/SKILL.md) first. It connects the source checkout,
-explicit skill loading, project initialization, Pi/provider/model preflight and
-the bounded readiness smoke without changing controller approval semantics.
+[setup skill](assets/setup/SKILL.md) first. It covers the global CLI install
+(or a source checkout), explicit skill loading, project initialization,
+Pi/provider/model preflight and the bounded readiness smoke without changing
+controller approval semantics. After upgrading the CLI, run `tinysdd skills
+update` and `tinysdd profiles update` (rerunning `setup` reports a conflict)
+and start a fresh session; see references/cli-workflow.md.
 
 ## Constitution entry check
 
@@ -145,9 +148,11 @@ existing task review, task apply and feature accept retain their authority.
 
 The #81 transition is currently an offline contract. It does not invoke Jev or
 a provider and it supplies no threshold, revision cap or uncertain/unavailable
-default. A negative assessment may enter a bounded revision only under explicit
-operator policy; every positive assessment requires independent strong review of
-the identical input digest; exhaustion escalates. Missing, uncertain,
+default; of the active slice-tests commands, only `slice-tests assess` calls a
+provider, and only the explicitly configured one. A negative assessment may
+enter a bounded revision only under explicit operator policy; every positive
+assessment requires independent strong review of the identical input digest;
+exhaustion escalates. Missing, uncertain,
 unavailable, stale or mismatched evidence cannot approve or accept.
 
 Use the existing usage schema and canonical phase names: specify, research,
@@ -174,8 +179,11 @@ dependencies, record caller approval, and inspect next. Implement with the
 host's normal tools or dispatch one explicit named worker. Never silently fall
 back to another model. Selected skills must match available tools; the first
 worker adapter does not provide MCP or arbitrary extensions. It returns a
-disposable candidate and patch without executing tests or applying changes to
-the source project. Instructions alone do not enforce write scope.
+disposable candidate and patch without applying changes to the source project.
+A Pi worker with declared checks and an available host runner can call the
+fixed `run_checks` tool, which runs only those checks in a separate sandbox;
+OpenCode workers have no `run_checks`. Those results are worker feedback, not
+verification. Instructions alone do not enforce write scope.
 
 To choose between the sandboxed worker and implementing in a foreign harness
 (Claude Code, OpenCode or interactive Pi), follow the "Harness or sandboxed
@@ -204,8 +212,9 @@ and revise the brief with the user before proceeding.
 
 Inspect worker patches, including out-of-scope changes, and verify in an
 appropriate disposable environment before applying them. Never execute
-generated code in a credential-bearing inference environment. Worker checks
-are unrun until the caller executes them separately. Apply only reviewed
+generated code in a credential-bearing inference environment. Worker-observed
+checks are labelled `acceptanceEvidence: false`; treat checks as unrun for
+acceptance until the caller executes them separately. Apply only reviewed
 changes under the user's authority, retain review evidence, then explicitly
 record acceptance. Recheck stale decisions if brief, evidence or prerequisite
 content changes.

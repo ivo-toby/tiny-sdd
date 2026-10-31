@@ -11,9 +11,10 @@ not implement the feature, invent product decisions, create approvals, invoke a
 provider, or replace the controller.
 
 For a new project or runtime, load the harness-independent [setup
-skill](../../../setup/SKILL.md) first. This router assumes the source
-checkout, project configuration, Pi route and required sandbox have already
-been discovered; it does not replace setup or readiness evidence.
+skill](../../../setup/SKILL.md) first. This router assumes the installed
+`tinysdd` CLI (or a source checkout), project configuration, Pi route and
+required sandbox have already been discovered; it does not replace setup or
+readiness evidence.
 
 Before asking which change to implement or what change to specify, run the
 constitution entry check from the product skill. Honor an explicitly selected
@@ -69,8 +70,9 @@ the sibling `references/` and `templates/` directories intact so its relative
 links continue to resolve; register the router or explicit phase route rather
 than assuming nested directories become commands automatically. Those assets
 are prompt guidance only: they do not include the TinySDD checkout's CLI,
-scripts, parsers, schemas or docs. Keep a canonical TinySDD checkout root and
-target project root available when running the recipes below.
+scripts, parsers, schemas or docs. Keep the canonical target project root
+available when running the recipes below; they use the installed `tinysdd`
+CLI.
 
 ## Preparation rules
 

@@ -14,7 +14,7 @@ requirement IDs throughout the preparation:
 | specify | proposal.md with observable requirements, clarifications, decisions and UNKNOWN facts | operator reviews the requirements in the conversation |
 | research | cited source excerpts in a context manifest and the recorded research inputs | the configured human phase record gate, when enabled |
 | plan | design.md, spec deltas and a coherent change.json | plan entry is only a phase record; it is not plan artifact approval |
-| tasks/slices | slice descriptors, briefs, context and checks for a DAG | read-only validate-change.mjs; then operator reviews task packets |
+| tasks/slices | slice descriptors, briefs, context and checks for a DAG | read-only `tinysdd change validate`; then operator reviews task packets |
 | implement | one freshly approved task packet or exported slice bundle | existing task approve is the implement gate |
 | verify/review | observed checks, candidate review and feature integration proof | existing task review, task apply and feature accept remain authoritative |
 
@@ -227,11 +227,13 @@ paths. The feature tests must be protected in every active accepted task:
 }
 ~~~
 
-feature accept passes this configured command through the existing safe Linux
-host runner against retained project and dependency bytes. It refuses missing,
+feature accept passes this configured command through the existing safe host
+check runner (bubblewrap on Linux, Seatbelt on macOS) against retained project
+and dependency bytes. It refuses missing,
 failed, timed-out, stale or unavailable integration evidence; a human saying
 that the feature passed is not a substitute. Symlinks and special files in
-retained trees are refused. macOS currently reports the runner unavailable.
+retained trees are refused. A host without a usable runner reports it
+unavailable.
 
 The command must exercise the real entrypoint and fail when the feature is
 disconnected from that entrypoint. A green direct-import slice test does not

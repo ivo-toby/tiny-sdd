@@ -13,8 +13,8 @@ Use the [context manifest template](../templates/context.json) and the shared
 [phase workflow reference](../references/phase-workflow.md); preserve this
 directory layout when installing the phase skill in another harness. This file
 is prompt guidance only: a standalone install does not include the TinySDD CLI,
-phase handler, schemas or repository docs. Keep the checkout and target roots
-from the phase workflow reference available for the human gate.
+phase handler, schemas or repository docs. Keep the target root from the phase
+workflow reference available for the human gate.
 
 When a change adopts a constitution, load
 [the constitution skill](../../../../constitution/SKILL.md) and cite the approved
