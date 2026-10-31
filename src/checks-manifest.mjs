@@ -107,8 +107,9 @@ export function parseChecksManifest(text) {
 // typechecker. Test runners such as Vitest and tsx strip types, so a green
 // test run does not prove the slice compiles.
 const TYPECHECK_BASENAMES = new Set(['tsc', 'tsgo', 'vue-tsc', 'svelte-check']);
-// `tsc` is matched as a word so ids like `lint-tsconfig` are not treated as a typecheck.
-const TYPECHECK_ID = /type[-_]?check|\btsc\b/u;
+// `tsc` is matched with explicit [-_] boundaries so `tsc_strict` and `run_tsc`
+// are typechecks but `lint-tsconfig` is not.
+const TYPECHECK_ID = /type[-_]?check|(^|[-_])tsc([-_]|$)/u;
 
 function argvBaseRunsTypecheck(argument) {
   const base = argument.split(/[\\/]/u).pop();

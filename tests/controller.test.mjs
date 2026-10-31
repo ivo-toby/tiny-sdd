@@ -479,6 +479,8 @@ test('typecheck detection recognizes named and binary typecheck checks', () => {
   assert.equal(checkRunsTypecheck({ id: 'typecheck', argv: ['node', 'scripts/typecheck.mjs'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'tsc', argv: ['node', 'x'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'tsc-strict', argv: ['node', 'x'] }), true);
+  assert.equal(checkRunsTypecheck({ id: 'tsc_strict', argv: ['node', 'x'] }), true);
+  assert.equal(checkRunsTypecheck({ id: 'run_tsc', argv: ['node', 'x'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node_modules/.bin/tsc', '--noEmit'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node', 'node_modules/typescript/bin/tsc', '--noEmit'] }), true);
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node', 'node_modules/typescript/lib/tsc.js', '--noEmit'] }), true);
