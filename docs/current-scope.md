@@ -44,10 +44,9 @@ GitHub issues track open work. In short, `main` has:
   `tool_limit` run can be the base of a revision. Registry profiles are
   selected by `init --model`; their limits are defaults that worker limits
   override.
-- **Checks.** The host check runner works on Linux and macOS: Pi workers get
-  `run_checks`, and `feature accept` runs the configured integration check.
-  OpenCode workers do not have `run_checks` yet
-  ([#182](https://github.com/ivo-toby/tiny-sdd/issues/182)). `worker stop` is
+- **Checks.** The host check runner works on Linux and macOS: Pi and OpenCode
+  workers get `run_checks` (OpenCode through a local TinySDD plugin, #182), and
+  `feature accept` runs the configured integration check. `worker stop` is
   Linux-only.
 - **Evidence.** Benchmarks and qualification, usage accounting, slice-test
   assessment and phase records. Harness adapters for Claude Code, OpenCode and
