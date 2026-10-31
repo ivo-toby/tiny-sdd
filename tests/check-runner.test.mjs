@@ -171,6 +171,7 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(CHECK_LIMIT_DEFAULTS.scratchBytes, 512 * MIB);
     assert.equal(CHECK_LIMIT_DEFAULTS.maxProcesses, 512);
     assert.deepEqual(result.sandbox, {
+      runner: 'linux-bubblewrap',
       bwrap: result.sandbox.bwrap,
       prlimit: result.sandbox.prlimit,
       network: 'none',
@@ -1031,7 +1032,7 @@ describe('check runner', { skip: SKIP }, () => {
     });
 
     test('checkRunnerAvailable says why it is unavailable', async () => {
-      assert.deepEqual(checkRunnerAvailable(), { available: true, reason: null });
+      assert.deepEqual(checkRunnerAvailable(), { available: true, reason: null, runner: 'linux-bubblewrap' });
       const missing = checkRunnerAvailable({ bwrapPath: '/nonexistent/bwrap' });
       assert.equal(missing.available, false);
       assert.match(missing.reason, /bubblewrap.*\/nonexistent\/bwrap/u);
@@ -1063,7 +1064,7 @@ describe('check runner', { skip: SKIP }, () => {
     });
 
     test('a caller that is not root does not need setpriv', { skip: AS_ROOT ? 'a root caller needs setpriv' : false }, async () => {
-      assert.deepEqual(checkRunnerAvailable({ setprivPath: '/nonexistent/setpriv' }), { available: true, reason: null });
+      assert.deepEqual(checkRunnerAvailable({ setprivPath: '/nonexistent/setpriv' }), { available: true, reason: null, runner: 'linux-bubblewrap' });
       const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
       const result = await run(candidate, {}, { setprivPath: '/nonexistent/setpriv' });
       assert.equal(result.exitCode, 0, result.output.text);
