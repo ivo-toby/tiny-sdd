@@ -1042,6 +1042,13 @@ signal. Stopping an already stopping launch only waits.
 Every non-completed worker result includes `candidateState`: the number of
 allowed paths changed and the sorted allowed paths left untouched. A non-completed
 result with changed paths is a candidate for review, not a reason to discard it.
+A scope-clean `timeout` or `tool_limit` run can be the `--base-run` of a
+revision, so the next worker finishes the retained candidate instead of starting
+over. Its retained evidence is verified the same way as a completed base, and
+the revision records the incomplete outcome in `result.baseRun.outcome` (and on
+the matching `baseRun.chain` entry). `apply` still refuses the incomplete run
+itself; only a completed revision built on it applies. Other outcomes
+(`failed`, `stopped`, `no_progress`, output-limit stops) are not valid bases.
 
 ## Run an isolated benchmark
 

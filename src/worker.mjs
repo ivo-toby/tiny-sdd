@@ -36,6 +36,8 @@ const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
 const MAX_SESSION_BYTES = 16 * 1024 * 1024;
 const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
+// A run cut off by a limit keeps a verifiable candidate; apply still requires a completed head.
+const REVISION_BASE_OUTCOMES = new Set(["completed", "timeout", "tool_limit"]);
 const CONTROLLER_TASKS_PREFIX = ".tinysdd/tasks/";
 const CONTROLLER_REVIEWS_PREFIX = ".tinysdd/reviews/";
 const PROJECT_SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
@@ -434,8 +436,8 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId,
       if (error instanceof WorkerError) throw error;
       fail(`Cannot load base run ${currentId}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (result?.outcome !== "completed" || !Array.isArray(result?.changedPaths) || !Array.isArray(result?.scopeViolations) || result.scopeViolations.length > 0) {
-      fail("base run must be a completed, scope-clean TinySDD worker result");
+    if (!REVISION_BASE_OUTCOMES.has(result?.outcome) || !Array.isArray(result?.changedPaths) || !Array.isArray(result?.scopeViolations) || result.scopeViolations.length > 0) {
+      fail("base run must be a completed, timeout or tool_limit, scope-clean TinySDD worker result");
     }
     if (result.taskId !== taskId) fail("base run lineage belongs to a different task");
     if (currentId === baseRunId) immediateRuntime = await readOptionalRuntime(runDirectory);
@@ -469,14 +471,25 @@ async function resolveRevisionBase(projectRoot, baseRunId, allowedPaths, taskId,
       return path;
     });
     if (paths.length === 0) fail("base run has no reusable source changes");
-    chain.unshift({ id: currentId, candidateRoot: join(runDirectory, "workspace-after"), paths: [...new Set(paths)].sort() });
+    chain.unshift({ id: currentId, outcome: result.outcome, candidateRoot: join(runDirectory, "workspace-after"), paths: [...new Set(paths)].sort() });
     const parentId = result?.baseRun?.id;
     if (parentId === undefined || parentId === null) break;
     if (typeof parentId !== "string" || !SAFE_RUN_ID.test(parentId)) fail("base run lineage has an invalid parent");
     currentId = parentId;
   }
   const paths = [...new Set(chain.flatMap((entry) => entry.paths))].sort();
-  return { id: baseRunId, chain, paths, runtime: immediateRuntime };
+  return { id: baseRunId, outcome: chain.at(-1).outcome, chain, paths, runtime: immediateRuntime };
+}
+
+// Completed lineages keep their historical shape; an incomplete link names its outcome.
+function revisionLineageRecord(base, { alwaysChain = false } = {}) {
+  const incomplete = (outcome) => (outcome === "completed" ? {} : { outcome });
+  return {
+    id: base.id,
+    ...incomplete(base.outcome),
+    paths: base.paths,
+    ...(alwaysChain || base.chain.length > 1 ? { chain: base.chain.map(({ id, outcome, paths }) => ({ id, ...incomplete(outcome), paths })) } : {}),
+  };
 }
 
 // An escalated run names the earlier run of the same task that a weaker worker failed.
@@ -1720,11 +1733,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       } : {}),
     });
     await writeJson(join(artifactDir, "before-snapshot.json"), before);
-    if (revisionBase) await writeJson(join(artifactDir, "base-run.json"), {
-      id: revisionBase.id,
-      paths: revisionBase.paths,
-      chain: revisionBase.chain.map(({ id, paths }) => ({ id, paths })),
-    });
+    if (revisionBase) await writeJson(join(artifactDir, "base-run.json"), revisionLineageRecord(revisionBase, { alwaysChain: true }));
     if (frozenBaseline) await writeJson(join(artifactDir, "baseline-run.json"), { id: frozenBaseline.id });
     const sandbox = runtimeChoice.test ? "test" : runtimeChoice.sandbox === "seatbelt" ? "seatbelt" : "bubblewrap";
     const nativePaths = sandbox !== "bubblewrap";
@@ -1841,13 +1850,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       taskId: normalizedPacket.taskId,
       runtimeScope: { ...normalizedPacket.runtimeScope },
       runChecks,
-      ...(revisionBase ? {
-        baseRun: {
-          id: revisionBase.id,
-          paths: revisionBase.paths,
-          ...(revisionBase.chain.length > 1 ? { chain: revisionBase.chain.map(({ id, paths }) => ({ id, paths })) } : {}),
-        },
-      } : {}),
+      ...(revisionBase ? { baseRun: revisionLineageRecord(revisionBase) } : {}),
       ...(frozenBaseline ? { baselineRun: { id: frozenBaseline.id } } : {}),
       ...(checkChannel ? { workerObservedChecks: { source: "worker run_checks", acceptanceEvidence: false, runs: checkChannel.runs } } : {}),
       taskShape: { allowedFiles: selectedAllowed.length, ...contextSizeMetrics(compiledContext) },

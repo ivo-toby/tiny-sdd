@@ -653,6 +653,12 @@ sending a signal. Stopping an already stopping launch only waits.
 Every non-completed worker result includes `candidateState`, which reports the
 allowed paths changed and the sorted allowed paths left untouched. If any
 allowed path changed, review the candidate before discarding it.
+A scope-clean `timeout` or `tool_limit` run is also a valid `--base-run`: the
+revision continues from its retained candidate and records the incomplete
+outcome in `result.baseRun.outcome` (and on its `baseRun.chain` entry). `apply`
+still refuses the incomplete run itself; only a completed revision built on it
+applies. `failed`, `stopped`, `no_progress` and output-limit runs are refused as
+bases.
 
 The offline [research selection scorer](../../../docs/research-scoring.md) is a
 preparation helper for the research phase. It compiles a candidate and a gold
@@ -861,7 +867,8 @@ read the failure. `not_run` checks cannot pass or qualify a worker. The reader s
 coverage, check IDs, definition digests, config identity and artifact hashes,
 and rejects edited or missing roster records.
 
-For a review revision, reuse a prior completed, scope-clean candidate explicitly:
+For a review revision, reuse a prior completed (or `timeout`/`tool_limit`),
+scope-clean candidate explicitly:
 `tinysdd worker start --task validation --worker qwen --base-run WORKER_RUN_ID`.
 TinySDD overlays every retained eligible actual change from that prior run into
 the new disposable workspace and records the lineage; it never changes the
