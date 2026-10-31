@@ -11,6 +11,7 @@ import {
   assertPinnedVersion,
   buildOpenCodeConfig,
   openCodeArguments,
+  openCodePermissions,
   openCodeEnvironment,
   openCodeVersion,
   preflightOpenCodeWorker,
@@ -98,8 +99,11 @@ function inferenceTarget({ prepared }) {
 // else is written into the sandbox, so there is no separate routing step.
 async function routeInference() {}
 
-/** The configuration OpenCode reads, built after the relay exists: its URL and the per-run relay token. */
-function inferenceEnvironment({ prepared, worker, baseUrl, token }) {
+/**
+ * The configuration OpenCode reads, built after the relay exists: its URL and the per-run relay
+ * token, and the run_checks plugin directory as the sandbox sees it when checks are available.
+ */
+function inferenceEnvironment({ prepared, worker, baseUrl, token, checkExtension = null }) {
   const { contextWindow, maxTokens } = prepared.metadata;
   return {
     [OPENCODE_CONFIG_CONTENT_ENV]: JSON.stringify(buildOpenCodeConfig({
@@ -109,8 +113,15 @@ function inferenceEnvironment({ prepared, worker, baseUrl, token }) {
       apiKey: token,
       contextLimit: contextWindow,
       outputLimit: maxTokens,
+      checkPlugin: checkExtension,
     })),
   };
+}
+
+// The facts prepared before the run know nothing of checks; the run's config adds
+// the check plugin and its rule when checks are available, so the record does too.
+function runnerFacts(facts, { checks }) {
+  return { ...facts, permissions: openCodePermissions({ checks }), plugins: checks ? ["run-checks-plugin"] : [] };
 }
 
 function responseTokenLimit(metadata) {
@@ -209,9 +220,9 @@ export const openCodeRunner = Object.freeze({
   inferenceTarget,
   routeInference,
   inferenceEnvironment,
+  runnerFacts,
   responseTokenLimit,
   parseEvents,
-  // No check tool is wired into OpenCode yet, so declared checks are reported unavailable with this reason.
-  checks: false,
-  checksUnavailableReason: "run_checks is unavailable for the opencode worker runner: the OpenCode runner does not provide the TinySDD check tool yet",
+  // run_checks is a local OpenCode plugin (src/run-checks-opencode-plugin.mjs).
+  checkTool: "opencode-plugin",
 });

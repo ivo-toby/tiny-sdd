@@ -216,6 +216,7 @@ test('Seatbelt exposes the staged anchor to trusted extension code without grant
       piExecutable: '/opt/node/lib/node_modules/pi/dist/cli.js',
       piRoot: '/opt/node/lib/node_modules/pi',
     }),
+    checkChannel: null,
   });
   assert.match(profile, /\(allow file-read\*[^\n]*\(subpath "\/private\/tmp\/compaction-bundle"\)/u);
   assert.doesNotMatch(profile, /file-write\*[^\n]*compaction-bundle/u);

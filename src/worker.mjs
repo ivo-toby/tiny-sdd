@@ -10,7 +10,7 @@ import { workerRunner } from "./runners/index.mjs";
 import { WorkerError, executablePath, fail, writeJson } from "./worker-host.mjs";
 import { checkRunnerAvailable } from "./check-runner.mjs";
 import { parseChecksManifest } from "./checks-manifest.mjs";
-import { createCheckChannel, identifyDependencyMounts } from "./check-channel.mjs";
+import { CHECK_TOOLS, createCheckChannel, identifyDependencyMounts } from "./check-channel.mjs";
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { startInferenceRelay } from "./inference-relay.mjs";
@@ -971,7 +971,9 @@ async function chooseRuntime(runtime, runner) {
 function probeCheckRunner(runtimeChoice, runtime, runner) {
   // A runner without a TinySDD check tool reports declared checks unavailable,
   // even when a test injects a check runner.
-  if (runner.checks === false) return { available: false, reason: runner.checksUnavailableReason, testInjected: false };
+  if (!Object.hasOwn(CHECK_TOOLS, runner.checkTool ?? "")) {
+    return { available: false, reason: `run_checks is unavailable for the ${runner.type} worker runner: it provides no TinySDD check tool`, testInjected: false };
+  }
   if (runtimeChoice.test) {
     if (typeof runtime?.checkRunner === "function") return { available: true, reason: null, testInjected: true };
     const availability = checkRunnerAvailable();
@@ -1166,7 +1168,7 @@ export function buildBubblewrapArgs({ workspace, invocation, checkChannel, compa
   for (const mount of invocation.mounts) if (mount.writable) args.push("--dir", mount.target, "--bind", mount.source, mount.target);
   args.push("--chdir", "/work");
   args.push("--dir", "/opt/tinysdd", "--ro-bind", inference.forwarder, SANDBOX_FORWARDER, "--ro-bind", inference.socketDir, SANDBOX_INFERENCE_DIR);
-  if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--ro-bind", checkChannel.extension, "/opt/tinysdd/run-checks.mjs");
+  if (checkChannel) args.push("--dir", "/tinysdd", "--bind", checkChannel.requests, "/tinysdd/requests", "--ro-bind", checkChannel.responses, "/tinysdd/responses", "--ro-bind", checkChannel.extension, checkChannel.extensionTarget ?? CHECK_TOOLS["pi-extension"].target);
   if (compactionBundle) args.push("--dir", "/opt/tinysdd/compaction", "--ro-bind", compactionBundle.directory, "/opt/tinysdd/compaction");
   // The only writable mounts are the disposable candidate and the runner's temporary state.
   for (const [name, value] of Object.entries(invocation.env)) args.push("--setenv", name, value);
@@ -1504,7 +1506,7 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
     warnings: Array.isArray(qualification.warnings) ? [...qualification.warnings] : [],
   };
   const extensions = [
-    ...(runChecks?.available ? ["run-checks.mjs"] : []),
+    ...(runChecks?.available ? [CHECK_TOOLS[runner.checkTool].path] : []),
     ...(compaction?.enabled ? ["compaction-extension.mjs"] : []),
   ];
   return {
@@ -1562,7 +1564,9 @@ function runtimeMetadata(runner, prepared, runtime, pi, bwrap, worker, profile, 
     generatedCredentialReferenceCount: prepared.metadata.generatedCredentialReferenceCount,
     ...(qualificationValue === undefined ? {} : { qualification: qualificationValue, warnings: qualificationValue.warnings }),
     compaction,
-    ...(prepared.metadata.runtimeFacts ? { runnerFacts: prepared.metadata.runtimeFacts } : {}),
+    ...(prepared.metadata.runtimeFacts
+      ? { runnerFacts: runner.runnerFacts ? runner.runnerFacts(prepared.metadata.runtimeFacts, { checks: runChecks?.available === true }) : prepared.metadata.runtimeFacts }
+      : {}),
   };
 }
 
@@ -1726,7 +1730,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     await writeFile(join(artifactDir, "prompt.txt"), prompt.rendered, { mode: 0o600 });
     if (compiledContext) await writeFile(join(artifactDir, "compiled-context.md"), compiledContext.rendered, { mode: 0o600 });
     if (checkManifest && checkAvailability.available) {
-      checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), dependencies: checkDependencies, ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
+      checkChannel = await createCheckChannel({ manifest: checkManifest, sourceRoot, workspace, artifactDir, tempRoot, allowedPaths: selectedAllowed, maxCheckRuns: limits.maxCheckRuns, nodeRoot: dirname(dirname(process.execPath)), dependencies: checkDependencies, tool: runner.checkTool, ...(runtimeChoice.test && runtime?.checkRunner ? { runner: runtime.checkRunner } : {}) });
     }
     const runChecks = runChecksMetadata({ declared: checksDeclared, availability: checkAvailability, maxCheckRuns: limits.maxCheckRuns, checkChannel, baseline: frozenBaseline ?? revisionBase });
     if (prepared.metadata.compaction?.enabled) {
@@ -1760,7 +1764,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     const sandbox = runtimeChoice.test ? "test" : runtimeChoice.sandbox === "seatbelt" ? "seatbelt" : "bubblewrap";
     const nativePaths = sandbox !== "bubblewrap";
     // Extension paths are where the sandbox wrapper mounts them, not runner choices.
-    const checkExtension = checkChannel ? (nativePaths ? checkChannel.extension : "/opt/tinysdd/run-checks.mjs") : null;
+    const checkExtension = checkChannel ? (nativePaths ? checkChannel.extension : checkChannel.extensionTarget) : null;
     const compactionExtension = compactionBundle ? (nativePaths ? compactionBundle.entryPath : "/opt/tinysdd/compaction/entry.mjs") : null;
     sessionHostPath = runner.sessionHostPath(prepared);
     const invocation = await runner.buildInvocation({ sandbox, prepared, worker, profile: resolvedProfile.value, prompt, executable: runtimeChoice.executable, node: runtimeChoice.node, packageRoot: piPackage.root, checkExtension, compactionExtension });
@@ -1821,7 +1825,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     }
     if (runner.inferenceEnvironment) {
       // Runners whose configuration names the relay get that configuration here, after the relay exists.
-      childEnv = { ...childEnv, ...runner.inferenceEnvironment({ prepared, worker, baseUrl: inferenceUrl, token: inferenceRelay?.token ?? TEST_INFERENCE_TOKEN }) };
+      childEnv = { ...childEnv, ...runner.inferenceEnvironment({ prepared, worker, baseUrl: inferenceUrl, token: inferenceRelay?.token ?? TEST_INFERENCE_TOKEN, checkExtension }) };
     }
     if (checkChannel) {
       childEnv.TINYSDD_CHECK_CHANNEL = nativePaths ? checkChannel.root : "/tinysdd";

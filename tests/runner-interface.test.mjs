@@ -69,6 +69,7 @@ test('Seatbelt wraps the Pi invocation into the same profile as before the inter
       piExecutable: '/opt/node/lib/node_modules/pi/dist/cli.js',
       piRoot: '/opt/node/lib/node_modules/pi',
     }),
+    checkChannel: null,
   });
   assert.equal(profile, MAIN_SEATBELT_PROFILE);
 });
