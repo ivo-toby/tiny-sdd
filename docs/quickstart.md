@@ -721,8 +721,14 @@ permission is exhausted. The handoff lists observed checks separately from
 checks still unrun. A slice's checks file may declare several named checks
 (for example `test` and `lint`), each with its own argv and timeout; the prompt
 lists each declared check by id, and `run_checks`, `checks.jsonl`,
-`workerObservedChecks` and review evidence report every result by id. This
-contract does not add a shell or arbitrary execution
+`workerObservedChecks` and review evidence report every result by id. For a
+TypeScript/Vue/Svelte slice, declare a typecheck check (`tsc --noEmit` or the
+repository equivalent) alongside the test and lint checks: test runners such as
+Vitest and tsx strip types, so a green test run does not prove the slice
+compiles. `change validate` warns when a slice writes typed files and no
+declared check runs a typecheck; `task add`, `task update` and `task approve`
+warn for the same condition on a task's allowed files (only when a checks file
+is declared). This contract does not add a shell or arbitrary execution
 tool; an unavailable runner keeps the existing no-check prompt and Pi tool
 arguments.
 
