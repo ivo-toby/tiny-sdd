@@ -513,8 +513,8 @@ A worker's `type` is `pi` or `opencode` (`init` writes `pi` workers; add an
 OpenCode 2.1.4 at `~/.opencode/bin/opencode`. A `pi` worker must not
 set it. Declared checks give an OpenCode worker `run_checks` through a local
 TinySDD plugin (the only plugin, one extra `run_checks` allow rule); OpenCode
-runs one step's tool calls concurrently, so a check waits (best effort) until
-no write call of its message is in flight. Qualifications recorded while
+runs one step's tool calls concurrently, so a check waits (best effort, at
+most 3 seconds) until no write call of its message is in flight. Qualifications recorded while
 `run_checks` was unavailable (OpenCode, or macOS before the Seatbelt check
 runner) no longer match and need a new qualification. It has no deterministic
 compaction. On Linux

@@ -18,6 +18,7 @@ import { buildMacosSandboxProfile } from "../src/macos-sandbox.mjs";
 import { openCodeBubblewrapInvocation, openCodeRunner, openCodeSeatbeltInvocation, parseEvents } from "../src/runners/opencode.mjs";
 import { piBubblewrapInvocation } from "../src/runners/pi.mjs";
 import { buildBubblewrapArgs, runWorker } from "../src/worker.mjs";
+import { createCheckChannel } from "../src/check-channel.mjs";
 
 // The OpenCode worker runs through the test runtime only: a fake executable that
 // prints `--format json` events from the recorded fixture. No binary, network or model.
@@ -546,6 +547,81 @@ describe("OpenCode fake-runtime runs", () => {
       assert.ok(runtimeRecord.qualification.changedFields.includes("runner.type"), JSON.stringify(runtimeRecord.qualification.changedFields));
     } finally {
       await rm(project, { recursive: true, force: true });
+    }
+  });
+});
+
+// The plugin driven directly, as OpenCode's Promise plugin host calls it, against
+// a real check channel whose runner is stubbed.
+describe("OpenCode run_checks plugin", () => {
+  async function pluginHarness() {
+    const root = await mkdtemp(join(canonicalTmpdir, "tinysdd-opencode-plugin-"));
+    const workspace = join(root, "work");
+    const artifactDir = join(root, "artifact");
+    await mkdir(join(workspace, "src"), { recursive: true });
+    await mkdir(artifactDir);
+    await writeFile(join(workspace, "src", "allowed.txt"), "before\n");
+    const channel = await createCheckChannel({
+      manifest: { schemaVersion: 1, dependencyMounts: [], checks: [{ id: "unit", argv: ["node", "-e", "0"], timeoutMs: 5000 }] },
+      sourceRoot: workspace, workspace, artifactDir, tempRoot: root, allowedPaths: ["src/allowed.txt"], maxCheckRuns: 4, nodeRoot: root, tool: "opencode-plugin",
+      runner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok", tail: "ok", totalBytes: 2, truncated: false } }),
+    });
+    const saved = { channel: process.env.TINYSDD_CHECK_CHANNEL, deadline: process.env.TINYSDD_CHECK_DEADLINE };
+    process.env.TINYSDD_CHECK_CHANNEL = channel.root;
+    process.env.TINYSDD_CHECK_DEADLINE = String(Date.now() + 30_000);
+    channel.start(30_000);
+    const poller = setInterval(() => channel.poll(), 20);
+    // A fresh import per harness, so its in-flight write state starts empty.
+    const plugin = (await import(`${new URL(`file://${join(channel.extension, "index.js")}`).href}?harness=${Math.random()}`)).default;
+    const hooks = { "execute.before": [], "execute.after": [] };
+    let tool;
+    await plugin.setup({ tool: {
+      hook: async (name, callback) => { hooks[name].push(callback); return { dispose: async () => {} }; },
+      transform: async (edit) => { edit({ add: (definition) => { tool = definition; } }); return { dispose: async () => {} }; },
+    } });
+    return {
+      channel, tool, hooks,
+      async cleanup() {
+        clearInterval(poller);
+        await channel.cleanup();
+        for (const [key, name] of [["channel", "TINYSDD_CHECK_CHANNEL"], ["deadline", "TINYSDD_CHECK_DEADLINE"]]) {
+          if (saved[key] === undefined) delete process.env[name];
+          else process.env[name] = saved[key];
+        }
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test("a call without an id is refused instead of sharing another call's response", async () => {
+    const harness = await pluginHarness();
+    try {
+      const signal = new AbortController().signal;
+      await assert.rejects(harness.tool.execute({}, { messageID: "msg_1", signal }), /run_checks call has no id/u);
+      await assert.rejects(harness.tool.execute({}, { id: "", messageID: "msg_1", signal }), /run_checks call has no id/u);
+      const answered = await harness.tool.execute({}, { id: "call_1", messageID: "msg_1", signal });
+      assert.equal(JSON.parse(answered.content[0].text).runs, 1);
+      assert.equal(harness.channel.runs.length, 1, "the refused calls never reached the channel");
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("a write whose after hook never comes delays a check by the cap, not until the deadline", async () => {
+    const harness = await pluginHarness();
+    try {
+      for (const hook of harness.hooks["execute.before"]) await hook({ tool: "write", id: "call_stuck", messageID: "msg_1", input: {} });
+      const started = Date.now();
+      const answered = await harness.tool.execute({}, { id: "call_check", messageID: "msg_1", signal: new AbortController().signal });
+      const waited = Date.now() - started;
+      assert.equal(JSON.parse(answered.content[0].text).runs, 1);
+      assert.ok(waited >= 2_900 && waited < 10_000, `waited ${waited} ms`);
+      // A write of another message does not delay the check at all.
+      const otherStarted = Date.now();
+      await harness.tool.execute({}, { id: "call_other", messageID: "msg_2", signal: new AbortController().signal });
+      assert.ok(Date.now() - otherStarted < 2_000);
+    } finally {
+      await harness.cleanup();
     }
   });
 });

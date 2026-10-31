@@ -878,8 +878,9 @@ channel as Pi's. The permissions get exactly one more rule,
 `{ "action": "run_checks", "resource": "*", "effect": "allow" }`, after the
 `*` deny. OpenCode starts the tool calls of one step concurrently and gives
 no ordering, so a check first waits 100 ms and then until no write call of its
-own message is in flight, also one that started after it; checks run one at a
-time. This narrows the race but does not guarantee it; the check record's
+own message is in flight, also one that started after it, for at most 3
+seconds; checks run one at a time, and a call without a call id is refused.
+This narrows the race but does not guarantee it; the check record's
 candidate digests show which bytes were checked. `runtime.json.runnerFacts`
 records the permission rules and plugin the run actually got. `run_checks`
 calls count toward `maxToolCalls`. The plugin was exercised with OpenCode 2.1.4
