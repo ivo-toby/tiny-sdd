@@ -246,6 +246,19 @@ if (action === "tools") {
   await new Promise((resolve) => setTimeout(resolve, 1000));
   process.exit(0);
 }
+if (action === "loadout-missing" || action === "loadout-complete") {
+  // Pi 1.4.0's system message lists the tools declared to the model.
+  const names = action === "loadout-missing" ? ["read", "write", "edit"] : ["read", "write", "edit", "run_checks"];
+  console.log(JSON.stringify({ type: "message_start", message: { role: "system", content: "", toolsAdded: names.map((name) => ({ name, description: name })) } }));
+  if (action === "loadout-missing") {
+    await delay(3000);
+    writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
+    process.exit(0);
+  }
+  writeFileSync(join(process.cwd(), "src", "allowed.txt"), "after\\n");
+  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] } }));
+  process.exit(0);
+}
 if (action === "checks") {
   const individual = await runCheckTool("checks-individual", { checkId: "first" });
   const all = await runCheckTool("checks-all", {});
@@ -1522,6 +1535,49 @@ describe("Pi worker capture and scope", () => {
       assert.equal(log.length, 3);
       assert.equal(log.at(-1).error.code, "CHECK_BUDGET_EXHAUSTED");
       assert.ok(result.artifactPaths.checks);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  const passingCheck = async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: "ok\n", tail: "ok\n", totalBytes: 3, truncated: false } });
+
+  test("stops the run when Pi does not declare run_checks to the model (#197)", async () => {
+    const project = await makeProject();
+    try {
+      const startedAt = Date.now();
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks: checksPacket(["first"]) },
+        worker: worker({ timeoutMs: 10_000 }),
+        runtime: { ...runtime(undefined, "loadout-missing"), checkRunner: passingCheck },
+      });
+      assert.ok(Date.now() - startedAt < 2_500, "the run is stopped before the fake Pi writes");
+      assert.equal(result.runChecks.available, true);
+      assert.equal(result.outcome, "failed");
+      assert.deepEqual(result.observed.toolLoadout, { expected: ["read", "write", "edit", "run_checks"], announced: ["read", "write", "edit"], missing: ["run_checks"] });
+      assert.ok(result.warnings.includes("Pi did not declare run_checks to the model; the run was stopped and failed."));
+      assert.deepEqual(result.changedPaths, []);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("records the declared tool loadout when Pi declares every contract tool", async () => {
+    const project = await makeProject();
+    try {
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), checks: checksPacket(["first"]) },
+        worker: worker(),
+        runtime: { ...runtime(undefined, "loadout-complete"), checkRunner: passingCheck },
+      });
+      assert.equal(result.outcome, "completed");
+      assert.deepEqual(result.observed.toolLoadout.missing, []);
+      assert.ok(!result.warnings.some((warning) => warning.includes("did not declare")));
+      const plain = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "loadout-complete") });
+      assert.equal(plain.outcome, "completed", "an extra announced tool is not a contract violation");
+      assert.deepEqual(plain.observed.toolLoadout.expected, ["read", "write", "edit"]);
     } finally {
       await rm(project, { recursive: true, force: true });
     }
