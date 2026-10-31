@@ -538,7 +538,11 @@ profile id, looked up in `.tinysdd/profiles/`, `~/.config/tiny-sdd/profiles/`,
 `~/.config/tiny-sdd/registry/` and the shipped profiles; duplicates with
 different content fail. Pass `--profile ID|PATH` to `config show`, `worker
 run|start|settings` or `bench run` to select another profile for one command.
-A worker limit that contradicts the profile fails with `PROFILE_LIMIT_CONFLICT`.
+A profile's `limits` are measured defaults, not binding ones (#174): the
+worker's explicit limits win, and `config show` plus the run's `runtime.json`
+record each limit as `{ measured, effective, source }` (`profile` or `worker`)
+under `limitProvenance`; only an impossible `firstWriteMs >= timeoutMs` merge
+still fails with `PROFILE_LIMIT_CONFLICT`.
 
 `tinysdd models [--route MODEL]` lists the selectable profiles with status,
 location, settings and the newest whole-suite baseline pass@1/pass@2. `init

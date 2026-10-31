@@ -2153,6 +2153,7 @@ export async function dispatchWorker(projectRoot, options = {}) {
     packet: reviewFeedback === undefined ? packet : { ...packet, review: reviewFeedback },
     worker: resolved.worker,
     profile: resolved.profile,
+    limitProvenance: resolved.limitProvenance,
     runtime: options.runtime,
     qualification,
     baseRunId: options.baseRunId,

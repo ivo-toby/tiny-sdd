@@ -573,11 +573,22 @@ export async function preflightPiWorker({ worker, profile = null, sourceAgentDir
  * selected provider/model plus the Pi state selector.  The caller must invoke
  * `cleanup()` in a finally block.
  */
+// A profile's limits are the measured settings, not binding ones (#174): the
+// worker's effective limits win and both values are recorded with their source.
+// The worker limits may already be merged by the project config; a value that
+// differs from the measured one can only come from the worker.
+function profileLimitProvenance(limits, profile) {
+  const provenance = {};
+  for (const [key, value] of Object.entries(profile?.limits ?? {})) {
+    const effective = limits[key] ?? value;
+    provenance[key] = { measured: value, effective, source: effective !== value ? "worker" : "profile" };
+  }
+  return Object.keys(provenance).length > 0 ? provenance : null;
+}
+
 export async function preparePiEnvironment({ worker, profile = null, sourceAgentDir = defaultSourceAgentDir(), sourceEnv = process.env } = {}) {
   const limits = validateWorker(worker);
-  for (const [key, value] of Object.entries(profile?.limits ?? {})) {
-    if (limits[key] !== value) fail(`Worker limits.${key} is ${limits[key]} but profile ${profile.id} requires ${value}; resolve the profile through the project config`);
-  }
+  const limitProvenance = profileLimitProvenance(limits, profile);
   const { modelsPath, provider, model, api, rawReasoning, rawCompat, generatedEnv, safeProvider, preflight } = await resolvePiModel({ worker, profile, sourceAgentDir, sourceEnv });
   if (preflight.errors.length > 0) fail(`Worker preflight failed: ${preflight.errors.join("; ")}`);
   const stateDir = await mkdtemp(join(tmpdir(), "tinysdd-pi-state-"));
@@ -620,6 +631,7 @@ export async function preparePiEnvironment({ worker, profile = null, sourceAgent
     maxToolCalls: limits.maxToolCalls,
     firstWriteMs: limits.firstWriteMs,
     maxCheckRuns: limits.maxCheckRuns,
+    ...(limitProvenance === null ? {} : { limitProvenance }),
     credentialEnvironmentNames: [],
     generatedCredentialReferenceCount: Object.keys(generatedEnv).length,
     preflight,

@@ -816,9 +816,19 @@ selected profile:
   values in the worker's temporary Pi state. Your own Pi `models.json` is not
   changed; when its values differ, preflight shows a warning. Make sure the
   server really serves that context window.
-- `limits` replace the worker's limits. A worker that sets the same limit to a
-  different value fails with `PROFILE_LIMIT_CONFLICT`; remove one of the two or
-  select another profile.
+- `limits` are the measured settings and become defaults, not a binding
+  configuration (#174). A worker's explicit `limits` win, without
+  `PROFILE_LIMIT_CONFLICT`. `config show` records both values per limit under
+  `provenance.workers.<name>.limitProvenance` (and the selected worker's
+  `limitProvenance`) as `{ measured, effective, source }` with source `profile`
+  or `worker`; the run's `runtime.json` records the same. A run with other
+  limits than the measured ones is therefore visibly not the benchmarked
+  configuration, which the qualification digest covers. The
+  `firstWriteMs < timeoutMs` invariant still applies to the merged limits and
+  still fails with `PROFILE_LIMIT_CONFLICT`. Because the qualification digest
+  covers the effective limits, raising a limit in `enforce` qualification mode
+  makes the worker no longer qualified (`MODEL_NOT_QUALIFIED`) until it is
+  re-qualified.
 - `model.route` must equal `worker.model`; otherwise the run fails before any
   model call.
 
