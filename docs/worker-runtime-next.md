@@ -372,12 +372,17 @@ a Seatbelt backend on macOS (#176), with these differences:
   symlinks, so writes outside the scratch are denied. `/bin` and `/usr/bin` stay
   executable, matching the Linux runner's `/usr` and `/bin` binds, so shebangs,
   `/bin/sh` and `child_process.exec` keep working. `RLIMIT_FSIZE` and
-  `RLIMIT_NPROC` (per-uid baseline, counted with `ps` since Darwin has no
-  `/proc`) are applied through a fixed `/bin/sh -c 'ulimit …; exec "$@"'`
-  wrapper; `addressSpaceBytes` and the tmpfs sizes have no Darwin equivalent and
-  are reported in `sandbox.limitsNotApplied`, with the applied ones in
-  `sandbox.limitsApplied`, so a Seatbelt result is never read as carrying the
-  Linux limits. The wall-clock deadline with process-group kill still applies.
+  `RLIMIT_NPROC` (XNU counts processes per uid, so the baseline counts `ps`
+  process lines since Darwin has no `/proc`, and is checked against
+  `kern.maxprocperuid`, which caps the limit) are applied through a fixed
+  `/bin/bash -c 'ulimit -f … || exit 125; ulimit -u … || exit 125; exec "$@"'`
+  wrapper — a failed `ulimit` aborts with the `tinysdd-setup:` exit-125
+  convention and becomes `CHECK_RUNNER_UNAVAILABLE`, never an unenforced run.
+  `addressSpaceBytes`, the tmpfs sizes and the runtime half of `scratchBytes`
+  (enforced at copy time only) have no Darwin equivalent and are reported in
+  `sandbox.limitsNotApplied`, with the applied ones in `sandbox.limitsApplied`,
+  so a Seatbelt result is never read as carrying the Linux limits. The
+  wall-clock deadline with process-group kill still applies.
   Seatbelt has no privilege drop, so a root caller is refused at the availability
   check (`CHECK_RUNNER_UNAVAILABLE`) instead of running the check as root. The
   result reports `sandbox.runner: "seatbelt"` (versus `"linux-bubblewrap"`) so the
@@ -779,7 +784,7 @@ contexts grow.
 | `.tinysdd/` in the git copy listing | **Fixed** (`efd887d`) | Found on first live use: a committed or unignored `.tinysdd/` failed the copy. |
 | Timeout candidate state | **Implemented** (#11) | Non-completed results report allowed paths touched and untouched; S4 timed out with a complete candidate. |
 | macOS worker sandbox | **Implemented** (#13), `code-local` qualified on macOS | Seatbelt with disposable-only writes, trusted-runtime reads, source/home isolation and a per-run inference-only relay. Provider credentials stay outside Pi. Offline tests, native escape checks and a live Pi 0.87.1 `code-local` smoke passed: the candidate changed as requested, the source stayed unchanged and there were no scope violations. MLX and LM Studio qualification remains pending. Linux bubblewrap is unchanged. |
-| Seatbelt check runner on macOS (#176) | **Implemented; live Seatbelt behavior unverified** | `run_checks` and `feature accept` work on macOS through `sandbox-exec` with a `(deny default)` profile: no network, a scrubbed spawn environment, read-only Node root and dependency mounts, `/bin` and `/usr/bin` executable, and only the scratch work copy writable. `ulimit -f`/`-u` are applied through a fixed `/bin/sh` wrapper; `addressSpaceBytes` and tmpfs sizes are reported as not applied (`sandbox.limitsApplied`/`limitsNotApplied`). A root caller is refused at the availability check because Seatbelt cannot drop privileges. Results report `sandbox.runner: "seatbelt"`. Offline tests cover availability, profile content (including that the launched argv is covered by `process-exec`), spawn shape, honest limits evidence and child cleanup on the darwin path with a stubbed `sandbox-exec`; live macOS Seatbelt enforcement (network denial, write denial, ulimit, timeout kill) was not observed on a Mac. |
+| Seatbelt check runner on macOS (#176) | **Implemented; live Seatbelt behavior unverified** | `run_checks` and `feature accept` work on macOS through `sandbox-exec` with a `(deny default)` profile: no network, a scrubbed spawn environment, read-only Node root and dependency mounts, `/bin` and `/usr/bin` executable, and only the scratch work copy writable. `ulimit -f`/`-u` (process baseline from `ps`, capped by `kern.maxprocperuid`) are applied through a fixed `/bin/bash` wrapper that aborts with the setup-failure convention when a limit cannot be set; `addressSpaceBytes`, tmpfs sizes and runtime `scratchBytes` are reported as not applied (`sandbox.limitsApplied`/`limitsNotApplied`). A root caller is refused at the availability check because Seatbelt cannot drop privileges. Results report `sandbox.runner: "seatbelt"`. Offline tests cover availability, profile content (including that the launched argv is covered by `process-exec`), spawn shape, honest limits evidence, the ulimit-failure refusal and child cleanup on the darwin path with a stubbed `sandbox-exec`; live macOS Seatbelt enforcement (network denial, write denial, ulimit, timeout kill) was not observed on a Mac. |
 | Linux worker network isolation (#152) | **Implemented; live bubblewrap/Pi behavior unverified** | bubblewrap adds `--unshare-net` and drops the DNS, hosts and CA mounts. The per-run inference relay listens on a Unix socket in a run-owned read-only mount; a fixed launcher forwards in-sandbox `127.0.0.1:41434` to it, then runs Pi with its exit status passed through. Pi gets a relay-based `models.json` and only the relay token; provider credentials stay on the host. Non-`openai-completions` providers fail closed on Linux. The setup probe also checks `--unshare-net`. |
 | Worker runner interface (#154) | **Implemented (refactor); live bubblewrap/Seatbelt/Pi behavior unverified** | `worker.type` selects a runner from `src/runners/index.mjs`; Pi (`src/runners/pi.mjs`) is the only one. The runner locates and identifies its executable, prepares its state, builds its arguments and its sandbox mounts and environment, points its configuration at the inference relay and parses its events, which `captureProcess` also uses for live limits. Copying, snapshots, patches, scope checks, the check channel, the relay and the bubblewrap and Seatbelt wrappers stay in the worker. `runtime.json`, `result.json`, controller state and qualification identity are unchanged; an unknown `worker.type` is still `UNSUPPORTED_WORKER`. |
 | Shared briefs going stale | **Implemented** (#16) | One brief per slice, shared spec cited by line range. Approval binds the cited excerpts, not the whole file: the compiled text no longer carries `Source sha256:`. Older approvals keep binding the whole file through a legacy digest until re-approved. Addenda stay on hold. |

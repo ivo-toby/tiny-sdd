@@ -388,26 +388,43 @@ async function assertMountPointsFree(input, mounts, signal, deadline) {
   }
 }
 
-// Darwin has no /proc: ps lists every process with its uid and thread count,
-// so the baseline sums the threads of the uid the check runs as, like the
-// Linux /proc scan does.
-async function countDarwinUserTasks(uid, signal, deadline) {
+// Darwin has no /proc. XNU's RLIMIT_NPROC counts processes per uid (fork1
+// compares chgproccnt(uid)), not threads, so the baseline counts the uid's
+// process lines, unlike the Linux /proc scan which counts threads.
+async function countDarwinUserProcesses(uid, signal, deadline) {
   checkPreparation(signal, deadline);
   const { stdout } = await new Promise((resolve, reject) => {
-    const child = spawn('/bin/ps', ['-A', '-o', 'uid=,thcount='], { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('/bin/ps', ['-A', '-o', 'uid='], { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (chunk) => { out += chunk; });
     child.on('error', reject);
     child.on('close', (code) => (code === 0 ? resolve({ stdout: out }) : reject(new Error(`ps exited ${code}`))));
     setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }, 10000).unref();
   });
-  let tasks = 0;
+  let processes = 0;
   for (const line of stdout.split('\n')) {
     checkPreparation(signal, deadline);
-    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
-    if (match && Number(match[1]) === uid) tasks += Number(match[2]);
+    if (/^\s*\d+\s*$/u.test(line) && Number(line.trim()) === uid) processes += 1;
   }
-  return tasks;
+  return processes;
+}
+
+// kern.maxprocperuid caps RLIMIT_NPROC for a non-root caller; XNU either
+// quietly lowers the value to the cap or the ulimit call fails, so the runner
+// refuses to claim maxProcesses above it. Returns null when the sysctl cannot
+// be read, in which case the wrapper's own ulimit failure is the backstop.
+async function darwinMaxProcPerUid(signal, deadline) {
+  checkPreparation(signal, deadline);
+  const { stdout } = await new Promise((resolve, reject) => {
+    const child = spawn('/usr/sbin/sysctl', ['-n', 'kern.maxprocperuid'], { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve({ stdout: out }) : reject(new Error(`sysctl exited ${code}`))));
+    setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }, 10000).unref();
+  });
+  const value = Number(stdout.trim());
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 // RLIMIT_NPROC counts every task of the real uid on the host, threads
@@ -767,10 +784,25 @@ export async function runCheck(options) {
       // sandbox-exec runs its command with the process working directory, so
       // cwd makes the check start in the scratch work copy like --chdir /work.
       // RLIMIT_FSIZE and RLIMIT_NPROC both work on Darwin; like prlimit on
-      // Linux they are set through a fixed /bin/sh wrapper, with NPROC counted
-      // per uid the check runs as. RLIMIT_AS has no Darwin equivalent that
-      // covers everything node maps, so addressSpaceBytes stays unenforced.
-      const processBaseline = await countDarwinUserTasks(runAs.uid, options.signal, setupDeadline);
+      // Linux they are set through a fixed /bin/sh wrapper, and the wrapper
+      // refuses to run (exit 125, tinysdd-setup:) when either ulimit fails,
+      // which sandboxSetupFailure turns into CHECK_RUNNER_UNAVAILABLE. NPROC
+      // counts processes per uid on XNU, so the baseline counts processes and
+      // is checked against kern.maxprocperuid, which caps the limit. RLIMIT_AS
+      // has no Darwin equivalent that covers everything node maps, so
+      // addressSpaceBytes stays unenforced.
+      const processBaseline = await countDarwinUserProcesses(runAs.uid, options.signal, setupDeadline);
+      const maxProcPerUid = await darwinMaxProcPerUid(options.signal, setupDeadline).catch(() => null);
+      const processLimit = processBaseline + request.limits.maxProcesses;
+      const processLimitApplied = maxProcPerUid === null || processLimit <= maxProcPerUid;
+      // bash is used for the wrapper because Darwin's /bin/sh (and Linux dash)
+      // have no ulimit -u; bash supports both -f and -u. A failing ulimit
+      // aborts with the setup-failure convention instead of running unenforced.
+      const wrapper = [
+        `ulimit -f ${Math.floor(request.limits.fileSizeBytes / 512)} || { printf '${SETUP_PREFIX}setting the file-size limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
+        `ulimit -u ${processLimit} || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
+        'exec "$@"',
+      ].join('; ');
       const run = await runSandbox({
         command: binaries.sandboxExec,
         args: seatbeltArguments({
@@ -778,7 +810,7 @@ export async function runCheck(options) {
           profilePath,
           work,
           check: request.check,
-          shell: ['/bin/sh', '-c', `ulimit -f ${Math.floor(request.limits.fileSizeBytes / 512)}; ulimit -u ${processBaseline + request.limits.maxProcesses}; exec "$@"`, 'tinysdd-check'],
+          shell: ['/bin/bash', '-c', wrapper, 'tinysdd-check'],
         }),
         cwd: work,
         env: seatbeltEnvironment({ binaries: { ...binaries, nodeRoot: request.nodeRoot }, work, home, tmp }),
@@ -804,9 +836,10 @@ export async function runCheck(options) {
           env: [...SANDBOX_ENV],
           runAs: { uid: runAs.uid, gid: runAs.gid },
           profile: 'check.sb',
-          limitsApplied: ['fileSizeBytes', 'maxProcesses', 'scratchBytes', 'storedOutputBytes', 'returnedTailBytes'],
-          limitsNotApplied: ['addressSpaceBytes', 'tmpfsBytes'],
+          limitsApplied: ['fileSizeBytes', ...(processLimitApplied ? ['maxProcesses'] : []), 'storedOutputBytes', 'returnedTailBytes'],
+          limitsNotApplied: ['addressSpaceBytes', 'tmpfsBytes', 'scratchBytes', ...(processLimitApplied ? [] : ['maxProcesses'])],
           processBaseline,
+          ...(maxProcPerUid === null ? {} : { maxProcPerUid }),
         },
       };
     }

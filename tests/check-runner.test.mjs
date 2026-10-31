@@ -1366,15 +1366,18 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     assert.equal(result.sandbox.network, 'none');
     assert.deepEqual(result.sandbox.env, ['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
     assert.deepEqual(result.sandbox.runAs, { uid: process.getuid(), gid: process.getgid() });
-    assert.deepEqual(result.sandbox.limitsApplied, ['fileSizeBytes', 'maxProcesses', 'scratchBytes', 'storedOutputBytes', 'returnedTailBytes']);
-    assert.deepEqual(result.sandbox.limitsNotApplied, ['addressSpaceBytes', 'tmpfsBytes']);
+    assert.ok(result.sandbox.limitsApplied.includes('fileSizeBytes'));
+    assert.ok(result.sandbox.limitsApplied.includes('storedOutputBytes'));
+    // scratchBytes is enforced at copy time only; addressSpaceBytes and
+    // tmpfsBytes have no Darwin equivalent: all three are reported as not applied.
+    assert.deepEqual(result.sandbox.limitsNotApplied.filter((key) => !['maxProcesses'].includes(key)).sort(), ['addressSpaceBytes', 'scratchBytes', 'tmpfsBytes']);
     assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
     // The stub recorded argv: -f <profile>, then the fixed /bin/sh wrapper whose
     // argv follows it as "$@", then the check argv with the host node.
     const { args, profile } = parseDump(stub.dump);
     assert.ok(args[1].endsWith('/check.sb'), args[1]);
-    assert.deepEqual(args.slice(2, 5), ['/bin/sh', '-c', args[4]]);
-    assert.match(args[4], /^ulimit -f \d+; ulimit -u \d+; exec "\$@"$/u);
+    assert.deepEqual(args.slice(2, 5), ["/bin/bash", "-c", args[4]]);
+    assert.match(args[4], /^ulimit -f \d+ \|\| \{ printf 'tinysdd-setup: setting the file-size limit failed\\n' >&2; exit 125; \}; ulimit -u \d+ \|\| \{ printf 'tinysdd-setup: setting the process limit failed\\n' >&2; exit 125; \}; exec "\$@"$/u);
     assert.equal(args[5], 'tinysdd-check');
     assert.equal(args[6], join(dirname(dirname(process.execPath)), 'bin', 'node'));
     assert.deepEqual(args.slice(7), ['--test', 't.test.mjs']);
@@ -1454,10 +1457,10 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
       const stub = await stubSandboxExec();
       const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path });
       assert.equal(result.exitCode, 0);
-      // The sh wrapper's own ulimit complaint goes to stderr; the check's JSON is last.
+      // The bash wrapper adds SHLVL; the check's JSON is the last { line.
       const environment = JSON.parse(result.output.text.trim().split('\n').filter((line) => line.startsWith('{')).pop());
       assert.equal(environment.TINYSDD_SECRET_PROBE, undefined);
-      assert.deepEqual(Object.keys(environment).sort(), ['CI', 'HOME', 'LANG', 'PATH', 'PWD', 'TMPDIR'].sort());
+      assert.deepEqual(Object.keys(environment).sort(), ['CI', 'HOME', 'LANG', 'PATH', 'PWD', 'SHLVL', 'TMPDIR'].sort());
       assert.ok(environment.HOME.includes('/home'), environment.HOME);
       assert.ok(environment.TMPDIR.includes('/tmp'), environment.TMPDIR);
     } finally {
@@ -1508,6 +1511,45 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
   test('a missing sandbox-exec is CHECK_RUNNER_UNAVAILABLE', async () => {
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
     await assert.rejects(run(candidate, {}, { sandboxExecPath: '/nonexistent/sandbox-exec' }), { code: 'CHECK_RUNNER_UNAVAILABLE' });
+  });
+
+  test('a wrapper whose ulimit fails is a setup failure, not a run without limits', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    // A fake bash whose ulimit builtin always fails, like a
+    // kern.maxprocperuid-capped RLIMIT_NPROC on a real Mac. The stub rewrites
+    // argv[0] (/bin/bash) to this fake, so no PATH quoting is involved.
+    counter += 1;
+    const fakeBash = join(fixtures, `fake-bash-${counter}.sh`);
+    await writeFile(fakeBash, [
+      '#!/bin/sh',
+      'script="$3"',
+      'shift 3',
+      'exec /bin/bash -c \'ulimit() { return 1; }; eval "$0"\' "$script" "$@"',
+      '',
+    ].join('\n'));
+    await chmod(fakeBash, 0o755);
+    counter += 1;
+    const stub = join(fixtures, `sandbox-exec-${counter}.sh`);
+    const dump = join(fixtures, `sb-args-${counter}.txt`);
+    await writeFile(stub, [
+      '#!/bin/sh',
+      `printf '%s\\n' "$@" > '${dump}'`,
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "-f" ]; then shift 2; continue; fi',
+      '  break',
+      'done',
+      'if [ "$1" = "/bin/bash" ]; then',
+      `  set -- '${fakeBash}' "$@"`,
+      'fi',
+      'exec "$@"',
+      '',
+    ].join('\n'));
+    await chmod(stub, 0o755);
+    await assert.rejects(run(candidate, {}, { sandboxExecPath: stub }), (error) => {
+      assert.equal(error.code, 'CHECK_RUNNER_UNAVAILABLE');
+      assert.match(error.details.output, /tinysdd-setup: setting the (file-size|process) limit failed/u);
+      return true;
+    });
   });
 });
 
