@@ -349,3 +349,33 @@ test('run_checks extension writes a request and returns the channel response', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('check channel installs the worker check tool its runner needs', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-tool-'));
+  const workspace = join(root, 'workspace');
+  const artifactDir = join(root, 'artifact');
+  await mkdir(workspace, { recursive: true });
+  await mkdir(artifactDir);
+  const manifest = { schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'unit', argv: ['node', '-e', ''], timeoutMs: 1000 }] };
+  const options = { manifest, sourceRoot: root, workspace, artifactDir, tempRoot: root, allowedPaths: [], maxCheckRuns: 1, nodeRoot: root, runner: async () => { throw new Error('not called'); } };
+  const pi = await createCheckChannel(options);
+  const opencode = await createCheckChannel({ ...options, tool: 'opencode-plugin' });
+  try {
+    assert.equal(pi.extension, join(pi.root, 'run-checks.mjs'));
+    assert.equal(pi.extensionTarget, '/opt/tinysdd/run-checks.mjs');
+    assert.equal(await readFile(pi.extension, 'utf8'), await readFile(new URL('../src/run-checks-extension.mjs', import.meta.url), 'utf8'));
+    // OpenCode loads a configured local plugin only from a directory.
+    assert.equal(opencode.extension, join(opencode.root, 'run-checks-plugin'));
+    assert.equal(opencode.extensionTarget, '/opt/tinysdd/run-checks-plugin');
+    assert.equal(await readFile(join(opencode.extension, 'index.js'), 'utf8'), await readFile(new URL('../src/run-checks-opencode-plugin.mjs', import.meta.url), 'utf8'));
+    assert.deepEqual(JSON.parse(await readFile(join(opencode.extension, 'package.json'), 'utf8')), { type: 'module' });
+    const plugin = (await import(pathToFileURL(join(opencode.extension, 'index.js')).href)).default;
+    assert.equal(plugin.id, 'tinysdd-run-checks');
+    assert.equal(typeof plugin.setup, 'function');
+    await assert.rejects(createCheckChannel({ ...options, tool: 'shell' }), /unknown check tool/u);
+  } finally {
+    await pi.cleanup();
+    await opencode.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+});

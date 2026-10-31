@@ -36,6 +36,10 @@ export const OPENCODE_PERMISSIONS = Object.freeze([
   { action: "read", resource: "*", effect: "allow" },
   { action: "edit", resource: "*", effect: "allow" },
 ]);
+// The one extra rule a run with declared checks gets. A plugin tool's permission
+// action is its name (core/src/tool.ts), and the rule only makes the tool visible:
+// it comes after the `*` deny, so it is the last match for run_checks only.
+export const OPENCODE_CHECK_PERMISSION = Object.freeze({ action: "run_checks", resource: "*", effect: "allow" });
 // The OPENCODE_* names the worker sets. Anything else OpenCode reads from the environment is absent.
 export const OPENCODE_ENV_NAMES = Object.freeze([
   "OPENCODE_CONFIG_CONTENT",
@@ -181,8 +185,12 @@ export async function readOperatorProvider({ worker, sourceEnv = process.env }) 
   return { providerId: worker.provider, modelId: worker.model, baseUrl, apiKey, contextLimit, outputLimit, ignoredHeaders };
 }
 
-/** The config OpenCode reads from OPENCODE_CONFIG_CONTENT. It uses the relay URL and the per-run token only. */
-export function buildOpenCodeConfig({ providerId, modelId, baseUrl, apiKey, contextLimit = null, outputLimit = null }) {
+/**
+ * The config OpenCode reads from OPENCODE_CONFIG_CONTENT. It uses the relay URL and the per-run token only.
+ * `checkPlugin` is the absolute run_checks plugin directory; it is the only plugin the config names.
+ */
+export function buildOpenCodeConfig({ providerId, modelId, baseUrl, apiKey, contextLimit = null, outputLimit = null, checkPlugin = null }) {
+  if (checkPlugin !== null && (typeof checkPlugin !== "string" || !checkPlugin.startsWith("/"))) fail("OpenCode check plugin must be an absolute directory");
   const limit = {
     ...(contextLimit === null ? {} : { context: contextLimit }),
     ...(outputLimit === null ? {} : { output: outputLimit }),
@@ -195,7 +203,8 @@ export function buildOpenCodeConfig({ providerId, modelId, baseUrl, apiKey, cont
         models: { [modelId]: { name: modelId, ...(Object.keys(limit).length === 0 ? {} : { limit }) } },
       },
     },
-    permissions: OPENCODE_PERMISSIONS.map((rule) => ({ ...rule })),
+    permissions: [...OPENCODE_PERMISSIONS, ...(checkPlugin === null ? [] : [OPENCODE_CHECK_PERMISSION])].map((rule) => ({ ...rule })),
+    ...(checkPlugin === null ? {} : { plugins: [checkPlugin] }),
     // Compaction is a model call that OpenCode may run without a prompt. The
     // worker has no deterministic compaction on this runner, so it stays off.
     compaction: { auto: false },
