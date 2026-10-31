@@ -1,9 +1,14 @@
 # TinySDD handover
 
-**Resume here (2026-09-07):** [Readiness assessment and proposed next steps](docs/next-steps-2026-09-07.md).
-The current checkout passes 44 deterministic tests and supports controlled
-controller/worker use. The dated execution summaries below need reconciliation
-with later work; they are not a complete account of current readiness.
+**This is a historical handover from 2026-09-04, before any code existed.** For
+the current state read the [README](README.md), the "State on main" section of
+[docs/current-scope.md](docs/current-scope.md) and, if you are orchestrating
+work, [docs/orchestration.md](docs/orchestration.md). Install and upgrade steps
+are in the README and [docs/setup.md](docs/setup.md); CLI usage is in
+[the quickstart](docs/quickstart.md) and `tinysdd --help`. The dated summaries
+below (including the 2026-09-07
+[next steps](docs/next-steps-2026-09-07.md)) are not an account of current
+readiness.
 
 **Prepared:** 2026-09-04  
 **Repository:** `https://github.com/ivo-toby/tiny-sdd`  
@@ -16,15 +21,15 @@ Task01 accepted; task02 blocked after its bounded three-call repair allowance;
 tasks03/04 unrun. Global Pi configuration and original project unchanged.
 
 **2026-09-06 local update:** [CLI implementation and Titan pilot](docs/cli-pilot-results-2026-09-06.md)
-complete; see the [quickstart](docs/quickstart.md). Controller and Pi-worker
-surfaces implemented, 32 deterministic tests pass. Gemma's bounded candidate
-accepted after one revision; Qwen/North pilot tasks blocked with evidence retained.
+complete. Controller and Pi-worker surfaces implemented, 32 deterministic tests
+passed at the time. Gemma's bounded candidate accepted after one revision;
+Qwen/North pilot tasks blocked with evidence retained.
 
 ## Current scope and precedence
 
-[docs/current-scope.md](docs/current-scope.md) is the authority for the approved
-2026-09-05 v0 direction and current implementation work. It takes precedence
-over this 2026-09-04 handover and the historical documents linked below.
+[docs/current-scope.md](docs/current-scope.md) records the approved 2026-09-05
+v0 direction and summarizes the state on `main`. It takes precedence over this
+2026-09-04 handover and the historical documents linked below.
 
 This handover is a dated snapshot from before the v0 CLI implementation.
 Statements below about proposed interfaces or no implementation describe that

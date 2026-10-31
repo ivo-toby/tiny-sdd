@@ -3,8 +3,8 @@
 This is the runbook for the agent that orchestrates work on this repository: it
 plans the issue queue, writes implementation notes, dispatches implementers,
 reviews their PRs and keeps the operator informed. Implementers only need
-`AGENTS.md`. The state below is a snapshot from 2026-10-03 (`main` at
-`450d82c`); check GitHub before acting on it.
+`AGENTS.md`. The state below is a snapshot from 2026-10-31 (`main` at
+`3a8c084`, v0.14.0); check GitHub before acting on it.
 
 ## Roles
 
@@ -17,83 +17,43 @@ reviews their PRs and keeps the operator informed. Implementers only need
   choose product meaning; it asks.
 - **Implementers.** One issue per branch, following `AGENTS.md`.
 
-## State at handover
+## State on main
 
-Merged since the design round: #10, #11, #12, #14, #15, #16, #18, #19, #21,
-#22, #26 and the macOS test fix #49. `main` has `task apply`, `task close`
-and `supersede`, declared checks, the sandboxed host check runner (not yet
-wired to the worker), cited-line approval digests, behavior-split sizing,
-deterministic decision baselines, the decision-model survey and the worker
-runtime measurements.
+Everything in the 2026-10-03 queue has landed (task apply/close/supersede, the
+check runner wired to the worker as `run_checks`, slice-DAG `status`, the
+benchmark harness, usage accounting, the macOS worker #13, the format spec and
+SDD skills). Since then: the profile registry (#123), the OpenCode harness kind
+(#153) and worker type (#155), the Linux relay-only network (#152), the runner
+interface (#154), Pi 1.4.0, per-task workers and escalation, grouped help
+(#173), `change validate|export` (#175), the macOS Seatbelt check runner (#176),
+profile limits as defaults (#174) and multiple named checks per slice (#181).
+`git log` has the details.
 
 Open PRs:
 
-| PR | Issue | State |
-| --- | --- | --- |
-| #58 | #13 macOS Seatbelt worker | Code reviewed and sound. #13's first acceptance item (a macOS worker run with a local model completes) has not been observed: the operator must run `scripts/qualify-macos-worker.mjs` with a working credential, or merge with `Refs #13` instead of `Closes #13`. |
+| PR | Issue |
+| --- | --- |
+| #188 | #182 `run_checks` for OpenCode workers (the macOS half landed in #176) |
+| #192 | #187 warn when TypeScript slices lack a typecheck check |
+| #193 | #189 allow timeout and tool-limit runs as revision bases |
 
 ## Queue
 
 Issues that touch `src/controller.mjs` or `bin/tinysdd.mjs` run one at a time.
 Everything else can run in parallel. "Notes" means the issue has an
-"Implementation notes for agents" section and can be dispatched.
+"Implementation notes for agents" section and can be dispatched. Check each
+issue for notes and the files it touches before dispatching.
 
-**Controller and CLI lane (serial)**
-
-1. #17 / PR #60: merged as `5fe36c3`; replay shape mismatch fixed and #17 closed.
-2. #62 `task apply` approval guard: operator decision and implementation notes
-   posted; implementation dispatched from merged #60 main.
-3. #36 CLI warning integration: follows #62 if it still needs changes in
-   `bin/tinysdd.mjs`; worker/channel work can proceed separately.
-4. #27 slice-DAG `status` and `--feature`: notes posted; after the above
-   controller/CLI changes are merged.
-5. #7 benchmark harness: design approved by Ivo; prepare schemas independently,
-   but queue CLI integration after #27.
-6. #8 frontier-token accounting: needs notes. Keep usage out of
-   `controller.json` (an append-only file under `.tinysdd/` avoids state
-   compatibility work), and report missing usage as unknown, never zero.
-
-**Worker runtime lane**
-
-1. #36 `run_checks` Pi extension: notes reassessed for Pi 1.0.0; unavailable-host
-   behavior decided by Ivo (omit tool/extension, record why, warn). Dependency
-   mounts use live sourceRoot read-only with recorded content identity (Ivo). #26's runner
-   (`src/check-runner.mjs`) is on `main`. Include:
-   - writing `checks.jsonl`, which #26 deliberately left to the caller;
-   - refusing a dependency mount that overlaps an expected task path, because
-     the read-only mount would hide the worker's edits; the mount remains a
-     read-only dependency boundary for all candidate changes;
-   - mapping #12's project-relative mounts onto the runner's
-     `{ source, target }` shape.
-2. #42 and #43 follow #36. #43 option 2 needs the extension; #42 also needs #23.
-
-**Benchmark lane.** #7 is the critical path. Ivo approved the design spec on
-2026-10-03; its config digest must include declared/effective `run_checks`
-availability and budget so enabled/disabled runs and qualifications never mix:
-- the challenge format;
-- the results schema with its config digest;
-- held-out checks run through the #26 runner, never visible to the worker.
-
-Once that schema is fixed, #23, #24 and #25 can run in parallel. After them:
-- #34 needs #24;
-- #33 needs #23, #24 and the operator's #9 data;
-- #35 needs #29.
-
-**SDD flow lane.** #20, the format spec, is design work for the orchestrator and
-the operator. It unblocks:
-- #28, #29, #30 and #31;
-- then #37 and #38.
-
-**Decision models lane.**
-- #32 needs #7; #21 and #22 are done.
-- #40 and #41 follow #32.
-- #40 must not refactor `src/jev.mjs` or `src/semantic-policy.mjs` without the
-  operator.
-
-**Operator only**
-- #9: the talon reruns.
-- #39: what plan-level approval means.
-- The live model smoke for #58.
+- **Bugs:** #179 (secret-path rule blocks `.env.example`), #180 (worker aborts
+  on a tracked symlink), #190 (`task review` accepts a task with no applied
+  run). #190 changes what acceptance binds: get the operator's decision first.
+- **Enhancements:** #191 (run copies under `.tinysdd/runs` break repo-wide
+  tools), plus the open PRs above.
+- **Experiments (operator-run, live models):** #110 to #117, #9, #33, #41.
+- **Decision models:** #40; must not refactor `src/jev.mjs` or
+  `src/semantic-policy.mjs` without the operator.
+- **Operator decisions:** #38 (engagement levels), #39 (what plan-level
+  approval means).
 
 ## Decisions already made
 
@@ -126,11 +86,13 @@ Don't relitigate these; cite them in notes when relevant.
   - An apply that would leave the approval stale is refused before writing
     (`APPLY_WOULD_STALE`).
 - **#26: check runner.**
-  - Checks never run as root: a root caller drops to `65534:65534` through
-    `setpriv`, and without `setpriv` it refuses.
+  - Checks never run as root: on Linux a root caller drops to `65534:65534`
+    through `setpriv`, and without `setpriv` it refuses.
   - The process limit is the target uid's current task count plus a headroom.
   - `/work` is a size-limited tmpfs.
-  - Non-Linux hosts get `CHECK_RUNNER_UNAVAILABLE`.
+  - Hosts other than Linux and macOS get `CHECK_RUNNER_UNAVAILABLE`. Since
+    #176, macOS runs checks under Seatbelt as the caller; Seatbelt cannot drop
+    privileges, so a root caller is refused.
 - **#12: benchmark replays** refuse a checks file that changed since approval
   (`STALE_BENCHMARK_CHECKS`).
 - **No silent fallbacks.** No silent model fallback, no credentials near
@@ -142,7 +104,7 @@ Don't relitigate these; cite them in notes when relevant.
 - **`task add` allows the task's own inputs in `--allow`.** It accepts an
   allowlist containing the task's own brief, context or checks file. Apply
   refuses such runs; rejecting the overlap at `task add` and `task update` would
-  fail earlier. #17 is the natural place.
+  fail earlier.
 - **`docs/quickstart.md` mis-describes `worker stop` off Linux.** It says
   `worker stop` "otherwise fails with `LAUNCH_NOT_OURS`"; off Linux it refuses
   with `UNSUPPORTED_PLATFORM`.
@@ -150,6 +112,11 @@ Don't relitigate these; cite them in notes when relevant.
   `task apply` and cited-line digests.
 - **Check runner as non-root.** A fork storm can still slow the user's other
   processes until the timeout. A cgroup `pids.max` would isolate it.
+- **Two setup tests fail when the suite runs as root.** Since #176,
+  `tests/setup.test.mjs` "sandbox inspection reports macOS inference and
+  Seatbelt check-runner support" and "runSetup installs a version-matched
+  archive…" expect macOS check-runner support, which a root caller is refused.
+  They pass as an unprivileged user.
 
 ## Writing implementation notes
 
@@ -205,14 +172,16 @@ Work in a detached worktree of the PR head and check:
      printf "Object.defineProperty(process, 'platform', { value: 'darwin' });\n" > /tmp/fake-darwin.mjs
      NODE_OPTIONS=--import=/tmp/fake-darwin.mjs TYPESAFE_API_KEY=stub npm test
      ```
-     Expect only the three Linux-only `worker stop` tests and the check-runner
-     suite to skip.
+     Expect the three Linux-only `worker stop` tests, the Linux worker network
+     isolation test and the check-runner suite (no `sandbox-exec` on Linux) to
+     skip. As root, the stubbed Seatbelt check-runner tests skip too.
 3. **Check-runner changes on a Linux host with bubblewrap.** Also run, as an
    unprivileged user:
    ```sh
    env -i PATH=/usr/bin:/bin HOME=/tmp TMPDIR=/tmp TYPESAFE_API_KEY=stub setpriv --reuid=65534 --regid=65534 --clear-groups "$(command -v node)" --test tests/check-runner.test.mjs
    ```
-   Root skips different tests than `nobody`; both runs matter.
+   Root skips different tests than `nobody`; both runs matter. Seatbelt
+   behavior can only be observed on a real macOS host; ask the operator.
 4. **Reverts.** Revert the source change and confirm that the new tests fail;
    restore it and compare the files.
 5. **Edge-case probes.** Use `node -e` on parsers, path validation and regexes.

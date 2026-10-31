@@ -1,10 +1,51 @@
 # TinySDD current scope: operator-led SDD for bounded features
 
-Date: 2026-09-05
-Status: first bounded feature pilot complete; podcast checkpoint repair exhausted
-after its bounded continuation;
-testable controller/worker CLI v0 implemented and available for controlled use;
-production reliability not established
+Date: 2026-09-05; "State on main" updated 2026-10-31 (v0.14.0)
+Status: CLI published on npm and usable for supervised trials; production
+reliability not established. The sections after "State on main" record the
+2026-09-05 scope decision and the experiments behind it.
+
+## State on main (2026-10-31, v0.14.0)
+
+The [README](../README.md) is the authority for current features and limits;
+GitHub issues track open work. In short, `main` has:
+
+- **Install and setup.** The `tinysdd` npm package (Node >= 22.19.0, no runtime
+  dependencies). `tinysdd setup` installs version-matched Claude Code/Codex
+  skills and the model-profile registry; after an upgrade,
+  `tinysdd skills update` and `tinysdd profiles update` refresh them. Projects
+  are set up from a fresh agent session with the `tinysdd-setup` skill, or
+  manually with `tinysdd init`.
+- **Preparation.** Constitution, specify, research, plan and slice skills for
+  the outer agent; the portable change format with `tinysdd change validate`
+  and `change export`; cited context manifests; several named checks per slice.
+- **Controller.** `task add/update/approve/packet/apply/review/close/supersede`,
+  `status` and `next`, with approval freshness, protected inputs and
+  dependencies. The operator records every approval and verdict; nothing is
+  accepted automatically.
+- **Workers.** Pi 1.4.0 or OpenCode 2.1.4 in sandboxed disposable copies
+  (bubblewrap with a relay-only network on Linux, Seatbelt on macOS), with
+  per-task worker choice and suggested escalation. Registry profiles are
+  selected by `init --model`; their limits are defaults that worker limits
+  override.
+- **Checks.** The host check runner works on Linux and macOS: Pi workers get
+  `run_checks`, and `feature accept` runs the configured integration check.
+  OpenCode workers do not have `run_checks` yet
+  ([#182](https://github.com/ivo-toby/tiny-sdd/issues/182)). `worker stop` is
+  Linux-only.
+- **Evidence.** Benchmarks and qualification, usage accounting, slice-test
+  assessment and phase records. Harness adapters for Claude Code, OpenCode and
+  interactive Pi, research packets and the living-spec archive remain
+  source-checkout scripts (`scripts/`), not installed subcommands.
+
+Open as of this date: the end-to-end and live experiments (#110–#117) and
+benchmark calibration (#33); bugs #179, #180 and #190; enhancements #182,
+#187, #189 and #191; and the product decisions on engagement levels (#38) and
+plan-level approval (#39). Live Pi, OpenCode, bubblewrap and Seatbelt behavior
+of several recent changes is unverified; see the section 3.7 table in
+[worker-runtime-next.md](worker-runtime-next.md).
+
+## The 2026-09-05 scope decision
 
 The operator's later 2026-09-05 instruction authorizes moving ahead with the CLI,
 prompts and bounded additional Titan benchmarking for testing on 2026-09-06.
@@ -60,9 +101,11 @@ context, and checks can inform it without importing WDD's controller.
 3. For the next task, supply the smaller model with the relevant specification,
    source context, constraints, dependencies, checks, and stop conditions. Keep
    the handoff visible and let the operator decide to proceed.
-4. The smaller model implements and verifies that task with ordinary host tools.
-   Observe a behavior-specific failing check first when applicable; distinguish
-   setup errors from that evidence. Report missing facts instead of guessing.
+4. The smaller model implements that task: in the 2026-09 experiments with
+   ordinary host tools, now in a sandboxed worker copy with file tools and,
+   where available, `run_checks` for the declared checks. Observe a
+   behavior-specific failing check first when applicable; distinguish setup
+   errors from that evidence. Report missing facts instead of guessing.
 5. The operator inspects the diff and observed verification, supported by
    strong-model review and independent checks. Accept the task, request a bounded
    revision, or revise the specification; do not silently advance on failure.
@@ -85,7 +128,10 @@ same-model fresh-context review does not establish independent correctness.
 
 These are workflow instructions, not hard enforcement. With ordinary host tools,
 a skill cannot guarantee write-set confinement, authentic approval attribution,
-immutable evidence, automatic staleness detection, or sandboxed execution.
+immutable evidence, automatic staleness detection, or sandboxed execution. The
+CLI's sandboxed worker and controller later added write-scope checks, approval
+freshness and retained evidence; approvals are still recorded, not
+authenticated.
 Report only commands observed in host tool results; never accept a participant's
 claim that it ran a test, obtained approval, or performed a review as evidence.
 
@@ -121,7 +167,10 @@ the available host protections; normal tools are not a security boundary.
   users. If Luna is unavailable, report it rather than silently choosing another
   model. Record delegation overhead where exposed; do not assume it is free.
 
-## Current increment and next test
+## Increment and next test as of 2026-09-06
+
+This section is the September record; the open work on `main` is listed under
+"State on main" above.
 
 The user selected `mcp-podcast-generator` and delegated controlled execution
 and primary review of the async-generation checkpoint. Task01 is accepted;
@@ -167,7 +216,9 @@ qualification remains separate work; missing coverage is not a pass.
 
 Keep the experiment-local preparation/task skills as candidates. The existing
 product skill was subsequently updated for the CLI; global Pi configuration is
-unchanged. The next useful feature-level test is
+unchanged. (The product skills are now installed globally by `tinysdd setup`.)
+The next useful feature-level test, now tracked as
+[#110](https://github.com/ivo-toby/tiny-sdd/issues/110), is
 a held-out small feature in a real repository selected with the operator. Test
 strong-model artifact preparation from the actual request and code, including
 operator review, rather than only consuming this carefully prepared fixture.
@@ -240,6 +291,9 @@ The [older evaluation plan](model-evaluation-plan.md) concerns the deferred
 controller, not this operator-led feature workflow.
 
 ## Runtime panel
+
+This is the 2026-09 experiment panel. Current worker models are chosen per
+project from registry profiles (`tinysdd models`, `tinysdd init --model`).
 
 Participants are the user-provided Pi runtimes:
 
@@ -369,6 +423,7 @@ build a controller.
 
 The deferred architecture still needs answers for command isolation when tests
 execute model-authored code, evidence freshness when tracked reports change the
-workspace, and recovery between a Git commit and its event record. Oracle-source
-correctness remains relevant now. Record these limits without implementing their
+workspace, and recovery between a Git commit and its event record. (Command
+isolation is now partly answered by the sandboxed host check runner on Linux
+and macOS.) Oracle-source correctness remains relevant now. Record these limits without implementing their
 infrastructure as a prerequisite for the skill experiment.

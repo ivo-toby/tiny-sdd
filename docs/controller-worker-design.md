@@ -25,9 +25,10 @@ user; it cannot manufacture approval for new product meaning or external effects
 
 The caller-facing interface should be harness-agnostic. Pi is the first worker
 runtime adapter; this does not require a new coding tool loop or several runtime
-implementations. Runtime/provider dependencies should stay separable from the
-controller. WDD remains a conceptual comparison only: no WDD workflow, command,
-skill, state or dependency is introduced.
+implementations. (OpenCode was later added as a second worker type, #155.)
+Runtime/provider dependencies should stay separable from the controller. WDD
+remains a conceptual comparison only: no WDD workflow, command, skill, state or
+dependency is introduced.
 
 ## Project configuration and named workers
 

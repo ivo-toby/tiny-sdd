@@ -328,8 +328,8 @@ metrics. Return the explicit default metadata
 deletions: false }` beside the plan, not inside controller approval fields.
 Preparation entries include truthful presence and byte identity; absent entries
 are carried as absence evidence and are not blindly added to `protect`.
-The offline validation script prints the plan; it does not register, update,
-approve, run checks, dispatch, apply or accept. Existing `task add`/`update`
+The offline `tinysdd change validate` command prints the plan; it does not
+register, update, approve, run checks, dispatch, apply or accept. Existing `task add`/`update`
 remain the mutation APIs. Dependencies must be registered first, and existing
 accepted-dependency/freshness requirements remain intact. No controller state,
 approval or packet schema changes are proposed for this format mapping.
