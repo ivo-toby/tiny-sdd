@@ -186,9 +186,9 @@ host's normal tools or dispatch one explicit named worker. Never silently fall
 back to another model. Selected skills must match available tools; the first
 worker adapter does not provide MCP or arbitrary extensions. It returns a
 disposable candidate and patch without applying changes to the source project.
-A Pi worker with declared checks and an available host runner can call the
-fixed `run_checks` tool, which runs only those checks in a separate sandbox;
-OpenCode workers have no `run_checks`. Those results are worker feedback, not
+A Pi or OpenCode worker with declared checks and an available host runner can
+call the fixed `run_checks` tool, which runs only those checks in a separate
+sandbox. Those results are worker feedback, not
 verification. Instructions alone do not enforce write scope.
 
 To choose between the sandboxed worker and implementing in a foreign harness

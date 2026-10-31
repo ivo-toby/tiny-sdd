@@ -641,7 +641,10 @@ function summarizeOutput(capture, limits) {
   };
 }
 
-function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, watchdogPipe = false, killGroupOnExit = false }) {
+// groupWatchdog (Seatbelt) gives the check a watchdog pipe on fd 3 and kills its
+// process group when it exits. The two go together: the watchdog holds fd 3 open,
+// so the child's close event waits for that kill.
+function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, groupWatchdog = false }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
     let settled = false;
@@ -670,7 +673,7 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, watch
       // sandbox-exec keeps its environment and launches the argv directly.
       // The watchdog pipe is fd 3, not stdin: Node's pipe is a socket, and bash
       // with a socket on stdin assumes rshd and reads the system bashrc.
-      child = spawn(command, args, { env: env ?? {}, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe', ...(watchdogPipe ? ['pipe'] : [])] });
+      child = spawn(command, args, { env: env ?? {}, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe', ...(groupWatchdog ? ['pipe'] : [])] });
     } catch (error) {
       reject(unavailable(`could not start the check sandbox: ${error.message}`, { code: error.code }));
       return;
@@ -684,7 +687,7 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, watch
     child.stderr.on('data', (chunk) => capture.push(chunk));
     // Without a PID namespace nothing takes background processes down with the
     // check, so its group is killed as soon as the check itself exits.
-    if (killGroupOnExit) {
+    if (groupWatchdog) {
       child.on('exit', () => {
         try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ }
         graceTimer ??= setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, KILL_GRACE_MS);
@@ -837,8 +840,7 @@ export async function runCheck(options) {
         timeoutMs: remainingTimeout,
         capture,
         signal: options.signal,
-        watchdogPipe: true,
-        killGroupOnExit: true,
+        groupWatchdog: true,
       });
       const setupFailure = sandboxSetupFailure(run, capture.head);
       if (setupFailure) throw unavailable('the check sandbox could not be created; the check did not run', { output: setupFailure });

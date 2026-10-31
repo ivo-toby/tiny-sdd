@@ -19,8 +19,11 @@ const INPUT = { type: 'object', properties: { checkId: { type: 'string' } }, add
 // Only write tools are tracked: their execute.after hook always runs once they
 // start. A write's fiber may not have reached its execute.before hook yet when
 // the check looks, so the check first gives it SETTLE_MS to get there. That
-// narrows the race; it does not close it.
+// narrows the race; it does not close it. The wait is capped at WRITE_WAIT_MS,
+// so a write whose execute.after never arrives cannot hold every later check
+// until the worker deadline; the candidate digests record what was checked.
 const SETTLE_MS = 100;
+const WRITE_WAIT_MS = 2000;
 const writes = new Map();
 let queue = Promise.resolve();
 
@@ -31,7 +34,8 @@ function track(event) {
 async function waitForWrites(context, deadline, signal) {
   await delay(SETTLE_MS, undefined, { signal });
   const pending = () => [...writes.values()].some((messageID) => messageID === context.messageID);
-  while (pending()) {
+  const until = Date.now() + WRITE_WAIT_MS;
+  while (pending() && Date.now() < until) {
     if (Date.now() >= deadline) throw new Error('worker check deadline expired');
     await delay(25, undefined, { signal });
   }
@@ -41,10 +45,13 @@ async function runChecks(input, context) {
   const root = process.env.TINYSDD_CHECK_CHANNEL;
   const deadline = Number(process.env.TINYSDD_CHECK_DEADLINE);
   if (!root || !Number.isFinite(deadline)) throw new Error('check channel is unavailable');
+  // The call id names the request; without one, every check would reuse the
+  // first check's response.
+  if (typeof context?.id !== 'string' || context.id.length === 0) throw new Error('run_checks needs the tool call id');
   const signal = context.signal;
   signal?.throwIfAborted();
   await waitForWrites(context, deadline, signal);
-  const name = `${createHash('sha256').update(String(context.id)).digest('hex')}.json`;
+  const name = `${createHash('sha256').update(context.id).digest('hex')}.json`;
   const temporary = join(root, 'requests', `${name}.tmp`);
   const request = input?.checkId === undefined ? {} : { checkId: input.checkId };
   await writeFile(temporary, JSON.stringify(request), { flag: 'wx', mode: 0o600 });
