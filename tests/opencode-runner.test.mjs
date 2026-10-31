@@ -137,6 +137,28 @@ describe("OpenCode worker configuration", () => {
     }
   });
 
+  test("ignores a User-Agent header with a warning and refuses any other header without echoing its value", async () => {
+    const withHeaders = (headers) => {
+      const path = join(fixtureRoot, `headers-${Math.random().toString(16).slice(2)}.json`);
+      return writeFile(path, JSON.stringify({ provider: { oc: { npm: "@ai-sdk/openai-compatible", options: { baseURL: "http://127.0.0.1:9/v1", apiKey: "{env:OPENCODE_TEST_KEY}", headers }, models: { "exact-model": {} } } } })).then(() => path);
+    };
+    const agent = await withHeaders({ "user-agent": "tinysdd-test/1" });
+    const preflight = await openCodeRunner.preflight({ worker: worker({ opencodeConfig: agent }), sourceEnv: { OPENCODE_TEST_KEY: "x" } });
+    assert.deepEqual(preflight.errors, []);
+    assert.ok(preflight.warnings.some((line) => /provider header user-agent is ignored/u.test(line)));
+    const prepared = await openCodeRunner.prepareEnvironment({ worker: worker({ opencodeConfig: agent }), sourceEnv: { OPENCODE_TEST_KEY: "x" } });
+    await prepared.cleanup();
+
+    const tenant = await withHeaders({ "X-Tenant": "secret-tenant-value" });
+    await assert.rejects(openCodeRunner.prepareEnvironment({ worker: worker({ opencodeConfig: tenant }), sourceEnv: { OPENCODE_TEST_KEY: "x" } }), (error) => {
+      assert.match(error.message, /header X-Tenant/u);
+      assert.match(error.message, /options\.apiKey/u);
+      assert.match(error.message, /\{env:NAME\}/u);
+      assert.equal(error.message.includes("secret-tenant-value"), false, "header values are never echoed");
+      return true;
+    });
+  });
+
   test("refuses providers that are not openai-completions style and compaction profiles before launch", async () => {
     const other = join(fixtureRoot, "other.json");
     await writeFile(other, JSON.stringify({ provider: { oc: { npm: "@ai-sdk/anthropic", options: { baseURL: "https://example.invalid/v1" }, models: { "exact-model": {} } } } }));

@@ -147,7 +147,21 @@ export async function readOperatorProvider({ worker, sourceEnv = process.env }) 
   }
   const options = (native ? entry.settings : entry.options) ?? {};
   if (!options || typeof options !== "object" || Array.isArray(options)) fail(`OpenCode provider ${worker.provider} options must be an object`);
-  if (options.headers !== undefined || entry.headers !== undefined) fail(`OpenCode provider ${worker.provider} headers are not supported by the sandboxed worker`);
+  // The relay sends only `Authorization: Bearer` (from options.apiKey). A User-Agent is
+  // ignored with a warning; any other header is refused, and its value is never shown.
+  const ignoredHeaders = [];
+  for (const source of [entry.headers, options.headers]) {
+    if (source === undefined) continue;
+    if (!source || typeof source !== "object" || Array.isArray(source)) fail(`OpenCode provider ${worker.provider} headers must be an object`);
+    for (const [name, value] of Object.entries(source)) {
+      if (typeof value !== "string") fail(`OpenCode provider ${worker.provider} header ${name} must be a string`);
+      if (name.toLowerCase() === "user-agent") {
+        ignoredHeaders.push(name);
+        continue;
+      }
+      fail(`OpenCode provider ${worker.provider} sets header ${name}, which the sandboxed worker cannot send. Set options.apiKey to an {env:NAME} reference instead; the relay sends it as Authorization: Bearer`);
+    }
+  }
   if (typeof options.baseURL !== "string") fail(`OpenCode provider ${worker.provider} needs options.baseURL`);
   const baseUrl = httpBaseUrl(options.baseURL, `OpenCode provider ${worker.provider}.baseURL`);
   let apiKey = null;
@@ -164,7 +178,7 @@ export async function readOperatorProvider({ worker, sourceEnv = process.env }) 
   const limit = model.limit && typeof model.limit === "object" ? model.limit : {};
   const contextLimit = Number.isInteger(limit.context) && limit.context > 0 ? limit.context : null;
   const outputLimit = Number.isInteger(limit.output) && limit.output > 0 ? limit.output : null;
-  return { providerId: worker.provider, modelId: worker.model, baseUrl, apiKey, contextLimit, outputLimit };
+  return { providerId: worker.provider, modelId: worker.model, baseUrl, apiKey, contextLimit, outputLimit, ignoredHeaders };
 }
 
 /** The config OpenCode reads from OPENCODE_CONFIG_CONTENT. It uses the relay URL and the per-run token only. */
@@ -298,6 +312,7 @@ export async function preflightOpenCodeWorker({ worker, profile = null, sourceEn
   if (profile?.runtime?.compaction?.enabled === true) {
     errors.push("OpenCode worker has no deterministic compaction: runtime.compaction.enabled cannot be applied");
   }
+  for (const name of provider.ignoredHeaders) warnings.push(`provider header ${name} is ignored: the relay does not forward it`);
   if (profile?.runtime?.compat !== undefined || profile?.runtime?.reasoning !== undefined || profile?.runtime?.thinkingBudgets !== undefined) {
     warnings.push("profile runtime.compat, runtime.reasoning and runtime.thinkingBudgets are not applied by the OpenCode runner");
   }
