@@ -350,6 +350,73 @@ test('run_checks extension writes a request and returns the channel response', a
   }
 });
 
+// Loads a fresh copy of the installed OpenCode plugin against a real channel,
+// with the hooks and tool it registers, and runs `body` with the channel polled.
+async function withOpenCodePlugin(body) {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-opencode-'));
+  const workspace = join(root, 'workspace');
+  const artifactDir = join(root, 'artifact');
+  await mkdir(workspace, { recursive: true });
+  await mkdir(artifactDir);
+  const channel = await createCheckChannel({
+    manifest: { schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'unit', argv: ['node'], timeoutMs: 1000 }] },
+    sourceRoot: root,
+    workspace,
+    artifactDir,
+    tempRoot: canonicalTmpdir,
+    allowedPaths: [],
+    maxCheckRuns: 4,
+    nodeRoot: root,
+    tool: 'opencode-plugin',
+    runner: async () => ({ exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: 'ok', tail: 'ok', totalBytes: 2, truncated: false } }),
+  });
+  const previousRoot = process.env.TINYSDD_CHECK_CHANNEL;
+  const previousDeadline = process.env.TINYSDD_CHECK_DEADLINE;
+  const poller = setInterval(() => channel.poll(), 5);
+  try {
+    const { default: plugin } = await import(`${pathToFileURL(join(channel.extension, 'index.js')).href}?test=${Date.now()}`);
+    const hooks = { 'execute.before': [], 'execute.after': [] };
+    let tool;
+    await plugin.setup({ tool: {
+      hook: async (name, callback) => { hooks[name].push(callback); },
+      transform: async (edit) => { edit({ add: (definition) => { tool = definition; } }); },
+    } });
+    process.env.TINYSDD_CHECK_CHANNEL = channel.root;
+    process.env.TINYSDD_CHECK_DEADLINE = String(Date.now() + 20000);
+    channel.start(20000);
+    await body({ tool, hooks, channel });
+  } finally {
+    clearInterval(poller);
+    if (previousRoot === undefined) delete process.env.TINYSDD_CHECK_CHANNEL;
+    else process.env.TINYSDD_CHECK_CHANNEL = previousRoot;
+    if (previousDeadline === undefined) delete process.env.TINYSDD_CHECK_DEADLINE;
+    else process.env.TINYSDD_CHECK_DEADLINE = previousDeadline;
+    await channel.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('OpenCode run_checks refuses a call without a tool call id instead of reusing a response', async () => {
+  await withOpenCodePlugin(async ({ tool }) => {
+    const signal = new AbortController().signal;
+    const first = await tool.execute({ checkId: 'unit' }, { id: 'call_1', messageID: 'msg_1', signal });
+    assert.equal(JSON.parse(first.content[0].text).results[0].checkId, 'unit');
+    await assert.rejects(tool.execute({ checkId: 'unit' }, { messageID: 'msg_1', signal }), /run_checks needs the tool call id/u);
+    await assert.rejects(tool.execute({ checkId: 'unit' }, { id: '', messageID: 'msg_1', signal }), /run_checks needs the tool call id/u);
+  });
+});
+
+test('OpenCode run_checks stops waiting for a write whose execute.after never arrives', async () => {
+  await withOpenCodePlugin(async ({ tool, hooks }) => {
+    for (const hook of hooks['execute.before']) await hook({ tool: 'write', id: 'call_lost_write', messageID: 'msg_1' });
+    const started = Date.now();
+    const response = await tool.execute({ checkId: 'unit' }, { id: 'call_check', messageID: 'msg_1', signal: new AbortController().signal });
+    const elapsed = Date.now() - started;
+    assert.equal(JSON.parse(response.content[0].text).results[0].checkId, 'unit');
+    assert.ok(elapsed < 10000, `the check waited ${elapsed} ms for a write that never finished`);
+  });
+});
+
 const mountManifest = { schemaVersion: 1, dependencyMounts: ['node_modules'], checks: [{ id: 'unit', argv: ['node'], timeoutMs: 1000 }] };
 
 test('dependency identity accepts workspace links that stay inside the project', async () => {
