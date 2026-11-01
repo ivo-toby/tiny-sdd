@@ -1637,7 +1637,8 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   let compiledContext;
   let matchedContextDigest;
   try {
-    compiledContext = await compileContext(executionSource, normalizedPacket.context);
+    const approvalDigest = normalizedPacket.approval?.contextDigest;
+    compiledContext = await compileContext(executionSource, normalizedPacket.context, typeof approvalDigest === "string" ? { approvedSha256: approvalDigest } : undefined);
     const approvedDigest = normalizedPacket.context?.compiledSha256;
     if (approvedDigest) {
       // A replay of an approval recorded before the whole-file source digests
@@ -1754,6 +1755,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
           resources: compiledContext.resources,
           sha256: compiledContext.sha256,
           ...(matchedContextDigest ? { matchedDigest: matchedContextDigest } : {}),
+          ...(compiledContext.shifts ? { anchoredSha256: compiledContext.anchoredSha256, shifts: compiledContext.shifts } : {}),
           bytes: compiledContext.bytes,
         },
       } : {}),

@@ -163,6 +163,26 @@ test('file-count budgets and planned ownership overlaps are warnings', async () 
   }
 });
 
+test('a slice citing a file another slice may modify gets an advisory warning', async () => {
+  const root = await fixtureProject();
+  try {
+    const changePath = 'examples/artifact-format/changes/broker-recut/change.json';
+    const before = await validateChange(root, changePath);
+    assert.ok(!before.warnings.some((warning) => warning.code === 'CITED_FILE_MODIFIED_BY_SLICE'));
+    const secondPath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s2/slice.json');
+    const second = JSON.parse(await readFile(secondPath, 'utf8'));
+    second.implementationFiles.push('examples/artifact-format/src/entrypoint.mjs');
+    await writeFile(secondPath, JSON.stringify(second));
+    const result = await validateChange(root, changePath);
+    const warnings = result.warnings.filter((warning) => warning.code === 'CITED_FILE_MODIFIED_BY_SLICE');
+    assert.deepEqual(warnings.map((warning) => warning.details.sliceId), ['broker-s1', 'broker-s3', 'broker-s4', 'broker-s5a', 'broker-s5b']);
+    assert.ok(warnings.every((warning) => warning.details.path === 'examples/artifact-format/src/entrypoint.mjs' && warning.details.modifiedBy === 'broker-s2'));
+    assert.equal(result.readiness.ready, before.readiness.ready);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('TypeScript slice without a typecheck check warns, and a typecheck check clears it', async () => {
   const root = await fixtureProject();
   try {

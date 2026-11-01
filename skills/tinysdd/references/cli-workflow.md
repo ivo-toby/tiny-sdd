@@ -489,7 +489,9 @@ A task may cite exact source lines with `--context MANIFEST`, a JSON file under
 `.tinysdd/tasks/` (format in `docs/context-compiler.md` of the TinySDD repository).
 Approval binds the cited lines, not the whole file, so slices that cite one shared
 spec by line range stay current when it is appended to or edited outside their
-ranges. Inserting lines above a cited range shifts it and stales the slice.
+ranges. Inserting lines above a cited range moves it; the slice stays current
+when the moved excerpt is byte-identical and occurs once in its file, and stales
+otherwise.
 
 Use `task add --protect src/types.ts,tests/contract.test.ts` for read-only
 contract files. They must exist and cannot overlap `--allow`. The packet lists

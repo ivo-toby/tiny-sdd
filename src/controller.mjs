@@ -31,7 +31,7 @@ import {
   validateProfileReference,
 } from './config.mjs';
 import { profilesForRoute } from './profile-catalog.mjs';
-import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
+import { compileContext, contextSizeMetrics, parseContextManifest } from './context-compiler.mjs';
 import { checksRunTypecheck, isTypecheckRelevantPath, parseChecksManifest } from './checks-manifest.mjs';
 import {
   extractAcceptanceCriteria,
@@ -289,20 +289,23 @@ function pinnedPaths(entries) {
   return new Set(entries.filter((entry) => entry.status === 'written').map((entry) => entry.path));
 }
 
-function compilePinnedContext(root, task, rootRunId, pinned) {
-  if (pinned.size === 0) return compileTaskContext(root, task.context);
+// `approvedSha256` lets a cited excerpt that moved within its file match the
+// approval it was taken under; approval itself compiles without it, so it
+// always binds the recorded lines.
+function compilePinnedContext(root, task, rootRunId, pinned, approvedSha256) {
+  if (pinned.size === 0) return compileTaskContext(root, task.context, { approvedSha256 });
   const readSource = async (path) => {
     if (!pinned.has(path)) return readProjectFile(root, path);
     const start = await readRunFile(root, rootRunId, 'workspace-before', path);
     if (start === null) throw tinyError('RUN_NOT_FOUND', `run ${rootRunId} no longer holds ${path}`, { runId: rootRunId });
     return start.bytes.toString('utf8');
   };
-  return compileTaskContext(root, task.context, { readSource });
+  return compileTaskContext(root, task.context, { readSource, approvedSha256 });
 }
 
-function compileApprovedContext(root, task) {
-  if (!task.applied) return compileTaskContext(root, task.context);
-  return compilePinnedContext(root, task, appliedStartRunId(task.applied), pinnedPaths(task.applied.files));
+function compileApprovedContext(root, task, approvedSha256) {
+  if (!task.applied) return compileTaskContext(root, task.context, { approvedSha256 });
+  return compilePinnedContext(root, task, appliedStartRunId(task.applied), pinnedPaths(task.applied.files), approvedSha256);
 }
 
 function appliedStartRunId(applied) {
@@ -335,6 +338,33 @@ function taskSizing(allow, compiled, checks) {
     warnings.push('TypeScript/Vue/Svelte files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit), or mark a wrapper check that runs it with "covers": ["typecheck"], because test runners strip types');
   }
   return { ...metrics, behaviorSplit: { recommended, reasons }, thresholds: { ...TASK_SIZE_THRESHOLDS, ...BEHAVIOR_SPLIT_THRESHOLDS }, warnings };
+}
+
+async function citedPaths(root, task) {
+  if (!task.context) return [];
+  try {
+    return parseContextManifest(await readProjectFile(root, task.context, taskBriefOptions())).resources.map((resource) => resource.path);
+  } catch {
+    return [];
+  }
+}
+
+// Advisory planning check: an edit to cited lines by another task of the same
+// feature makes the citing task stale (a pure line shift does not).
+async function citedFileWarnings(root, state, task) {
+  const warnings = [];
+  const cited = new Set(await citedPaths(root, task));
+  for (const other of Object.values(state.tasks)) {
+    if (other.id === task.id || other.closure || (other.feature ?? null) !== (task.feature ?? null)) continue;
+    for (const path of other.allow.filter((item) => cited.has(item))) {
+      warnings.push(`task ${task.id} cites ${path}, which task ${other.id} may modify; an edit to the cited lines makes ${task.id} stale`);
+    }
+    const otherCited = new Set(await citedPaths(root, other));
+    for (const path of task.allow.filter((item) => otherCited.has(item))) {
+      warnings.push(`task ${other.id} cites ${path}, which task ${task.id} may modify; an edit to the cited lines makes ${other.id} stale`);
+    }
+  }
+  return warnings;
 }
 
 function nowIso() {
@@ -674,8 +704,11 @@ async function mutateState(projectRoot, callback) {
 
 // Approvals recorded before the compiled text dropped its whole-file source
 // digests hold the legacy digest; they stay fresh and keep binding the whole file.
-function contextDigestMatches(approved, current, legacy) {
-  return approved === current || (legacy !== undefined && approved === legacy);
+// An anchored digest is the approved one, matched by unchanged excerpts that moved.
+function contextDigestMatches(approved, compiled) {
+  if (compiled === null) return approved === null;
+  if (!compiled) return false;
+  return [compiled.sha256, compiled.legacySha256, compiled.anchoredSha256].includes(approved);
 }
 
 function approvalBindsTaskShape(approval, task) {
@@ -754,7 +787,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
   }
   const briefDigest = await digestProjectFile(projectRoot, task.brief, taskBriefOptions()).catch(() => undefined);
   const compiledContext = task.context
-    ? await compileApprovedContext(projectRoot, task).catch(() => undefined)
+    ? await compileApprovedContext(projectRoot, task, task.approval?.contextDigest).catch(() => undefined)
     : null;
   const contextDigest = compiledContext === null ? null : compiledContext?.sha256;
   const checksDigest = task.checks
@@ -771,7 +804,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     approval
       && briefDigest
       && approval.briefDigest === briefDigest
-      && contextDigestMatches(approval.contextDigest ?? null, contextDigest, compiledContext?.legacySha256)
+      && contextDigestMatches(approval.contextDigest ?? null, compiledContext)
       && (approval.checksDigest ?? null) === checksDigest
       && (approval.protectDigest ?? null) === protectDigest
       && (approval.preparationDigest ?? null) === preparationDigest
@@ -822,6 +855,7 @@ async function inspectTask(projectRoot, state, task, seen = new Set()) {
     status,
     briefDigest,
     contextDigest,
+    contextShifts: compiledContext?.shifts,
     checksDigest,
     approvalFresh,
     blockedBy,
@@ -869,6 +903,7 @@ function publicTask(task, stateInfo) {
     ...(task.revisions?.length > 0 ? { revisions: structuredClone(task.revisions) } : {}),
     status: stateInfo.status,
     blockedBy: [...stateInfo.blockedBy],
+    ...(stateInfo.contextShifts ? { contextShifts: structuredClone(stateInfo.contextShifts) } : {}),
     approval: task.approval ? {
       by: task.approval.by,
       reason: task.approval.reason,
@@ -989,7 +1024,9 @@ export async function addTask(projectRoot, options = {}) {
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing: taskSizing(allow, compiled, parsedChecks) };
+    const sizing = taskSizing(allow, compiled, parsedChecks);
+    sizing.warnings.push(...await citedFileWarnings(root, state, state.tasks[id]));
+    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing };
   });
 }
 
@@ -1086,7 +1123,12 @@ export async function approveTask(projectRoot, options = {}) {
     const preparationDigest = await preparationFilesDigest(root, task.preparation);
     const approvalBase = { taskId: id, briefDigest, context: task.context ?? null, contextDigest, checks: task.checks ?? null, checksDigest, protect: task.protect ?? null, protectDigest, preparation: task.preparation ?? null, preparationDigest, dependsOn: [...task.dependsOn], allow: [...task.allow], ...(task.worker === undefined ? {} : { worker: task.worker }), dependencyAcceptances, by, reason, approvedAt };
     task.approval = { ...approvalBase, approvalDigest: digestJson(approvalBase) };
-    return { task: publicTask(task, await inspectTask(root, state, task)), sizing: taskSizing(task.allow, compiled, parsedChecks) };
+    const sizing = taskSizing(task.allow, compiled, parsedChecks);
+    // The previous approval matched moved excerpts; this one binds the recorded lines.
+    for (const shift of status.contextShifts ?? []) {
+      sizing.warnings.push(`cited range ${shift.path}:${shift.from.join('-')} now sits at ${shift.to.join('-')}; this approval binds the recorded lines ${shift.from.join('-')}, so update the context manifest if they are no longer the intended excerpt`);
+    }
+    return { task: publicTask(task, await inspectTask(root, state, task)), sizing };
   });
 }
 
@@ -1540,8 +1582,8 @@ async function applyTaskWithinState(root, state, task, { id, by, runId, exclude 
   // Compile the context as inspectTask will read it once this apply is recorded,
   // and refuse now if that would leave the approval stale.
   if (task.context) {
-    const compiled = await compilePinnedContext(root, task, startRun.id, pinnedPaths(plan)).catch(() => undefined);
-    if (!compiled || !contextDigestMatches(task.approval.contextDigest ?? null, compiled.sha256, compiled.legacySha256)) {
+    const compiled = await compilePinnedContext(root, task, startRun.id, pinnedPaths(plan), task.approval.contextDigest).catch(() => undefined);
+    if (!contextDigestMatches(task.approval.contextDigest ?? null, compiled)) {
       throw tinyError('APPLY_WOULD_STALE', `applying run ${finalRun.id} would leave task ${id} with a stale approval; nothing was written`, { runId: finalRun.id, rootRunId: rootRun.id });
     }
   }
@@ -1656,7 +1698,7 @@ export async function resolveTaskPacket(projectRoot, taskId, { reviewRunId } = {
   if (task.context) {
     let compiled;
     try {
-      compiled = await compileApprovedContext(root, task);
+      compiled = await compileApprovedContext(root, task, task.approval?.contextDigest);
     } catch {
       throw tinyError('STALE_CONTEXT', `context manifest or selected source is no longer readable: ${task.context}`);
     }

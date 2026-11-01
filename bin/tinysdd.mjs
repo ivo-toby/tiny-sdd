@@ -1138,6 +1138,7 @@ function describeStatusTask(task) {
   let description = `${task.id}  ${describeTask(task)}`;
   if (task.status === 'accepted' && task.applied) description += ` (applied from ${task.applied.runId})`;
   if (task.blockedBy?.length) description += ` (requires ${task.blockedBy.join(', ')})`;
+  for (const shift of task.contextShifts ?? []) description += ` (cited ${shift.path}:${shift.from.join('-')} shifted to ${shift.to.join('-')})`;
   return description;
 }
 

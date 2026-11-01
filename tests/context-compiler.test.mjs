@@ -205,3 +205,58 @@ test('readSource supplies the text of each cited source instead of the project f
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a cited excerpt that moved within its file anchors to the approved digest only when it occurs once', async () => {
+  const root = await project();
+  try {
+    const spec = ['# Spec', 'A1', 'A2', 'gap', 'B1', 'B2', 'end'];
+    const writeSpec = (lines) => writeFile(join(root, 'src', 'spec.md'), `${lines.join('\n')}\n`);
+    await writeSpec(spec);
+    const text = JSON.stringify({ schemaVersion: 1, facts: [], resources: [
+      { path: 'src/spec.md', startLine: 2, endLine: 3, purpose: 'A rules.' },
+      { path: 'src/spec.md', startLine: 5, endLine: 6, purpose: 'B rules.' },
+      { path: 'src/contract.ts', startLine: 1, endLine: 1, purpose: 'Input type.' },
+    ] });
+    const packet = { path: '.tinysdd/tasks/task.context.json', text, sha256: sha256(text) };
+    const approved = (await compileContext(root, packet)).sha256;
+    const compile = () => compileContext(root, packet, { approvedSha256: approved });
+
+    const unchanged = await compile();
+    assert.equal(unchanged.sha256, approved);
+    assert.equal(unchanged.anchoredSha256, undefined);
+    assert.equal(unchanged.shifts, undefined);
+
+    // Lines inserted between the two ranges move only the second one.
+    await writeSpec(['# Spec', 'A1', 'A2', 'gap', 'new', 'lines', 'B1', 'B2', 'end']);
+    const between = await compile();
+    assert.notEqual(between.sha256, approved);
+    assert.equal(between.anchoredSha256, approved);
+    assert.deepEqual(between.shifts, [{ path: 'src/spec.md', from: [5, 6], to: [7, 8] }]);
+    assert.deepEqual(between.resources.map((resource) => [resource.startLine, resource.endLine]), [[2, 3], [7, 8], [1, 1]]);
+    assert.match(between.rendered, /### src\/spec\.md:7-8\n[\s\S]*\n7 \| B1\n8 \| B2\n/u);
+    // Without the approved digest the compiler stays positional.
+    assert.equal((await compileContext(root, packet)).anchoredSha256, undefined);
+
+    // Deleting lines above moves both ranges up, past the recorded end of file.
+    await writeSpec(['A1', 'A2', 'gap', 'B1', 'B2']);
+    assert.deepEqual((await compile()).shifts, [
+      { path: 'src/spec.md', from: [2, 3], to: [1, 2] },
+      { path: 'src/spec.md', from: [5, 6], to: [4, 5] },
+    ]);
+    await assert.rejects(compileContext(root, packet), { code: 'CONTEXT_MANIFEST_INVALID', message: /range exceeds source/u });
+
+    // A changed excerpt does not anchor.
+    await writeSpec(['# Spec', 'inserted', 'A1', 'A2 changed', 'gap', 'B1', 'B2', 'end']);
+    const changed = await compile();
+    assert.equal(changed.anchoredSha256, undefined);
+    assert.notEqual(changed.sha256, approved);
+
+    // An excerpt that occurs twice is ambiguous and does not anchor.
+    await writeSpec(['# Spec', 'inserted', 'A1', 'A2', 'gap', 'B1', 'B2', 'end', 'B1', 'B2']);
+    const ambiguous = await compile();
+    assert.equal(ambiguous.anchoredSha256, undefined);
+    assert.notEqual(ambiguous.sha256, approved);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

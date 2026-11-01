@@ -82,9 +82,11 @@ brief between slices:
 
 Approval binds the cited lines, not the whole file (see below). Appending to the
 spec, or editing outside every cited range, leaves the slices current. Editing a
-cited line makes only the slices that cite it stale. Citations are positional,
-so inserting lines above a cited range shifts it and makes that slice stale:
-append addenda at the end of the spec rather than in the middle.
+cited line makes only the slices that cite it stale. Inserting or deleting lines
+above a cited range moves it; the slice stays current when the moved excerpt is
+byte-identical and occurs once in the file (see
+[Moved excerpts](#moved-excerpts)). Appending addenda at the end of the spec is
+still the safest edit, because it moves nothing.
 
 ## Guarantees and limits
 
@@ -98,8 +100,9 @@ append addenda at the end of the spec rather than in the middle.
   facts, and each cited range with its line numbers and excerpt digest. Editing
   the manifest or a cited line makes the task's approval stale until it is
   re-approved. The whole source file is not bound: appending to it or editing
-  outside every cited range keeps the approval fresh, while inserting or
-  deleting lines above a cited range moves it and makes the approval stale.
+  outside every cited range keeps the approval fresh. Inserting or deleting
+  lines above a cited range moves it, and the approval stays fresh only under
+  the rule in [Moved excerpts](#moved-excerpts).
 - Approvals recorded before this binding changed hold the digest of an older
   rendering that also carried a whole-file `Source sha256:` line per cited file.
   They stay fresh and keep binding the whole file until the task is
@@ -119,6 +122,49 @@ append addenda at the end of the spec rather than in the middle.
 - The worker contract tells a model not to reread cited source merely to
   rediscover injected facts. It may still inspect uncited code needed for the
   allowed edit or report a concrete contradiction.
+
+## Moved excerpts
+
+Citations are anchored to their content, not only to their line numbers. When
+the approved digest no longer matches at the recorded lines, the controller
+looks for the same excerpt elsewhere in the same file. A candidate keeps the
+recorded line labels and reads the lines it moved to, so it reproduces the
+approved digest only when those lines are byte-identical and the range has the
+same line count. Per file, the search tries every shift of the cited ranges
+from one range onward, which covers one block of lines inserted or deleted in
+that file. Citations in two different files that moved at the same time stay
+stale.
+
+The citation is fresh only when exactly one candidate matches and every moved
+excerpt occurs exactly once in its file. A changed excerpt, an excerpt that now
+occurs more than once, a missing excerpt, or a shift outside that search stays
+stale, as before. The search is bounded; a search that would exceed its budget
+stays stale. Nothing else is relaxed: the manifest, facts, brief, checks,
+allowed and protected files still bind exactly as before.
+
+The same rule applies to approval freshness, acceptance freshness, `task apply`
+(`APPLY_WOULD_STALE`), `task packet`, the worker and slice bundles. `status
+--json` reports a moved citation on the task:
+
+```json
+"contextShifts": [{ "path": "cli/src/pgm.ts", "from": [237, 263], "to": [243, 269] }]
+```
+
+Human `status` adds `(cited cli/src/pgm.ts:237-263 shifted to 243-269)`. The
+worker's `compiled-context.md` shows the excerpt at its current lines, and
+`context.json` records `anchoredSha256` (the approved digest) and `shifts`.
+The manifest file is not rewritten. Re-approving binds the manifest's recorded
+lines again, so `task approve` warns when a moved citation would be rebound to
+whatever now sits at those lines; update the manifest first.
+
+Status is recomputed on every read, so an accepted task that read `stale` only
+because of such a move reads `accepted` again once the controller has this
+rule; no command is needed.
+
+`task add` and `change validate` warn, without blocking, when a task or slice
+cites a file that another task in the same feature or another slice of the
+change may modify (`CITED_FILE_MODIFIED_BY_SLICE` in `change validate`). An
+edit to the cited lines themselves still makes the citing task stale.
 
 An omitted `--context` remains valid for small tasks. Use one when a precise
 interface or oracle would materially reduce rediscovery and ambiguity.

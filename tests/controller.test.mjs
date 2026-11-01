@@ -269,9 +269,102 @@ test('slices citing one shared spec go stale only when their own cited lines mov
     await assert.rejects(resolveTaskPacket(root, 'one'), { code: 'TASK_NOT_READY' });
     assert.equal((await resolveTaskPacket(root, 'two')).taskId, 'two');
 
-    // Citations are positional: a line inserted above both ranges shifts them.
-    await writeSharedSpec(root, [SHARED_SPEC[0], 'inserted above both ranges', ...SHARED_SPEC.slice(1)]);
-    assert.deepEqual(await statusById(root), { one: 'stale_approval', two: 'stale_approval' });
+    // A line inserted above both ranges shifts them; an unchanged excerpt is
+    // found again once, so only the slice whose cited lines changed is stale.
+    await writeSharedSpec(root, [SHARED_SPEC[0], 'inserted above both ranges', ...SHARED_SPEC.slice(1).map((line) => (line === 'A2 second rule' ? 'A2 changed rule' : line))]);
+    assert.deepEqual(await statusById(root), { one: 'stale_approval', two: 'ready' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+const ENTRYPOINT = ['import { a } from "./a.js";', '', 'export function main() {', '  return run(a);', '}', '', 'export function run(value) {', '  return value;', '}'];
+
+async function writeEntrypoint(root, lines = ENTRYPOINT) {
+  await mkdir(join(root, 'src'), { recursive: true });
+  await writeFile(join(root, 'src', 'main.ts'), `${lines.join('\n')}\n`);
+}
+
+// Issue #222: `reader` cites src/main.ts read-only; `wiring` depends on it and
+// is allowed to edit that file above the cited range.
+async function addReaderAndWiring(root) {
+  await writeEntrypoint(root);
+  await mkdir(join(root, '.tinysdd', 'tasks'), { recursive: true });
+  await writeFile(join(root, 'docs', 'reader.md'), '# Reader\n');
+  await writeFile(join(root, 'docs', 'wiring.md'), '# Wiring\n');
+  await writeFile(join(root, '.tinysdd', 'tasks', 'reader.context.json'), JSON.stringify({
+    schemaVersion: 1,
+    facts: [],
+    resources: [{ path: 'src/main.ts', startLine: 7, endLine: 9, purpose: 'The run pattern to follow.' }],
+  }));
+  await addTask(root, { id: 'reader', brief: 'docs/reader.md', context: '.tinysdd/tasks/reader.context.json', allow: ['src/reader.ts'] });
+  await approveTask(root, { id: 'reader', by: 'operator', reason: 'checked the cited pattern' });
+  await mkdir(join(root, 'src'), { recursive: true });
+  await writeFile(join(root, 'src', 'reader.ts'), 'export const reader = 1;\n');
+  await reviewTask(root, { id: 'reader', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+  const added = await addTask(root, { id: 'wiring', brief: 'docs/wiring.md', dependsOn: ['reader'], allow: ['src/main.ts'] });
+  await approveTask(root, { id: 'wiring', by: 'operator', reason: 'checked the wiring scope' });
+  return added;
+}
+
+test('an accepted slice stays accepted when a dependent inserts lines above its unchanged cited range', async () => {
+  const root = await project();
+  try {
+    const added = await addReaderAndWiring(root);
+    assert.deepEqual(added.sizing.warnings, ['task reader cites src/main.ts, which task wiring may modify; an edit to the cited lines makes reader stale']);
+    await writeEntrypoint(root, ['import { b } from "./b.js";', 'import { c } from "./c.js";', ...ENTRYPOINT]);
+    assert.deepEqual(await statusById(root), { reader: 'accepted', wiring: 'ready' });
+    const reader = (await controllerStatus(root)).tasks.find((task) => task.id === 'reader');
+    assert.deepEqual(reader.contextShifts, [{ path: 'src/main.ts', from: [7, 9], to: [9, 11] }]);
+    await reviewTask(root, { id: 'wiring', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual(await statusById(root), { reader: 'accepted', wiring: 'accepted' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a shifted cited range whose excerpt changed stays stale', async () => {
+  const root = await project();
+  try {
+    await addReaderAndWiring(root);
+    const changed = ENTRYPOINT.map((line) => (line === '  return value;' ? '  return value + 1;' : line));
+    await writeEntrypoint(root, ['import { b } from "./b.js";', ...changed]);
+    assert.deepEqual(await statusById(root), { reader: 'stale', wiring: 'blocked' });
+    await assert.rejects(reviewTask(root, { id: 'wiring', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'PREREQUISITES_NOT_ACCEPTED' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a cited excerpt that now occurs twice in the file is ambiguous and stays stale', async () => {
+  const root = await project();
+  try {
+    await addReaderAndWiring(root);
+    await writeEntrypoint(root, ['import { b } from "./b.js";', ...ENTRYPOINT, '', ...ENTRYPOINT.slice(6)]);
+    assert.deepEqual(await statusById(root), { reader: 'stale', wiring: 'blocked' });
+    assert.equal((await controllerStatus(root)).tasks.find((task) => task.id === 'reader').contextShifts, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a shifted citation keeps dispatch and the worker packet on the current lines', async () => {
+  const root = await project();
+  try {
+    await writeSharedSpec(root);
+    await addSliceCitingSpec(root, 'one', 6, 8);
+    const approved = (await rawState(root)).tasks.one.approval.contextDigest;
+    await writeSharedSpec(root, [SHARED_SPEC[0], 'inserted above', ...SHARED_SPEC.slice(1)]);
+    const [one] = (await controllerStatus(root)).tasks;
+    assert.equal(one.status, 'ready');
+    assert.deepEqual(one.contextShifts, [{ path: 'docs/spec.md', from: [6, 8], to: [7, 9] }]);
+    const packet = await resolveTaskPacket(root, 'one');
+    assert.equal(packet.approval.contextDigest, approved);
+    const compiled = await compileContext(root, packet.context, { approvedSha256: approved });
+    assert.equal(compiled.sha256, packet.context.compiledSha256);
+    assert.equal(compiled.anchoredSha256, approved);
+    assert.match(compiled.rendered, /### docs\/spec\.md:7-9\n/u);
+    assert.match(compiled.rendered, /\n7 \| B1 first rule\n/u);
   } finally {
     await cleanup(root);
   }

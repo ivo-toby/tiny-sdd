@@ -1,7 +1,7 @@
 import { lstat, mkdir, open, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { compileContext, parseContextManifest } from './context-compiler.mjs';
+import { APPROVAL_COMPARISONS, compileContext, parseContextManifest } from './context-compiler.mjs';
 import { resolveTaskPacket } from './controller.mjs';
 import {
   assertNoSymlinkPath,
@@ -330,7 +330,7 @@ function buildManifest({ change, slice, packet, plan, result, context, contextBi
       compiledBytes: context.bytes,
       approvalContextDigest: packet.approval.contextDigest ?? null,
       approvalContextBinding: contextBinding,
-      approvalComparison: contextBinding === 'legacy' ? 'approval.contextDigest=compiled.legacySha256' : contextBinding === 'current' ? 'approval.contextDigest=compiled.sha256' : 'none',
+      approvalComparison: APPROVAL_COMPARISONS[contextBinding],
       legacySha256: context.legacySha256,
       sourceDigests: context.resources.map((resource) => ({ path: resource.path, sha256: resource.sourceSha256, bytes: resource.sourceBytes })),
     },
@@ -422,6 +422,7 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
   let contextBinding = 'none';
   if (packet.context) {
     compiled = await compileContext(root, { path: packet.context.path, text: packet.context.text, sha256: packet.context.sha256 }, {
+      approvedSha256: packet.approval.contextDigest ?? undefined,
       readSource: async (sourcePath) => {
         if (result.constitution && sourcePath === result.constitution.path) {
           return result.constitution.markdown.text;
@@ -450,6 +451,7 @@ export async function exportSliceBundle(projectRootOrOptions, changePathArgument
     }
     if (packet.approval.contextDigest === compiled.sha256) contextBinding = 'current';
     else if (packet.approval.contextDigest === compiled.legacySha256) contextBinding = 'legacy';
+    else if (packet.approval.contextDigest === compiled.anchoredSha256) contextBinding = 'anchored';
     else throw tinyError('STALE_APPROVAL', `task approval context digest matches neither current nor legacy compiled context`, { approved: packet.approval.contextDigest, current: compiled.sha256, legacy: compiled.legacySha256 });
   } else if ((packet.approval.contextDigest ?? null) !== null) {
     throw tinyError('STALE_APPROVAL', 'task approval has a context digest but the packet has no context');
