@@ -186,6 +186,24 @@ describe('check runner', { skip: SKIP }, () => {
     assert.ok(['disabled', 'allowed'].includes(result.sandbox.nestedUserNamespaces));
   });
 
+  test('a relative symlink inside the candidate is recreated as the same link', async () => {
+    const candidate = await makeDir({
+      'CLAUDE.md': 'shared instructions\n',
+      'check.mjs': [
+        "import { lstatSync, readFileSync, readlinkSync } from 'node:fs';",
+        "if (!lstatSync('AGENTS.md').isSymbolicLink() || readlinkSync('AGENTS.md') !== 'CLAUDE.md') process.exit(3);",
+        "if (readlinkSync('docs/guide.md') !== '../CLAUDE.md') process.exit(4);",
+        "process.exit(readFileSync('docs/guide.md', 'utf8') === 'shared instructions\\n' ? 0 : 5);",
+        '',
+      ].join('\n'),
+    });
+    await symlink('CLAUDE.md', join(candidate, 'AGENTS.md'));
+    await mkdir(join(candidate, 'docs'));
+    await symlink('../CLAUDE.md', join(candidate, 'docs', 'guide.md'));
+    const result = await run(candidate, { argv: ['node', 'check.mjs'] });
+    assert.equal(result.exitCode, 0, result.output.text);
+  });
+
   test('a failing test exits non-zero and its failure text is in the tail', async () => {
     const candidate = await makeDir({ 't.test.mjs': FAILING_TEST });
     const result = await run(candidate, {});
@@ -892,10 +910,17 @@ describe('check runner', { skip: SKIP }, () => {
       return options;
     }));
 
-    test('a symlink nested in a subdirectory of candidateDir', () => assertRefused(/subdir\/link/u, async () => {
+    test('a symlink nested in a subdirectory of candidateDir that climbs out of it', () => assertRefused(/subdir\/link/u, async () => {
       const options = await withCandidate();
       await mkdir(join(options.candidateDir, 'subdir'));
-      await symlink('t.test.mjs', join(options.candidateDir, 'subdir', 'link'));
+      await symlink('../../t.test.mjs', join(options.candidateDir, 'subdir', 'link'));
+      return options;
+    }));
+
+    test('a symlink whose .. follows a name, which the kernel may resolve elsewhere', () => assertRefused(/symlink/u, async () => {
+      const options = await withCandidate();
+      await mkdir(join(options.candidateDir, 'subdir'));
+      await symlink('subdir/../t.test.mjs', join(options.candidateDir, 'link'));
       return options;
     }));
 

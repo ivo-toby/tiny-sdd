@@ -9,11 +9,11 @@
 // refuses to run, and on macOS a root caller is refused because Seatbelt has no
 // privilege drop. Nothing here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
-import { lchown, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lchown, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { TinySDDError, isPlainObject, normalizeProjectRelative, tinyError } from './fs-utils.mjs';
+import { TinySDDError, containedSymlinkTarget, isPlainObject, normalizeProjectRelative, tinyError } from './fs-utils.mjs';
 import { buildSeatbeltCheckProfile } from './macos-sandbox.mjs';
 
 const MIB = 1024 * 1024;
@@ -340,9 +340,16 @@ async function copyDirectory(from, to, budget, prefix = '', signal, deadline) {
       await copyDirectory(source, target, budget, `${label}/`, signal, deadline);
     } else if (info.isFile()) {
       await copyRegularFile(source, target, info, budget, label, signal, deadline);
+    } else if (info.isSymbolicLink()) {
+      // A relative link that stays inside the candidate (AGENTS.md -> CLAUDE.md)
+      // is recreated as the same link; it cannot reach anything outside /work.
+      const linkTarget = await readlink(source);
+      if (containedSymlinkTarget(label, linkTarget) === null) {
+        throw invalid(`candidateDir contains a symlink that leaves the candidate: ${label}`, { path: label });
+      }
+      await symlink(linkTarget, target);
     } else {
-      const kind = info.isSymbolicLink() ? 'symlink' : 'special file';
-      throw invalid(`candidateDir contains a ${kind}; only regular files and directories are copied: ${label}`, { path: label });
+      throw invalid(`candidateDir contains a special file; only regular files, directories and contained symlinks are copied: ${label}`, { path: label });
     }
   }
 }
