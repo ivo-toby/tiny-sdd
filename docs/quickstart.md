@@ -590,14 +590,78 @@ top-level command may be omitted when every feature has an entry:
 
 Each entry takes the same fields as the top-level command (`argv` or
 `manifest`/`checkId`, `timeoutMs`, `dependencyMounts`, `testPaths`,
-`entrypoints`); only that feature's tasks must protect its `testPaths`.
+`entrypoints`, `docker`); only that feature's tasks must protect its
+`testPaths`. Dependency mounts are copied as they are, including package files
+with secret-like names (`dockerode/lib/secret.js`); project source keeps the
+secret-name filter.
 
-The host check runner has no network and grants no sockets, so a feature test
-that needs Docker (for example testcontainers through `/var/run/docker.sock`)
-cannot pass under `feature accept`. Point `featureIntegration` at a test that
-runs without external services. On macOS a workspace link inside a dependency
-mount resolves next to the retained mount rather than into the candidate, so a
-check that imports a workspace package through `node_modules` may not find it.
+By default the host check runner has no network and grants no sockets. A
+feature test that needs Docker (for example testcontainers) declares it on its
+entry:
+
+```json
+"004-report-core": {
+  "argv": ["node", "node_modules/vitest/vitest.mjs", "run", "tests/integration/workspace-report.feature.test.ts"],
+  "dependencyMounts": ["node_modules"],
+  "testPaths": ["tests/integration/workspace-report.feature.test.ts"],
+  "entrypoints": ["src/services/workspace-service.ts"],
+  "timeoutMs": 300000,
+  "docker": { "socket": "/var/run/docker.sock" }
+}
+```
+
+**Trade-off:** a check with Docker access can start containers, and through
+the Docker API that is host-level access (it can mount host directories or run
+privileged containers). Declare `docker` only for feature tests you trust as
+much as your own shell. Only the `feature accept` check gets this access;
+worker sandboxes and `run_checks` never do. An entry without `docker` runs
+exactly as before.
+
+With `docker` declared:
+
+- the socket must exist and be a unix socket when `feature accept` starts,
+  otherwise it refuses with `FEATURE_INTEGRATION_DOCKER_SOCKET` (is Docker
+  running?). A symlinked socket such as OrbStack's
+  `/var/run/docker.sock -> ~/.orbstack/run/docker.sock` is resolved;
+- the check gets `DOCKER_HOST=unix://<socket>`,
+  `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1` (published ports are reached on
+  IPv4 loopback without a name lookup) and
+  `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=<daemonSocket>`, the daemon-side path
+  Ryuk mounts. `daemonSocket` defaults to `/var/run/docker.sock`, which is right
+  for Docker Desktop, OrbStack, Colima and rootful Linux; set it for rootless
+  Docker. Ryuk stays enabled so containers are removed if the check is killed;
+- `HOME` is an empty scratch directory: no `~/.docker` config, credentials or
+  `.testcontainers.properties` reach the check, so images come from public
+  registries anonymously (pull private images beforehand);
+- on macOS (Seatbelt) the check may connect to the declared socket (and the
+  paths it resolves to), open TCP connections to `localhost` only, and look up
+  its own user (testcontainers calls `os.userInfo()`). No other network;
+- on Linux (bubblewrap) the socket is bound at `/run/tinysdd/docker.sock` and
+  the check keeps the host network namespace, because published ports live on
+  the host's loopback and bubblewrap cannot narrow a shared namespace to
+  loopback. That is full network access, on top of what the socket already
+  grants. The check also gets a passwd and group entry for its own uid;
+- the declaration is part of the proof's command identity, so adding, removing
+  or changing it makes an earlier proof stale, and the proof records
+  `dockerAccess.granted` with the socket the runner bound.
+
+Runner limits to know about when a feature test uses vitest:
+
+- the dependency mount is read-only, and vite bundles a `vitest.config.*` into
+  `node_modules/.vite-temp`; pass `--configLoader runner` (vitest 3.1+) when the
+  project has a vitest or vite config file;
+- on Linux the check runs under an 8 GiB address-space limit, which V8's
+  WebAssembly guard regions exceed (`WebAssembly.instantiate(): Out of
+  memory`). Add `--disable-wasm-trap-handler` after `node` in `argv` and run the
+  workers as forks with the same flag (`pool: 'forks'`,
+  `poolOptions.forks.execArgv: ['--disable-wasm-trap-handler']`). macOS does not
+  apply that limit.
+
+The Linux sandbox has a fixed `/etc/hosts` with only `localhost`, so test
+runners that resolve `localhost` start. On macOS a workspace link inside a
+dependency mount resolves next to the retained mount rather than into the
+candidate, so a check that imports a workspace package through `node_modules`
+may not find it.
 
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'
