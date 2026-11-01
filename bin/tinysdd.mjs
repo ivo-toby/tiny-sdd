@@ -290,12 +290,9 @@ function parseCommand(args) {
   throw cliError(unknownCommandHelp(command), 'UNKNOWN_COMMAND');
 }
 
-const DEFAULT_STOP_WAIT_MS = STOP_WAIT_MS_DEFAULT;
-const MAX_STOP_WAIT_MS = STOP_WAIT_MS_MAX;
-
 function parseWaitMs(value) {
-  if (value === undefined) return DEFAULT_STOP_WAIT_MS;
-  if (!/^\d+$/.test(value) || Number(value) > MAX_STOP_WAIT_MS) throw cliError(`--wait-ms must be an integer from 0 to ${MAX_STOP_WAIT_MS}`);
+  if (value === undefined) return STOP_WAIT_MS_DEFAULT;
+  if (!/^\d+$/.test(value) || Number(value) > STOP_WAIT_MS_MAX) throw cliError(`--wait-ms must be an integer from 0 to ${STOP_WAIT_MS_MAX}`);
   return Number(value);
 }
 
@@ -858,14 +855,16 @@ async function run(argv) {
   const { args, json, help, version, project, projectSpecified } = extractGlobals(argv);
   if (version) return { ok: true, data: { version: VERSION }, presentation: 'version' };
   if (help || args[0] === 'help') {
-    const topic = args[0] === 'help' ? args.slice(1) : args;
+    let topic = args[0] === 'help' ? args.slice(1) : args;
+    // `help help` and `help --help` mean the top-level help.
+    while (topic[0] === 'help') topic = topic.slice(1);
     const firstFlag = topic.findIndex((token) => token.startsWith('-'));
     const words = firstFlag === -1 ? topic : topic.slice(0, firstFlag);
     const text = words.length === 0
       ? topLevelHelp(VERSION)
       : commandHelp(words[0], words.slice(1).join(' '));
     if (text === undefined) {
-      const error = words.length === 1
+      const error = commandHelp(words[0]) === undefined
         ? unknownCommandHelp(words[0])
         : unknownSubcommandHelp(words[0], words.slice(1).join(' '));
       throw cliError(error, 'UNKNOWN_COMMAND');
@@ -1271,14 +1270,8 @@ function writeResult(result, json) {
   if (result.presentation === 'change-validate') {
     const report = result.data;
     process.stdout.write(`Change ${report.changeId}: ${report.readiness.ready ? 'ready' : 'not ready'} (${report.metrics.sliceCount} slice(s), ${report.metrics.deltaCount} delta(s)).\n`);
-    for (const warning of report.warnings ?? []) {
-      const text = typeof warning === 'string' ? warning : warning.message ?? warning.code ?? JSON.stringify(warning);
-      process.stderr.write(`Warning: ${text}\n`);
-    }
-    for (const issue of report.readiness.issues ?? []) {
-      const text = typeof issue === 'string' ? issue : issue.message ?? issue.code ?? JSON.stringify(issue);
-      process.stderr.write(`Not ready: ${text}\n`);
-    }
+    for (const warning of report.warnings) process.stderr.write(`Warning: ${warning.message}\n`);
+    for (const issue of report.readiness.issues) process.stderr.write(`Not ready: ${issue.message}\n`);
     return;
   }
   if (result.presentation === 'change-export') {

@@ -257,8 +257,8 @@ credential store. If the operator does not authorize the install, report the
 missing sibling executable and leave the project and Node installation alone.
 
 The current target is Pi **1.4.0**, an exact pin, and its fixed check-client
-surface requires Node **>=22.19.0**. The package declares Node >=22, but use the
-stricter 22.19.0 floor for a worker readiness attempt. Setup walks from the
+surface requires Node **>=22.19.0**, which is also the package's declared
+engine. Setup walks from the
 resolved executable to a nearby `package.json` and reports any other version,
 including 1.0.0, as `unsupported-version` and not ready, so stop and replace
 the package. A successful `pi --version` by itself is discovery, not

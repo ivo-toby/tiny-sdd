@@ -172,6 +172,7 @@ describe("OpenCode worker configuration", () => {
     const prepared = await openCodeRunner.prepareEnvironment({ worker: worker(), sourceEnv: { OPENCODE_TEST_KEY: "synthetic-key-value" } });
     try {
       assert.equal(prepared.env.TINYSDD_PI_SECRET_0, "synthetic-key-value");
+      assert.equal(prepared.metadata.generatedCredentialReferenceCount, 1);
       const content = openCodeRunner.inferenceEnvironment({ prepared, worker: worker(), baseUrl: "http://127.0.0.1:41434", token: "relay-token-1" });
       const text = content.OPENCODE_CONFIG_CONTENT;
       assert.equal(text.includes("synthetic-key-value"), false, "the provider key must stay on the host");
@@ -217,6 +218,20 @@ describe("OpenCode worker configuration", () => {
     await assert.rejects(openCodeRunner.prepareEnvironment({ worker: worker({ opencodeConfig: literal }) }), /must be an \{env:NAME\} reference/u);
     const compaction = { schemaVersion: 1, id: "compact", runtime: { compaction: { enabled: true } } };
     await assert.rejects(openCodeRunner.prepareEnvironment({ worker: worker(), profile: compaction, sourceEnv: { OPENCODE_TEST_KEY: "x" } }), /no deterministic compaction/u);
+  });
+});
+
+describe("OpenCode provider lookup", () => {
+  test("a relative opencodeConfig is refused even without the project config", async () => {
+    await assert.rejects(openCodeRunner.preflight({ worker: worker({ opencodeConfig: "opencode.json" }) }), /an absolute path/u);
+  });
+
+  test("a provider or model id that names an inherited property does not resolve", async () => {
+    const path = join(fixtureRoot, "proto.json");
+    await writeFile(path, JSON.stringify({ provider: { oc: { npm: "@ai-sdk/openai-compatible", options: { baseURL: "http://127.0.0.1:9/v1" }, models: { "exact-model": {} } } } }));
+    await assert.rejects(openCodeRunner.preflight({ worker: worker({ opencodeConfig: path, model: "__proto__" }) }), /does not define model __proto__/u);
+    await assert.rejects(openCodeRunner.preflight({ worker: worker({ opencodeConfig: path, model: "constructor" }) }), /does not define model constructor/u);
+    await assert.rejects(openCodeRunner.preflight({ worker: worker({ opencodeConfig: path, provider: "constructor" }) }), /has no provider constructor/u);
   });
 });
 

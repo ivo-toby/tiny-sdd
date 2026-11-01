@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_MAX_TOOL_CALLS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_TOOL_CALLS } from "./config.mjs";
 import { stripJsonComments } from "./pi-environment.mjs";
@@ -63,6 +63,7 @@ export const OPENCODE_ENV_NAMES = Object.freeze([
 export const OPENCODE_MACOS_MANAGED_DIRECTORY = "/Library/Application Support/opencode";
 export const OPENCODE_LINUX_MANAGED_DIRECTORY = "/etc/opencode";
 export const OPENCODE_MANAGED_PREFERENCES = ["/Library/Managed Preferences"];
+// The relay only resolves TINYSDD_PI_(SECRET|ENV)_n references (inference-relay.mjs).
 const SECRET_PLACEHOLDER = "TINYSDD_PI_SECRET_0";
 const ENV_REFERENCE = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/u;
 const PROVIDER_ID = /^[A-Za-z0-9_.-]+$/u;
@@ -90,7 +91,7 @@ export function validateOpenCodeWorker(worker) {
   if (!PROVIDER_ID.test(worker.provider)) fail("OpenCode worker.provider may contain only letters, digits, '.', '_' and '-'");
   if (typeof worker.model !== "string" || worker.model.length === 0) fail("OpenCode worker.model is required");
   if (MODEL_ID_FORBIDDEN.test(worker.model)) fail("OpenCode worker.model cannot contain '#', braces or control characters");
-  if (typeof worker.opencodeConfig !== "string" || worker.opencodeConfig.length === 0) {
+  if (typeof worker.opencodeConfig !== "string" || !isAbsolute(worker.opencodeConfig)) {
     fail("OpenCode worker.opencodeConfig is required: an absolute path to the OpenCode config file that defines the provider");
   }
   const limits = worker.limits ?? {};
@@ -145,8 +146,10 @@ export async function readOperatorProvider({ worker, sourceEnv = process.env }) 
     // Do not echo parser output: the file can contain references to secrets.
     fail(`Cannot parse OpenCode config ${worker.opencodeConfig}`);
   }
-  const native = document?.providers?.[worker.provider];
-  const legacy = document?.provider?.[worker.provider];
+  // Own keys only: a provider or model id such as "__proto__" must not resolve.
+  const own = (object, key) => (object && typeof object === "object" && Object.hasOwn(object, key) ? object[key] : undefined);
+  const native = own(document?.providers, worker.provider);
+  const legacy = own(document?.provider, worker.provider);
   if (native !== undefined && legacy !== undefined) fail(`OpenCode config defines provider ${worker.provider} twice`);
   const entry = native ?? legacy;
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail(`OpenCode config has no provider ${worker.provider}`);
@@ -181,8 +184,7 @@ export async function readOperatorProvider({ worker, sourceEnv = process.env }) 
     if (typeof value !== "string" || value.length === 0) fail(`Required OpenCode credential environment variable is unavailable: ${reference[1]}`);
     apiKey = value;
   }
-  const models = entry.models ?? {};
-  const model = models[worker.model];
+  const model = own(entry.models, worker.model);
   if (!model || typeof model !== "object") fail(`OpenCode provider ${worker.provider} does not define model ${worker.model}`);
   const limit = model.limit && typeof model.limit === "object" ? model.limit : {};
   const contextLimit = Number.isInteger(limit.context) && limit.context > 0 ? limit.context : null;
@@ -315,10 +317,15 @@ export function assertPinnedVersion(version) {
   return version;
 }
 
+function endpointFingerprint(baseUrl) {
+  const url = new URL(baseUrl);
+  return `${url.origin}${url.pathname}`;
+}
+
 /** Check the worker's OpenCode settings without creating state. */
-export async function preflightOpenCodeWorker({ worker, profile = null, sourceEnv = process.env } = {}) {
+export async function preflightOpenCodeWorker({ worker, profile = null, sourceEnv = process.env, provider: readProvider } = {}) {
   validateOpenCodeWorker(worker);
-  const provider = await readOperatorProvider({ worker, sourceEnv });
+  const provider = readProvider ?? await readOperatorProvider({ worker, sourceEnv });
   const errors = [];
   const warnings = [];
   const thinking = profile?.runtime?.thinking ?? "off";
@@ -331,13 +338,13 @@ export async function preflightOpenCodeWorker({ worker, profile = null, sourceEn
     warnings.push("profile runtime.compat, runtime.reasoning and runtime.thinkingBudgets are not applied by the OpenCode runner");
   }
   return {
-    basis: "OpenCode 2.1.4 config and run source (tag v2.1.4, commit 68bc26b)",
+    basis: `OpenCode ${OPENCODE_VERSION} config and run source (tag v${OPENCODE_VERSION}, commit ${OPENCODE_SOURCE_COMMIT})`,
     thinking: { control: "none", reason: "the OpenCode runner sends no thinking level", requested: thinking },
     maxTokens: { value: provider.outputLimit, source: provider.outputLimit === null ? "unknown" : "model" },
     thinkingTokenBudgetField: null,
     thinkingBudget: null,
     compaction: { enabled: false, deterministic: "unavailable", reason: "OpenCode runner: auto-compaction is disabled and deterministic compaction is not implemented" },
-    endpointFingerprint: `${new URL(provider.baseUrl).origin}${new URL(provider.baseUrl).pathname}`,
+    endpointFingerprint: endpointFingerprint(provider.baseUrl),
     effectiveReasoning: null,
     effectiveCompat: null,
     errors,
@@ -358,11 +365,11 @@ export async function preflightOpenCodeWorker({ worker, profile = null, sourceEn
  * catalog and the relay target. The caller must call `cleanup()` in a finally block.
  */
 export async function prepareOpenCodeEnvironment({ worker, profile = null, sourceEnv = process.env } = {}) {
-  // A profile's limits are measured defaults, not binding ones (#174).
   const limits = validateOpenCodeWorker(worker);
-  const preflight = await preflightOpenCodeWorker({ worker, profile, sourceEnv });
-  if (preflight.errors.length > 0) fail(`Worker preflight failed: ${preflight.errors.join("; ")}`);
+  // One read of the operator's file, so the recorded preflight describes the provider the run uses.
   const provider = await readOperatorProvider({ worker, sourceEnv });
+  const preflight = await preflightOpenCodeWorker({ worker, profile, sourceEnv, provider });
+  if (preflight.errors.length > 0) fail(`Worker preflight failed: ${preflight.errors.join("; ")}`);
   const hostConfig = await hostManagedConfigPresence();
   const stateDir = await mkdtemp(join(tmpdir(), "tinysdd-opencode-state-"));
   let cleaned = false;
@@ -402,9 +409,8 @@ export async function prepareOpenCodeEnvironment({ worker, profile = null, sourc
     maxToolCalls: limits.maxToolCalls,
     firstWriteMs: limits.firstWriteMs,
     maxCheckRuns: limits.maxCheckRuns,
-    ...(profile?.limits ? { limitProvenance: Object.fromEntries(Object.entries(profile.limits).map(([key, value]) => [key, { measured: value, effective: limits[key] ?? value, source: (limits[key] ?? value) !== value ? "worker" : "profile" }])) } : {}),
     credentialEnvironmentNames: [],
-    generatedCredentialReferenceCount: 0,
+    generatedCredentialReferenceCount: Object.keys(env).length,
     preflight: {
       basis: preflight.basis,
       thinking: preflight.thinking,
@@ -419,7 +425,6 @@ export async function prepareOpenCodeEnvironment({ worker, profile = null, sourc
     runtimeFacts: {
       managedConfig: hostConfig,
       isolatedEnvironment: [...OPENCODE_ENV_NAMES],
-      permissions: openCodePermissions(),
     },
   };
   return {

@@ -214,7 +214,7 @@ test('runSetup names the exact replacement when Pi 1.0.0 is still installed', as
     for (const path of ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md', 'profiles/titan-gemma4-26b-a4b-2x64k-v1.json']) {
       entries.push([path, await readFile(join(repoRoot, path))]);
     }
-    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
+    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(result.ready, false);
     assert.equal(result.checks.pi.status, 'unsupported-version');
     assert.match(result.nextSteps.join('\n'), /Replace @earendil-works\/pi-coding-agent@1\.0\.0 with @earendil-works\/pi-coding-agent@1\.4\.0 beside this Node executable/u);
@@ -363,15 +363,19 @@ test('sandbox inspection reports macOS inference and Seatbelt check-runner suppo
     assert.equal(blocked.worker.supported, false);
     assert.equal(blocked.worker.probe.status, 'failed-empty-stderr');
     assert.equal(blocked.checks.available, false);
-    const mac = await inspectSandbox({ platform: 'darwin', executablePaths: { sandboxExec: bwrap } });
+    const mac = await inspectSandbox({ platform: 'darwin', privileged: false, executablePaths: { sandboxExec: bwrap } });
     assert.equal(mac.worker.supported, true);
     assert.equal(mac.checks.available, true);
     assert.equal(mac.checks.runner, 'seatbelt');
     assert.equal(mac.checks.sandboxExec, bwrap);
-    const macMissing = await inspectSandbox({ platform: 'darwin', executablePaths: { sandboxExec: join(home, 'missing-sandbox-exec') } });
+    const macMissing = await inspectSandbox({ platform: 'darwin', privileged: false, executablePaths: { sandboxExec: join(home, 'missing-sandbox-exec') } });
     assert.equal(macMissing.worker.supported, false);
     assert.equal(macMissing.checks.available, false);
     assert.match(macMissing.checks.reason, /sandbox-exec/u);
+    const macRoot = await inspectSandbox({ platform: 'darwin', privileged: true, executablePaths: { sandboxExec: bwrap } });
+    assert.equal(macRoot.worker.supported, true);
+    assert.equal(macRoot.checks.available, false);
+    assert.match(macRoot.checks.reason, /as root/u);
   } finally {
     await cleanup(home);
   }
@@ -491,7 +495,7 @@ test('runSetup installs a version-matched archive and reports metadata-only read
     for (const path of ['package.json', 'skills/tinysdd/SKILL.md', 'skills/tinysdd/assets/setup/SKILL.md', 'skills/tinysdd/references/cli-workflow.md', 'docs/artifact-format.md', 'docs/context-compiler.md', 'docs/quickstart.md', 'profiles/titan-gemma4-26b-a4b-2x64k-v1.json']) {
       entries.push([path, await readFile(join(repoRoot, path))]);
     }
-    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
+    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(result.version, CLI_VERSION);
     assert.equal(result.checks.pi.status, 'ready');
     assert.equal(result.checks.models.status, 'ready');
@@ -562,7 +566,7 @@ test('global setup is cwd-independent and leaves a project config untouched', as
     }
     const before = await readFile(join(cwd, '.tinysdd', 'config.json'));
     process.chdir(cwd);
-    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
+    const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(result.installation.bundleRoot, join(home, '.agents', 'tinysdd'));
     assert.deepEqual(await readFile(join(cwd, '.tinysdd', 'config.json')), before);
   } finally {
@@ -588,7 +592,7 @@ async function setupHome() {
   const agent = join(home, 'agent');
   await mkdir(agent, { recursive: true });
   await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { local: { models: [{ id: 'model-a' }] } } }));
-  const options = { homeDir: home, configDir: join(home, 'config'), nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: pi.pi } } };
+  const options = { homeDir: home, configDir: join(home, 'config'), nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: pi.pi } } };
   return { home, pi, options, registry: join(home, 'config', 'registry') };
 }
 
@@ -746,7 +750,7 @@ test('skills update resolves a symlinked bundle root and keeps unrelated entries
   const home = await temporary('tinysdd-symlink-bundle-home-');
   const dotfiles = await temporary('tinysdd-bundle-dotfiles-');
   try {
-    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
+    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
     const realBundle = join(dotfiles, 'tinysdd-bundle');
     await mkdir(realBundle, { recursive: true });
     await rm(join(home, '.agents', 'tinysdd'), { recursive: true, force: true });
@@ -818,7 +822,7 @@ test('skills update refuses to replace a symlinked bundle root that is not a Tin
   const home = await temporary('tinysdd-unsafe-bundle-home-');
   const dotfiles = await temporary('tinysdd-unsafe-dotfiles-');
   try {
-    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
+    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
     const other = join(dotfiles, 'some-repo');
     await mkdir(other, { recursive: true });
     await writeFile(join(other, 'README.md'), 'not a tinysdd bundle\n');
@@ -842,7 +846,7 @@ test('skills update refuses to replace a symlinked bundle root that is a source 
   const home = await temporary('tinysdd-checkout-bundle-home-');
   const dotfiles = await temporary('tinysdd-checkout-dotfiles-');
   try {
-    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
+    await runSetup({ homeDir: home, configDir: join(home, 'config'), nodeExecutable: process.execPath, nodeVersion: process.versions.node, sourceAgentDir: home, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: process.execPath } }, archiveBytes: archive(await releaseEntries()) });
     const checkout = join(dotfiles, 'tiny-sdd-clone');
     await mkdir(join(checkout, 'skills', 'tinysdd'), { recursive: true });
     await mkdir(join(checkout, '.git'), { recursive: true });
