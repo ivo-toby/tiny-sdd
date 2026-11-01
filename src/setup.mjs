@@ -719,13 +719,21 @@ export async function inspectSandbox({ platform = process.platform, privileged =
   }
   if (platform === 'darwin') {
     const sandboxExec = await firstExecutable(executablePaths.sandboxExec ? [executablePaths.sandboxExec] : ['/usr/bin/sandbox-exec']);
-    const runner = checkRunnerAvailable({ platform, privileged, sandboxExecPath: sandboxExec?.path });
+    if (!sandboxExec) {
+      const reason = 'macOS sandbox-exec is not available at /usr/bin/sandbox-exec';
+      return {
+        platform,
+        worker: { supported: false, sandbox: 'seatbelt', executable: null, reason },
+        checks: { available: false, runner: 'seatbelt', reason },
+      };
+    }
+    const runner = checkRunnerAvailable({ platform, privileged, sandboxExecPath: sandboxExec.path });
     return {
       platform,
-      worker: sandboxExec ? { supported: true, sandbox: 'seatbelt', executable: sandboxExec.path } : { supported: false, sandbox: 'seatbelt', executable: null, reason: 'macOS sandbox-exec is not available at /usr/bin/sandbox-exec' },
+      worker: { supported: true, sandbox: 'seatbelt', executable: sandboxExec.path },
       checks: runner.available
         ? { available: true, runner: runner.runner, sandboxExec: sandboxExec.path }
-        : { available: false, runner: runner.runner ?? 'seatbelt', reason: runner.reason },
+        : { available: false, runner: 'seatbelt', reason: runner.reason },
     };
   }
   return {
@@ -1217,7 +1225,8 @@ function setupInstructions(checks) {
     instructions.push(`Linux run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing bubblewrap, prlimit or setpriv executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
   }
   if (!checks.models.usable) instructions.push(`Add an explicit provider/model entry to ${checks.models.modelsPath}; credentials remain environment references and are not inspected: ${SETUP_DOCS_URL}`);
-  if (checks.sandbox.checks.available === false && checks.sandbox.platform === 'darwin') instructions.push(`macOS run_checks is unavailable (${checks.sandbox.checks.reason}); install the missing sandbox-exec executable without automatic setup, then rerun setup: ${SETUP_DOCS_URL}`);
+  // A missing sandbox-exec already got the Seatbelt install instruction above.
+  if (checks.sandbox.platform === 'darwin' && checks.sandbox.worker.supported && checks.sandbox.checks.available === false) instructions.push(`macOS run_checks is unavailable (${checks.sandbox.checks.reason}); fix that, then rerun setup: ${SETUP_DOCS_URL}`);
   if (instructions.length === 0) {
     instructions.push(
       'Start a fresh Claude or Codex session in the intended project, then invoke /tinysdd-setup in Claude or $tinysdd-setup in Codex.',

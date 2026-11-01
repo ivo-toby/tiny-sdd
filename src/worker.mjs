@@ -1022,7 +1022,7 @@ function runChecksMetadata({ declared, availability, maxCheckRuns, checkChannel,
     declared,
     available: declared && availability.available,
     ...(declared && !availability.available ? { reason: availability.reason } : {}),
-    ...(declared && availability.available ? { maxCheckRuns, runner: availability.testInjected ? "test-injected" : availability.runner ?? "linux-bubblewrap" } : {}),
+    ...(declared && availability.available ? { maxCheckRuns, runner: availability.testInjected ? "test-injected" : availability.runner } : {}),
     ...(checkChannel ? { dependencyIdentity: checkChannel.dependencyIdentity } : {}),
   };
   if (baseline) current.baselineComparison = compareRunChecks(baseline, current);
