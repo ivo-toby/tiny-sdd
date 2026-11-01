@@ -1,10 +1,11 @@
 import { constants as fsConstants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   chmod,
   lstat,
+  stat,
   mkdir,
   mkdtemp,
   open,
@@ -33,7 +34,7 @@ import {
   stableStringify,
   tinyError,
 } from './fs-utils.mjs';
-import { checkRunnerAvailable, runCheck } from './check-runner.mjs';
+import { DOCKER_DAEMON_SOCKET_DEFAULT, checkRunnerAvailable, runCheck } from './check-runner.mjs';
 
 export const FEATURE_INTEGRATION_SCHEMA_VERSION = 1;
 export const FEATURE_INTEGRATION_DEFAULT_TIMEOUT_MS = 120_000;
@@ -51,7 +52,7 @@ export const FEATURE_INTEGRATION_MAX_PATH_BYTES = 4096;
 export const FEATURE_INTEGRATION_MAX_PROOF_BYTES = 8 * 1024 * 1024;
 export const FEATURE_INTEGRATION_TEST_ENV = 'TINYSDD_FEATURE_INTEGRATION_TEST';
 
-const CONFIG_KEYS = ['schemaVersion', 'manifest', 'checkId', 'argv', 'command', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints', 'features'];
+const CONFIG_KEYS = ['schemaVersion', 'manifest', 'checkId', 'argv', 'command', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints', 'docker', 'features'];
 const CHECK_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
 const SOURCE_SELECTIONS = ['git-ls-files', 'walk'];
@@ -94,6 +95,27 @@ function command(value, label) {
     }
   }
   return argv;
+}
+
+function socketPath(value, label) {
+  if (typeof value !== 'string' || !isAbsolute(value) || resolve(value) !== value || /[\x00-\x1f\x7f]/u.test(value) || Buffer.byteLength(value) > 1024) {
+    invalid(`${label} must be a normalized absolute path`);
+  }
+  return value;
+}
+
+// Opt-in Docker access for this feature check. The check can then start
+// containers, which is host-level access: only declare it for trusted tests.
+function dockerConfig(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(`${label} must be an object with a socket path`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'socket' && key !== 'daemonSocket') invalid(`${label} contains an unknown key: ${key}`);
+  }
+  if (value.socket === undefined) invalid(`${label}.socket is required`);
+  return {
+    socket: socketPath(value.socket, `${label}.socket`),
+    daemonSocket: value.daemonSocket === undefined ? DOCKER_DAEMON_SOCKET_DEFAULT : socketPath(value.daemonSocket, `${label}.daemonSocket`),
+  };
 }
 
 function checkId(value, label) {
@@ -163,7 +185,7 @@ export function validateFeatureIntegrationConfig(value, label = 'config.featureI
   const argv = suppliedArgv ?? suppliedCommand;
   if (manifest === undefined && argv === undefined) {
     if (features === undefined) invalid(`${label} requires manifest or argv`);
-    const stray = ['checkId', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints'].filter((key) => value[key] !== undefined);
+    const stray = ['checkId', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints', 'docker'].filter((key) => value[key] !== undefined);
     if (stray.length > 0) invalid(`${label}.${stray[0]} requires a default manifest or argv; put it under ${label}.features`);
     return { schemaVersion: FEATURE_INTEGRATION_SCHEMA_VERSION, features };
   }
@@ -181,6 +203,7 @@ export function validateFeatureIntegrationConfig(value, label = 'config.featureI
   }
   const testPaths = value.testPaths === undefined ? [] : uniquePaths(value.testPaths, `${label}.testPaths`);
   const entrypoints = value.entrypoints === undefined ? [] : uniquePaths(value.entrypoints, `${label}.entrypoints`);
+  const docker = value.docker === undefined ? undefined : dockerConfig(value.docker, `${label}.docker`);
   const normalized = {
     schemaVersion: FEATURE_INTEGRATION_SCHEMA_VERSION,
     ...(manifest === undefined ? {} : { manifest }),
@@ -190,6 +213,7 @@ export function validateFeatureIntegrationConfig(value, label = 'config.featureI
     dependencyMounts,
     testPaths,
     entrypoints,
+    ...(docker === undefined ? {} : { docker }),
     ...(features === undefined ? {} : { features }),
   };
   if (argv !== undefined) {
@@ -287,9 +311,9 @@ export async function resolveFeatureIntegrationCommand(projectRoot, config, { re
 const SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
 const SECRET_DIRECTORY = /^(?:\.aws|\.azure|\.gcloud|\.ssh|secrets?|credentials?)$/iu;
 
-function excludedProjectPath(path, excluded) {
+function excludedProjectPath(path, excluded, secretNames = true) {
   const parts = path.split('/');
-  if (parts.some((part, index) => SECRET_NAME.test(part) || (index < parts.length - 1 && SECRET_DIRECTORY.test(part)))) return true;
+  if (secretNames && parts.some((part, index) => SECRET_NAME.test(part) || (index < parts.length - 1 && SECRET_DIRECTORY.test(part)))) return true;
   return excluded.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
@@ -357,6 +381,7 @@ export async function copyIntegrationTree(source, destination, {
   paths = null,
   symlinkBase = '',
   maxEntries = FEATURE_INTEGRATION_MAX_TREE_FILES,
+  secretNames = true,
 } = {}) {
   await assertNoSymlinkPath(source, { allowMissing: false, requireDirectory: true });
   const sourceRealpath = await realpath(source);
@@ -411,7 +436,7 @@ export async function copyIntegrationTree(source, destination, {
     names.sort();
     for (const name of names) {
       const path = prefix ? `${prefix}/${name}` : name;
-      if (excludedProjectPath(path, excluded) || (nested && name === '.git')) continue;
+      if (excludedProjectPath(path, excluded, secretNames) || (nested && name === '.git')) continue;
       state.files += 1;
       await copyEntry(join(current, name), join(target, name), path, await lstat(join(current, name)), nested);
     }
@@ -420,7 +445,7 @@ export async function copyIntegrationTree(source, destination, {
     for (const listed of listedPaths) {
       // An untracked nested repository is listed once, as "dir/".
       const path = listed.endsWith('/') ? listed.slice(0, -1) : listed;
-      if (path.length === 0 || excludedProjectPath(path, excluded)) continue;
+      if (path.length === 0 || excludedProjectPath(path, excluded, secretNames)) continue;
       let normalized;
       try {
         normalized = normalizeProjectRelative(path, 'git-listed path');
@@ -584,6 +609,7 @@ async function configFilesIdentity(root) {
 }
 
 function commandIdentity(resolved) {
+  const docker = resolved.config.docker;
   return {
     schemaVersion: FEATURE_INTEGRATION_PROOF_SCHEMA_VERSION,
     checkId: resolved.check.id,
@@ -591,14 +617,28 @@ function commandIdentity(resolved) {
     timeoutMs: resolved.check.timeoutMs,
     dependencyMounts: [...resolved.manifest.dependencyMounts],
     manifestSha256: sha256(resolved.manifestText),
+    ...(docker === undefined ? {} : { docker: { ...docker } }),
+    // Docker is added only when declared, so earlier command digests hold.
     sha256: digestJson({
       check: resolved.check,
       dependencyMounts: resolved.manifest.dependencyMounts,
       manifestText: resolved.manifestText,
       testPaths: resolved.config.testPaths,
       entrypoints: resolved.config.entrypoints,
+      ...(docker === undefined ? {} : { docker }),
     }),
   };
+}
+
+async function assertDockerSocket(docker) {
+  const refuse = (message, cause) => tinyError('FEATURE_INTEGRATION_DOCKER_SOCKET', message, { socket: docker.socket, ...(cause ? { cause } : {}) });
+  let info;
+  try {
+    info = await stat(docker.socket);
+  } catch (error) {
+    throw refuse(`declared docker socket does not exist: ${docker.socket} (is Docker running?)`, error?.code);
+  }
+  if (!info.isSocket()) throw refuse(`declared docker socket is not a unix socket: ${docker.socket}`);
 }
 
 function identityDigest(identity) {
@@ -653,6 +693,9 @@ async function copyDependencySnapshots(root, destination, dependencyMounts) {
       mountReadable: true,
       symlinkBase: target,
       maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES,
+      // Mounted as-is, like run_checks: package files such as
+      // dockerode/lib/secret.js are code, not project secrets.
+      secretNames: false,
     });
     dependencies.push({ target, sourcePath: target, retainedPath, identity: copied.identity });
   }
@@ -670,6 +713,9 @@ async function copyDependencySnapshotsFromRetained(sourceRoot, dependencyMounts,
       mountReadable: true,
       symlinkBase: target,
       maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES,
+      // Mounted as-is, like run_checks: package files such as
+      // dockerode/lib/secret.js are code, not project secrets.
+      secretNames: false,
     });
     dependencies.push({ target, retainedPath, identity: copied.identity });
   }
@@ -826,6 +872,7 @@ export async function runFeatureIntegration(projectRoot, {
   const dependencyMounts = assertMountPaths(resolved.manifest.dependencyMounts);
   await assertDeclaredFiles(root, normalized.testPaths, 'testPaths', [...protectedSet], dependencyMounts);
   await assertDeclaredFiles(root, normalized.entrypoints, 'entrypoints', [...protectedSet], dependencyMounts);
+  if (normalized.docker !== undefined) await assertDockerSocket(normalized.docker);
   const available = checkRunnerAvailable();
   if (runner === runCheck && !available.available) integrationUnavailable(available.reason);
   const artifact = await createArtifact(root, integrationId);
@@ -847,6 +894,7 @@ export async function runFeatureIntegration(projectRoot, {
       candidateDir: candidatePath,
       check: resolved.check,
       dependencyMounts: retained.dependencies.map((item) => ({ source: item.retainedPath, target: item.target })),
+      ...(normalized.docker === undefined ? {} : { docker: { ...normalized.docker } }),
       ...(nodeRoot === undefined ? {} : { nodeRoot }),
       ...(tempRoot === undefined ? {} : { tempRoot }),
       ...(signal === undefined ? {} : { signal }),
@@ -876,6 +924,14 @@ export async function runFeatureIntegration(projectRoot, {
     const resultFile = await writeRetainedJson(join(artifact, 'result.json'), result);
     retained.proof.result = { path: pathForArtifact(integrationId, 'result.json'), sha256: resultFile.sha256 };
     retained.proof.status = 'passed';
+    if (normalized.docker !== undefined) {
+      retained.proof.dockerAccess = {
+        granted: true,
+        socket: normalized.docker.socket,
+        daemonSocket: normalized.docker.daemonSocket,
+        ...(result.sandbox?.docker === undefined ? {} : { sandbox: { network: result.sandbox.network, ...result.sandbox.docker } }),
+      };
+    }
     const proofFile = await writeRetainedJson(join(artifact, 'proof.json'), retained.proof);
     const reference = {
       schemaVersion: FEATURE_INTEGRATION_PROOF_SCHEMA_VERSION,
@@ -998,7 +1054,7 @@ export async function featureIntegrationFreshness(projectRoot, {
     for (const [index, dependency] of value.dependencies.entries()) {
       const temporary = await makeTemporaryDirectory('tinysdd-feature-dependency-');
       try {
-        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true, symlinkBase: dependency.target, maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES });
+        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true, symlinkBase: dependency.target, maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES, secretNames: false });
         retainedDependencies.push({ target: dependency.target, identity: copied.identity });
       } finally {
         await rm(temporary, { recursive: true, force: true }).catch(() => {});
