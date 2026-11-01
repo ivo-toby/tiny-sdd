@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, writeFile, lstat, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { DEFAULT_MAX_TOOL_CALLS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_TOOL_CALLS } from "./config.mjs";
 import { piCompactionSettings, resolveCompactionSettings } from "./compaction-runtime.mjs";
 

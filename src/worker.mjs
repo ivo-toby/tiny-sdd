@@ -14,7 +14,7 @@ import { CHECK_TOOLS, createCheckChannel, identifyDependencyMounts } from "./che
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { startInferenceRelay } from "./inference-relay.mjs";
-import { digestJson, stableStringify as fsStableStringify } from "./fs-utils.mjs";
+import { stableStringify as fsStableStringify } from "./fs-utils.mjs";
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths, unicodeCaseFold } from "./file-scope.mjs";
 import {
   COMPACTION_ANCHOR_ENV,
