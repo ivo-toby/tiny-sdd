@@ -936,7 +936,7 @@ async function runVerifierGroup({ suiteRoot, manifestPath, definition, visibilit
           sandbox: result.sandbox,
         };
       } catch (error) {
-        if (error?.code === 'CHECK_RUNNER_UNAVAILABLE') record = unavailableVerifierRecord(check.id, definition.resource.sha256);
+        if (error?.code === 'CHECK_RUNNER_UNAVAILABLE' || error?.code === 'CHECK_TOOL_UNAVAILABLE') record = unavailableVerifierRecord(check.id, definition.resource.sha256);
         else throw error;
       }
     }

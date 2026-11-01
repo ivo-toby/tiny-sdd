@@ -605,6 +605,22 @@ return the loopback addresses and passes every other name to the (blocked)
 resolver. The worker's own inference sandbox gets none of this, and `run_checks`
 never gets Docker.
 
+Checks can run `git` (#220). At each check run the runner looks up `git` on the
+controller's `PATH` and puts that same binary first on the check's `PATH`
+(after Node). On macOS, `/usr/bin/git` is the Xcode shim, so the runner uses the
+git it starts (`xcrun --find git`); Homebrew's `/opt/homebrew/bin/git` is
+resolved to its Cellar directory. Seatbelt gets that binary and its exec path
+as read-only and executable, and its `share/git-core` and its non-system
+libraries as read-only. On Linux the git must be under `/usr` or `/bin`, which
+bubblewrap already binds read-only. In both sandboxes `GIT_CONFIG_NOSYSTEM=1`
+is set and `HOME` is the scratch home, so the check reads no system or user git
+configuration, no credential helper and no identity: a test that commits must
+set `user.name` and `user.email` itself. There is still no network.
+When the host has a git that the sandbox cannot provide (a Linux git outside
+`/usr` and `/bin`, or a git that does not run), the check does not run and
+fails with `CHECK_TOOL_UNAVAILABLE`. A test that skips itself when git is
+missing therefore cannot pass in the check only because git was hidden.
+
 Each dependency mount is retained under its own name
 (`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),
 so Node's real-path module resolution finds sibling packages. Mounts are copied

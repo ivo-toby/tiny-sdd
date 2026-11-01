@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createCheckChannel, identifyDependencyMounts } from '../src/check-channel.mjs';
 import { checkRunnerAvailable } from '../src/check-runner.mjs';
+import { resolveCheckGit } from '../src/check-tools.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
 
@@ -590,6 +591,72 @@ test('a run_checks check resolves and reaches localhost but no other host in the
     assert.match(seen.address, /^(127\.0\.0\.1|::1)$/u);
     assert.equal(seen.reply, 'pong');
     assert.notEqual(seen.outbound, 'connected');
+  } finally {
+    await channel.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const HOST_GIT = process.platform === 'darwin' ? await resolveCheckGit().catch(() => null) : null;
+
+test('a run_checks check runs the host git in the seatbelt sandbox, without the user git config (#220)', { skip: SEATBELT_SKIP || (HOST_GIT === null ? 'no git on this host' : false) }, async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-git-'));
+  const workspace = join(root, 'workspace');
+  const artifactDir = join(root, 'artifact');
+  await mkdir(workspace, { recursive: true });
+  await mkdir(artifactDir);
+  await writeFile(join(workspace, 'probe.mjs'), [
+    "import { execFileSync, spawnSync } from 'node:child_process';",
+    "import { mkdtempSync, writeFileSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import { join } from 'node:path';",
+    "const repo = mkdtempSync(join(tmpdir(), 'repo-'));",
+    "const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();",
+    "const version = git('--version');",
+    "git('init', '-q');",
+    "writeFileSync(join(repo, 'a.txt'), 'a');",
+    "git('add', 'a.txt');",
+    "git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'first');",
+    "const log = git('log', '--format=%s');",
+    "const global = spawnSync('git', ['config', '--global', '--list'], { cwd: repo, encoding: 'utf8' });",
+    "const helper = spawnSync('git', ['config', 'credential.helper'], { cwd: repo, encoding: 'utf8' });",
+    "const clone = spawnSync('git', ['clone', '-q', 'https://github.com/git/git.git', join(repo, 'remote')], { cwd: repo, encoding: 'utf8', timeout: 15000 });",
+    "console.log(JSON.stringify({ version, log, global: global.status, helper: helper.stdout.trim(), clone: clone.status }));",
+    '',
+  ].join('\n'));
+  const channel = await createCheckChannel({
+    manifest: { schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'probe', argv: ['node', 'probe.mjs'], timeoutMs: 30000 }] },
+    sourceRoot: root,
+    workspace,
+    artifactDir,
+    tempRoot: canonicalTmpdir,
+    allowedPaths: ['probe.mjs'],
+    maxCheckRuns: 1,
+    nodeRoot: dirname(dirname(await realpath(process.execPath))),
+  });
+  try {
+    channel.start(45000);
+    const correlation = 'd'.repeat(64);
+    await writeFile(join(channel.requests, `${correlation}.json`), JSON.stringify({ checkId: 'probe' }));
+    let response;
+    for (let attempt = 0; attempt < 800 && response === undefined; attempt += 1) {
+      channel.poll();
+      response = await readFile(join(channel.responses, `${correlation}.json`), 'utf8').then(JSON.parse, (error) => { if (error.code === 'ENOENT') return undefined; throw error; });
+      if (response === undefined) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(response, 'no check response');
+    assert.equal(response.error, undefined, JSON.stringify(response.error));
+    const [result] = response.results;
+    assert.equal(result.exitCode, 0, result.tail);
+    const seen = JSON.parse(result.tail.trim().split('\n').at(-1));
+    assert.match(seen.version, /^git version /u);
+    assert.equal(seen.log, 'first');
+    // HOME is the scratch home and the system file is skipped: no user or
+    // Homebrew configuration (and so no credential helper) reaches the check.
+    assert.notEqual(seen.global, 0);
+    assert.equal(seen.helper, '');
+    // There is still no network.
+    assert.notEqual(seen.clone, 0);
   } finally {
     await channel.cleanup();
     await rm(root, { recursive: true, force: true });

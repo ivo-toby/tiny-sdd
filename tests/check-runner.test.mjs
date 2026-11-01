@@ -155,7 +155,7 @@ describe('check runner', { skip: SKIP }, () => {
 
   test('a passing node:test file exits 0 and reports the sandbox it ran in', async () => {
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
-    const result = await run(candidate, {});
+    const result = await run(candidate, {}, { gitPath: null });
     assert.equal(result.exitCode, 0);
     assert.equal(result.signal, null);
     assert.equal(result.timedOut, false);
@@ -176,6 +176,7 @@ describe('check runner', { skip: SKIP }, () => {
       prlimit: result.sandbox.prlimit,
       network: 'none',
       env: ['PATH', 'HOME', 'CI', 'LANG', 'PWD'],
+      tools: { git: null },
       setpriv: AS_ROOT ? result.sandbox.setpriv : null,
       runAs: TARGET,
       processBaseline: result.sandbox.processBaseline,
@@ -184,6 +185,28 @@ describe('check runner', { skip: SKIP }, () => {
     if (AS_ROOT) assert.match(result.sandbox.setpriv, /\/setpriv$/u);
     assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
     assert.ok(['disabled', 'allowed'].includes(result.sandbox.nestedUserNamespaces));
+  });
+
+  test('a check runs the host git from /usr and commits in a scratch repository (#220)', { skip: existsSync('/usr/bin/git') ? false : 'no /usr/bin/git on this host' }, async () => {
+    const candidate = await makeDir({
+      'git.mjs': [
+        "import { execFileSync } from 'node:child_process';",
+        "import { mkdtempSync, writeFileSync } from 'node:fs';",
+        "const repo = mkdtempSync('/tmp/repo-');",
+        "const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();",
+        "git('init', '-q');",
+        "writeFileSync(`${repo}/a.txt`, 'a');",
+        "git('add', 'a.txt');",
+        "git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'first');",
+        "console.log(`log=${git('log', '--format=%s')} nosystem=${process.env.GIT_CONFIG_NOSYSTEM}`);",
+        '',
+      ].join('\n'),
+    });
+    const result = await run(candidate, { argv: ['node', 'git.mjs'] }, { gitPath: '/usr/bin/git' });
+    assert.equal(result.exitCode, 0, result.output.text);
+    assert.match(result.output.text, /^log=first nosystem=1$/mu);
+    assert.deepEqual(result.sandbox.tools, { git: await realpath('/usr/bin/git') });
+    assert.ok(result.sandbox.env.includes('GIT_CONFIG_NOSYSTEM'));
   });
 
   test('a relative symlink inside the candidate is recreated as the same link', async () => {
@@ -1489,11 +1512,12 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
   test('a passing check runs through sandbox-exec and reports runner seatbelt', async () => {
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
     const stub = await stubSandboxExec();
-    const result = await run(candidate, {}, { sandboxExecPath: stub.path });
+    const result = await run(candidate, {}, { sandboxExecPath: stub.path, gitPath: null });
     assert.equal(result.exitCode, 0);
     assert.equal(result.timedOut, false);
     assert.match(result.output.text, /pass 1/mu);
     assert.equal(result.sandbox.runner, 'seatbelt');
+    assert.deepEqual(result.sandbox.tools, { git: null });
     assert.equal(result.sandbox.sandboxExec, stub.path);
     assert.equal(result.sandbox.network, 'none');
     assert.deepEqual(result.sandbox.env, ['PATH', 'HOME', 'TMPDIR', 'CI', 'LANG', 'PWD']);
@@ -1692,7 +1716,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     try {
       const candidate = await makeDir({ 'env.mjs': 'console.log(JSON.stringify(process.env));\n' });
       const stub = await stubSandboxExec();
-      const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path });
+      const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path, gitPath: null });
       assert.equal(result.exitCode, 0);
       // The bash wrapper adds SHLVL; the check's JSON is the last { line.
       const environment = JSON.parse(result.output.text.trim().split('\n').filter((line) => line.startsWith('{')).pop());
@@ -1924,4 +1948,53 @@ test('the seatbelt check profile allows the declared docker sockets and loopback
   assert.doesNotMatch(profile, /subpath "\/Users/u);
   assert.throws(() => buildSeatbeltCheckProfile({ ...paths, docker: { sockets: [] } }), /socket/u);
   assert.throws(() => buildSeatbeltCheckProfile({ ...paths, docker: { sockets: ['relative.sock'] } }), /normalized absolute/u);
+});
+
+test('the seatbelt check profile grants a provided git read-only and executable, nothing writable (#220)', () => {
+  const paths = { work: '/private/tmp/c/work', home: '/private/tmp/c/home', tmp: '/private/tmp/c/tmp', nodeExecutable: '/usr/local/bin/node' };
+  const git = {
+    executable: '/opt/homebrew/Cellar/git/2.56.0/bin/git',
+    binDir: '/opt/homebrew/Cellar/git/2.56.0/bin',
+    execPaths: ['/opt/homebrew/opt/git/libexec/git-core', '/opt/homebrew/Cellar/git/2.56.0/libexec/git-core'],
+    libraries: ['/opt/homebrew/opt/pcre2/lib/libpcre2-8.0.dylib', '/opt/homebrew/Cellar/pcre2/10.49/lib/libpcre2-8.0.dylib'],
+    readable: ['/opt/homebrew/Cellar/git/2.56.0/share/git-core'],
+  };
+  assert.doesNotMatch(buildSeatbeltCheckProfile(paths), /homebrew|mailname/u);
+  const profile = buildSeatbeltCheckProfile({ ...paths, git });
+  const exec = /^\(allow process-exec (.+)\)$/mu.exec(profile)[1];
+  assert.match(exec, /\(literal "\/opt\/homebrew\/Cellar\/git\/2\.56\.0\/bin\/git"\)/u);
+  for (const path of git.execPaths) assert.ok(exec.includes(`(subpath ${JSON.stringify(path)})`), exec);
+  // Only git, never its bin directory or the Homebrew prefix, may be started.
+  assert.doesNotMatch(exec, /\(subpath "\/opt\/homebrew(?:\/bin|\/Cellar\/git\/2\.56\.0\/bin)?"\)/u);
+  assert.doesNotMatch(exec, /pcre2|share/u);
+  const read = profile.split('\n').find((line) => line.startsWith('(allow file-read* (subpath'));
+  for (const path of [...git.libraries, git.executable]) assert.ok(read.includes(`(literal ${JSON.stringify(path)})`), read);
+  assert.ok(read.includes('(subpath "/opt/homebrew/Cellar/git/2.56.0/share/git-core")'), read);
+  // The symlinked opt/ paths resolve through their parents' metadata only.
+  assert.match(profile, /\(allow file-read-metadata [^\n]*\(literal "\/opt\/homebrew\/opt\/pcre2"\)/u);
+  assert.doesNotMatch(profile, /\(subpath "\/opt\/homebrew(?:\/opt|\/etc)?"\)/u);
+  for (const rule of profile.split('\n').filter((line) => line.includes('file-write*'))) assert.doesNotMatch(rule, /homebrew/u);
+  assert.throws(() => buildSeatbeltCheckProfile({ ...paths, git: { ...git, libraries: ['relative.dylib'] } }), /normalized absolute/u);
+});
+
+test('bubblewrap puts a provided git on PATH and keeps the system gitconfig out (#220)', () => {
+  const base = {
+    binaries: { bwrap: '/usr/bin/bwrap' },
+    nodeRoot: '/opt/node-root',
+    input: '/tmp/scratch/input',
+    mounts: [],
+    limits: CHECK_LIMIT_DEFAULTS,
+    check: { id: 'c1', argv: ['node', 'x.mjs'], executable: '/opt/node/bin/node' },
+    processLimit: 600,
+    nestedUserns: 'disabled',
+  };
+  const environment = (args) => Object.fromEntries(args.flatMap((arg, index) => (arg === '--setenv' ? [[args[index + 1], args[index + 2]]] : [])));
+  const plain = environment(sandboxArguments(base));
+  assert.equal(plain.PATH, '/opt/node/bin:/usr/bin:/bin');
+  assert.equal(plain.GIT_CONFIG_NOSYSTEM, undefined);
+  const system = environment(sandboxArguments({ ...base, git: { executable: '/usr/bin/git', binDir: '/usr/bin', execPaths: ['/usr/lib/git-core'], libraries: [], readable: [] } }));
+  assert.equal(system.PATH, '/opt/node/bin:/usr/bin:/bin');
+  assert.equal(system.GIT_CONFIG_NOSYSTEM, '1');
+  const local = environment(sandboxArguments({ ...base, git: { executable: '/usr/local/bin/git', binDir: '/usr/local/bin', execPaths: ['/usr/local/libexec/git-core'], libraries: [], readable: [] } }));
+  assert.equal(local.PATH, '/opt/node/bin:/usr/local/bin:/usr/bin:/bin');
 });
