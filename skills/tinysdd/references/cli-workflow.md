@@ -448,8 +448,8 @@ feature tests. A missing socket refuses with
 command identity and the proof records `dockerAccess`. `HOME` is scratch, so no
 Docker credentials reach the check. With vitest on Linux, add
 `--disable-wasm-trap-handler` (8 GiB address-space limit) and run forks with
-the same `execArgv`. Worker sandboxes and `run_checks` never get loopback
-changes or Docker.
+the same `execArgv`. `run_checks` gets the same loopback (#215) but never
+Docker; the worker's inference sandbox gets neither.
 Historical events without this optional proof remain readable but are reported
 as ineligible; their frozen usage report is unchanged.
 

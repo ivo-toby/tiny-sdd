@@ -595,14 +595,15 @@ Each entry takes the same fields as the top-level command (`argv` or
 with secret-like names (`dockerode/lib/secret.js`); project source keeps the
 secret-name filter.
 
-The `feature accept` check always gets loopback (#212): TCP connect, bind and
-accept on `127.0.0.1`/`::1`, and `localhost` resolves. Nothing else on the
-network is reachable. On Linux the sandbox has its own loopback and a fixed
+The `feature accept` check (#212) and every worker `run_checks` check (#215)
+always get loopback: TCP connect, bind and accept on `127.0.0.1`/`::1`, and
+`localhost` resolves. Nothing else on the network is reachable. On Linux the sandbox has its own loopback and a fixed
 `/etc/hosts` with only `localhost`. On macOS Seatbelt cannot allow a name lookup
 for `localhost` alone, so the runner answers it inside Node: `NODE_OPTIONS`
 gets `--require` of a small TinySDD file that makes `dns.lookup('localhost')`
 return the loopback addresses and passes every other name to the (blocked)
-resolver. Worker sandboxes and `run_checks` get none of this.
+resolver. The worker's own inference sandbox gets none of this, and `run_checks`
+never gets Docker.
 
 Each dependency mount is retained under its own name
 (`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),

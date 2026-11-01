@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createCheckChannel, identifyDependencyMounts } from '../src/check-channel.mjs';
+import { checkRunnerAvailable } from '../src/check-runner.mjs';
 
 const canonicalTmpdir = await realpath(tmpdir());
 
@@ -70,6 +71,8 @@ test('check channel runs a declared request and records checked bytes and live m
     assert.deepEqual(calls[0].dependencyMounts, [{ source: dependencies, target: 'node_modules' }]);
     // Docker access belongs to feature acceptance; run_checks never asks for it.
     assert.equal(Object.hasOwn(calls[0], 'docker'), false);
+    // Vite resolves localhost at startup, so run_checks gets loopback like feature checks (#215).
+    assert.equal(calls[0].loopback, true);
     const expected = createHash('sha256').update('before\n').digest('hex');
     assert.equal(channel.runs[0].allowedFileDigests['src/allowed.txt'], expected);
     assert.equal(channel.runs[0].candidateEntries['src'].kind, 'directory');
@@ -524,6 +527,71 @@ test('check channel installs the worker check tool its runner needs', async () =
   } finally {
     await pi.cleanup();
     await opencode.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Real sandbox-exec, so it runs on macOS only; Linux CI covers bubblewrap in
+// tests/check-runner.test.mjs.
+const SEATBELT_SKIP = process.platform !== 'darwin' ? 'needs macOS sandbox-exec' : checkRunnerAvailable().available ? false : checkRunnerAvailable().reason;
+
+test('a run_checks check resolves and reaches localhost but no other host in the seatbelt sandbox (#215)', { skip: SEATBELT_SKIP }, async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-loopback-'));
+  const workspace = join(root, 'workspace');
+  const artifactDir = join(root, 'artifact');
+  await mkdir(workspace, { recursive: true });
+  await mkdir(artifactDir);
+  await writeFile(join(workspace, 'probe.mjs'), [
+    "import { lookup } from 'node:dns/promises';",
+    "import { connect, createServer } from 'node:net';",
+    "const resolved = await lookup('localhost');",
+    "const server = createServer((socket) => socket.end('pong'));",
+    "await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));",
+    "const reply = await new Promise((resolve, reject) => {",
+    "  const socket = connect(server.address().port, 'localhost');",
+    "  let text = '';",
+    "  socket.on('data', (chunk) => { text += chunk; }).on('end', () => resolve(text)).on('error', reject);",
+    "});",
+    "server.close();",
+    "const outbound = await new Promise((resolve) => {",
+    "  const socket = connect({ host: '1.1.1.1', port: 80, timeout: 3000 });",
+    "  socket.on('connect', () => { socket.destroy(); resolve('connected'); });",
+    "  socket.on('timeout', () => { socket.destroy(); resolve('timeout'); });",
+    "  socket.on('error', (error) => resolve(error.code));",
+    "});",
+    "console.log(JSON.stringify({ address: resolved.address, reply, outbound }));",
+    '',
+  ].join('\n'));
+  const channel = await createCheckChannel({
+    manifest: { schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'probe', argv: ['node', 'probe.mjs'], timeoutMs: 20000 }] },
+    sourceRoot: root,
+    workspace,
+    artifactDir,
+    tempRoot: canonicalTmpdir,
+    allowedPaths: ['probe.mjs'],
+    maxCheckRuns: 1,
+    nodeRoot: dirname(dirname(await realpath(process.execPath))),
+  });
+  try {
+    channel.start(30000);
+    const correlation = 'c'.repeat(64);
+    await writeFile(join(channel.requests, `${correlation}.json`), JSON.stringify({ checkId: 'probe' }));
+    let response;
+    for (let attempt = 0; attempt < 600 && response === undefined; attempt += 1) {
+      channel.poll();
+      response = await readFile(join(channel.responses, `${correlation}.json`), 'utf8').then(JSON.parse, (error) => { if (error.code === 'ENOENT') return undefined; throw error; });
+      if (response === undefined) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(response, 'no check response');
+    assert.equal(response.error, undefined, JSON.stringify(response.error));
+    const [result] = response.results;
+    assert.equal(result.exitCode, 0, result.tail);
+    const seen = JSON.parse(result.tail.trim().split('\n').at(-1));
+    assert.match(seen.address, /^(127\.0\.0\.1|::1)$/u);
+    assert.equal(seen.reply, 'pong');
+    assert.notEqual(seen.outbound, 'connected');
+  } finally {
+    await channel.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });
