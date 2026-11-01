@@ -1716,7 +1716,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     try {
       const candidate = await makeDir({ 'env.mjs': 'console.log(JSON.stringify(process.env));\n' });
       const stub = await stubSandboxExec();
-      const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path });
+      const result = await run(candidate, { argv: ['node', 'env.mjs'] }, { sandboxExecPath: stub.path, gitPath: null });
       assert.equal(result.exitCode, 0);
       // The bash wrapper adds SHLVL; the check's JSON is the last { line.
       const environment = JSON.parse(result.output.text.trim().split('\n').filter((line) => line.startsWith('{')).pop());
