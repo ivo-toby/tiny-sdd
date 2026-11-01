@@ -279,7 +279,8 @@ async function compileTaskContext(projectRoot, path, options) {
 
 // The approval bound the context the worker started from, but an apply moves the
 // files it writes to the candidate. Only those paths are displaced: while the
-// apply is recorded they are read from the lineage root's workspace-before, which
+// apply is recorded they are read from the workspace-before of the lineage run the
+// project matched (the root, or a revision dispatched from an applied run), which
 // is what the project held there (the drift check requires it). Every other cited
 // file, including allowed files the lineage never changed and already-applied
 // paths, is read from the project, so the approval keeps binding its current text.
@@ -301,7 +302,11 @@ function compilePinnedContext(root, task, rootRunId, pinned) {
 
 function compileApprovedContext(root, task) {
   if (!task.applied) return compileTaskContext(root, task.context);
-  return compilePinnedContext(root, task, task.applied.rootRunId, pinnedPaths(task.applied.files));
+  return compilePinnedContext(root, task, appliedStartRunId(task.applied), pinnedPaths(task.applied.files));
+}
+
+function appliedStartRunId(applied) {
+  return applied.startRunId ?? applied.rootRunId;
 }
 
 // Provisional advisory thresholds from one observed failure (talon
@@ -430,6 +435,9 @@ function validateApplied(id, applied) {
   assertPlainObject(applied, 'STATE_MALFORMED', label);
   for (const field of ['runId', 'rootRunId']) {
     if (typeof applied[field] !== 'string' || !RUN_ID_PATTERN.test(applied[field])) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a worker run id`);
+  }
+  if (applied.startRunId !== undefined && (typeof applied.startRunId !== 'string' || !RUN_ID_PATTERN.test(applied.startRunId))) {
+    throw tinyError('STATE_MALFORMED', `${label} startRunId must be a worker run id`);
   }
   for (const field of ['by', 'appliedAt']) {
     if (typeof applied[field] !== 'string' || applied[field].trim().length === 0) throw tinyError('STATE_MALFORMED', `${label} ${field} must be a nonempty string`);
@@ -1474,23 +1482,47 @@ async function applyTaskWithinState(root, state, task, { id, by, runId, exclude 
     throw tinyError('APPLY_EXCLUDE_ALLOWED', `--exclude applies only to extra paths, not allowed paths of task ${id}: ${excludedAllowed.join(', ')}; nothing was written`, { paths: excludedAllowed, runId: finalRun.id });
   }
   const applicable = [...recorded].filter((path) => !exclude.includes(path)).sort();
-  const plan = [];
-  const conflicts = [];
+  const after = new Map();
+  for (const path of applicable) after.set(path, await readRunFile(root, finalRun.id, 'workspace-after', path));
+  const current = new Map();
   for (const path of applicable) {
-    const before = await readRunFile(root, rootRun.id, 'workspace-before', path);
-    const after = await readRunFile(root, finalRun.id, 'workspace-after', path);
-    if (sameContent(before, after)) continue;
     const absolute = (await resolveProjectPath(root, path, { allowMissing: true })).absolutePath;
-    const current = await readRegularFile(absolute);
-    let applyStatus = 'written';
-    if (!sameContent(current, before)) {
-      if (sameContent(current, after)) applyStatus = 'already-applied';
-      else conflicts.push(path);
-    }
-    plan.push({ path, absolute, change: after === null ? 'deleted' : before === null ? 'created' : 'modified', after, previous: current, digest: after === null ? null : sha256(after.bytes), status: applyStatus });
+    current.set(path, { absolute, content: await readRegularFile(absolute) });
   }
-  if (conflicts.length > 0) {
-    throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
+  // The project normally holds the root's starting state. After an applied run
+  // was revised it holds that run's candidate, which is the workspace-before of
+  // the revision dispatched from it, so the earliest run whose start the project
+  // matches on every path is the state this apply updates (#217).
+  const planFrom = async (startRun) => {
+    const plan = [];
+    const conflicts = [];
+    for (const path of applicable) {
+      const before = await readRunFile(root, startRun.id, 'workspace-before', path);
+      const candidate = after.get(path);
+      if (sameContent(before, candidate)) continue;
+      const { absolute, content } = current.get(path);
+      let applyStatus = 'written';
+      if (!sameContent(content, before)) {
+        if (sameContent(content, candidate)) applyStatus = 'already-applied';
+        else conflicts.push(path);
+      }
+      plan.push({ path, absolute, change: candidate === null ? 'deleted' : before === null ? 'created' : 'modified', after: candidate, previous: content, digest: candidate === null ? null : sha256(candidate.bytes), status: applyStatus });
+    }
+    return { plan, conflicts };
+  };
+  const { plan: rootPlan, conflicts } = await planFrom(rootRun);
+  let startRun = rootRun;
+  let plan = rootPlan;
+  for (const run of conflicts.length > 0 ? lineage.slice(1) : []) {
+    const candidate = await planFrom(run);
+    if (candidate.conflicts.length === 0) {
+      startRun = run;
+      plan = candidate.plan;
+      break;
+    }
+  }
+  if (startRun === rootRun && conflicts.length > 0) {
+    throw tinyError('APPLY_CONFLICT', `project files no longer match the state run ${rootRun.id} or any of its revisions started from: ${conflicts.join(', ')}`, { paths: conflicts, runId: finalRun.id, rootRunId: rootRun.id });
   }
 
   // A run that rewrites its own brief, context manifest or checks would leave the approval it was dispatched under stale.
@@ -1508,8 +1540,8 @@ async function applyTaskWithinState(root, state, task, { id, by, runId, exclude 
   // Compile the context as inspectTask will read it once this apply is recorded,
   // and refuse now if that would leave the approval stale.
   if (task.context) {
-    const after = await compilePinnedContext(root, task, rootRun.id, pinnedPaths(plan)).catch(() => undefined);
-    if (!after || !contextDigestMatches(task.approval.contextDigest ?? null, after.sha256, after.legacySha256)) {
+    const compiled = await compilePinnedContext(root, task, startRun.id, pinnedPaths(plan)).catch(() => undefined);
+    if (!compiled || !contextDigestMatches(task.approval.contextDigest ?? null, compiled.sha256, compiled.legacySha256)) {
       throw tinyError('APPLY_WOULD_STALE', `applying run ${finalRun.id} would leave task ${id} with a stale approval; nothing was written`, { runId: finalRun.id, rootRunId: rootRun.id });
     }
   }
@@ -1520,6 +1552,7 @@ async function applyTaskWithinState(root, state, task, { id, by, runId, exclude 
   const applied = {
     runId: finalRun.id,
     rootRunId: rootRun.id,
+    ...(startRun === rootRun ? {} : { startRunId: startRun.id }),
     appliedAt: nowIso(),
     by,
     allowedDigest: '0'.repeat(64),
@@ -1870,6 +1903,12 @@ export async function reviewTask(projectRoot, options = {}) {
     if (!task.approval || !status.approvalFresh) throw tinyError('APPROVAL_STALE', `task ${id} does not have a current approval`);
     const evidenceContent = await readProjectFile(root, evidence, reviewEvidenceOptions());
     if (evidenceContent.trim().length === 0) throw tinyError('INVALID_EVIDENCE', 'evidence must be nonempty');
+    // A revised applied run's candidate stays in the project; accepting now
+    // would bind content the reviewer rejected, not the revision (#217).
+    const revisedApplied = task.review?.verdict === 'revision' ? task.review.appliedFromRun?.runId : undefined;
+    if (verdict === 'accepted' && !task.applied && revisedApplied) {
+      throw tinyError('APPLY_REQUIRED', `task ${id} still holds the files of revised run ${revisedApplied}; apply the run you accept with task apply first`, { revisedRunId: revisedApplied });
+    }
     let sliceTestReview;
     if (verdict === 'accepted') {
       sliceTestReview = await assertSliceTestAcceptance(root, { id, run: task.applied?.runId });

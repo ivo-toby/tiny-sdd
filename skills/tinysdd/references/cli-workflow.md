@@ -994,7 +994,7 @@ prior candidate, not the project). It follows the lineage to the first run,
 validates complete snapshot and before/after identity evidence, and applies only
 the paths those runs recorded as changed. It refuses with `APPLY_CONFLICT`,
 writing nothing, if one of those project files no longer matches the state the
-lineage started from; files that already equal the candidate are recorded as
+lineage, or a later run of it, started from; files that already equal the candidate are recorded as
 `already-applied`. It refuses missing or tampered evidence, protected or other
 ineligible changes, another task's run, a benchmark replay, boundary violations
 and a run whose outcome is not `completed` (a timed-out run included), with no
@@ -1020,8 +1020,8 @@ tinysdd task apply --id validation --run WORKER_RUN_ID --by operator --exclude s
 ```
 
 After an apply the approval keeps binding the context the worker started from
-(the cited lines of a file apply wrote are read from the first run's starting
-copy), so applying does not stale it and nothing re-approves the new source. Every
+(the cited lines of a file apply wrote are read from the starting copy the apply
+matched: the first run's, or that of `applied.startRunId`), so applying does not stale it and nothing re-approves the new source. Every
 other cited file, including an allowed file the run did not change and an
 already-applied path, is read from the project, so editing it still stales the
 approval. If a written file's run directory is deleted the approval reads stale,
@@ -1031,9 +1031,12 @@ anything is written. While an apply is recorded,
 first. Accepted and blocked reviews keep the record. A `revision` review records
 `appliedFromRun` and clears it, since the next attempt builds on the applied
 project; if the context cites a file apply wrote whose cited lines changed, the
-approval then reads `stale_approval` and must be re-approved explicitly. Do not
-start a `--base-run` revision from an already applied run: the project no longer
-matches the lineage's starting state, so its apply conflicts.
+approval then reads `stale_approval` and must be re-approved explicitly. A
+`--base-run` revision of an already applied run applies over the applied files,
+because the project matches the revision's `workspace-before`; the record names
+that run as `applied.startRunId`. Until a run is applied again, `task review
+--verdict accepted` refuses with `APPLY_REQUIRED`: the project still holds the
+revised candidate.
 
 Applying a dependent that rewrites a candidate file of an accepted prerequisite
 (direct or transitive) keeps the prerequisite accepted and records the extension

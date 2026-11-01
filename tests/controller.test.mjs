@@ -2451,19 +2451,78 @@ test('apply follows a --base-run chain from the root run and ends at the final c
   }
 });
 
-test('a --base-run revision of an already applied run conflicts, because the project left the lineage start', async () => {
+test('a --base-run revision of an applied and revised run applies over the applied files (#217)', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' } });
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    // The revision starts from the project, which already holds run one's candidate.
+    await fakeRun(root, RUN_TWO, {
+      before: { 'src/a.ts': 'a1\n', 'src/b.ts': 'b1\n' },
+      after: { 'src/a.ts': 'a2\n', 'src/b.ts': 'b1\n' },
+      baseRun: { id: RUN_ONE, paths: ['src/a.ts', 'src/b.ts'] },
+    });
+    const { applied } = await apply(root, RUN_TWO);
+    assert.equal(await readProject(root, 'src/a.ts'), 'a2\n');
+    assert.equal(await readProject(root, 'src/b.ts'), 'b1\n');
+    assert.equal(applied.rootRunId, RUN_ONE);
+    assert.equal(applied.startRunId, RUN_TWO);
+    assert.deepEqual(applied.files.map(({ path, change, status }) => [path, change, status]), [['src/a.ts', 'modified', 'written']]);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.deepEqual((await rawState(root)).tasks.one.review.appliedFromRun, { runId: RUN_TWO, identical: true });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a revision applied over an applied run pins a re-approved cited file to the revision start', async () => {
+  const root = await contextApplyProject();
+  try {
+    await apply(root);
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    await approveTask(root, { id: 'one', by: 'operator', reason: 'reviewed the applied source' });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'two\n' }, after: { 'src/a.ts': 'three\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
+    await apply(root, RUN_TWO);
+    assert.equal(await readProject(root, 'src/a.ts'), 'three\n');
+    assert.equal(await taskStatus(root, 'one'), 'ready');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a revision apply still conflicts when the project matches no run of the lineage', async () => {
   const root = await applyProject({ 'src/a.ts': 'v0\n' });
   try {
     await fakeRun(root, RUN_ONE, { before: { 'src/a.ts': 'v0\n' }, after: { 'src/a.ts': 'v1\n' } });
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
+    await writeFile(join(root, 'src', 'a.ts'), 'edited by hand\n');
+    await assert.rejects(apply(root, RUN_TWO), { code: 'APPLY_CONFLICT', details: { paths: ['src/a.ts'], runId: RUN_TWO, rootRunId: RUN_ONE } });
+    await assertNothingApplied(root, { 'src/a.ts': 'edited by hand\n' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('accepting after a revision of an applied run is refused until a run is applied (#217)', async () => {
+  const root = await applyProject({});
+  try {
+    await fakeRun(root, RUN_ONE, { after: { 'src/a.ts': 'a1\n' } });
     await apply(root);
     await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
-    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
-    await assert.rejects(apply(root, RUN_TWO), { code: 'APPLY_CONFLICT', details: { paths: ['src/a.ts'], runId: RUN_TWO, rootRunId: RUN_ONE } });
-    assert.equal(await readProject(root, 'src/a.ts'), 'v1\n');
-    // The next attempt dispatched from the applied project applies cleanly.
-    await fakeRun(root, RUN_OTHER, { before: { 'src/a.ts': 'v1\n' }, after: { 'src/a.ts': 'v2\n' } });
-    await apply(root, RUN_OTHER);
-    assert.equal(await readProject(root, 'src/a.ts'), 'v2\n');
+    await fakeRun(root, RUN_TWO, { before: { 'src/a.ts': 'a1\n' }, after: { 'src/a.ts': 'a2\n' }, baseRun: { id: RUN_ONE, paths: ['src/a.ts'] } });
+    await assert.rejects(
+      reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }),
+      { code: 'APPLY_REQUIRED', details: { revisedRunId: RUN_ONE } },
+    );
+    assert.equal((await rawState(root)).tasks.one.review.verdict, 'revision');
+    // A second revision without an apply keeps the refusal.
+    await reviewTask(root, { id: 'one', verdict: 'revision', evidence: EVIDENCE, by: 'reviewer' });
+    await assert.rejects(reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' }), { code: 'APPLY_REQUIRED' });
+    await apply(root, RUN_TWO);
+    await reviewTask(root, { id: 'one', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal(await taskStatus(root, 'one'), 'accepted');
+    assert.equal(await readProject(root, 'src/a.ts'), 'a2\n');
   } finally {
     await cleanup(root);
   }

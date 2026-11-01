@@ -1537,7 +1537,8 @@ so it also works for a `--base-run` revision, whose `patch.diff` is a delta agai
 the prior candidate. It follows the revision lineage back to the first run and
 applies only the complete paths and before/after identities those runs recorded.
 It refuses with `APPLY_CONFLICT`, writing nothing, when one of those project files
-no longer matches the state the lineage started from. A file that already equals
+no longer matches the state the lineage started from, or the state a later run
+of the lineage started from. A file that already equals
 the candidate (for example applied by hand) is recorded as `already-applied`. It
 refuses missing or tampered snapshot/inventory proof, protected or otherwise
 ineligible changes, a run of another task, a benchmark replay, a run with scope
@@ -1568,8 +1569,8 @@ and an allowed path of the task (`APPLY_EXCLUDE_ALLOWED`), writing nothing. It
 does not lift the refusal of a deletion or other ineligible change.
 
 After an apply the approval keeps binding the context the worker started from:
-the cited lines of a file apply wrote are read from the first run's starting copy,
-so applying does not make the approval stale, and nothing re-approves the new
+the cited lines of a file apply wrote are read from the starting copy the apply
+matched (the first run's, or that of `applied.startRunId`), so applying does not make the approval stale, and nothing re-approves the new
 source. Every other cited file, including an allowed file the run did not change
 and a path that was already applied, is read from the project, so editing it still
 makes the approval stale. If a written file's run directory is gone the approval
@@ -1581,8 +1582,11 @@ review records `appliedFromRun` and clears the apply record, because the next
 attempt builds on the applied project; if the context cites a file apply wrote
 whose cited lines changed, the approval then reads `stale_approval` and you re-approve
 it explicitly. A later run made with `--base-run` of an already applied run
-conflicts, because the project no longer matches the lineage's starting state;
-dispatch the next attempt from the applied project instead.
+applies cleanly over the applied files: the project matches the revision's
+`workspace-before`, so the apply updates from there and records that run as
+`applied.startRunId`. Until a run is applied again, `task review --verdict
+accepted` refuses with `APPLY_REQUIRED`, because the project still holds the
+revised candidate.
 
 Several slices often grow one file: one creates a service, the next depends on it
 and adds a function. Applying a dependent that rewrites a candidate file of an
