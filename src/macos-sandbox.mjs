@@ -79,7 +79,7 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
 // resolves to) and TCP to loopback, where Docker publishes container ports,
 // plus the user lookup testcontainers needs. Nothing else on the network is
 // allowed.
-// `loopback` (feature acceptance only) allows TCP connect, bind and accept on
+// `loopback` (feature checks and run_checks) allows TCP connect, bind and accept on
 // localhost; Docker access implies it. Name resolution stays closed, so the
 // runner resolves `localhost` inside Node instead (see check-runner).
 export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [], docker = null, loopback = false }) {

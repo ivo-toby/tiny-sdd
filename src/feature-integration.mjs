@@ -927,7 +927,7 @@ export async function runFeatureIntegration(projectRoot, {
       candidateDir: candidatePath,
       check: resolved.check,
       dependencyMounts: retained.dependencies.map((item) => ({ source: item.retainedPath, target: item.target })),
-      // Feature checks always get localhost (#212); run_checks never does.
+      // Feature checks always get localhost (#212), like run_checks (#215).
       loopback: true,
       ...(normalized.docker === undefined ? {} : { docker: { ...normalized.docker } }),
       ...(nodeRoot === undefined ? {} : { nodeRoot }),
