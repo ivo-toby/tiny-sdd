@@ -34,7 +34,6 @@ or a small model pilot does not establish reliable delivery across projects.
 | Model registry | Profiles in `profiles/` per exact model configuration (route, context, `maxTokens`, timeout, thinking) with aggregate polyglot benchmark results; `setup` installs the registry, `init --model` selects the matching profile, `tinysdd models` lists them, `tinysdd profiles new` creates a local one and `tinysdd profiles update` refreshes the registry. The developer benchmark in `bench/polyglot` is not shipped in the npm package. | Worker runs apply the profile's context window, `maxTokens` and limits; the server must actually serve that configuration. A registry score describes that exact configuration, not the model in general. |
 
 Other open work includes [full workflow experiments](https://github.com/ivo-toby/tiny-sdd/issues/110),
-[`run_checks` for OpenCode workers](https://github.com/ivo-toby/tiny-sdd/issues/182),
 [benchmark score calibration](https://github.com/ivo-toby/tiny-sdd/issues/33) and the
 [open bug reports](https://github.com/ivo-toby/tiny-sdd/issues?q=is%3Aissue+is%3Aopen+label%3Abug).
 The dated experiment reports are historical evidence, not a current model ranking.

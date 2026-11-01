@@ -3,8 +3,8 @@
 This is the runbook for the agent that orchestrates work on this repository: it
 plans the issue queue, writes implementation notes, dispatches implementers,
 reviews their PRs and keeps the operator informed. Implementers only need
-`AGENTS.md`. The state below is a snapshot from 2026-10-31 (`main` at
-`939c5e6`, v0.15.0); check GitHub before acting on it.
+`AGENTS.md`. The state below is a snapshot from 2026-11-01 (`main` at
+`8e64b03`, v0.15.7); check GitHub before acting on it.
 
 ## Roles
 
@@ -27,15 +27,14 @@ SDD skills). Since then: the profile registry (#123), the OpenCode harness kind
 interface (#154), Pi 1.4.0, per-task workers and escalation, grouped help
 (#173), `change validate|export` (#175), the macOS Seatbelt check runner (#176),
 profile limits as defaults (#174), multiple named checks per slice (#181), the
-TypeScript typecheck advisory (#187) and incomplete runs as revision bases
-(#189).
+TypeScript typecheck advisory (#187), incomplete runs as revision bases
+(#189), OpenCode `run_checks` and Seatbelt runner hardening (#182), workspace
+links in dependency mounts (#195), the Pi tool-loadout check (#197), atomic
+apply with `--exclude` (#198), dependent applies that extend a prerequisite
+(#202) and the Git-listed feature projection (#206, reopened).
 `git log` has the details.
 
-Open PRs:
-
-| PR | Issue |
-| --- | --- |
-| #188 | #182 `run_checks` for OpenCode workers (the macOS half landed in #176) |
+Open PRs: none at the snapshot.
 
 ## Queue
 
@@ -46,11 +45,11 @@ issue for notes and the files it touches before dispatching.
 
 - **Bugs:** #179 (secret-path rule blocks `.env.example`), #180 (worker aborts
   on a tracked symlink), #190 (`task review` accepts a task with no applied
-  run), #195 (worker cannot start with workspace symlinks or more than 20k
-  entries in `node_modules`). #190 changes what acceptance binds: get the
-  operator's decision first.
+  run), #206 (`feature accept` and project symlinks, reopened), #209 (macOS
+  `feature accept`: the `node_modules` mount breaks module resolution). #190
+  changes what acceptance binds: get the operator's decision first.
 - **Enhancements:** #191 (run copies under `.tinysdd/runs` break repo-wide
-  tools), plus the open PRs above.
+  tools), #201 (warn when a sibling slice can stale another's approval).
 - **Experiments (operator-run, live models):** #110 to #117, #9, #33, #41.
 - **Decision models:** #40; must not refactor `src/jev.mjs` or
   `src/semantic-policy.mjs` without the operator.
@@ -65,6 +64,8 @@ issue for notes and the files it touches before dispatching.
 - **#36 unavailable runner:** a checks packet continues without the extension
   or tool, with explicit runtime metadata/result warning and CLI stderr warning.
   No new Seatbelt channel grants. #7/#24 config identity includes availability.
+  (Superseded on macOS: #176 added the Seatbelt check runner and #197 grants
+  the Pi sandbox the check channel.)
 
 Don't relitigate these; cite them in notes when relevant.
 
@@ -107,18 +108,10 @@ Don't relitigate these; cite them in notes when relevant.
   allowlist containing the task's own brief, context or checks file. Apply
   refuses such runs; rejecting the overlap at `task add` and `task update` would
   fail earlier.
-- **`docs/quickstart.md` mis-describes `worker stop` off Linux.** It says
-  `worker stop` "otherwise fails with `LAUNCH_NOT_OURS`"; off Linux it refuses
-  with `UNSUPPORTED_PLATFORM`.
 - **`docs/cli-v0-implementation.md` is stale.** Lines 54, 111 and 116 predate
   `task apply` and cited-line digests.
 - **Check runner as non-root.** A fork storm can still slow the user's other
   processes until the timeout. A cgroup `pids.max` would isolate it.
-- **Two setup tests fail when the suite runs as root.** Since #176,
-  `tests/setup.test.mjs` "sandbox inspection reports macOS inference and
-  Seatbelt check-runner support" and "runSetup installs a version-matched
-  archive…" expect macOS check-runner support, which a root caller is refused.
-  They pass as an unprivileged user.
 
 ## Writing implementation notes
 
