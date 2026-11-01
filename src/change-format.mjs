@@ -789,6 +789,16 @@ export async function validateChange(projectRootOrOptions, changePathArgument, o
     };
   });
   const warnings = [...ownershipWarnings];
+  // Advisory: an edit to cited lines by another slice stales the citing slice.
+  for (const slice of slices) {
+    const cited = new Set(slice.contextManifest.resources.map((resource) => resource.path));
+    for (const other of slices) {
+      if (other.value.id === slice.value.id) continue;
+      for (const output of [...other.value.implementationFiles, ...other.value.sliceTests].filter((item) => cited.has(item))) {
+        warnings.push({ code: 'CITED_FILE_MODIFIED_BY_SLICE', message: `slice ${slice.value.id} cites ${output}, which slice ${other.value.id} may modify; an edit to the cited lines makes ${slice.value.id} stale`, details: { path: output, sliceId: slice.value.id, modifiedBy: other.value.id } });
+      }
+    }
+  }
   for (const slice of slices) {
     if (slice.value.implementationFiles.length > slice.resolvedBudget.maxImplementationFiles) warnings.push({ code: 'IMPLEMENTATION_SIZING_EXCEEDED', message: `slice ${slice.value.id} expects ${slice.value.implementationFiles.length} implementation files, above advisory budget ${slice.resolvedBudget.maxImplementationFiles}`, details: { sliceId: slice.value.id, count: slice.value.implementationFiles.length, limit: slice.resolvedBudget.maxImplementationFiles } });
     if (slice.value.sliceTests.length > slice.resolvedBudget.maxSliceTestFiles) warnings.push({ code: 'SLICE_TEST_SIZING_EXCEEDED', message: `slice ${slice.value.id} expects ${slice.value.sliceTests.length} slice-test files, above advisory budget ${slice.resolvedBudget.maxSliceTestFiles}`, details: { sliceId: slice.value.id, count: slice.value.sliceTests.length, limit: slice.resolvedBudget.maxSliceTestFiles } });

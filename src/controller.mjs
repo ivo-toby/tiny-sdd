@@ -31,7 +31,7 @@ import {
   validateProfileReference,
 } from './config.mjs';
 import { profilesForRoute } from './profile-catalog.mjs';
-import { compileContext, contextSizeMetrics } from './context-compiler.mjs';
+import { compileContext, contextSizeMetrics, parseContextManifest } from './context-compiler.mjs';
 import { checksRunTypecheck, isTypecheckRelevantPath, parseChecksManifest } from './checks-manifest.mjs';
 import {
   extractAcceptanceCriteria,
@@ -338,6 +338,33 @@ function taskSizing(allow, compiled, checks) {
     warnings.push('TypeScript/Vue/Svelte files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit), or mark a wrapper check that runs it with "covers": ["typecheck"], because test runners strip types');
   }
   return { ...metrics, behaviorSplit: { recommended, reasons }, thresholds: { ...TASK_SIZE_THRESHOLDS, ...BEHAVIOR_SPLIT_THRESHOLDS }, warnings };
+}
+
+async function citedPaths(root, task) {
+  if (!task.context) return [];
+  try {
+    return parseContextManifest(await readProjectFile(root, task.context, taskBriefOptions())).resources.map((resource) => resource.path);
+  } catch {
+    return [];
+  }
+}
+
+// Advisory planning check: an edit to cited lines by another task of the same
+// feature makes the citing task stale (a pure line shift does not).
+async function citedFileWarnings(root, state, task) {
+  const warnings = [];
+  const cited = new Set(await citedPaths(root, task));
+  for (const other of Object.values(state.tasks)) {
+    if (other.id === task.id || other.closure || (other.feature ?? null) !== (task.feature ?? null)) continue;
+    for (const path of other.allow.filter((item) => cited.has(item))) {
+      warnings.push(`task ${task.id} cites ${path}, which task ${other.id} may modify; an edit to the cited lines makes ${task.id} stale`);
+    }
+    const otherCited = new Set(await citedPaths(root, other));
+    for (const path of task.allow.filter((item) => otherCited.has(item))) {
+      warnings.push(`task ${other.id} cites ${path}, which task ${task.id} may modify; an edit to the cited lines makes ${other.id} stale`);
+    }
+  }
+  return warnings;
 }
 
 function nowIso() {
@@ -997,7 +1024,9 @@ export async function addTask(projectRoot, options = {}) {
       approval: undefined,
       review: undefined,
     };
-    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing: taskSizing(allow, compiled, parsedChecks) };
+    const sizing = taskSizing(allow, compiled, parsedChecks);
+    sizing.warnings.push(...await citedFileWarnings(root, state, state.tasks[id]));
+    return { task: { id, ...(feature === undefined ? {} : { feature }), brief, ...(context === undefined ? {} : { context }), ...(checks === undefined ? {} : { checks }), dependsOn, allow, ...(protect ? { protect } : {}), ...(preparation.length > 0 ? { preparation } : {}), ...(worker === undefined ? {} : { worker }), ...(workerReason === undefined ? {} : { workerReason }) }, sizing };
   });
 }
 

@@ -161,5 +161,10 @@ Status is recomputed on every read, so an accepted task that read `stale` only
 because of such a move reads `accepted` again once the controller has this
 rule; no command is needed.
 
+`task add` and `change validate` warn, without blocking, when a task or slice
+cites a file that another task in the same feature or another slice of the
+change may modify (`CITED_FILE_MODIFIED_BY_SLICE` in `change validate`). An
+edit to the cited lines themselves still makes the citing task stale.
+
 An omitted `--context` remains valid for small tasks. Use one when a precise
 interface or oracle would materially reduce rediscovery and ambiguity.

@@ -302,14 +302,16 @@ async function addReaderAndWiring(root) {
   await mkdir(join(root, 'src'), { recursive: true });
   await writeFile(join(root, 'src', 'reader.ts'), 'export const reader = 1;\n');
   await reviewTask(root, { id: 'reader', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
-  await addTask(root, { id: 'wiring', brief: 'docs/wiring.md', dependsOn: ['reader'], allow: ['src/main.ts'] });
+  const added = await addTask(root, { id: 'wiring', brief: 'docs/wiring.md', dependsOn: ['reader'], allow: ['src/main.ts'] });
   await approveTask(root, { id: 'wiring', by: 'operator', reason: 'checked the wiring scope' });
+  return added;
 }
 
 test('an accepted slice stays accepted when a dependent inserts lines above its unchanged cited range', async () => {
   const root = await project();
   try {
-    await addReaderAndWiring(root);
+    const added = await addReaderAndWiring(root);
+    assert.deepEqual(added.sizing.warnings, ['task reader cites src/main.ts, which task wiring may modify; an edit to the cited lines makes reader stale']);
     await writeEntrypoint(root, ['import { b } from "./b.js";', 'import { c } from "./c.js";', ...ENTRYPOINT]);
     assert.deepEqual(await statusById(root), { reader: 'accepted', wiring: 'ready' });
     const reader = (await controllerStatus(root)).tasks.find((task) => task.id === 'reader');
