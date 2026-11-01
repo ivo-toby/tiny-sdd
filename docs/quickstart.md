@@ -555,10 +555,49 @@ check, and project/configuration drift all
 refuse acceptance. A successful run retains its result, command identity,
 tested bytes and dependency identities; `feature report --json` marks the proof
 stale when any of those inputs changes. Every active accepted task scope must
-protect the declared test paths. The retained projection accepts regular files
-and directories only: symlinks (including common `node_modules/.bin` links) and
-special files are refused, and each copied tree is bounded to 20,000 entries
-and 512 MiB (manifest bytes are bounded to 512 KiB).
+protect the declared test paths.
+
+The retained projection copies what the worker copy sees: in a Git work tree,
+tracked plus untracked-but-not-ignored files (`git ls-files --cached --others
+--exclude-standard`), so ignored state such as `.claude/worktrees/` or
+`.worktrees/` never enters it; outside Git it walks the tree. `.git`,
+`.tinysdd`, secret-looking names and dependency mounts are left out. A relative
+symlink that stays inside the project (`AGENTS.md -> CLAUDE.md`, npm workspace
+and `node_modules/.bin` links in a dependency mount) is retained as the same
+link and its target text is part of the identity; an absolute link, one that
+leaves the project, or one with `..` after a name (`a/../b`) is refused with
+`FEATURE_INTEGRATION_UNSAFE_INPUT`, as are special files. The project tree is
+bounded to 20,000 entries, each dependency mount to 250,000 entries, each tree
+to 512 MiB, and a manifest to 512 KiB. A proof recorded before the Git-listed
+projection keeps its whole-tree walk when its freshness is checked.
+
+When features need different tests, give each its own command under
+`features`; a feature without an entry uses the top-level command, and the
+top-level command may be omitted when every feature has an entry:
+
+```json
+"featureIntegration": {
+  "features": {
+    "report-core": {
+      "manifest": "changes/report-core/feature-checks.json",
+      "checkId": "report-feature",
+      "testPaths": ["tests/integration/report.feature.test.ts"],
+      "entrypoints": ["src/services/report-service.ts"]
+    }
+  }
+}
+```
+
+Each entry takes the same fields as the top-level command (`argv` or
+`manifest`/`checkId`, `timeoutMs`, `dependencyMounts`, `testPaths`,
+`entrypoints`); only that feature's tasks must protect its `testPaths`.
+
+The host check runner has no network and grants no sockets, so a feature test
+that needs Docker (for example testcontainers through `/var/run/docker.sock`)
+cannot pass under `feature accept`. Point `featureIntegration` at a test that
+runs without external services. On macOS a workspace link inside a dependency
+mount resolves next to the retained mount rather than into the candidate, so a
+check that imports a workspace package through `node_modules` may not find it.
 
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'

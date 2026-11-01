@@ -413,10 +413,20 @@ records its bounded result and identities in the acceptance event. It refuses
 when configuration, the host check sandbox (bubblewrap on Linux, Seatbelt on
 macOS), the check, the protected test, the
 entrypoint, or any retained project/dependency bytes are unavailable or stale.
-Every active accepted task scope must protect the declared test paths. Retained
-project and dependency trees are regular-file-only: symlinks (including common
-`node_modules/.bin` links) and special files are refused; each tree is bounded
-to 20,000 entries and 512 MiB, and a manifest is bounded to 512 KiB.
+Every active accepted task scope must protect the declared test paths. In a Git
+work tree the retained project tree holds tracked plus untracked-not-ignored
+files only, so ignored worktrees (`.claude/worktrees/`, `.worktrees/`) are
+skipped; outside Git the tree is walked. Relative symlinks that stay inside the
+project (`AGENTS.md -> CLAUDE.md`, workspace and `.bin` links in a dependency
+mount) are retained as links; absolute, escaping or `a/../b` links and special
+files are refused with `FEATURE_INTEGRATION_UNSAFE_INPUT`. The project tree is
+bounded to 20,000 entries, each dependency mount to 250,000, each tree to
+512 MiB, and a manifest to 512 KiB. For per-feature tests, put a command per
+feature under `featureIntegration.features.<feature>` (same fields; a
+`manifest` such as `changes/<id>/feature-checks.json` with a `checkId` works);
+features without an entry use the top-level command. The check runner has no
+network or sockets, so a Docker-backed (testcontainers) feature test cannot
+pass under `feature accept`.
 Historical events without this optional proof remain readable but are reported
 as ineligible; their frozen usage report is unchanged.
 
