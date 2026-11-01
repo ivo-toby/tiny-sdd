@@ -576,24 +576,12 @@ describe("Pi environment filtering", () => {
       preparePiEnvironment({ worker: worker(), profile: { ...profile, model: { route: "fake/other-model" } }, sourceAgentDir, sourceEnv }),
       /measured on route fake\/other-model, but worker.model is fake\/exact-model/u,
     );
-    // Profile limits are measured defaults, not binding ones (#174): a worker
-    // value wins and both values are recorded with their source.
-    const overridden = await preparePiEnvironment({ worker: { ...worker(), limits: { timeoutMs: 900000, maxToolCalls: 4 } }, profile: { ...profile, limits: { timeoutMs: 600000, maxToolCalls: 100 } }, sourceAgentDir, sourceEnv });
+    // Profile limits never bind here: runWorker merges them (#174).
+    const withProfileLimits = await preparePiEnvironment({ worker: worker(), profile: { ...profile, limits: { timeoutMs: 600000 } }, sourceAgentDir, sourceEnv });
     try {
-      assert.equal(overridden.metadata.timeoutMs, 900000);
-      assert.deepEqual(overridden.metadata.limitProvenance, {
-        timeoutMs: { measured: 600000, effective: 900000, source: "worker" },
-        maxToolCalls: { measured: 100, effective: 4, source: "worker" },
-      });
+      assert.equal(withProfileLimits.metadata.timeoutMs, 2_000);
     } finally {
-      await overridden.cleanup();
-    }
-    const defaulted = await preparePiEnvironment({ worker: worker(), profile: { ...profile, limits: { timeoutMs: 600000 } }, sourceAgentDir, sourceEnv });
-    try {
-      assert.equal(defaulted.metadata.timeoutMs, 2_000);
-      assert.deepEqual(defaulted.metadata.limitProvenance, { timeoutMs: { measured: 600000, effective: 2_000, source: "worker" } });
-    } finally {
-      await defaulted.cleanup();
+      await withProfileLimits.cleanup();
     }
   });
 
