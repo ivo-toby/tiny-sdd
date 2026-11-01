@@ -719,7 +719,7 @@ export async function inspectSandbox({ platform = process.platform, privileged =
   }
   if (platform === 'darwin') {
     const sandboxExec = await firstExecutable(executablePaths.sandboxExec ? [executablePaths.sandboxExec] : ['/usr/bin/sandbox-exec']);
-    const runner = checkRunnerAvailable({ platform, sandboxExecPath: sandboxExec?.path });
+    const runner = checkRunnerAvailable({ platform, privileged, sandboxExecPath: sandboxExec?.path });
     return {
       platform,
       worker: sandboxExec ? { supported: true, sandbox: 'seatbelt', executable: sandboxExec.path } : { supported: false, sandbox: 'seatbelt', executable: null, reason: 'macOS sandbox-exec is not available at /usr/bin/sandbox-exec' },

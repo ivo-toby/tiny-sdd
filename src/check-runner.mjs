@@ -97,12 +97,14 @@ function unsupportedPlatform(platform = process.platform) {
   return `the check runner requires Linux or macOS (this is ${platform})`;
 }
 
-function locateBinaries({ platform = process.platform, bwrapPath, prlimitPath, setprivPath, sandboxExecPath } = {}) {
-  if (platform !== 'linux' && platform !== 'darwin') return { reason: `the check runner requires Linux or macOS (this is ${platform})` };
+function locateBinaries({ platform = process.platform, bwrapPath, prlimitPath, setprivPath, sandboxExecPath, privileged } = {}) {
+  const unsupported = unsupportedPlatform(platform);
+  if (unsupported) return { reason: unsupported };
+  const asRoot = privileged ?? isPrivileged();
   if (platform === 'darwin') {
     // Seatbelt has no privilege drop: a root caller would be refused per run,
     // so availability refuses it up front and never advertises run_checks.
-    if (isPrivileged()) return { reason: 'the check runner will not run checks as root: Seatbelt has no privilege drop, so run the worker as an unprivileged user' };
+    if (asRoot) return { reason: 'the check runner will not run checks as root: Seatbelt has no privilege drop, so run the worker as an unprivileged user' };
     const candidates = sandboxExecPath === undefined ? SANDBOX_EXEC_DEFAULTS : [sandboxExecPath];
     const sandboxExec = findExecutable(candidates);
     if (!sandboxExec) return { reason: `sandbox-exec is not an executable file (tried ${candidates.join(', ')})` };
@@ -114,7 +116,7 @@ function locateBinaries({ platform = process.platform, bwrapPath, prlimitPath, s
   const prlimitCandidates = prlimitPath === undefined ? PRLIMIT_DEFAULTS : [prlimitPath];
   const prlimit = findExecutable(prlimitCandidates);
   if (!prlimit) return { reason: `prlimit is not an executable file (tried ${prlimitCandidates.join(', ')})` };
-  if (!isPrivileged()) return { kind: 'linux-bubblewrap', bwrap, prlimit, setpriv: null };
+  if (!asRoot) return { kind: 'linux-bubblewrap', bwrap, prlimit, setpriv: null };
   const setprivCandidates = setprivPath === undefined ? SETPRIV_DEFAULTS : [setprivPath];
   const setpriv = findExecutable(setprivCandidates);
   if (!setpriv) {
@@ -746,7 +748,8 @@ export async function runCheck(options) {
   const request = parseRequest(options);
   const setupDeadline = options.signal === undefined ? undefined : Date.now() + request.check.timeoutMs;
   checkPreparation(options.signal, setupDeadline);
-  const binaries = locateBinaries(options);
+  // Availability may be asked about a hypothetical caller; a real run always uses this process's identity.
+  const binaries = locateBinaries({ ...options, privileged: isPrivileged() });
   if (binaries.reason) throw unavailable(binaries.reason);
   const seatbelt = binaries.kind === 'seatbelt';
 
