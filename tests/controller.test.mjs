@@ -439,6 +439,9 @@ test('task add rejects invalid checks manifests without changing state', async (
       { name: 'argv traversal', value: { ...valid, checks: [{ id: 'unit', argv: ['node_modules/../bin/test'] }] }, message: /must not traverse/u },
       { name: 'duplicate id', value: { ...valid, checks: [{ id: 'unit', argv: ['node'] }, { id: 'unit', argv: ['node'] }] }, message: /duplicate id: unit/u },
       { name: 'bad criteria', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], criteria: ['criterion'] }] }, message: /criteria must contain unique C<n> ids/u },
+      { name: 'unknown covers kind', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], covers: ['lint'] }] }, message: /covers must contain only: typecheck/u },
+      { name: 'empty covers', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], covers: [] }] }, message: /covers must be a nonempty array/u },
+      { name: 'duplicate covers', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], covers: ['typecheck', 'typecheck'] }] }, message: /duplicate kind: typecheck/u },
       { name: 'timeout out of range', value: { ...valid, checks: [{ id: 'unit', argv: ['node'], timeoutMs: 999 }] }, message: /timeoutMs must be an integer from 1000 to 600000/u },
       { name: 'empty checks', value: { ...valid, checks: [] }, message: /checks must contain between 1 and 16 items/u },
     ];
@@ -488,6 +491,8 @@ test('typecheck detection recognizes named and binary typecheck checks', () => {
   assert.equal(checkRunsTypecheck({ id: 'test', argv: ['node_modules/.bin/vitest', 'run'] }), false);
   assert.equal(checkRunsTypecheck({ id: 'lint', argv: ['node_modules/.bin/eslint', 'src'] }), false);
   assert.equal(checkRunsTypecheck({ id: 'lint-tsconfig', argv: ['node', 'x'] }), false);
+  assert.equal(checkRunsTypecheck({ id: 'slice-m1', argv: ['node', 'changes/c/slice-check.mjs', 'src/a.ts'], covers: ['typecheck'] }), true);
+  assert.equal(checkRunsTypecheck({ id: 'slice-m1', argv: ['node', 'changes/c/slice-check.mjs', 'src/a.ts'] }), false);
   assert.equal(checksRunTypecheck([{ id: 'test', argv: ['node', 'tests/a.test.mjs'] }, { id: 'typecheck', argv: ['node', 'scripts/tc.mjs'] }]), true);
   assert.equal(checksRunTypecheck([{ id: 'test', argv: ['node', 'tests/a.test.mjs'] }]), false);
   assert.equal(isTypecheckRelevantPath('src/foo.ts'), true);
@@ -530,6 +535,14 @@ test('task add warns when TypeScript allow has no typecheck check', async () => 
     assert.ok(!added3.sizing.warnings.some((warning) => warning.includes('typecheck')));
     const added4 = await addTask(root, { id: 'nochecks', brief: 'docs/brief.md', allow: ['src/new-file.ts'] });
     assert.ok(!added4.sizing.warnings.some((warning) => warning.includes('typecheck')));
+    const wrapperPath = '.tinysdd/tasks/wrapper.checks.json';
+    await writeFile(join(root, ...wrapperPath.split('/')), JSON.stringify({
+      schemaVersion: 1,
+      dependencyMounts: [],
+      checks: [{ id: 'slice', argv: ['node', 'scripts/slice-check.mjs', 'src/new-file.ts'], covers: ['typecheck'] }],
+    }));
+    const added5 = await addTask(root, { id: 'wrapper', brief: 'docs/brief.md', checks: wrapperPath, allow: ['src/new-file.ts'] });
+    assert.ok(!added5.sizing.warnings.some((warning) => warning.includes('typecheck')));
   } finally {
     await cleanup(root);
   }

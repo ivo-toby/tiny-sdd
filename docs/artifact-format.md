@@ -182,6 +182,8 @@ optional `workerReason` (#164). Slice IDs are globally unique task IDs such as `
 - `checks`: unchanged `parseChecksManifest()` schema with its existing 1–16
   check limit, so a slice may declare several named argv checks side by side
   (for example `test`, `lint`, `typecheck`), each with its own id and timeout.
+  A wrapper check that runs a typecheck among other tools declares
+  `"covers": ["typecheck"]` so `TS_NO_TYPECHECK` does not fire for it.
   Every expected `sliceTests` path must appear as a literal argv operand of at
   least one declared check. Commands are never shell strings. Feature checks
   are separate.
