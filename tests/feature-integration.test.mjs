@@ -505,3 +505,69 @@ test('dependency mounts keep package files with secret-like names; project sourc
     await cleanup(root);
   }
 });
+
+test('dependency mounts are retained under their own name so real-path module resolution finds siblings', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.mjs'), 'export {};\n');
+    const config = { ...args(root).config, dependencyMounts: ['node_modules'] };
+    let source;
+    const result = await runFeatureIntegration(root, {
+      ...args(root, async ({ dependencyMounts }) => {
+        source = dependencyMounts[0].source;
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+      }),
+      config,
+    });
+    assert.match(source, /\/dependencies\/mount-00\/node_modules$/u);
+    assert.equal(await readFile(join(source, 'pkg', 'index.mjs'), 'utf8'), 'export {};\n');
+    assert.match(result.proof.dependencies[0].path, /\/dependencies\/mount-00$/u);
+    assert.equal(result.proof.dependencies[0].layout, 'target');
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a proof retained with the earlier mount-NN layout stays fresh', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'deps'), { recursive: true });
+    await writeFile(join(root, 'deps', 'runtime.mjs'), 'export const runtime = true;\n');
+    const config = { ...args(root).config, dependencyMounts: ['deps'] };
+    const result = await runFeatureIntegration(root, { ...args(root, passingRunner()), config });
+    // Rebuild the artifact as an earlier version wrote it: the tree directly
+    // at mount-00 and no layout in the proof.
+    const artifact = join(root, ...result.reference.proofPath.split('/').slice(0, -1));
+    const mount = join(artifact, 'dependencies', 'mount-00');
+    await fs.promises.rename(join(mount, 'deps'), join(artifact, 'legacy-mount'));
+    await rm(mount, { recursive: true });
+    await fs.promises.rename(join(artifact, 'legacy-mount'), mount);
+    const proofPath = join(artifact, 'proof.json');
+    const proof = JSON.parse(await readFile(proofPath, 'utf8'));
+    delete proof.dependencies[0].layout;
+    const text = `${JSON.stringify(proof, null, 2)}\n`;
+    await writeFile(proofPath, text);
+    const legacy = { ...result.reference, proofSha256: sha256(text) };
+    assert.deepEqual(await featureIntegrationFreshness(root, freshnessArgs(legacy, config)), { required: true, fresh: true, reasons: [], status: 'fresh' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an argv path into node_modules without a dependency mount says what to declare', async () => {
+  const root = await project();
+  try {
+    let ran = false;
+    const error = await runFeatureIntegration(root, {
+      ...args(root, async () => { ran = true; return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 }; }),
+      config: { ...args(root).config, argv: ['node', 'node_modules/vitest/vitest.mjs', 'run', 'tests/integration.mjs'] },
+    }).catch((caught) => caught);
+    assert.equal(error.code, 'FEATURE_INTEGRATION_CONFIG');
+    assert.match(error.message, /argv\[1\] names node_modules\/vitest\/vitest\.mjs.*"dependencyMounts": \["node_modules"\]/u);
+    assert.equal(ran, false);
+  } finally {
+    await cleanup(root);
+  }
+});
