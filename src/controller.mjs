@@ -327,7 +327,7 @@ function taskSizing(allow, compiled, checks) {
   // Only warn when a checks file is declared: a task with no checks has a
   // separate gap (no verification at all), not a missing typecheck.
   if (checks && allow.some(isTypecheckRelevantPath) && !checksRunTypecheck(checks.checks)) {
-    warnings.push('TypeScript/Vue/Svelte files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit) because test runners strip types');
+    warnings.push('TypeScript/Vue/Svelte files in allow but no declared check runs a typecheck; add one (e.g. tsc --noEmit), or mark a wrapper check that runs it with "covers": ["typecheck"], because test runners strip types');
   }
   return { ...metrics, behaviorSplit: { recommended, reasons }, thresholds: { ...TASK_SIZE_THRESHOLDS, ...BEHAVIOR_SPLIT_THRESHOLDS }, warnings };
 }

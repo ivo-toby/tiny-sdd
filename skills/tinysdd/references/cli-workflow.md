@@ -1063,7 +1063,8 @@ the declaration into approval and the packet. The file has `schemaVersion: 1`,
 `dependencyMounts` (at most 8) and 1–16 `checks`, each with an `id`, an `argv`
 array (never a shell string) whose first item is `node` or a project-relative
 executable inside a declared dependency mount, an optional `timeoutMs`
-(1000–600000, default 120000) and optional `criteria` (`C<n>` ids). When the
+(1000–600000, default 120000), optional `criteria` (`C<n>` ids) and optional
+`covers` (`["typecheck"]` declares that a wrapper check runs a typecheck). When the
 host runner is available, a checks-bearing packet exposes `run_checks` with optional `checkId` (omitted
 means all checks in order). It uses the separate host sandbox runner
 (bubblewrap on Linux, Seatbelt on macOS), without network or credentials.
@@ -1103,7 +1104,8 @@ and timeout; the worker prompt lists every declared check by id and each
 result is reported by id. For a TypeScript/Vue/Svelte slice, one of those
 checks must run a typecheck (`tsc --noEmit` or the repository equivalent):
 test runners such as Vitest and tsx strip types, so a green test run does not
-prove the slice compiles. `change validate` warns when a slice writes typed
+prove the slice compiles. A wrapper script that runs `tsc` is not inspected;
+mark that check with `"covers": ["typecheck"]`. `change validate` warns when a slice writes typed
 files and no declared check runs a typecheck; `task add`, `task update` and
 `task approve` warn for the same condition on a task's allowed files (only
 when a checks file is declared). When the client is

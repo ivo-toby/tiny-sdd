@@ -7,6 +7,7 @@ const MAX_DEPENDENCY_MOUNTS = 8;
 const MAX_CHECKS = 16;
 const MAX_ARGV = 64;
 const MAX_ARG_BYTES = 4096;
+const COVERAGE_KINDS = new Set(['typecheck']);
 
 function invalid(message, details) {
   throw tinyError('CHECKS_MANIFEST_INVALID', message, details);
@@ -30,6 +31,17 @@ function parseCriteria(value, label) {
     if (seen.has(criterion)) invalid(`${label} contains duplicate id: ${criterion}`);
     seen.add(criterion);
     return criterion;
+  });
+}
+
+function parseCovers(value, label) {
+  if (!Array.isArray(value) || value.length < 1) invalid(`${label} must be a nonempty array`);
+  const seen = new Set();
+  return value.map((kind) => {
+    if (typeof kind !== 'string' || !COVERAGE_KINDS.has(kind)) invalid(`${label} must contain only: ${[...COVERAGE_KINDS].join(', ')}`);
+    if (seen.has(kind)) invalid(`${label} contains duplicate kind: ${kind}`);
+    seen.add(kind);
+    return kind;
   });
 }
 
@@ -65,7 +77,7 @@ export function parseChecksManifest(text) {
   for (const [index, check] of value.checks.entries()) {
     const label = `check ${index + 1}`;
     assertPlainObject(check, 'CHECKS_MANIFEST_INVALID', label);
-    assertExactKeys(check, ['id', 'argv', 'timeoutMs', 'criteria'], 'CHECKS_MANIFEST_INVALID', label);
+    assertExactKeys(check, ['id', 'argv', 'timeoutMs', 'criteria', 'covers'], 'CHECKS_MANIFEST_INVALID', label);
     if (typeof check.id !== 'string' || !CHECK_ID_PATTERN.test(check.id)) invalid(`${label}.id must match /^[a-z0-9][a-z0-9_-]{0,63}$/`);
     if (idsSeen.has(check.id)) invalid(`checks contains duplicate id: ${check.id}`);
     idsSeen.add(check.id);
@@ -97,14 +109,16 @@ export function parseChecksManifest(text) {
     }
     const normalized = { id: check.id, argv, timeoutMs };
     if (check.criteria !== undefined) normalized.criteria = parseCriteria(check.criteria, `${label}.criteria`);
+    if (check.covers !== undefined) normalized.covers = parseCovers(check.covers, `${label}.covers`);
     checks.push(normalized);
   }
 
   return { schemaVersion: CHECKS_MANIFEST_SCHEMA_VERSION, dependencyMounts, checks };
 }
 
-// A check runs a typecheck when it is named for one or invokes a known
-// typechecker. Test runners such as Vitest and tsx strip types, so a green
+// A check runs a typecheck when it declares one (`covers`), is named for one or
+// invokes a known typechecker. A wrapper script that runs tsc among other
+// tools is not inspected; it declares `covers: ["typecheck"]` instead. Test runners such as Vitest and tsx strip types, so a green
 // test run does not prove the slice compiles.
 const TYPECHECK_BASENAMES = new Set(['tsc', 'tsgo', 'vue-tsc', 'svelte-check']);
 // `tsc` is matched with explicit [-_] boundaries so `tsc_strict` and `run_tsc`
@@ -119,6 +133,7 @@ function argvBaseRunsTypecheck(argument) {
 }
 
 export function checkRunsTypecheck(check) {
+  if (check.covers?.includes('typecheck')) return true;
   if (TYPECHECK_ID.test(check.id)) return true;
   return check.argv.some(argvBaseRunsTypecheck);
 }

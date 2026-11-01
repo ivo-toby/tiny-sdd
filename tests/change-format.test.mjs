@@ -187,6 +187,32 @@ test('TypeScript slice without a typecheck check warns, and a typecheck check cl
   }
 });
 
+test('a wrapper check that declares covers typecheck clears TS_NO_TYPECHECK', async () => {
+  const root = await fixtureProject();
+  try {
+    const slicePath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/slice.json');
+    const slice = JSON.parse(await readFile(slicePath, 'utf8'));
+    slice.implementationFiles.push('examples/artifact-format/src/s1-ts.ts');
+    await writeFile(join(root, 'examples/artifact-format/src/s1-ts.ts'), 'export const ts = true;\n');
+    await writeFile(slicePath, JSON.stringify(slice));
+    const changePath = 'examples/artifact-format/changes/broker-recut/change.json';
+    const checksPath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/checks.json');
+    const checks = JSON.parse(await readFile(checksPath, 'utf8'));
+    checks.checks[0].argv = ['node', 'examples/artifact-format/slice-check.mjs', ...checks.checks[0].argv.slice(1)];
+    await writeFile(checksPath, JSON.stringify(checks));
+    const undeclared = await validateChange(root, changePath);
+    const warning = undeclared.warnings.find((item) => item.code === 'TS_NO_TYPECHECK');
+    assert.ok(warning, 'a wrapper without a declaration still warns');
+    assert.match(warning.message, /"covers": \["typecheck"\]/u);
+    checks.checks[0].covers = ['typecheck'];
+    await writeFile(checksPath, JSON.stringify(checks));
+    const declared = await validateChange(root, changePath);
+    assert.ok(!declared.warnings.some((item) => item.code === 'TS_NO_TYPECHECK'));
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('protected preparation overlap and compiled context budget remain hard failures', async () => {
   const root = await fixtureProject();
   try {

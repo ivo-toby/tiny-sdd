@@ -917,7 +917,8 @@ lists each declared check by id, and `run_checks`, `checks.jsonl`,
 TypeScript/Vue/Svelte slice, declare a typecheck check (`tsc --noEmit` or the
 repository equivalent) alongside the test and lint checks: test runners such as
 Vitest and tsx strip types, so a green test run does not prove the slice
-compiles. `change validate` warns when a slice writes typed files and no
+compiles. A wrapper script that runs `tsc` among other tools is not inspected;
+mark that check with `"covers": ["typecheck"]`. `change validate` warns when a slice writes typed files and no
 declared check runs a typecheck; `task add`, `task update` and `task approve`
 warn for the same condition on a task's allowed files (only when a checks file
 is declared). This contract does not add a shell or arbitrary execution
