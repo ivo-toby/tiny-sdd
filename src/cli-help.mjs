@@ -557,6 +557,7 @@ const NOTE = [
   'Use `worker start` for real model calls from an agent: it detaches the controller from short-lived interactive shells. Poll it with `worker status`. Stopping a launch with `worker stop` finalizes the run with outcome `stopped`, keeping its evidence and candidate.',
   'Use --json for machine-readable results, including failed worker evidence.',
   'Feature acceptance requires featureIntegration in .tinysdd/config.json (optionally one command per feature under featureIntegration.features); TinySDD executes that typed command through the host check runner before recording an event.',
+  'A featureIntegration entry may declare "docker": { "socket": PATH } so that one check can reach Docker (testcontainers). That is host-level access: declare it only for trusted feature tests. Workers and run_checks never get it.',
   'Every command accepts --help (and `tinysdd help <command> [<sub>]`) for its own usage, flags and an example.',
 ];
 
