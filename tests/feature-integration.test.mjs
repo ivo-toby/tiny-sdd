@@ -391,6 +391,100 @@ test('per-feature integration configuration selects each feature its own command
   assert.throws(() => validateFeatureIntegrationConfig({ testPaths: ['tests/x.mjs'], features: { a: { argv: ['node', 'x.mjs'] } } }), { code: 'CONFIG_INVALID' });
 });
 
+test('docker access is opt-in per integration entry and normalizes its daemon socket', () => {
+  const plain = validateFeatureIntegrationConfig({ argv: ['node', 'tests/x.mjs'] });
+  assert.equal(Object.hasOwn(plain, 'docker'), false);
+  const declared = validateFeatureIntegrationConfig({
+    argv: ['node', 'tests/x.mjs'],
+    docker: { socket: '/var/run/docker.sock' },
+    features: { pg: { argv: ['node', 'tests/pg.mjs'], docker: { socket: '/Users/op/.orbstack/run/docker.sock', daemonSocket: '/run/docker.sock' } } },
+  });
+  assert.deepEqual(declared.docker, { socket: '/var/run/docker.sock', daemonSocket: '/var/run/docker.sock' });
+  assert.deepEqual(featureIntegrationConfigFor(declared, 'pg').docker, { socket: '/Users/op/.orbstack/run/docker.sock', daemonSocket: '/run/docker.sock' });
+  assert.deepEqual(featureIntegrationConfigFor(declared, 'other').docker, { socket: '/var/run/docker.sock', daemonSocket: '/var/run/docker.sock' });
+  for (const docker of [{}, { socket: 'docker.sock' }, { socket: '/var/run/../run/docker.sock' }, { socket: '/var/run/docker.sock', network: 'host' }, '/var/run/docker.sock']) {
+    assert.throws(() => validateFeatureIntegrationConfig({ argv: ['node', 'tests/x.mjs'], docker }), { code: 'CONFIG_INVALID' }, JSON.stringify(docker));
+  }
+  // Without a top-level command the top level cannot grant Docker to features.
+  assert.throws(() => validateFeatureIntegrationConfig({ docker: { socket: '/var/run/docker.sock' }, features: { pg: { argv: ['node', 'tests/pg.mjs'] } } }), { code: 'CONFIG_INVALID' });
+});
+
+async function listeningSocket() {
+  const { createServer } = await import('node:net');
+  const directory = await mkdtemp(join(canonicalTmpdir, 'tinysdd-docker-'));
+  const socket = join(directory, 'docker.sock');
+  const server = createServer((connection) => connection.end());
+  await new Promise((resolve) => server.listen(socket, resolve));
+  return { socket, close: async () => { await new Promise((resolve) => server.close(resolve)); await cleanup(directory); } };
+}
+
+test('a declared docker socket reaches the runner and is bound into the proof', async () => {
+  const root = await project();
+  const daemon = await listeningSocket();
+  try {
+    const config = { ...args(root).config, docker: { socket: daemon.socket } };
+    const received = [];
+    const result = await runFeatureIntegration(root, {
+      ...args(root, async (options) => {
+        received.push(options.docker);
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1, sandbox: { runner: 'test', network: 'loopback', docker: { socket: daemon.socket, resolvedSocket: daemon.socket, daemonSocket: '/var/run/docker.sock' } } };
+      }),
+      config,
+    });
+    assert.deepEqual(received, [{ socket: daemon.socket, daemonSocket: '/var/run/docker.sock' }]);
+    assert.deepEqual(result.proof.command.docker, { socket: daemon.socket, daemonSocket: '/var/run/docker.sock' });
+    assert.deepEqual(result.proof.dockerAccess, {
+      granted: true,
+      socket: daemon.socket,
+      daemonSocket: '/var/run/docker.sock',
+      sandbox: { network: 'loopback', socket: daemon.socket, resolvedSocket: daemon.socket, daemonSocket: '/var/run/docker.sock' },
+    });
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+    // Dropping or changing the declaration is a different command.
+    const withoutDocker = await featureIntegrationFreshness(root, freshnessArgs(result.reference, args(root).config));
+    assert.ok(withoutDocker.reasons.includes('integration command changed'));
+    const otherSocket = await featureIntegrationFreshness(root, freshnessArgs(result.reference, { ...config, docker: { socket: daemon.socket, daemonSocket: '/run/docker.sock' } }));
+    assert.ok(otherSocket.reasons.includes('integration command changed'));
+  } finally {
+    await daemon.close();
+    await cleanup(root);
+  }
+});
+
+test('without a declaration the runner gets no docker access and the command digest is unchanged', async () => {
+  const root = await project();
+  try {
+    const seen = [];
+    const result = await runFeatureIntegration(root, args(root, async (options) => {
+      seen.push(Object.hasOwn(options, 'docker'));
+      return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+    }));
+    assert.deepEqual(seen, [false]);
+    assert.equal(result.proof.dockerAccess, undefined);
+    assert.equal(result.proof.command.docker, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a declared docker socket that is missing or not a socket refuses before the check runs', async () => {
+  const root = await project();
+  try {
+    let ran = false;
+    const runner = async () => { ran = true; return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 }; };
+    const missing = await runFeatureIntegration(root, { ...args(root, runner), config: { ...args(root).config, docker: { socket: join(root, 'absent.sock') } } }).catch((error) => error);
+    assert.equal(missing.code, 'FEATURE_INTEGRATION_DOCKER_SOCKET');
+    assert.match(missing.message, /does not exist/u);
+    await writeFile(join(root, 'plain.sock'), '');
+    const regular = await runFeatureIntegration(root, { ...args(root, runner), config: { ...args(root).config, docker: { socket: join(root, 'plain.sock') } } }).catch((error) => error);
+    assert.equal(regular.code, 'FEATURE_INTEGRATION_DOCKER_SOCKET');
+    assert.match(regular.message, /not a unix socket/u);
+    assert.equal(ran, false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('dependency mounts keep package files with secret-like names; project source does not', async () => {
   const root = await project();
   try {
@@ -457,6 +551,36 @@ test('a proof retained with the earlier mount-NN layout stays fresh', async () =
     await writeFile(proofPath, text);
     const legacy = { ...result.reference, proofSha256: sha256(text) };
     assert.deepEqual(await featureIntegrationFreshness(root, freshnessArgs(legacy, config)), { required: true, fresh: true, reasons: [], status: 'fresh' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('feature checks always get loopback and tool caches in node_modules do not affect the proof (#212)', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.mjs'), 'export {};\n');
+    await mkdir(join(root, 'node_modules', '.vite', 'vitest'), { recursive: true });
+    await writeFile(join(root, 'node_modules', '.vite', 'vitest', 'results.json'), '{"run":1}\n');
+    const config = { ...args(root).config, dependencyMounts: ['node_modules'] };
+    const seen = [];
+    const result = await runFeatureIntegration(root, {
+      ...args(root, async (options) => {
+        seen.push({ loopback: options.loopback, cache: await lstat(join(options.dependencyMounts[0].source, '.vite')).then(() => true, () => false) });
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+      }),
+      config,
+    });
+    assert.deepEqual(seen, [{ loopback: true, cache: false }]);
+    // A local vitest run rewrites its results cache; the acceptance stays fresh.
+    await writeFile(join(root, 'node_modules', '.vite', 'vitest', 'results.json'), '{"run":2}\n');
+    await mkdir(join(root, 'node_modules', '.vite-temp'), { recursive: true });
+    await writeFile(join(root, 'node_modules', '.vite-temp', 'vitest.config.ts.timestamp-1.mjs'), 'export default {};\n');
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+    // A real dependency change still does.
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.mjs'), 'export const changed = true;\n');
+    assert.deepEqual((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).reasons, ['project dependency bytes changed']);
   } finally {
     await cleanup(root);
   }

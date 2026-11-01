@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { CHECK_LIMIT_DEFAULTS, checkRunnerAvailable, runCheck } from '../src/check-runner.mjs';
+import { CHECK_LIMIT_DEFAULTS, checkRunnerAvailable, runCheck, sandboxArguments } from '../src/check-runner.mjs';
 import { buildSeatbeltCheckProfile } from '../src/macos-sandbox.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -219,6 +219,94 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(result.exitCode, 4);
     assert.match(result.output.text, /to-stdout/u);
     assert.match(result.output.text, /to-stderr/u);
+  });
+
+  test('localhost resolves inside the sandbox, as test runners such as vitest need', async () => {
+    const candidate = await makeDir({ 'lookup.mjs': "import { lookup } from 'node:dns/promises';\nconsole.log((await lookup('localhost', { family: 4 })).address);\n" });
+    const result = await run(candidate, { argv: ['node', 'lookup.mjs'] });
+    assert.equal(result.exitCode, 0, result.output.text);
+    assert.equal(result.output.text.trim(), '127.0.0.1');
+  });
+
+  // A fake Docker API on a unix socket plus a host loopback listener stand in
+  // for the daemon and a published container port.
+  test('declared docker access reaches only the declared socket and host loopback', async () => {
+    counter += 1;
+    const dockerDir = join(fixtures, `docker-${counter}`);
+    await mkdir(dockerDir);
+    await chmod(dockerDir, 0o777);
+    const socket = join(dockerDir, 'docker.sock');
+    const link = join(dockerDir, 'link.sock');
+    const daemon = createServer((request, response) => response.end(`docker ${request.url}`));
+    // HTTP/1.0 keeps the raw probe simple: the server closes after one response.
+    const published = createServer((request, response) => response.end('published'));
+    await new Promise((resolve) => daemon.listen(socket, resolve));
+    await chmod(socket, 0o777);
+    await symlink(socket, link);
+    await new Promise((resolve) => published.listen(0, '127.0.0.1', resolve));
+    const port = String(published.address().port);
+    try {
+      const candidate = await makeDir({
+        'probe.mjs': [
+          "import { connect } from 'node:net';",
+          // Raw sockets: the HTTP client's wasm parser cannot reserve memory under RLIMIT_AS.
+          'const get = (options) => new Promise((resolve) => {',
+          "  const socket = connect(options, () => socket.end('GET /_ping HTTP/1.0\\r\\n\\r\\n'));",
+          "  let body = '';",
+          "  socket.on('data', (chunk) => { body += chunk; });",
+          "  socket.on('end', () => resolve(body.split('\\r\\n\\r\\n').at(-1)));",
+          "  socket.on('error', (error) => resolve(`error ${error.code}`));",
+          "  socket.setTimeout(3000, () => { socket.destroy(); resolve('error timeout'); });",
+          '});',
+          "const host = process.env.DOCKER_HOST ?? '';",
+          "const path = host.startsWith('unix://') ? host.slice('unix://'.length) : process.argv[3];",
+          'const viaSocket = await get({ path });',
+          "const viaTcp = await get({ host: '127.0.0.1', port: Number(process.argv[2]) });",
+          "let user = null;",
+          "try { user = (await import('node:os')).userInfo().username; } catch (error) { user = `error ${error.code}`; }",
+          'console.log(JSON.stringify({ host, override: process.env.TESTCONTAINERS_HOST_OVERRIDE ?? null, daemon: process.env.TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?? null, viaSocket, viaTcp, user }));',
+          '',
+        ].join('\n'),
+      });
+      const probe = (result) => JSON.parse(result.output.text.trim().split('\n').at(-1));
+      const granted = await run(candidate, { argv: ['node', 'probe.mjs', port, socket] }, { docker: { socket: link } });
+      assert.equal(granted.exitCode, 0, granted.output.text);
+      assert.deepEqual(probe(granted), {
+        host: 'unix:///run/tinysdd/docker.sock',
+        override: '127.0.0.1',
+        daemon: '/var/run/docker.sock',
+        viaSocket: 'docker /_ping',
+        viaTcp: 'published',
+        user: 'check',
+      });
+      assert.equal(granted.sandbox.network, 'host');
+      assert.deepEqual(granted.sandbox.docker, { socket: link, resolvedSocket: socket, daemonSocket: '/var/run/docker.sock' });
+      assert.deepEqual(granted.sandbox.env.slice(-3), ['DOCKER_HOST', 'TESTCONTAINERS_HOST_OVERRIDE', 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE']);
+
+      const denied = await run(candidate, { argv: ['node', 'probe.mjs', port, socket] });
+      assert.equal(denied.exitCode, 0, denied.output.text);
+      const deniedProbe = probe(denied);
+      assert.equal(deniedProbe.host, '');
+      assert.equal(deniedProbe.override, null);
+      assert.match(deniedProbe.viaSocket, /^error /u);
+      assert.match(deniedProbe.viaTcp, /^error /u);
+      assert.match(deniedProbe.user, /^error /u);
+      assert.equal(denied.sandbox.network, 'none');
+      assert.equal(denied.sandbox.docker, undefined);
+    } finally {
+      await new Promise((resolve) => daemon.close(resolve));
+      await new Promise((resolve) => published.close(resolve));
+    }
+  });
+
+  test('a declared docker socket that is missing or not a socket is refused before anything runs', async () => {
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    await assert.rejects(run(candidate, {}, { docker: { socket: join(fixtures, 'no-such.sock') } }), { code: 'CHECK_DOCKER_SOCKET' });
+    const regular = join(fixtures, `regular-${counter}.sock`);
+    await writeFile(regular, '');
+    await assert.rejects(run(candidate, {}, { docker: { socket: regular } }), { code: 'CHECK_DOCKER_SOCKET', message: /not a unix socket/u });
+    await assert.rejects(run(candidate, {}, { docker: { socket: 'relative.sock' } }), { code: 'CHECK_INVALID' });
+    await assert.rejects(run(candidate, {}, { docker: { socket: regular, extra: true } }), { code: 'CHECK_INVALID', message: /unknown key: extra/u });
   });
 
   test('the sandbox has no network: a listener on the host sees no connection', async () => {
@@ -452,9 +540,11 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(result.exitCode, 0, result.output.text);
     // 64 MiB fit next to the candidate; the next file runs out of space in the tmpfs.
     assert.match(result.output.text, /written 64 ENOSPC/u);
-    // What the host holds is the copy of the candidate and nothing the check wrote.
+    // What the host holds is the copy of the candidate and the fixed hosts
+    // file, and nothing the check wrote.
     assert.ok(largest > 0, 'the sampler never saw the host copy');
-    assert.ok(largest <= Buffer.byteLength(script), `the host scratch grew to ${largest} bytes`);
+    const hostsBytes = Buffer.byteLength('127.0.0.1 localhost\n::1 localhost\n');
+    assert.ok(largest <= Buffer.byteLength(script) + hostsBytes, `the host scratch grew to ${largest} bytes`);
   });
 
   test('a timeout kills the process group and the sandbox, and reports timedOut', async () => {
@@ -1241,9 +1331,13 @@ describe('check runner', { skip: SKIP }, () => {
       assert.ok(sequence('--setenv', 'HOME', '/tmp'));
       assert.ok(sequence('--size', String(256 * MIB), '--tmpfs', '/tmp'));
       // The host copy is bound read-only at /input; /work is a tmpfs of scratchBytes.
-      const input = bwrapArgs.indexOf('--ro-bind', bwrapArgs.indexOf('--remount-ro'));
+      const input = bwrapArgs.indexOf('/input') - 2;
+      assert.equal(bwrapArgs[input], '--ro-bind');
       assert.ok(bwrapArgs[input + 1].startsWith(`${scratchRoot}/tinysdd-check-`) && bwrapArgs[input + 1].endsWith('/input'));
-      assert.equal(bwrapArgs[input + 2], '/input');
+      // localhost resolves through a fixed hosts file in the scratch, read-only.
+      const hosts = bwrapArgs.indexOf('/etc/hosts') - 2;
+      assert.equal(bwrapArgs[hosts], '--ro-bind');
+      assert.ok(bwrapArgs[hosts + 1].startsWith(`${scratchRoot}/tinysdd-check-`) && bwrapArgs[hosts + 1].endsWith('/hosts'));
       assert.ok(sequence('--size', String(512 * MIB), '--tmpfs', '/work'));
       assert.ok(!bwrapArgs.includes('--bind'), 'nothing writable is bound from the host');
       assert.ok(bwrapArgs.indexOf('/work') < bwrapArgs.indexOf(dependencies), 'the dependency mounts go on top of the /work tmpfs');
@@ -1518,6 +1612,63 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     await assert.rejects(stat(join(dependencies, '.vite-temp')), { code: 'ENOENT' });
   });
 
+  test('cache directories the project already has become fresh writable scratch (#212)', async () => {
+    const root = await makeDir({
+      'node_modules/.vite-temp/stale.mjs': 'export default "host";\n',
+      'node_modules/.vite/vitest/results.json': '{"host":true}\n',
+      'node_modules/pkg/index.mjs': 'export const pkg = 1;\n',
+    });
+    const dependencies = join(root, 'node_modules');
+    // A read-only source proves the check never writes through to the project.
+    await chmod(join(dependencies, '.vite-temp'), 0o555);
+    await chmod(join(dependencies, '.vite'), 0o555);
+    const candidate = await makeDir({
+      'probe.mjs': [
+        "import { existsSync, writeFileSync } from 'node:fs';",
+        "writeFileSync('node_modules/.vite-temp/config.mjs', 'export default {};');",
+        "writeFileSync('node_modules/.vite/results.json', '{}');",
+        "console.log(JSON.stringify({ stale: existsSync('node_modules/.vite-temp/stale.mjs'), pkg: existsSync('node_modules/pkg/index.mjs') }));",
+        '',
+      ].join('\n'),
+    });
+    const stub = await stubSandboxExec();
+    try {
+      const result = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path, dependencyMounts: [{ source: dependencies, target: 'node_modules' }] });
+      assert.equal(result.exitCode, 0, result.output.text);
+      assert.deepEqual(JSON.parse(result.output.text.trim().split('\n').at(-1)), { stale: false, pkg: true });
+      await assert.rejects(stat(join(dependencies, '.vite-temp', 'config.mjs')), { code: 'ENOENT' });
+    } finally {
+      await chmod(join(dependencies, '.vite-temp'), 0o755);
+      await chmod(join(dependencies, '.vite'), 0o755);
+    }
+  });
+
+  test('a loopback check resolves localhost in Node and records the loopback network (#212)', async () => {
+    const candidate = await makeDir({
+      'probe.mjs': [
+        "import { lookup } from 'node:dns/promises';",
+        "const one = await lookup('localhost', { family: 4 });",
+        "console.log(JSON.stringify({ address: one.address, options: process.env.NODE_OPTIONS ?? null }));",
+        '',
+      ].join('\n'),
+    });
+    const stub = await stubSandboxExec();
+    const plain = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path });
+    assert.equal(plain.sandbox.network, 'none');
+    assert.equal(JSON.parse(plain.output.text.trim().split('\n').at(-1)).options, null);
+    assert.doesNotMatch(parseDump(stub.dump).profile, /network/u);
+    const looped = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path, loopback: true });
+    assert.equal(looped.exitCode, 0, looped.output.text);
+    const seen = JSON.parse(looped.output.text.trim().split('\n').at(-1));
+    assert.equal(seen.address, '127.0.0.1');
+    assert.match(seen.options, /^--require ".*\/home\/\.tinysdd-localhost\.cjs"$/u);
+    assert.equal(looped.sandbox.network, 'loopback');
+    assert.ok(looped.sandbox.env.includes('NODE_OPTIONS'));
+    const network = parseDump(stub.dump).profile.split('\n').filter((line) => line.includes('network'));
+    assert.deepEqual(network, ['(allow network-outbound (remote ip "localhost:*"))', '(allow network-bind network-inbound (local ip "localhost:*"))']);
+    await assert.rejects(run(candidate, {}, { sandboxExecPath: stub.path, loopback: 'yes' }), { code: 'CHECK_INVALID', message: /loopback must be a boolean/u });
+  });
+
   test('a mount symlink that leaves the project is refused', async () => {
     const root = await makeDir({ 'node_modules/pkg/index.mjs': 'export {};\n' });
     await symlink('../../../outside', join(root, 'node_modules', 'escape'));
@@ -1712,4 +1863,65 @@ test('without POSIX identity APIs the runner reports unavailable and this file s
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('bubblewrap arguments share the network and bind the socket only when docker is declared', () => {
+  const base = {
+    binaries: { bwrap: '/usr/bin/bwrap' },
+    nodeRoot: '/opt/node-root',
+    input: '/tmp/scratch/input',
+    mounts: [],
+    limits: CHECK_LIMIT_DEFAULTS,
+    check: { id: 'c1', argv: ['node', 'x.mjs'], executable: '/opt/node/bin/node' },
+    processLimit: 600,
+    nestedUserns: 'disabled',
+  };
+  const plain = sandboxArguments({ ...base, hosts: '/tmp/scratch/hosts' });
+  assert.ok(plain.includes('--unshare-all'));
+  // A fixed hosts file so localhost resolves; no passwd or group without docker.
+  const hostsBind = plain.indexOf('/etc/hosts');
+  assert.deepEqual(plain.slice(hostsBind - 2, hostsBind + 1), ['--ro-bind', '/tmp/scratch/hosts', '/etc/hosts']);
+  assert.equal(plain.includes('/etc/passwd'), false);
+  assert.equal(plain.includes('--share-net'), false);
+  assert.equal(plain.some((arg) => /docker|TESTCONTAINERS/u.test(arg)), false);
+  const docker = sandboxArguments({ ...base, docker: { socket: '/var/run/docker.sock', resolvedSocket: '/run/docker.sock', daemonSocket: '/var/run/docker.sock' } });
+  const command = docker.slice(0, docker.indexOf('/bin/sh'));
+  assert.ok(command.indexOf('--share-net') > command.indexOf('--unshare-all'));
+  const bind = command.indexOf('--bind');
+  assert.deepEqual(command.slice(bind, bind + 3), ['--bind', '/run/docker.sock', '/run/tinysdd/docker.sock']);
+  assert.equal(command.filter((arg) => arg === '--bind').length, 1);
+  const env = Object.fromEntries(command.flatMap((arg, index) => (arg === '--setenv' ? [[command[index + 1], command[index + 2]]] : [])));
+  assert.equal(env.DOCKER_HOST, 'unix:///run/tinysdd/docker.sock');
+  assert.equal(env.TESTCONTAINERS_HOST_OVERRIDE, '127.0.0.1');
+  assert.equal(env.TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE, '/var/run/docker.sock');
+  const identity = sandboxArguments({ ...base, docker: { socket: '/var/run/docker.sock', resolvedSocket: '/run/docker.sock', daemonSocket: '/var/run/docker.sock', passwd: '/tmp/scratch/passwd', group: '/tmp/scratch/group' } });
+  const passwd = identity.indexOf('/etc/passwd');
+  assert.deepEqual(identity.slice(passwd - 2, passwd + 4), ['--ro-bind', '/tmp/scratch/passwd', '/etc/passwd', '--ro-bind', '/tmp/scratch/group', '/etc/group']);
+});
+
+test('the seatbelt check profile allows the declared docker sockets and loopback TCP only', () => {
+  const paths = { work: '/private/tmp/c/work', home: '/private/tmp/c/home', tmp: '/private/tmp/c/tmp', nodeExecutable: '/usr/local/bin/node' };
+  assert.doesNotMatch(buildSeatbeltCheckProfile(paths), /network/u);
+  const sockets = ['/var/run/docker.sock', '/private/var/run/docker.sock', '/Users/op/.orbstack/run/docker.sock'];
+  const profile = buildSeatbeltCheckProfile({ ...paths, docker: { sockets } });
+  const network = profile.split('\n').filter((line) => line.includes('network'));
+  assert.deepEqual(network, [
+    '(allow network-outbound (remote ip "localhost:*"))',
+    '(allow network-bind network-inbound (local ip "localhost:*"))',
+    '(allow network-outbound (remote unix-socket (path-literal "/var/run/docker.sock")) (remote unix-socket (path-literal "/private/var/run/docker.sock")) (remote unix-socket (path-literal "/Users/op/.orbstack/run/docker.sock")))',
+  ]);
+  assert.doesNotMatch(profile, /ip "\*/u);
+  // Loopback alone opens localhost and nothing of Docker.
+  const loopbackOnly = buildSeatbeltCheckProfile({ ...paths, loopback: true });
+  assert.deepEqual(loopbackOnly.split('\n').filter((line) => line.includes('network')), network.slice(0, 2));
+  assert.doesNotMatch(loopbackOnly, /unix-socket|mach-lookup/u);
+  // The only mach service is the user lookup testcontainers needs, and only with docker.
+  assert.deepEqual(profile.split('\n').filter((line) => line.includes('mach-lookup')), ['(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))']);
+  assert.doesNotMatch(buildSeatbeltCheckProfile(paths), /mach-lookup/u);
+  assert.match(profile, /\(allow file-read-metadata \(literal "\/var\/run\/docker\.sock"\) \(literal "\/private\/var\/run\/docker\.sock"\) \(literal "\/Users\/op\/\.orbstack\/run\/docker\.sock"\)\)/u);
+  // Resolving the OrbStack link needs metadata of its parents, not their contents.
+  assert.match(profile, /\(literal "\/Users\/op\/\.orbstack\/run"\)/u);
+  assert.doesNotMatch(profile, /subpath "\/Users/u);
+  assert.throws(() => buildSeatbeltCheckProfile({ ...paths, docker: { sockets: [] } }), /socket/u);
+  assert.throws(() => buildSeatbeltCheckProfile({ ...paths, docker: { sockets: ['relative.sock'] } }), /normalized absolute/u);
 });

@@ -68,6 +68,8 @@ test('check channel runs a declared request and records checked bytes and live m
     assert.equal(response.runs, 1);
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].dependencyMounts, [{ source: dependencies, target: 'node_modules' }]);
+    // Docker access belongs to feature acceptance; run_checks never asks for it.
+    assert.equal(Object.hasOwn(calls[0], 'docker'), false);
     const expected = createHash('sha256').update('before\n').digest('hex');
     assert.equal(channel.runs[0].allowedFileDigests['src/allowed.txt'], expected);
     assert.equal(channel.runs[0].candidateEntries['src'].kind, 'directory');
