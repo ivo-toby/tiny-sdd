@@ -1483,6 +1483,49 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     assert.match(args[6], /\/work\/pkg\/cli\.js$/u, args.join(' '));
   });
 
+  // #209: Node resolves a package's real path, so the mount must keep its
+  // node_modules name, and tools write caches into the top of node_modules.
+  test('a mounted node_modules resolves nested and workspace packages and its top level is writable scratch', async () => {
+    const root = await makeDir({
+      'node_modules/pkg-a/package.json': '{"name":"pkg-a","type":"module","exports":"./index.mjs"}',
+      'node_modules/pkg-a/index.mjs': "import { b } from 'pkg-b';\nexport const a = `a+${b}`;\n",
+      'node_modules/pkg-b/package.json': '{"name":"pkg-b","type":"module","exports":"./index.mjs"}',
+      'node_modules/pkg-b/index.mjs': "export const b = 'b';\n",
+      'node_modules/@scope/kept/package.json': '{"name":"@scope/kept","type":"module","exports":"./index.mjs"}',
+      'node_modules/@scope/kept/index.mjs': "export const kept = 'kept';\n",
+    });
+    const dependencies = join(root, 'node_modules');
+    await symlink('../../packages/core', join(dependencies, '@scope', 'core'));
+    const candidate = await makeDir({
+      'packages/core/package.json': '{"name":"@scope/core","type":"module","exports":"./index.mjs"}',
+      'packages/core/index.mjs': "export const core = 'candidate core';\n",
+      'probe.mjs': [
+        "import { mkdirSync, writeFileSync } from 'node:fs';",
+        "import { a } from 'pkg-a';",
+        "import { kept } from '@scope/kept';",
+        "import { core } from '@scope/core';",
+        "mkdirSync('node_modules/.vite-temp', { recursive: true });",
+        "writeFileSync('node_modules/.vite-temp/config.mjs', 'export default {};');",
+        'console.log(JSON.stringify({ a, kept, core }));',
+        '',
+      ].join('\n'),
+    });
+    const stub = await stubSandboxExec();
+    const result = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path, dependencyMounts: [{ source: dependencies, target: 'node_modules' }] });
+    assert.equal(result.exitCode, 0, result.output.text);
+    assert.deepEqual(JSON.parse(result.output.text.trim().split('\n').at(-1)), { a: 'a+b', kept: 'kept', core: 'candidate core' });
+    // The write went to the scratch link directory, never into the mount.
+    await assert.rejects(stat(join(dependencies, '.vite-temp')), { code: 'ENOENT' });
+  });
+
+  test('a mount symlink that leaves the project is refused', async () => {
+    const root = await makeDir({ 'node_modules/pkg/index.mjs': 'export {};\n' });
+    await symlink('../../../outside', join(root, 'node_modules', 'escape'));
+    const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
+    const stub = await stubSandboxExec();
+    await assert.rejects(run(candidate, {}, { sandboxExecPath: stub.path, dependencyMounts: [{ source: join(root, 'node_modules'), target: 'node_modules' }] }), { code: 'CHECK_INVALID', message: /node_modules\/escape/u });
+  });
+
   test('a write outside the scratch is not granted by the profile', async () => {
     const candidate = await makeDir({ 't.test.mjs': PASSING_TEST });
     const stub = await stubSandboxExec();
