@@ -774,7 +774,10 @@ will compile only its declared source line ranges and record their digests; see
 tasks rather than padding prompts. Approval binds the cited lines, not the whole
 file, so slices that cite one shared spec by line range stay current when the
 spec is appended to or edited outside their ranges. Inserting lines above a
-cited range shifts it and makes the slice stale: append addenda at the end.
+cited range moves it; the slice stays current when the moved excerpt is
+byte-identical and occurs once in its file, and `status` reports the shift.
+A changed or duplicated excerpt still makes the slice stale. See
+[moved excerpts](context-compiler.md#moved-excerpts).
 
 For offline preparation of the future research phase, see the
 [deterministic research selection scorer](research-scoring.md). It compares a

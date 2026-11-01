@@ -1241,6 +1241,31 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("compiles a cited excerpt that moved at its current lines and records the shift", async () => {
+    const project = await makeProject();
+    try {
+      const { context, compiled: approved } = await approvedContextPacket(project);
+      const original = await readFile(join(project, "src", "allowed.txt"), "utf8");
+      await writeFile(join(project, "src", "allowed.txt"), `inserted\n${original}`);
+      const current = await compileContext(project, context, { approvedSha256: approved.sha256 });
+      assert.equal(current.anchoredSha256, approved.sha256);
+      const result = await runWorker({
+        projectRoot: project,
+        packet: { ...packet(), approval: { contextDigest: approved.sha256 }, context: { ...context, compiledSha256: current.sha256 } },
+        worker: worker(),
+        runtime: runtime(undefined, "complete"),
+      });
+      assert.equal(result.outcome, "completed");
+      assert.match(await readFile(result.artifactPaths.compiledContext, "utf8"), /### src\/allowed\.txt:2-2\n[\s\S]*\n2 \| before\n/u);
+      const metadata = JSON.parse(await readFile(result.artifactPaths.context, "utf8"));
+      assert.equal(metadata.compiledContext.matchedDigest, "sha256");
+      assert.equal(metadata.compiledContext.anchoredSha256, approved.sha256);
+      assert.deepEqual(metadata.compiledContext.shifts, [{ path: "src/allowed.txt", from: [1, 1], to: [2, 2] }]);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("rejects a compiled-context digest that is neither the current nor the legacy digest", async () => {
     const project = await makeProject();
     try {

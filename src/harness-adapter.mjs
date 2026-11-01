@@ -18,7 +18,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 
 import { resolveTaskPacket } from './controller.mjs';
 import { parseChecksManifest } from './checks-manifest.mjs';
-import { compileContext } from './context-compiler.mjs';
+import { APPROVAL_COMPARISONS, compileContext } from './context-compiler.mjs';
 import { validateChange } from './change-format.mjs';
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths } from './file-scope.mjs';
 import { assertNoSymlinkPath, canonicalProjectRoot, digestJson, normalizeProjectRelative, sha256, stableStringify, tinyError } from './fs-utils.mjs';
@@ -399,13 +399,14 @@ async function validateBundleSemantics(projectRoot, bundle, packet) {
   let contextBinding = 'none';
   if (packet.context) {
     try {
-      compiled = await compileContext(projectRoot, packet.context, { readSource: (path) => readSourceText(projectRoot, path) });
+      compiled = await compileContext(projectRoot, packet.context, { readSource: (path) => readSourceText(projectRoot, path), approvedSha256: packet.approval.contextDigest ?? undefined });
     } catch (error) {
       captureError('HARNESS_BUNDLE_INVALID', `bundle context cannot be recompiled from the source: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (packet.context.compiledSha256 !== compiled.sha256) captureError('HARNESS_BUNDLE_INVALID', 'bundle packet context is not current');
     if (packet.approval.contextDigest === compiled.sha256) contextBinding = 'current';
     else if (packet.approval.contextDigest === compiled.legacySha256) contextBinding = 'legacy';
+    else if (packet.approval.contextDigest === compiled.anchoredSha256) contextBinding = 'anchored';
     else captureError('HARNESS_BUNDLE_INVALID', 'bundle approval context digest matches neither current nor legacy compiled context');
     const compiledContext = bundle.files.get('compiled-context.md');
     if (!compiledContext || !compiledContext.equals(Buffer.from(compiled.rendered))) {
@@ -436,7 +437,7 @@ async function validateBundleSemantics(projectRoot, bundle, packet) {
       compiledBytes: compiled.bytes,
       approvalContextDigest: packet.approval.contextDigest ?? null,
       approvalContextBinding: contextBinding,
-      approvalComparison: contextBinding === 'legacy' ? 'approval.contextDigest=compiled.legacySha256' : contextBinding === 'current' ? 'approval.contextDigest=compiled.sha256' : 'none',
+      approvalComparison: APPROVAL_COMPARISONS[contextBinding],
       legacySha256: compiled.legacySha256,
       sourceDigests: compiled.resources.map((resource) => ({ path: resource.path, sha256: resource.sourceSha256, bytes: resource.sourceBytes })),
     },

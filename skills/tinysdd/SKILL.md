@@ -105,7 +105,8 @@ Write one brief per slice, and cite shared feature material through each
 context manifest by exact line range instead of sharing a brief: approval binds
 a brief's whole digest, while cited context ranges are the narrower binding.
 Appending outside cited lines can remain fresh; inserting lines above a cited
-range shifts it and makes the approval stale. The manifest format is described
+range moves it, and it stays fresh only if the moved excerpt is byte-identical
+and occurs once in its file. The manifest format is described
 in docs/context-compiler.md. task add reports allowed files, compiled-context
 bytes and cited test lines; treat behavior-split and file-budget messages as
 advisory preparation feedback. Apply an accepted slice's reviewed candidate
