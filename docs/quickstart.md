@@ -601,7 +601,11 @@ Each dependency mount is retained under its own name
 (`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),
 so Node's real-path module resolution finds sibling packages. Mounts are copied
 as they are, including package files with secret-like names such as
-`dockerode/lib/secret.js`; project source keeps the secret-name filter. On
+`dockerode/lib/secret.js`; project source keeps the secret-name filter. An
+acceptance recorded before this change whose dependency mounts contain package
+files with secret-like names (`secret.js`, `token.js`, `*.pem` fixtures) reads
+stale once with `project dependency bytes changed`; rerun `tinysdd feature
+accept` to refresh it. On
 macOS the check's `node_modules` is a writable scratch directory of links into
 the retained mount: caches such as `node_modules/.vite-temp` are written there
 and discarded, and top-level workspace links (`@scope/pkg -> ../../packages/pkg`)

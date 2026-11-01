@@ -427,7 +427,10 @@ feature under `featureIntegration.features.<feature>` (same fields; a
 features without an entry use the top-level command. Dependency mounts are
 retained under their own name (`dependencies/mount-00/node_modules`) and copied
 as-is, so Node resolves sibling packages and package files such as
-`dockerode/lib/secret.js` stay. On macOS the check's `node_modules` is writable
+`dockerode/lib/secret.js` stay. An acceptance recorded before that change whose
+mounts contain such secret-named package files reads stale once (`project
+dependency bytes changed`); rerun `feature accept` to refresh it. On macOS the
+check's `node_modules` is writable
 scratch made of links into the mount (Vite's `.vite-temp` works, workspace
 links resolve into the checked copy); on Linux it is bound read-only, so pass
 `--configLoader runner` when a vite/vitest config exists. An `argv` path under

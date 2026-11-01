@@ -477,3 +477,25 @@ test('an argv path into node_modules without a dependency mount says what to dec
     await cleanup(root);
   }
 });
+
+// Before #209 dependency mounts were copied with the project secret-name
+// filter, so such package files were missing from the recorded identity. A
+// mount without that file stands in for that older proof.
+test('a proof recorded with the secret-name filter reads stale once when its mount has secret-named package files', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'node_modules', 'dockerode', 'lib'), { recursive: true });
+    await writeFile(join(root, 'node_modules', 'dockerode', 'lib', 'docker.js'), "require('./secret');\n");
+    const config = { ...args(root).config, dependencyMounts: ['node_modules'] };
+    const recorded = await runFeatureIntegration(root, { ...args(root, passingRunner()), config });
+    await writeFile(join(root, 'node_modules', 'dockerode', 'lib', 'secret.js'), 'module.exports = {};\n');
+    const stale = await featureIntegrationFreshness(root, freshnessArgs(recorded.reference, config));
+    assert.equal(stale.fresh, false);
+    assert.deepEqual(stale.reasons, ['project dependency bytes changed']);
+    // Running feature accept again records the full mount and is fresh.
+    const rerun = await runFeatureIntegration(root, { ...args(root, passingRunner()), config });
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(rerun.reference, config))).fresh, true);
+  } finally {
+    await cleanup(root);
+  }
+});
