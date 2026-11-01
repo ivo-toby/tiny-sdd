@@ -595,8 +595,38 @@ Each entry takes the same fields as the top-level command (`argv` or
 with secret-like names (`dockerode/lib/secret.js`); project source keeps the
 secret-name filter.
 
-By default the host check runner has no network and grants no sockets. A
-feature test that needs Docker (for example testcontainers) declares it on its
+The `feature accept` check always gets loopback (#212): TCP connect, bind and
+accept on `127.0.0.1`/`::1`, and `localhost` resolves. Nothing else on the
+network is reachable. On Linux the sandbox has its own loopback and a fixed
+`/etc/hosts` with only `localhost`. On macOS Seatbelt cannot allow a name lookup
+for `localhost` alone, so the runner answers it inside Node: `NODE_OPTIONS`
+gets `--require` of a small TinySDD file that makes `dns.lookup('localhost')`
+return the loopback addresses and passes every other name to the (blocked)
+resolver. Worker sandboxes and `run_checks` get none of this.
+
+Each dependency mount is retained under its own name
+(`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),
+so Node's real-path module resolution finds sibling packages. Mounts are copied
+as they are, including package files with secret-like names such as
+`dockerode/lib/secret.js`; project source keeps the secret-name filter. The tool
+caches `.cache`, `.vite` and `.vite-temp` at the top of a mount are left out:
+Vitest rewrites `node_modules/.vite` on every local run, and that must not make
+an acceptance stale. In the check they are empty, writable directories, even
+when the project has them. An acceptance recorded before these changes reads
+stale once (`project dependency bytes changed`) when its mounts held
+secret-named package files or those caches; rerun `tinysdd feature accept` to
+refresh it.
+
+On macOS the check's `node_modules` is a writable scratch directory of links
+into the retained mount, so Vite's `.vite-temp` works without flags, and
+top-level workspace links (`@scope/pkg -> ../../packages/pkg`) resolve into the
+checked copy, as on Linux. On Linux the mount is bound read-only, so a vite or
+vitest config file needs `--configLoader runner` (vitest 3.1+). An `argv` path
+under `node_modules/` without a dependency mount refuses with
+`FEATURE_INTEGRATION_CONFIG` and says to declare
+`"dependencyMounts": ["node_modules"]`.
+
+A feature test that needs Docker (for example testcontainers) declares it on its
 entry:
 
 ```json
@@ -614,8 +644,8 @@ entry:
 the Docker API that is host-level access (it can mount host directories or run
 privileged containers). Declare `docker` only for feature tests you trust as
 much as your own shell. Only the `feature accept` check gets this access;
-worker sandboxes and `run_checks` never do. An entry without `docker` runs
-exactly as before.
+worker sandboxes and `run_checks` never do. An entry without `docker` gets only
+loopback.
 
 With `docker` declared:
 
@@ -625,17 +655,17 @@ With `docker` declared:
   `/var/run/docker.sock -> ~/.orbstack/run/docker.sock` is resolved;
 - the check gets `DOCKER_HOST=unix://<socket>`,
   `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1` (published ports are reached on
-  IPv4 loopback without a name lookup) and
-  `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=<daemonSocket>`, the daemon-side path
-  Ryuk mounts. `daemonSocket` defaults to `/var/run/docker.sock`, which is right
-  for Docker Desktop, OrbStack, Colima and rootful Linux; set it for rootless
-  Docker. Ryuk stays enabled so containers are removed if the check is killed;
+  IPv4 loopback) and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=<daemonSocket>`, the
+  daemon-side path Ryuk mounts. `daemonSocket` defaults to
+  `/var/run/docker.sock`, which is right for Docker Desktop, OrbStack, Colima and
+  rootful Linux; set it for rootless Docker. Ryuk stays enabled so containers
+  are removed if the check is killed;
 - `HOME` is an empty scratch directory: no `~/.docker` config, credentials or
   `.testcontainers.properties` reach the check, so images come from public
   registries anonymously (pull private images beforehand);
-- on macOS (Seatbelt) the check may connect to the declared socket (and the
-  paths it resolves to), open TCP connections to `localhost` only, and look up
-  its own user (testcontainers calls `os.userInfo()`). No other network;
+- on macOS (Seatbelt) the check may also connect to the declared socket (and the
+  paths it resolves to) and look up its own user (testcontainers calls
+  `os.userInfo()`). No other network than loopback;
 - on Linux (bubblewrap) the socket is bound at `/run/tinysdd/docker.sock` and
   the check keeps the host network namespace, because published ports live on
   the host's loopback and bubblewrap cannot narrow a shared namespace to
@@ -645,35 +675,12 @@ With `docker` declared:
   or changing it makes an earlier proof stale, and the proof records
   `dockerAccess.granted` with the socket the runner bound.
 
-Runner limits to know about when a feature test uses vitest:
-
-- on Linux the check runs under an 8 GiB address-space limit, which V8's
-  WebAssembly guard regions exceed (`WebAssembly.instantiate(): Out of
-  memory`). Add `--disable-wasm-trap-handler` after `node` in `argv` and run the
-  workers as forks with the same flag (`pool: 'forks'`,
-  `poolOptions.forks.execArgv: ['--disable-wasm-trap-handler']`). macOS does not
-  apply that limit.
-
-The Linux sandbox has a fixed `/etc/hosts` with only `localhost`, so test
-runners that resolve `localhost` start.
-
-Each dependency mount is retained under its own name
-(`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),
-so Node's real-path module resolution finds sibling packages. Mounts are copied
-as they are, including package files with secret-like names such as
-`dockerode/lib/secret.js`; project source keeps the secret-name filter. An
-acceptance recorded before this change whose dependency mounts contain package
-files with secret-like names (`secret.js`, `token.js`, `*.pem` fixtures) reads
-stale once with `project dependency bytes changed`; rerun `tinysdd feature
-accept` to refresh it. On
-macOS the check's `node_modules` is a writable scratch directory of links into
-the retained mount: caches such as `node_modules/.vite-temp` are written there
-and discarded, and top-level workspace links (`@scope/pkg -> ../../packages/pkg`)
-resolve into the checked copy, as on Linux. On Linux the mount is bound
-read-only, so a vite or vitest config file needs `--configLoader runner`
-(vitest 3.1+). An `argv` path under `node_modules/` without a dependency mount
-refuses with `FEATURE_INTEGRATION_CONFIG` and says to declare
-`"dependencyMounts": ["node_modules"]`.
+On Linux the check runs under an 8 GiB address-space limit, which V8's
+WebAssembly guard regions exceed in vitest (`WebAssembly.instantiate(): Out of
+memory`). Add `--disable-wasm-trap-handler` after `node` in `argv` and run the
+workers as forks with the same flag (`pool: 'forks'`,
+`poolOptions.forks.execArgv: ['--disable-wasm-trap-handler']`). macOS does not
+apply that limit.
 
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'

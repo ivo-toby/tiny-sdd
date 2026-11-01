@@ -34,7 +34,7 @@ import {
   stableStringify,
   tinyError,
 } from './fs-utils.mjs';
-import { DOCKER_DAEMON_SOCKET_DEFAULT, checkRunnerAvailable, runCheck } from './check-runner.mjs';
+import { DOCKER_DAEMON_SOCKET_DEFAULT, MOUNT_CACHE_DIRECTORIES, checkRunnerAvailable, runCheck } from './check-runner.mjs';
 
 export const FEATURE_INTEGRATION_SCHEMA_VERSION = 1;
 export const FEATURE_INTEGRATION_DEFAULT_TIMEOUT_MS = 120_000;
@@ -718,7 +718,8 @@ async function copyDependencySnapshots(root, destination, dependencyMounts) {
     const resolved = await resolveProjectPath(root, target, { field: `dependencyMounts[${index}]`, allowMissing: false, requireDirectory: true });
     const retainedPath = retainedMountRoot(destination, index, target);
     const copied = await copyIntegrationTree(resolved.absolutePath, retainedPath, {
-      excluded: ['.git', '.tinysdd'],
+      // Tool caches change on every local test run; they are not dependencies.
+      excluded: ['.git', '.tinysdd', ...MOUNT_CACHE_DIRECTORIES],
       identityAlgorithm: 'sha256-dependency-tree-v1',
       mountReadable: true,
       symlinkBase: target,
@@ -926,6 +927,8 @@ export async function runFeatureIntegration(projectRoot, {
       candidateDir: candidatePath,
       check: resolved.check,
       dependencyMounts: retained.dependencies.map((item) => ({ source: item.retainedPath, target: item.target })),
+      // Feature checks always get localhost (#212); run_checks never does.
+      loopback: true,
       ...(normalized.docker === undefined ? {} : { docker: { ...normalized.docker } }),
       ...(nodeRoot === undefined ? {} : { nodeRoot }),
       ...(tempRoot === undefined ? {} : { tempRoot }),

@@ -1612,6 +1612,63 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     await assert.rejects(stat(join(dependencies, '.vite-temp')), { code: 'ENOENT' });
   });
 
+  test('cache directories the project already has become fresh writable scratch (#212)', async () => {
+    const root = await makeDir({
+      'node_modules/.vite-temp/stale.mjs': 'export default "host";\n',
+      'node_modules/.vite/vitest/results.json': '{"host":true}\n',
+      'node_modules/pkg/index.mjs': 'export const pkg = 1;\n',
+    });
+    const dependencies = join(root, 'node_modules');
+    // A read-only source proves the check never writes through to the project.
+    await chmod(join(dependencies, '.vite-temp'), 0o555);
+    await chmod(join(dependencies, '.vite'), 0o555);
+    const candidate = await makeDir({
+      'probe.mjs': [
+        "import { existsSync, writeFileSync } from 'node:fs';",
+        "writeFileSync('node_modules/.vite-temp/config.mjs', 'export default {};');",
+        "writeFileSync('node_modules/.vite/results.json', '{}');",
+        "console.log(JSON.stringify({ stale: existsSync('node_modules/.vite-temp/stale.mjs'), pkg: existsSync('node_modules/pkg/index.mjs') }));",
+        '',
+      ].join('\n'),
+    });
+    const stub = await stubSandboxExec();
+    try {
+      const result = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path, dependencyMounts: [{ source: dependencies, target: 'node_modules' }] });
+      assert.equal(result.exitCode, 0, result.output.text);
+      assert.deepEqual(JSON.parse(result.output.text.trim().split('\n').at(-1)), { stale: false, pkg: true });
+      await assert.rejects(stat(join(dependencies, '.vite-temp', 'config.mjs')), { code: 'ENOENT' });
+    } finally {
+      await chmod(join(dependencies, '.vite-temp'), 0o755);
+      await chmod(join(dependencies, '.vite'), 0o755);
+    }
+  });
+
+  test('a loopback check resolves localhost in Node and records the loopback network (#212)', async () => {
+    const candidate = await makeDir({
+      'probe.mjs': [
+        "import { lookup } from 'node:dns/promises';",
+        "const one = await lookup('localhost', { family: 4 });",
+        "console.log(JSON.stringify({ address: one.address, options: process.env.NODE_OPTIONS ?? null }));",
+        '',
+      ].join('\n'),
+    });
+    const stub = await stubSandboxExec();
+    const plain = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path });
+    assert.equal(plain.sandbox.network, 'none');
+    assert.equal(JSON.parse(plain.output.text.trim().split('\n').at(-1)).options, null);
+    assert.doesNotMatch(parseDump(stub.dump).profile, /network/u);
+    const looped = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path, loopback: true });
+    assert.equal(looped.exitCode, 0, looped.output.text);
+    const seen = JSON.parse(looped.output.text.trim().split('\n').at(-1));
+    assert.equal(seen.address, '127.0.0.1');
+    assert.match(seen.options, /^--require ".*\/home\/\.tinysdd-localhost\.cjs"$/u);
+    assert.equal(looped.sandbox.network, 'loopback');
+    assert.ok(looped.sandbox.env.includes('NODE_OPTIONS'));
+    const network = parseDump(stub.dump).profile.split('\n').filter((line) => line.includes('network'));
+    assert.deepEqual(network, ['(allow network-outbound (remote ip "localhost:*"))', '(allow network-bind network-inbound (local ip "localhost:*"))']);
+    await assert.rejects(run(candidate, {}, { sandboxExecPath: stub.path, loopback: 'yes' }), { code: 'CHECK_INVALID', message: /loopback must be a boolean/u });
+  });
+
   test('a mount symlink that leaves the project is refused', async () => {
     const root = await makeDir({ 'node_modules/pkg/index.mjs': 'export {};\n' });
     await symlink('../../../outside', join(root, 'node_modules', 'escape'));
@@ -1849,10 +1906,15 @@ test('the seatbelt check profile allows the declared docker sockets and loopback
   const profile = buildSeatbeltCheckProfile({ ...paths, docker: { sockets } });
   const network = profile.split('\n').filter((line) => line.includes('network'));
   assert.deepEqual(network, [
-    '(allow network-outbound (remote unix-socket (path-literal "/var/run/docker.sock")) (remote unix-socket (path-literal "/private/var/run/docker.sock")) (remote unix-socket (path-literal "/Users/op/.orbstack/run/docker.sock")))',
     '(allow network-outbound (remote ip "localhost:*"))',
+    '(allow network-bind network-inbound (local ip "localhost:*"))',
+    '(allow network-outbound (remote unix-socket (path-literal "/var/run/docker.sock")) (remote unix-socket (path-literal "/private/var/run/docker.sock")) (remote unix-socket (path-literal "/Users/op/.orbstack/run/docker.sock")))',
   ]);
-  assert.doesNotMatch(profile, /network-inbound|network-bind|remote ip "\*/u);
+  assert.doesNotMatch(profile, /ip "\*/u);
+  // Loopback alone opens localhost and nothing of Docker.
+  const loopbackOnly = buildSeatbeltCheckProfile({ ...paths, loopback: true });
+  assert.deepEqual(loopbackOnly.split('\n').filter((line) => line.includes('network')), network.slice(0, 2));
+  assert.doesNotMatch(loopbackOnly, /unix-socket|mach-lookup/u);
   // The only mach service is the user lookup testcontainers needs, and only with docker.
   assert.deepEqual(profile.split('\n').filter((line) => line.includes('mach-lookup')), ['(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))']);
   assert.doesNotMatch(buildSeatbeltCheckProfile(paths), /mach-lookup/u);

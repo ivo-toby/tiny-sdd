@@ -556,6 +556,36 @@ test('a proof retained with the earlier mount-NN layout stays fresh', async () =
   }
 });
 
+test('feature checks always get loopback and tool caches in node_modules do not affect the proof (#212)', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true });
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.mjs'), 'export {};\n');
+    await mkdir(join(root, 'node_modules', '.vite', 'vitest'), { recursive: true });
+    await writeFile(join(root, 'node_modules', '.vite', 'vitest', 'results.json'), '{"run":1}\n');
+    const config = { ...args(root).config, dependencyMounts: ['node_modules'] };
+    const seen = [];
+    const result = await runFeatureIntegration(root, {
+      ...args(root, async (options) => {
+        seen.push({ loopback: options.loopback, cache: await lstat(join(options.dependencyMounts[0].source, '.vite')).then(() => true, () => false) });
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+      }),
+      config,
+    });
+    assert.deepEqual(seen, [{ loopback: true, cache: false }]);
+    // A local vitest run rewrites its results cache; the acceptance stays fresh.
+    await writeFile(join(root, 'node_modules', '.vite', 'vitest', 'results.json'), '{"run":2}\n');
+    await mkdir(join(root, 'node_modules', '.vite-temp'), { recursive: true });
+    await writeFile(join(root, 'node_modules', '.vite-temp', 'vitest.config.ts.timestamp-1.mjs'), 'export default {};\n');
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+    // A real dependency change still does.
+    await writeFile(join(root, 'node_modules', 'pkg', 'index.mjs'), 'export const changed = true;\n');
+    assert.deepEqual((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).reasons, ['project dependency bytes changed']);
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('an argv path into node_modules without a dependency mount says what to declare', async () => {
   const root = await project();
   try {

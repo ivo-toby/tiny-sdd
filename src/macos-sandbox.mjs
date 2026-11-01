@@ -79,7 +79,10 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
 // resolves to) and TCP to loopback, where Docker publishes container ports,
 // plus the user lookup testcontainers needs. Nothing else on the network is
 // allowed.
-export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [], docker = null }) {
+// `loopback` (feature acceptance only) allows TCP connect, bind and accept on
+// localhost; Docker access implies it. Name resolution stays closed, so the
+// runner resolves `localhost` inside Node instead (see check-runner).
+export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [], docker = null, loopback = false }) {
   const writable = [work, home, tmp];
   const writableFiles = ["/dev/null"];
   const readable = [...SYSTEM_READ_ROOTS, "/bin", "/usr/bin", ...mounts.map((mount) => mount.source)];
@@ -106,10 +109,13 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mou
   const dockerRules = sockets.length === 0 ? [] : [
     `(allow file-read-metadata ${sockets.map((path) => `(literal ${pathString(path)})`).join(" ")})`,
     `(allow network-outbound ${sockets.map((path) => `(remote unix-socket (path-literal ${pathString(path)}))`).join(" ")})`,
-    '(allow network-outbound (remote ip "localhost:*"))',
     // getpwuid (os.userInfo, which testcontainers calls before starting Ryuk)
     // asks Open Directory over this service.
     '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))',
+  ];
+  const loopbackRules = !loopback && sockets.length === 0 ? [] : [
+    '(allow network-outbound (remote ip "localhost:*"))',
+    '(allow network-bind network-inbound (local ip "localhost:*"))',
   ];
   return [
     "(version 1)",
@@ -123,6 +129,7 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mou
     ...writable.map((path) => `(allow file-read* file-write* (subpath ${pathString(path)}))`),
     ...writableFiles.map((path) => `(allow file-read* file-write* (literal ${pathString(path)}))`),
     ...writable.map((path) => `(deny file-write-unlink (literal ${pathString(path)}))`),
+    ...loopbackRules,
     ...dockerRules,
     "",
   ].join("\n");

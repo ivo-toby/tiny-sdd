@@ -42,7 +42,39 @@ const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
 const SETPRIV_DEFAULTS = ['/usr/bin/setpriv', '/bin/setpriv'];
 const SANDBOX_EXEC_DEFAULTS = ['/usr/bin/sandbox-exec'];
-const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'sandboxExecPath', 'tempRoot', 'signal', 'docker'];
+const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'sandboxExecPath', 'tempRoot', 'signal', 'docker', 'loopback'];
+// Tool caches that live in node_modules (Vite's bundled config, Vitest's
+// results, generic caches). In a mount they become empty writable scratch.
+export const MOUNT_CACHE_DIRECTORIES = Object.freeze(['.cache', '.vite', '.vite-temp']);
+// Seatbelt cannot allow name resolution for localhost alone, so on macOS a
+// loopback check resolves it in Node: dns.lookup answers localhost from this
+// table and passes every other name through, where the sandbox refuses it.
+export const LOCALHOST_LOOKUP = `'use strict';
+const dns = require('node:dns');
+const { syncBuiltinESMExports } = require('node:module');
+const ADDRESSES = [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }];
+const local = (name) => typeof name === 'string' && name.toLowerCase().replace(/\\.$/, '') === 'localhost';
+function answer(options) {
+  const value = typeof options === 'number' ? { family: options } : (options ?? {});
+  const family = value.family === 'IPv4' ? 4 : value.family === 'IPv6' ? 6 : value.family;
+  return { all: value.all === true, list: family === 4 || family === 6 ? ADDRESSES.filter((item) => item.family === family) : ADDRESSES };
+}
+const lookup = dns.lookup;
+dns.lookup = function (hostname, options, callback) {
+  if (!local(hostname)) return lookup.apply(this, arguments);
+  if (typeof options === 'function') { callback = options; options = {}; }
+  const { all, list } = answer(options);
+  process.nextTick(() => (all ? callback(null, list) : callback(null, list[0].address, list[0].family)));
+  return {};
+};
+const promised = dns.promises.lookup;
+dns.promises.lookup = async function (hostname, options) {
+  if (!local(hostname)) return promised.apply(this, arguments);
+  const { all, list } = answer(options);
+  return all ? list : list[0];
+};
+syncBuiltinESMExports();
+`;
 // Docker access is for feature acceptance only (src/feature-integration.mjs);
 // the worker's run_checks channel never passes it. Inside bubblewrap the
 // declared socket is bound here. Ryuk mounts the daemon-side socket path,
@@ -289,7 +321,14 @@ function parseRequest(options) {
     limits: parseLimits(options.limits),
     runAs: parseRunAs(options.runAs),
     docker: parseDocker(options.docker),
+    loopback: parseLoopback(options.loopback),
   };
+}
+
+function parseLoopback(value) {
+  if (value === undefined) return false;
+  if (typeof value !== 'boolean') throw invalid('loopback must be a boolean');
+  return value;
 }
 
 // Paths are compared with their realpath so a symlinked parent cannot point a
@@ -628,6 +667,9 @@ async function linkMountEntries(source, target, label, top) {
       const linkTarget = await readlink(from);
       if (containedSymlinkTarget(path, linkTarget) === null) throw invalid(`dependency mount symlink leaves the project: ${path}`, { path });
       await symlink(linkTarget, to);
+    } else if (top && MOUNT_CACHE_DIRECTORIES.includes(entry.name)) {
+      // Even when the project already has one, the check gets its own.
+      await mkdir(to, { mode: 0o700 });
     } else if (top && info.isDirectory() && entry.name.startsWith('@')) {
       await mkdir(to, { mode: 0o700 });
       await linkMountEntries(from, to, path, false);
@@ -666,7 +708,7 @@ function dockerEnvironment(docker, socket) {
   };
 }
 
-function seatbeltEnvironment({ nodeRoot, work, home, tmp, docker = null }) {
+function seatbeltEnvironment({ nodeRoot, work, home, tmp, docker = null, localhostLookup = null }) {
   return Object.freeze({
     PATH: `${join(nodeRoot, 'bin')}:/usr/bin:/bin`,
     HOME: home,
@@ -675,6 +717,7 @@ function seatbeltEnvironment({ nodeRoot, work, home, tmp, docker = null }) {
     LANG: 'C.UTF-8',
     PWD: work,
     ...(docker === null ? {} : dockerEnvironment(docker, docker.socket)),
+    ...(localhostLookup === null ? {} : { NODE_OPTIONS: `--require "${localhostLookup}"` }),
   });
 }
 
@@ -931,7 +974,13 @@ export async function runCheck(options) {
       const profilePath = join(scratch, 'check.sb');
       // A symlinked bin/node (Homebrew) is granted and started at its target.
       const nodeExecutable = await realpath(join(request.nodeRoot, 'bin', 'node'));
-      const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts: request.mounts, docker: docker === null ? null : { sockets: docker.sockets } });
+      const loopback = request.loopback || docker !== null;
+      const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts: request.mounts, docker: docker === null ? null : { sockets: docker.sockets }, loopback });
+      let localhostLookup = null;
+      if (loopback) {
+        localhostLookup = join(home, '.tinysdd-localhost.cjs');
+        await writeFile(localhostLookup, LOCALHOST_LOOKUP, { mode: 0o600 });
+      }
       await writeFile(profilePath, profile, { mode: 0o600 });
       // sandbox-exec runs its command with the process working directory, so
       // cwd makes the check start in the scratch work copy like --chdir /work.
@@ -960,7 +1009,7 @@ export async function runCheck(options) {
         `ulimit -u ${processLimit} || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         'exec "$@"',
       ].join('; ');
-      const env = seatbeltEnvironment({ nodeRoot: request.nodeRoot, work, home, tmp, docker });
+      const env = seatbeltEnvironment({ nodeRoot: request.nodeRoot, work, home, tmp, docker, localhostLookup });
       checkPreparation(options.signal, setupDeadline);
       const capture = new OutputCapture(request.limits.storedOutputBytes);
       const remainingTimeout = setupDeadline === undefined ? request.check.timeoutMs : setupDeadline - Date.now();
@@ -988,7 +1037,7 @@ export async function runCheck(options) {
         sandbox: {
           runner: 'seatbelt',
           sandboxExec: binaries.sandboxExec,
-          network: 'none',
+          network: loopback ? 'loopback' : 'none',
           env: Object.keys(env),
           ...(docker === null ? {} : dockerRecord(docker, 'loopback')),
           runAs: { uid: runAs.uid, gid: runAs.gid },

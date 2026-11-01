@@ -426,28 +426,30 @@ feature under `featureIntegration.features.<feature>` (same fields; a
 `manifest` such as `changes/<id>/feature-checks.json` with a `checkId` works);
 features without an entry use the top-level command. Dependency mounts are
 retained under their own name (`dependencies/mount-00/node_modules`) and copied
-as-is, so Node resolves sibling packages and package files such as
-`dockerode/lib/secret.js` stay. An acceptance recorded before that change whose
-mounts contain such secret-named package files reads stale once (`project
-dependency bytes changed`); rerun `feature accept` to refresh it. On macOS the
-check's `node_modules` is writable
-scratch made of links into the mount (Vite's `.vite-temp` works, workspace
-links resolve into the checked copy); on Linux it is bound read-only, so pass
-`--configLoader runner` when a vite/vitest config exists. An `argv` path under
-`node_modules/` without a mount refuses and names the missing
-`dependencyMounts`.
-The check runner has no network or
-sockets unless an entry declares `"docker": { "socket": "/var/run/docker.sock" }`
-(optional `daemonSocket`, default `/var/run/docker.sock`, for Ryuk). Then only
-that `feature accept` check gets `DOCKER_HOST`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
-and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; Seatbelt allows the socket, TCP to
-localhost and the user lookup only; bubblewrap binds the socket and keeps the
-host network namespace (full network). Docker access is host-level access:
-declare it only for trusted feature tests. A missing socket refuses with
+as-is (package files such as `dockerode/lib/secret.js` stay), except the
+top-level tool caches `.cache`, `.vite` and `.vite-temp`, which are left out of
+the proof and are empty writable directories in the check. An acceptance
+recorded before that change reads stale once (`project dependency bytes
+changed`); rerun `feature accept`. The feature check always gets loopback
+(`localhost` resolves; on macOS through a Node `--require` shim in
+`NODE_OPTIONS`) and no other network. On macOS the check's `node_modules` is
+writable scratch made of links into the mount (workspace links resolve into the
+checked copy); on Linux it is bound read-only, so pass `--configLoader runner`
+when a vite/vitest config exists. An `argv` path under `node_modules/` without
+a mount refuses and names the missing `dependencyMounts`. An entry may declare
+`"docker": { "socket": "/var/run/docker.sock" }` (optional `daemonSocket`,
+default `/var/run/docker.sock`, for Ryuk). Then only that `feature accept`
+check gets `DOCKER_HOST`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1` and
+`TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; Seatbelt adds the socket and the user
+lookup; bubblewrap binds the socket and keeps the host network namespace (full
+network). Docker access is host-level access: declare it only for trusted
+feature tests. A missing socket refuses with
 `FEATURE_INTEGRATION_DOCKER_SOCKET`; the declaration is part of the proof's
-command identity and the proof records `dockerAccess`. `HOME` is scratch, so
-no Docker credentials reach the check. With vitest on Linux, add `--disable-wasm-trap-handler` (8 GiB address-space limit) and run forks with
-the same `execArgv`. Worker sandboxes and `run_checks` never get Docker.
+command identity and the proof records `dockerAccess`. `HOME` is scratch, so no
+Docker credentials reach the check. With vitest on Linux, add
+`--disable-wasm-trap-handler` (8 GiB address-space limit) and run forks with
+the same `execArgv`. Worker sandboxes and `run_checks` never get loopback
+changes or Docker.
 Historical events without this optional proof remain readable but are reported
 as ineligible; their frozen usage report is unchanged.
 
