@@ -435,8 +435,19 @@ scratch made of links into the mount (Vite's `.vite-temp` works, workspace
 links resolve into the checked copy); on Linux it is bound read-only, so pass
 `--configLoader runner` when a vite/vitest config exists. An `argv` path under
 `node_modules/` without a mount refuses and names the missing
-`dependencyMounts`. The check runner has no network or sockets, so a
-Docker-backed (testcontainers) feature test cannot pass under `feature accept`.
+`dependencyMounts`.
+The check runner has no network or
+sockets unless an entry declares `"docker": { "socket": "/var/run/docker.sock" }`
+(optional `daemonSocket`, default `/var/run/docker.sock`, for Ryuk). Then only
+that `feature accept` check gets `DOCKER_HOST`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
+and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; Seatbelt allows the socket, TCP to
+localhost and the user lookup only; bubblewrap binds the socket and keeps the
+host network namespace (full network). Docker access is host-level access:
+declare it only for trusted feature tests. A missing socket refuses with
+`FEATURE_INTEGRATION_DOCKER_SOCKET`; the declaration is part of the proof's
+command identity and the proof records `dockerAccess`. `HOME` is scratch, so
+no Docker credentials reach the check. With vitest on Linux, add `--disable-wasm-trap-handler` (8 GiB address-space limit) and run forks with
+the same `execArgv`. Worker sandboxes and `run_checks` never get Docker.
 Historical events without this optional proof remain readable but are reported
 as ineligible; their frozen usage report is unchanged.
 
