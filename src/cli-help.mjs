@@ -40,9 +40,9 @@ const COMMANDS = [
     command: 'profiles new',
     group: 'Setup',
     summary: 'Write a configuration-only profile to ~/.config/tiny-sdd/profiles/; asks for missing values on a terminal.',
-    usage: 'tinysdd [--json] profiles new [--route MODEL] [--id ID] [--context-window N] [--parallel N] [--max-tokens N] [--timeout-ms N] [--thinking LEVEL] [--family NAME] [--quantization NAME] [--server NAME]',
+    usage: 'tinysdd [--json] [--project PATH] profiles new [--route MODEL] [--id ID] [--context-window N] [--parallel N] [--max-tokens N] [--timeout-ms N] [--thinking LEVEL] [--family NAME] [--quantization NAME] [--server NAME]',
     flags: [
-      { flag: '--route MODEL', description: 'worker model id (the exact Pi model / route)', required: true },
+      { flag: '--route MODEL', description: 'worker model id (the exact Pi model / route); required, asked for on a terminal' },
       { flag: '--id ID', description: 'profile id, default: derived from the route' },
       { flag: '--context-window N', description: 'context window in tokens (per request slot)' },
       { flag: '--parallel N', description: 'parallel server slots' },
@@ -209,7 +209,7 @@ const COMMANDS = [
       { flag: '--by LABEL', description: 'operator label applying', required: true },
       { flag: '--exclude FILE[,FILE]', description: 'extra (not allowed) candidate paths to leave out of the project' },
     ],
-    example: 'tinysdd task apply --id validation --run run-1 --by operator',
+    example: 'tinysdd task apply --id validation --run WORKER_RUN_ID --by operator',
   },
   {
     command: 'task review',
@@ -461,7 +461,7 @@ const COMMANDS = [
       { flag: '--provider-config PATH', description: 'provider configuration file (max 64 KiB)', required: true },
       { flag: '--credential-env NAME', description: 'environment variable holding the provider credential', required: true },
     ],
-    example: 'tinysdd slice-tests assess --id validation --run run-1 --change changes/reservations/change.json --implementer coder --producer frontier/model --provider-config provider.json --credential-env PROVIDER_KEY',
+    example: 'tinysdd slice-tests assess --id validation --run WORKER_RUN_ID --change changes/reservations/change.json --implementer coder --producer frontier/model --provider-config provider.json --credential-env PROVIDER_KEY',
   },
   {
     command: 'slice-tests check',
@@ -601,12 +601,8 @@ export function commandHelp(command, subcommand) {
   return `${lines.join('\n')}\n`;
 }
 
-export function usageHintForArgs(args, version) {
-  for (let end = args.length; end >= 2; end -= 1) {
-    const text = commandHelp(args[0], args.slice(1, end).join(' '));
-    if (text !== undefined && !text.startsWith(`tinysdd ${args[0]} <subcommand>`)) return text;
-  }
-  return commandHelp(args[0]) ?? topLevelHelp(version);
+export function usageHintForArgs([command, subcommand], version) {
+  return (subcommand === undefined ? undefined : commandHelp(command, subcommand)) ?? commandHelp(command) ?? topLevelHelp(version);
 }
 
 function renderCommand(entry) {
@@ -644,7 +640,7 @@ function levenshtein(a, b) {
   return distance[rows - 1][columns - 1];
 }
 
-export function closestCommand(command) {
+function closestCommand(command) {
   let best;
   let bestDistance = Infinity;
   for (const entry of COMMANDS) {
@@ -657,7 +653,7 @@ export function closestCommand(command) {
   return best;
 }
 
-export function closestSubcommand(command, subcommand) {
+function closestSubcommand(command, subcommand) {
   const entries = COMMANDS.filter((entry) => entry.command.split(' ')[0] === command);
   let best;
   let bestDistance = Infinity;

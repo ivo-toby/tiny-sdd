@@ -107,6 +107,17 @@ test('an unknown command prints the closest command\'s usage, not the whole list
   assert.match(json.parsed.error.message, /unknown command: wroker/u);
 });
 
+test('help for an unknown command with more words still names the closest command', async () => {
+  for (const args of [['help', 'wroker', 'start'], ['wroker', 'start', '--help']]) {
+    const result = await invoke(...args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /^ERROR \[UNKNOWN_COMMAND\] unknown command: wroker\. Did you mean `worker`\?/u);
+  }
+  const helpHelp = await invoke('help', 'help');
+  assert.equal(helpHelp.status, 0);
+  assert.match(helpHelp.stdout, /Normal flow:/u);
+});
+
 test('an unknown subcommand or flag prints that command\'s usage, not the whole list', async () => {
   const badSub = await invoke('worker', 'stat');
   assert.equal(badSub.status, 1);
