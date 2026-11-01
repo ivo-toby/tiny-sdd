@@ -53,6 +53,7 @@ import {
 } from './feature-events.mjs';
 import {
   FEATURE_INTEGRATION_TEST_ENV,
+  featureIntegrationConfigFor,
   featureIntegrationFreshness,
   runFeatureIntegration,
 } from './feature-integration.mjs';
@@ -2011,7 +2012,7 @@ function latestFeatureEvent(events, feature) {
 }
 
 async function featureIntegrationState(root, feature, current, event, resolved) {
-  const config = resolved?.config?.featureIntegration;
+  const config = featureIntegrationConfigFor(resolved?.config?.featureIntegration, feature);
   const protectedPaths = featureIntegrationProtectedPaths(current, config);
   return featureIntegrationFreshness(root, {
     feature,
@@ -2077,9 +2078,9 @@ export async function acceptFeature(projectRoot, options = {}) {
     let current = await inspectFeature(root, state, feature);
     assertFeatureAcceptanceReady(feature, current);
     const resolved = await resolveConfig(root);
-    const integrationConfig = resolved.config.featureIntegration;
+    const integrationConfig = featureIntegrationConfigFor(resolved.config.featureIntegration, feature);
     if (integrationConfig === undefined) {
-      throw tinyError('FEATURE_INTEGRATION_CONFIG', 'feature acceptance requires a configured integration command');
+      throw tinyError('FEATURE_INTEGRATION_CONFIG', `feature acceptance requires a configured integration command for ${feature}`, { feature });
     }
     const testProtectedPaths = process.env[FEATURE_INTEGRATION_TEST_ENV] === '1'
       ? [...new Set([...current.protectedPaths, ...(options.integrationProtectedPaths ?? integrationConfig.testPaths ?? [])])].sort()
@@ -2098,15 +2099,15 @@ export async function acceptFeature(projectRoot, options = {}) {
       || stableStringify(after.activeAcceptanceDigests) !== stableStringify(current.activeAcceptanceDigests)) {
       throw tinyError('FEATURE_INTEGRATION_STALE', 'feature membership or task acceptance changed while the integration check was running');
     }
-    const afterConfig = await resolveConfig(root);
-    if (afterConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed while the check was running');
+    const afterConfig = featureIntegrationConfigFor((await resolveConfig(root)).config.featureIntegration, feature);
+    if (afterConfig === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed while the check was running');
     const afterIntegration = await featureIntegrationFreshness(root, {
       feature,
       eventIntegration: integration.reference,
       membership: after.membership,
       activeAcceptanceDigests: after.activeAcceptanceDigests,
-      config: afterConfig.config.featureIntegration,
-      protectedPaths: featureIntegrationProtectedPaths(after, afterConfig.config.featureIntegration),
+      config: afterConfig,
+      protectedPaths: featureIntegrationProtectedPaths(after, afterConfig),
     });
     if (!afterIntegration.fresh) {
       throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration evidence became stale before acceptance', { reasons: afterIntegration.reasons });
@@ -2118,15 +2119,15 @@ export async function acceptFeature(projectRoot, options = {}) {
     return withUsageLedgerLock(root, async (usageRecords) => {
       const finalState = await readState(info);
       const final = await inspectFeature(root, finalState, feature);
-      const finalConfig = await resolveConfig(root);
-      if (finalConfig.config.featureIntegration === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed before acceptance');
+      const finalConfig = featureIntegrationConfigFor((await resolveConfig(root)).config.featureIntegration, feature);
+      if (finalConfig === undefined) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration was removed before acceptance');
       const finalIntegration = await featureIntegrationFreshness(root, {
         feature,
         eventIntegration: integration.reference,
         membership: final.membership,
         activeAcceptanceDigests: final.activeAcceptanceDigests,
-        config: finalConfig.config.featureIntegration,
-        protectedPaths: featureIntegrationProtectedPaths(final, finalConfig.config.featureIntegration),
+        config: finalConfig,
+        protectedPaths: featureIntegrationProtectedPaths(final, finalConfig),
       });
       if (!finalIntegration.fresh) {
         throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration evidence became stale before acceptance', { reasons: finalIntegration.reasons });

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readlink, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,9 +13,19 @@ import {
   FEATURE_INTEGRATION_MAX_TREE_BYTES,
   FEATURE_INTEGRATION_TEST_ENV,
   copyIntegrationTree,
+  featureIntegrationConfigFor,
   featureIntegrationFreshness,
   runFeatureIntegration,
+  validateFeatureIntegrationConfig,
 } from '../src/feature-integration.mjs';
+import { sha256 } from '../src/fs-utils.mjs';
+
+const execFileAsync = promisify(execFile);
+
+async function git(cwd, ...gitArgs) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  await execFileAsync('git', gitArgs, { cwd, env });
+}
 
 const canonicalTmpdir = await realpath(tmpdir());
 const previousTestEnv = process.env[FEATURE_INTEGRATION_TEST_ENV];
@@ -219,4 +231,162 @@ test('normal callers cannot inject a passing runner', async () => {
     else process.env[FEATURE_INTEGRATION_TEST_ENV] = old;
     await cleanup(root);
   }
+});
+
+function freshnessArgs(reference, config) {
+  return {
+    feature: 'broker',
+    eventIntegration: reference,
+    membership: [{ id: 'one', retired: false }],
+    activeAcceptanceDigests: { one: 'a'.repeat(64) },
+    config,
+    protectedPaths: ['tests/integration.mjs'],
+  };
+}
+
+// The postgram shape from #206: a tracked AGENTS.md -> CLAUDE.md and ignored
+// git worktrees that contain their own symlinks.
+async function gitProject() {
+  const root = await project();
+  await writeFile(join(root, 'CLAUDE.md'), 'shared instructions\n');
+  await symlink('CLAUDE.md', join(root, 'AGENTS.md'));
+  await writeFile(join(root, '.gitignore'), '.env\n.claude/worktrees/\n');
+  const worktree = join(root, '.claude', 'worktrees', 'gracious');
+  await mkdir(worktree, { recursive: true });
+  await writeFile(join(worktree, 'CLAUDE.md'), 'other worktree\n');
+  await symlink('CLAUDE.md', join(worktree, 'AGENTS.md'));
+  await symlink('/etc/passwd', join(worktree, 'outside'));
+  await git(root, 'init', '-q');
+  await git(root, 'add', '.');
+  await git(root, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'init');
+  await writeFile(join(root, 'src', 'untracked.mjs'), 'export const untracked = true;\n');
+  return root;
+}
+
+test('projects git-listed files, skips ignored worktrees and keeps an in-project symlink', async () => {
+  const root = await gitProject();
+  try {
+    const result = await runFeatureIntegration(root, args(root, async ({ candidateDir }) => {
+      assert.ok((await lstat(join(candidateDir, 'AGENTS.md'))).isSymbolicLink());
+      assert.equal(await readlink(join(candidateDir, 'AGENTS.md')), 'CLAUDE.md');
+      assert.equal(await readFile(join(candidateDir, 'AGENTS.md'), 'utf8'), 'shared instructions\n');
+      assert.equal(await readFile(join(candidateDir, 'src', 'untracked.mjs'), 'utf8'), 'export const untracked = true;\n');
+      await assert.rejects(lstat(join(candidateDir, '.claude')), { code: 'ENOENT' });
+      await assert.rejects(lstat(join(candidateDir, '.env')), { code: 'ENOENT' });
+      return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+    }));
+    assert.equal(result.proof.candidate.selection, 'git-ls-files');
+    assert.ok(result.proof.candidate.identity.entries.some((entry) => entry.path === 'AGENTS.md' && entry.kind === 'symlink' && entry.target === 'CLAUDE.md'));
+    const config = args(root).config;
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+    // Ignored state may change freely; a retargeted tracked link is a source change.
+    await writeFile(join(root, '.claude', 'worktrees', 'gracious', 'CLAUDE.md'), 'changed elsewhere\n');
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+    await rm(join(root, 'AGENTS.md'));
+    await symlink('src/entry.mjs', join(root, 'AGENTS.md'));
+    const stale = await featureIntegrationFreshness(root, freshnessArgs(result.reference, config));
+    assert.equal(stale.fresh, false);
+    assert.ok(stale.reasons.includes('project or tested bytes changed'));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('refuses a symlink that leaves the project or climbs after a name', async () => {
+  for (const target of ['/etc/passwd', '../outside', 'src/../../outside', 'src/../CLAUDE.md']) {
+    const root = await project();
+    try {
+      await writeFile(join(root, 'CLAUDE.md'), 'shared\n');
+      await symlink(target, join(root, 'link'));
+      const error = await runFeatureIntegration(root, args(root, passingRunner())).catch((caught) => caught);
+      assert.equal(error.code, 'FEATURE_INTEGRATION_UNSAFE_INPUT', target);
+    } finally {
+      await cleanup(root);
+    }
+  }
+});
+
+test('walks a project without git and keeps nested in-project symlinks', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'docs'), { recursive: true });
+    await symlink('../src/entry.mjs', join(root, 'docs', 'entry.mjs'));
+    const result = await runFeatureIntegration(root, args(root, async ({ candidateDir }) => {
+      assert.equal(await readFile(join(candidateDir, 'docs', 'entry.mjs'), 'utf8'), 'export const entry = true;\n');
+      return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+    }));
+    assert.equal(result.proof.candidate.selection, 'walk');
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, args(root).config))).fresh, true);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('retains node_modules workspace and .bin links that stay inside the project', async () => {
+  const root = await project();
+  try {
+    await mkdir(join(root, 'packages', 'core'), { recursive: true });
+    await writeFile(join(root, 'packages', 'core', 'index.mjs'), 'export const core = true;\n');
+    await mkdir(join(root, 'node_modules', '@scope'), { recursive: true });
+    await mkdir(join(root, 'node_modules', 'tool'), { recursive: true });
+    await mkdir(join(root, 'node_modules', '.bin'), { recursive: true });
+    await writeFile(join(root, 'node_modules', 'tool', 'cli.mjs'), 'export {};\n');
+    await symlink('../../packages/core', join(root, 'node_modules', '@scope', 'core'));
+    await symlink('../tool/cli.mjs', join(root, 'node_modules', '.bin', 'tool'));
+    const config = { ...args(root).config, dependencyMounts: ['node_modules'] };
+    const result = await runFeatureIntegration(root, {
+      ...args(root, async ({ dependencyMounts }) => {
+        assert.equal(await readlink(join(dependencyMounts[0].source, '@scope', 'core')), '../../packages/core');
+        assert.equal(await readlink(join(dependencyMounts[0].source, '.bin', 'tool')), '../tool/cli.mjs');
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+      }),
+      config,
+    });
+    assert.equal((await featureIntegrationFreshness(root, freshnessArgs(result.reference, config))).fresh, true);
+    await symlink('../../../outside', join(root, 'node_modules', '@scope', 'escape'));
+    const error = await runFeatureIntegration(root, { ...args(root, passingRunner()), config }).catch((caught) => caught);
+    assert.equal(error.code, 'FEATURE_INTEGRATION_UNSAFE_INPUT');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('a proof written before the git selection keeps its walk projection and stays fresh', async () => {
+  const root = await project();
+  try {
+    const result = await runFeatureIntegration(root, args(root, passingRunner()));
+    const proofPath = join(root, ...result.reference.proofPath.split('/'));
+    const proof = JSON.parse(await readFile(proofPath, 'utf8'));
+    delete proof.candidate.selection;
+    const text = `${JSON.stringify(proof, null, 2)}\n`;
+    await writeFile(proofPath, text);
+    const legacyReference = { ...result.reference, proofSha256: sha256(text) };
+    // A later git init that ignores tested source (outside the projected
+    // tree) must not change how the old proof is compared.
+    await git(root, 'init', '-q');
+    await writeFile(join(root, '.git', 'info', 'exclude'), 'src/\n');
+    assert.deepEqual(await featureIntegrationFreshness(root, freshnessArgs(legacyReference, args(root).config)), { required: true, fresh: true, reasons: [], status: 'fresh' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('per-feature integration configuration selects each feature its own command', () => {
+  const config = validateFeatureIntegrationConfig({
+    argv: ['node', 'tests/default.mjs'],
+    testPaths: ['tests/default.mjs'],
+    features: {
+      'report-core': { argv: ['node', 'tests/report.mjs'], testPaths: ['tests/report.mjs'], entrypoints: ['src/report.mjs'] },
+    },
+  });
+  assert.deepEqual(featureIntegrationConfigFor(config, 'report-core').argv, ['node', 'tests/report.mjs']);
+  assert.deepEqual(featureIntegrationConfigFor(config, 'other').argv, ['node', 'tests/default.mjs']);
+  assert.equal(featureIntegrationConfigFor(config, 'other').features, undefined);
+  const featuresOnly = validateFeatureIntegrationConfig({ features: { 'report-core': { argv: ['node', 'tests/report.mjs'] } } });
+  assert.equal(featureIntegrationConfigFor(featuresOnly, 'other'), undefined);
+  assert.equal(featureIntegrationConfigFor(undefined, 'other'), undefined);
+  assert.throws(() => validateFeatureIntegrationConfig({ features: {} }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateFeatureIntegrationConfig({ features: { Bad: { argv: ['node', 'x.mjs'] } } }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateFeatureIntegrationConfig({ features: { a: { argv: ['node', 'x.mjs'], features: {} } } }), { code: 'CONFIG_INVALID' });
+  assert.throws(() => validateFeatureIntegrationConfig({ testPaths: ['tests/x.mjs'], features: { a: { argv: ['node', 'x.mjs'] } } }), { code: 'CONFIG_INVALID' });
 });
