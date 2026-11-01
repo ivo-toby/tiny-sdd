@@ -663,7 +663,7 @@ async function validateArchivedDerivation(archiveDir, manifest) {
     if (!task || task.feature !== manifest.changeId || stableStringify(task.preparation ?? []) !== stableStringify(expectedPreparation)) {
       archiveError(`archived controller task does not retain validated preparation: ${taskId}`);
     }
-    for (const runId of [task.applied?.runId, task.applied?.rootRunId].filter((value) => typeof value === 'string')) {
+    for (const runId of [task.applied?.runId, task.applied?.rootRunId, task.applied?.startRunId].filter((value) => typeof value === 'string')) {
       const prefix = `evidence/runs/${runId}/`;
       if (!manifest.files.some((record) => record.archivePath.startsWith(prefix))) archiveError(`archive is missing applied run evidence: ${runId}`);
     }
@@ -847,6 +847,7 @@ function eventRunIds(event, state) {
     if (task?.feature !== event.feature) continue;
     if (typeof task.applied?.runId === 'string') ids.add(task.applied.runId);
     if (typeof task.applied?.rootRunId === 'string') ids.add(task.applied.rootRunId);
+    if (typeof task.applied?.startRunId === 'string') ids.add(task.applied.startRunId);
   }
   return [...ids].sort();
 }

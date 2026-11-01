@@ -269,7 +269,7 @@ async function preflightRegisteredTask(projectRoot, task, tasks, seen = new Set(
     const pinned = new Set(task.applied.files.filter((file) => file?.status === 'written' && typeof file.path === 'string').map((file) => file.path));
     for (const resource of manifest?.resources ?? []) {
       if (!pinned.has(resource.path)) continue;
-      const runPath = `.tinysdd/runs/${task.applied.rootRunId}/workspace-before/${resource.path}`;
+      const runPath = `.tinysdd/runs/${task.applied.startRunId ?? task.applied.rootRunId}/workspace-before/${resource.path}`;
       await readBoundedBytes(projectRoot, runPath, { allowMissing: true, label: `registered pinned context resource ${resource.path}` });
     }
   }
