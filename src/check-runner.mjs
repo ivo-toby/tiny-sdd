@@ -15,6 +15,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { TinySDDError, containedSymlinkTarget, isPlainObject, normalizeProjectRelative, tinyError } from './fs-utils.mjs';
 import { buildSeatbeltCheckProfile } from './macos-sandbox.mjs';
+import { GIT_ENV, resolveCheckGit } from './check-tools.mjs';
 
 const MIB = 1024 * 1024;
 
@@ -42,7 +43,7 @@ const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
 const SETPRIV_DEFAULTS = ['/usr/bin/setpriv', '/bin/setpriv'];
 const SANDBOX_EXEC_DEFAULTS = ['/usr/bin/sandbox-exec'];
-const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'sandboxExecPath', 'tempRoot', 'signal', 'docker', 'loopback'];
+const OPTION_KEYS = ['candidateDir', 'check', 'dependencyMounts', 'nodeRoot', 'limits', 'runAs', 'bwrapPath', 'prlimitPath', 'setprivPath', 'sandboxExecPath', 'tempRoot', 'signal', 'docker', 'loopback', 'gitPath'];
 // Tool caches that live in node_modules (Vite's bundled config, Vitest's
 // results, generic caches). In a mount they become empty writable scratch.
 export const MOUNT_CACHE_DIRECTORIES = Object.freeze(['.cache', '.vite', '.vite-temp']);
@@ -312,6 +313,7 @@ function parseRequest(options) {
   }
   if (typeof options.candidateDir !== 'string') throw invalid('candidateDir must be an absolute path');
   if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) throw invalid('signal must be an AbortSignal');
+  if (options.gitPath !== undefined && options.gitPath !== null && (typeof options.gitPath !== 'string' || !isAbsolute(options.gitPath))) throw invalid('gitPath must be an absolute path or null');
   const mounts = parseMounts(options.dependencyMounts);
   return {
     candidateDir: options.candidateDir,
@@ -708,9 +710,10 @@ function dockerEnvironment(docker, socket) {
   };
 }
 
-function seatbeltEnvironment({ nodeRoot, work, home, tmp, docker = null, localhostLookup = null }) {
+// git's own directory goes before /usr/bin, where git is the xcrun shim.
+function seatbeltEnvironment({ nodeRoot, work, home, tmp, docker = null, localhostLookup = null, git = null }) {
   return Object.freeze({
-    PATH: `${join(nodeRoot, 'bin')}:/usr/bin:/bin`,
+    PATH: [join(nodeRoot, 'bin'), ...(git === null ? [] : [git.binDir]), '/usr/bin', '/bin'].join(':'),
     HOME: home,
     TMPDIR: tmp,
     CI: '1',
@@ -718,6 +721,7 @@ function seatbeltEnvironment({ nodeRoot, work, home, tmp, docker = null, localho
     PWD: work,
     ...(docker === null ? {} : dockerEnvironment(docker, docker.socket)),
     ...(localhostLookup === null ? {} : { NODE_OPTIONS: `--require "${localhostLookup}"` }),
+    ...(git === null ? {} : GIT_ENV),
   });
 }
 
@@ -730,7 +734,14 @@ function dockerRecord(docker, network) {
 // private namespace cannot reach, and bubblewrap cannot narrow a shared
 // namespace to loopback. The socket itself already lets the check start
 // containers with any network access, so this is part of the same opt-in.
-export function sandboxArguments({ binaries, nodeRoot, input, hosts, mounts, limits, check, processLimit, nestedUserns, docker = null }) {
+// `git` is already inside the /usr or /bin binds (src/check-tools.mjs); only
+// its directory is added to PATH when it is not /usr/bin or /bin.
+function linuxPath(git) {
+  const extra = git === null || ['/usr/bin', '/bin'].includes(git.binDir) ? [] : [git.binDir];
+  return ['/opt/node/bin', ...extra, '/usr/bin', '/bin'].join(':');
+}
+
+export function sandboxArguments({ binaries, nodeRoot, input, hosts, mounts, limits, check, processLimit, nestedUserns, docker = null, git = null }) {
   const tmpfsSize = String(limits.tmpfsBytes);
   const dockerArgs = docker === null ? [] : [
     '--share-net',
@@ -762,7 +773,8 @@ export function sandboxArguments({ binaries, nodeRoot, input, hosts, mounts, lim
     '--ro-bind', input, '/input',
     '--size', String(limits.scratchBytes), '--tmpfs', '/work',
     ...mounts.flatMap((mount) => ['--ro-bind', mount.source, `/work/${mount.target}`]),
-    '--setenv', 'PATH', '/opt/node/bin:/usr/bin:/bin', '--setenv', 'HOME', '/tmp', '--setenv', 'CI', '1', '--setenv', 'LANG', 'C.UTF-8',
+    '--setenv', 'PATH', linuxPath(git), '--setenv', 'HOME', '/tmp', '--setenv', 'CI', '1', '--setenv', 'LANG', 'C.UTF-8',
+    ...(git === null ? [] : Object.entries(GIT_ENV).flatMap(([name, value]) => ['--setenv', name, value])),
     ...dockerArgs,
     '--chdir', '/work',
     '--', '/bin/sh', '-c', COPY_AND_EXEC, 'tinysdd-check', check.executable, ...check.argv.slice(1),
@@ -931,6 +943,7 @@ export async function runCheck(options) {
     throw invalid(`nodeRoot has no executable bin/node: ${request.nodeRoot}`);
   }
   const docker = request.docker === null ? null : await resolveDockerSocket(request.docker);
+  const git = await resolveCheckGit({ platform: process.platform, gitPath: options.gitPath, signal: options.signal });
   const tempRoot = await resolveTempRoot(options.tempRoot);
   checkPreparation(options.signal, setupDeadline);
   if (tempRoot === request.candidateDir || tempRoot.startsWith(`${request.candidateDir}/`)) {
@@ -975,7 +988,7 @@ export async function runCheck(options) {
       // A symlinked bin/node (Homebrew) is granted and started at its target.
       const nodeExecutable = await realpath(join(request.nodeRoot, 'bin', 'node'));
       const loopback = request.loopback || docker !== null;
-      const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts: request.mounts, docker: docker === null ? null : { sockets: docker.sockets }, loopback });
+      const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts: request.mounts, docker: docker === null ? null : { sockets: docker.sockets }, loopback, git });
       let localhostLookup = null;
       if (loopback) {
         localhostLookup = join(home, '.tinysdd-localhost.cjs');
@@ -1009,7 +1022,7 @@ export async function runCheck(options) {
         `ulimit -u ${processLimit} || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         'exec "$@"',
       ].join('; ');
-      const env = seatbeltEnvironment({ nodeRoot: request.nodeRoot, work, home, tmp, docker, localhostLookup });
+      const env = seatbeltEnvironment({ nodeRoot: request.nodeRoot, work, home, tmp, docker, localhostLookup, git });
       checkPreparation(options.signal, setupDeadline);
       const capture = new OutputCapture(request.limits.storedOutputBytes);
       const remainingTimeout = setupDeadline === undefined ? request.check.timeoutMs : setupDeadline - Date.now();
@@ -1041,6 +1054,7 @@ export async function runCheck(options) {
           env: Object.keys(env),
           ...(docker === null ? {} : dockerRecord(docker, 'loopback')),
           runAs: { uid: runAs.uid, gid: runAs.gid },
+          tools: { git: git?.executable ?? null },
           profile: 'check.sb',
           limitsApplied: ['fileSizeBytes', ...(processLimitApplied ? ['maxProcesses'] : []), 'storedOutputBytes', 'returnedTailBytes'],
           limitsNotApplied: ['addressSpaceBytes', 'tmpfsBytes', 'scratchBytes', ...(processLimitApplied ? [] : ['maxProcesses'])],
@@ -1067,6 +1081,7 @@ export async function runCheck(options) {
       processLimit: processBaseline + request.limits.maxProcesses,
       nestedUserns,
       docker,
+      git,
     });
     const remainingTimeout = setupDeadline === undefined ? request.check.timeoutMs : setupDeadline - Date.now();
     checkPreparation(options.signal, setupDeadline);
@@ -1094,8 +1109,9 @@ export async function runCheck(options) {
         bwrap: binaries.bwrap,
         prlimit: binaries.prlimit,
         network: 'none',
-        env: [...SANDBOX_ENV, ...(docker === null ? [] : DOCKER_ENV)],
+        env: [...SANDBOX_ENV, ...(git === null ? [] : Object.keys(GIT_ENV)), ...(docker === null ? [] : DOCKER_ENV)],
         ...(docker === null ? {} : dockerRecord(docker, 'host')),
+        tools: { git: git?.executable ?? null },
         setpriv: binaries.setpriv,
         runAs: { uid: runAs.uid, gid: runAs.gid },
         processBaseline,

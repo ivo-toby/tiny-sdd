@@ -82,15 +82,21 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
 // `loopback` (feature checks and run_checks) allows TCP connect, bind and accept on
 // localhost; Docker access implies it. Name resolution stays closed, so the
 // runner resolves `localhost` inside Node instead (see check-runner).
-export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [], docker = null, loopback = false }) {
+// `git` (src/check-tools.mjs) grants the host's real git binary and its exec
+// path read-only and executable, and its share directory and non-system
+// libraries read-only (#220). /etc/mailname is only read when git looks up a
+// default identity; it is absent on macOS, and allowing the read turns git's
+// "Operation not permitted" warning into the host's silent ENOENT.
+export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [], docker = null, loopback = false, git = null }) {
   const writable = [work, home, tmp];
   const writableFiles = ["/dev/null"];
-  const readable = [...SYSTEM_READ_ROOTS, "/bin", "/usr/bin", ...mounts.map((mount) => mount.source)];
-  const executables = ["/bin", "/usr/bin", work, ...mounts.map((mount) => mount.source)];
-  for (const path of [...writable, ...readable, ...executables, nodeExecutable]) pathString(path);
+  const readable = [...SYSTEM_READ_ROOTS, "/bin", "/usr/bin", ...mounts.map((mount) => mount.source), ...(git === null ? [] : [...git.execPaths, ...git.readable])];
+  const executables = ["/bin", "/usr/bin", work, ...mounts.map((mount) => mount.source), ...(git === null ? [] : git.execPaths)];
+  const files = [nodeExecutable, ...(git === null ? [] : [git.executable, ...git.libraries, "/etc/mailname", "/private/etc/mailname"])];
+  for (const path of [...writable, ...readable, ...executables, ...files]) pathString(path);
   for (const writablePath of writable) {
     if (writablePath === tmp) continue;
-    for (const granted of [...readable, ...executables, nodeExecutable]) {
+    for (const granted of [...readable, ...executables, ...files]) {
       // work is executable and writable at once: the check runs scripts from it.
       if (granted === writablePath) continue;
       if (inside(granted, writablePath) || inside(writablePath, granted)) {
@@ -102,10 +108,11 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mou
   if (docker !== null && (!Array.isArray(sockets) || sockets.length === 0)) throw new Error("Seatbelt Docker access needs at least one socket path");
   for (const socket of sockets) pathString(socket);
   const ancestors = new Set(["/"]);
-  for (const path of [...writable, ...readable, ...executables, nodeExecutable, ...sockets]) {
+  for (const path of [...writable, ...readable, ...executables, ...files, ...sockets]) {
     for (let parent = dirname(path); parent !== "/"; parent = dirname(parent)) ancestors.add(parent);
   }
-  const node = `(literal ${pathString(nodeExecutable)})`;
+  const literals = files.map((path) => `(literal ${pathString(path)})`).join(" ");
+  const gitExec = git === null ? "" : ` (literal ${pathString(git.executable)})`;
   const dockerRules = sockets.length === 0 ? [] : [
     `(allow file-read-metadata ${sockets.map((path) => `(literal ${pathString(path)})`).join(" ")})`,
     `(allow network-outbound ${sockets.map((path) => `(remote unix-socket (path-literal ${pathString(path)}))`).join(" ")})`,
@@ -120,12 +127,12 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mou
   return [
     "(version 1)",
     "(deny default)",
-    `(allow process-exec ${executables.map((path) => `(subpath ${pathString(path)})`).join(" ")} ${node})`,
+    `(allow process-exec ${executables.map((path) => `(subpath ${pathString(path)})`).join(" ")} (literal ${pathString(nodeExecutable)})${gitExec})`,
     "(allow process-fork)",
     "(allow signal (target same-sandbox))",
     '(allow sysctl-read (sysctl-name-prefix "hw.") (sysctl-name "kern.ostype") (sysctl-name "kern.osrelease") (sysctl-name "kern.osversion") (sysctl-name "kern.hostname") (sysctl-name "kern.version"))',
     `(allow file-read-metadata ${[...ancestors].map((path) => `(literal ${pathString(path)})`).join(" ")})`,
-    `(allow file-read* ${readable.map((path) => `(subpath ${pathString(path)})`).join(" ")} ${node} ${[...SYSTEM_READ_FILES, ...writableFiles].map((path) => `(literal ${pathString(path)})`).join(" ")})`,
+    `(allow file-read* ${readable.map((path) => `(subpath ${pathString(path)})`).join(" ")} ${literals} ${[...SYSTEM_READ_FILES, ...writableFiles].map((path) => `(literal ${pathString(path)})`).join(" ")})`,
     ...writable.map((path) => `(allow file-read* file-write* (subpath ${pathString(path)}))`),
     ...writableFiles.map((path) => `(allow file-read* file-write* (literal ${pathString(path)}))`),
     ...writable.map((path) => `(deny file-write-unlink (literal ${pathString(path)}))`),

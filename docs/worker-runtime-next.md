@@ -387,6 +387,19 @@ a Seatbelt backend on macOS (#176), with these differences:
   check (`CHECK_RUNNER_UNAVAILABLE`) instead of running the check as root. The
   result reports `sandbox.runner: "seatbelt"` (versus `"linux-bubblewrap"`) so the
   two backends are never confused.
+- Both backends provide the host's `git` (#220, `src/check-tools.mjs`). It is
+  looked up on the controller's `PATH` per run (on macOS the `/usr/bin/git`
+  shim is replaced by the git from `xcrun --find git`) and probed once with
+  `git --exec-path`. Seatbelt grants the real binary and its exec path
+  read-only and executable, its `share/git-core` read-only, and the non-system
+  libraries dyld reports with `DYLD_PRINT_SEARCHING` read-only, both by the
+  opened path and its target. bubblewrap needs the git under `/usr` or `/bin`.
+  The git's directory goes first on `PATH` after Node, `GIT_CONFIG_NOSYSTEM=1`
+  is added to the environment and `HOME` stays the scratch home, so no system
+  or user configuration or credential helper is read. A host git that cannot
+  be provided fails the run with `CHECK_TOOL_UNAVAILABLE`, so a test that
+  guards on git is never green only because the sandbox hid it. The result
+  records the binary as `sandbox.tools.git` (`null` without one).
 
 - The check never runs as root. A root caller drops to an unprivileged uid
   first (`runAs`, default 65534:65534) with
@@ -796,6 +809,7 @@ contexts grow.
 | Dependent applies that extend a prerequisite (#202) | **Implemented** | Applying a dependent that rewrites an accepted prerequisite's candidate file records the run, paths and file identity under `review.extendedBy` and keeps the prerequisite accepted; a non-dependent apply still stales it and lists it under `staled`. |
 | Feature checks: loopback, tool caches and opt-in Docker (#212) | **Implemented; live macOS run pending** | `feature accept` checks always get loopback (Seatbelt allows localhost TCP and bind; `localhost` resolves through a Node `--require` shim); top-level `.cache`/`.vite`/`.vite-temp` in a mount are left out of the proof and are fresh writable directories in the check; an entry may declare `docker: { socket }`, recorded in the proof as `dockerAccess`. Workers and `run_checks` are unchanged. Merge waits for a passing postgram `feature accept` on a real Mac. |
 | `run_checks` loopback (#215) | **Implemented; checked with real Seatbelt on macOS** | Worker `run_checks` checks get the #212 loopback: Seatbelt allows localhost TCP and bind, and `localhost` resolves through the Node `--require` shim, so Vitest starts. Other hosts stay unreachable; no Docker. bubblewrap already had its own loopback and `/etc/hosts`. |
+| `git` in checks (#220) | **Implemented; checked with real Seatbelt on macOS (Homebrew and Command Line Tools git)** | `run_checks`, `feature accept` and benchmark checks get the controller's `git` read-only on `PATH`, with `GIT_CONFIG_NOSYSTEM=1` and the scratch `HOME`, so no user or system git configuration or credentials, and no network. On macOS the xcrun shim is replaced by the real git, and its exec path, `share/git-core` and libraries are granted. On Linux the git must be under `/usr` or `/bin`. A host git that cannot be provided fails with `CHECK_TOOL_UNAVAILABLE` instead of a silent skip. |
 | Worker runner interface (#154) | **Implemented (refactor); live bubblewrap/Seatbelt/Pi behavior unverified** | `worker.type` selects a runner from `src/runners/index.mjs`; Pi (`src/runners/pi.mjs`) was the first and OpenCode (`src/runners/opencode.mjs`, #155) followed. The runner locates and identifies its executable, prepares its state, builds its arguments and its sandbox mounts and environment, points its configuration at the inference relay and parses its events, which `captureProcess` also uses for live limits. Copying, snapshots, patches, scope checks, the check channel, the relay and the bubblewrap and Seatbelt wrappers stay in the worker. `runtime.json`, `result.json`, controller state and qualification identity are unchanged; an unknown `worker.type` is still `UNSUPPORTED_WORKER`. |
 | Shared briefs going stale | **Implemented** (#16) | One brief per slice, shared spec cited by line range. Approval binds the cited excerpts, not the whole file: the compiled text no longer carries `Source sha256:`. Older approvals keep binding the whole file through a legacy digest until re-approved. Addenda stay on hold. |
 | Behavior-split sizing signal | **Implemented** (#18) | Cited test characteristics (fake timers with deferred promises or races, or at least 8 ordering assertions) recommend a behavior split; thresholds are provisional and uncalibrated, pending the talon reruns. |
