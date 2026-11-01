@@ -595,9 +595,21 @@ Each entry takes the same fields as the top-level command (`argv` or
 The host check runner has no network and grants no sockets, so a feature test
 that needs Docker (for example testcontainers through `/var/run/docker.sock`)
 cannot pass under `feature accept`. Point `featureIntegration` at a test that
-runs without external services. On macOS a workspace link inside a dependency
-mount resolves next to the retained mount rather than into the candidate, so a
-check that imports a workspace package through `node_modules` may not find it.
+runs without external services.
+
+Each dependency mount is retained under its own name
+(`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),
+so Node's real-path module resolution finds sibling packages. Mounts are copied
+as they are, including package files with secret-like names such as
+`dockerode/lib/secret.js`; project source keeps the secret-name filter. On
+macOS the check's `node_modules` is a writable scratch directory of links into
+the retained mount: caches such as `node_modules/.vite-temp` are written there
+and discarded, and top-level workspace links (`@scope/pkg -> ../../packages/pkg`)
+resolve into the checked copy, as on Linux. On Linux the mount is bound
+read-only, so a vite or vitest config file needs `--configLoader runner`
+(vitest 3.1+). An `argv` path under `node_modules/` without a dependency mount
+refuses with `FEATURE_INTEGRATION_CONFIG` and says to declare
+`"dependencyMounts": ["node_modules"]`.
 
 ```sh
 tinysdd feature accept --feature reservations --by ivo --reason 'Reviewed the complete feature window'
