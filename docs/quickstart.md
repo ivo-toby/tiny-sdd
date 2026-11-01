@@ -1460,6 +1460,20 @@ it explicitly. A later run made with `--base-run` of an already applied run
 conflicts, because the project no longer matches the lineage's starting state;
 dispatch the next attempt from the applied project instead.
 
+Several slices often grow one file: one creates a service, the next depends on it
+and adds a function. Applying a dependent that rewrites a candidate file of an
+accepted prerequisite (direct or transitive) keeps that prerequisite accepted and
+records the dependent's run, paths and the resulting file identity under
+`review.extendedBy`. The acceptance digest does not change, so the dependent's
+approval stays fresh and its own review can accept. The prerequisite then matches
+either the bytes it was accepted with or what the last such apply left; any other
+edit to those files still makes it `stale` and blocks the chain. Applying a task
+that is not a dependent still stales an accepted task whose files it rewrites;
+`task apply` lists it under `staled` with a warning on stderr. To recover, re-run
+that task's checks and record `task review --verdict accepted` again, then
+`task approve` each task that depends on it, because their approvals bound the old
+acceptance.
+
 Use `revision` or `blocked` instead of accepting an incomplete result. Caller
 evidence is labeled as such; the CLI does not claim to have executed its tests.
 For a revision, the next packet includes the recorded review feedback. Retain

@@ -3355,3 +3355,162 @@ test('CLI task update emits one JSON object and distinguishes omitted lists from
     await cleanup(root);
   }
 });
+
+const SERVICE = 'src/service.ts';
+
+// f3 creates the service, f4 and f5 each extend it (issue #202).
+async function sliceChainProject() {
+  const root = await project();
+  await addTask(root, { id: 'f3', brief: 'docs/brief.md', allow: [SERVICE] });
+  await addTask(root, { id: 'f4', brief: 'docs/brief.md', allow: [SERVICE], dependsOn: ['f3'] });
+  await addTask(root, { id: 'f5', brief: 'docs/brief.md', allow: [SERVICE], dependsOn: ['f4'] });
+  return root;
+}
+
+async function applyAndAccept(root, id, runId, before, after) {
+  await approveTask(root, { id, by: 'operator', reason: 'scope' });
+  await fakeRun(root, runId, { taskId: id, before: before === null ? {} : { [SERVICE]: before }, after: { [SERVICE]: after } });
+  const result = await applyTask(root, { id, run: runId, by: 'operator' });
+  await reviewTask(root, { id, verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+  return result;
+}
+
+test('applying a dependent that extends a prerequisite file keeps the prerequisite accepted', async () => {
+  const root = await sliceChainProject();
+  try {
+    await applyAndAccept(root, 'f3', RUN_ONE, null, 'create\n');
+    const f3Acceptance = (await rawState(root)).tasks.f3.review.acceptanceDigest;
+
+    const f4 = await applyAndAccept(root, 'f4', RUN_TWO, 'create\n', 'create\nstage\n');
+    assert.deepEqual(f4.extended, [{ taskId: 'f3', paths: [SERVICE] }]);
+    assert.equal(f4.staled, undefined);
+    assert.equal(f4.warnings, undefined);
+    assert.equal(await taskStatus(root, 'f3'), 'accepted');
+    assert.equal(await taskStatus(root, 'f4'), 'accepted');
+
+    const f5 = await applyAndAccept(root, 'f5', RUN_OTHER, 'create\nstage\n', 'create\nstage\npr\n');
+    assert.deepEqual(f5.extended, [{ taskId: 'f3', paths: [SERVICE] }, { taskId: 'f4', paths: [SERVICE] }]);
+    assert.deepEqual(await statusById(root), { f3: 'accepted', f4: 'accepted', f5: 'accepted' });
+    const publicF3 = (await controllerStatus(root)).tasks.find((task) => task.id === 'f3');
+    assert.deepEqual(publicF3.review.extendedBy.map(({ taskId, runId, paths }) => ({ taskId, runId, paths })), [
+      { taskId: 'f4', runId: RUN_TWO, paths: [SERVICE] },
+      { taskId: 'f5', runId: RUN_OTHER, paths: [SERVICE] },
+    ]);
+    const state = await rawState(root);
+    // The acceptance itself, and so every approval that bound it, is unchanged.
+    assert.equal(state.tasks.f3.review.acceptanceDigest, f3Acceptance);
+    // f3 and f5 bind the same single file, so the extension records the bytes f5 accepted.
+    assert.equal(state.tasks.f3.review.extendedBy.at(-1).candidateDigest, state.tasks.f5.review.candidateDigest);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('an outside edit after a dependent extended the file stales the whole chain', async () => {
+  const root = await sliceChainProject();
+  try {
+    await applyAndAccept(root, 'f3', RUN_ONE, null, 'create\n');
+    await applyAndAccept(root, 'f4', RUN_TWO, 'create\n', 'create\nstage\n');
+    await writeFile(join(root, ...SERVICE.split('/')), 'create\nstage\nmanual\n');
+    assert.equal(await taskStatus(root, 'f3'), 'stale');
+    assert.equal(await taskStatus(root, 'f4'), 'blocked');
+    // Restoring exactly what the dependent wrote brings both back.
+    await writeFile(join(root, ...SERVICE.split('/')), 'create\nstage\n');
+    assert.equal(await taskStatus(root, 'f3'), 'accepted');
+    assert.equal(await taskStatus(root, 'f4'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('re-accepting a prerequisite drops its extension record and binds the current files', async () => {
+  const root = await sliceChainProject();
+  try {
+    await applyAndAccept(root, 'f3', RUN_ONE, null, 'create\n');
+    await applyAndAccept(root, 'f4', RUN_TWO, 'create\n', 'create\nstage\n');
+    await reviewTask(root, { id: 'f3', verdict: 'accepted', evidence: EVIDENCE, by: 'reviewer' });
+    assert.equal((await rawState(root)).tasks.f3.review.extendedBy, undefined);
+    assert.equal(await taskStatus(root, 'f3'), 'accepted');
+    // A new acceptance digest is a deliberate operator act, so the dependent's approval goes stale.
+    assert.equal(await taskStatus(root, 'f4'), 'stale');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('applying a task that rewrites an accepted non-prerequisite file stales it and says so', async () => {
+  const root = await project();
+  try {
+    await addTask(root, { id: 'one', brief: 'docs/brief.md', allow: [SERVICE] });
+    await addTask(root, { id: 'two', brief: 'docs/brief.md', allow: [SERVICE] });
+    await applyAndAccept(root, 'one', RUN_ONE, null, 'one\n');
+    await approveTask(root, { id: 'two', by: 'operator', reason: 'scope' });
+    await fakeRun(root, RUN_TWO, { taskId: 'two', before: { [SERVICE]: 'one\n' }, after: { [SERVICE]: 'one\ntwo\n' } });
+    const result = await applyTask(root, { id: 'two', run: RUN_TWO, by: 'operator' });
+    assert.equal(result.extended, undefined);
+    assert.deepEqual(result.staled, [{ taskId: 'one', paths: [SERVICE] }]);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /made the acceptance of task one stale: it rewrote src\/service\.ts, and one is not a prerequisite of two/u);
+    assert.equal(await taskStatus(root, 'one'), 'stale');
+    assert.equal((await rawState(root)).tasks.one.review.extendedBy, undefined);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('CLI task apply reports kept prerequisite acceptances and warns on stderr about staled ones', async () => {
+  const root = await sliceChainProject();
+  try {
+    const bin = join(process.cwd(), 'bin', 'tinysdd.mjs');
+    await applyAndAccept(root, 'f3', RUN_ONE, null, 'create\n');
+    await approveTask(root, { id: 'f4', by: 'operator', reason: 'scope' });
+    await fakeRun(root, RUN_TWO, { taskId: 'f4', before: { [SERVICE]: 'create\n' }, after: { [SERVICE]: 'create\nstage\n' } });
+    const human = await exec(process.execPath, [bin, '--project', root, 'task', 'apply', '--id', 'f4', '--run', RUN_TWO, '--by', 'operator']);
+    assert.equal(human.stdout, `f4: applied 1 file(s) from ${RUN_TWO}\nf3: still accepted; f4 extended ${SERVICE}\n`);
+    assert.equal(human.stderr, '');
+
+    await addTask(root, { id: 'other', brief: 'docs/brief.md', allow: [SERVICE] });
+    await approveTask(root, { id: 'other', by: 'operator', reason: 'scope' });
+    await fakeRun(root, RUN_OTHER, { taskId: 'other', before: { [SERVICE]: 'create\nstage\n' }, after: { [SERVICE]: 'create\nstage\nother\n' } });
+    const json = await exec(process.execPath, [bin, '--project', root, '--json', 'task', 'apply', '--id', 'other', '--run', RUN_OTHER, '--by', 'operator']);
+    assert.equal(json.stdout.trim().split('\n').length, 1);
+    assert.deepEqual(JSON.parse(json.stdout).data.staled, [{ taskId: 'f3', paths: [SERVICE] }]);
+    assert.match(json.stderr, /^Warning: applying run .* made the acceptance of task f3 stale/mu);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('controller state without extendedBy stays valid and a malformed extendedBy is rejected', async () => {
+  const root = await sliceChainProject();
+  try {
+    await applyAndAccept(root, 'f3', RUN_ONE, null, 'create\n');
+    await applyAndAccept(root, 'f4', RUN_TWO, 'create\n', 'create\nstage\n');
+    const good = await rawState(root);
+    const entry = good.tasks.f3.review.extendedBy[0];
+    const variants = [
+      (review) => { review.extendedBy = []; },
+      (review) => { review.extendedBy = [{ ...entry, taskId: '../x' }]; },
+      (review) => { review.extendedBy = [{ ...entry, runId: 'not-a-run' }]; },
+      (review) => { review.extendedBy = [{ ...entry, candidateDigest: 'abc' }]; },
+      (review) => { review.extendedBy = [{ ...entry, paths: ['../escape.ts'] }]; },
+      (review) => { review.extendedBy = [{ ...entry, paths: [] }]; },
+      (review) => { review.verdict = 'revision'; },
+    ];
+    for (const change of variants) {
+      const state = structuredClone(good);
+      change(state.tasks.f3.review);
+      await writeState(root, state);
+      await assert.rejects(controllerStatus(root), { code: 'STATE_MALFORMED' });
+    }
+    // A state from before this field: f3 goes stale exactly as it did then.
+    const legacy = structuredClone(good);
+    delete legacy.tasks.f3.review.extendedBy;
+    await writeState(root, legacy);
+    assert.equal(await taskStatus(root, 'f3'), 'stale');
+    await writeState(root, good);
+    assert.equal(await taskStatus(root, 'f3'), 'accepted');
+  } finally {
+    await cleanup(root);
+  }
+});

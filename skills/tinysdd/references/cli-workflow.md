@@ -1002,6 +1002,15 @@ approval then reads `stale_approval` and must be re-approved explicitly. Do not
 start a `--base-run` revision from an already applied run: the project no longer
 matches the lineage's starting state, so its apply conflicts.
 
+Applying a dependent that rewrites a candidate file of an accepted prerequisite
+(direct or transitive) keeps the prerequisite accepted and records the extension
+under its `review.extendedBy`; the acceptance digest, and so the dependent's
+approval, is unchanged. The prerequisite then matches the bytes it was accepted
+with or what the last such apply left; any other edit stales it. Applying a task
+that does not depend on an accepted task whose files it rewrites stales that task,
+reported under `staled` with a stderr warning: re-run its checks, accept it again,
+then re-approve every task that depends on it.
+
 Use `revision` for a bounded repair or `blocked` for missing authority/context.
 The next revision packet includes the recorded review evidence as feedback;
 do not modify it silently after recording the decision.

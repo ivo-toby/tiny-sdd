@@ -1310,6 +1310,7 @@ function writeResult(result, json) {
       const already = data.applied.files.filter((file) => file.status === 'already-applied').length;
       const notes = [...(already > 0 ? [`${already} already applied`] : []), ...(data.applied.excluded?.length > 0 ? [`excluded ${data.applied.excluded.join(', ')}`] : [])];
       process.stdout.write(`${data.task.id}: applied ${data.applied.files.length} file(s) from ${data.applied.runId}${notes.length > 0 ? ` (${notes.join('; ')})` : ''}\n`);
+      for (const item of data.extended ?? []) process.stdout.write(`${item.taskId}: still accepted; ${data.task.id} extended ${item.paths.join(', ')}\n`);
     } else if (data?.task?.id) {
       process.stdout.write(`${data.task.id}: ${describeTask(data.task)}\n`);
       for (const warning of data.sizing?.warnings ?? []) process.stderr.write(`Warning: ${warning}\n`);
