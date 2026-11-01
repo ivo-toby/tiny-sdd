@@ -9,7 +9,7 @@
 // refuses to run, and on macOS a root caller is refused because Seatbelt has no
 // privilege drop. Nothing here is verification or acceptance evidence.
 import { accessSync, constants as fsConstants, createWriteStream, statSync } from 'node:fs';
-import { lchown, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lchown, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -36,6 +36,7 @@ export const CHECK_LIMIT_DEFAULTS = Object.freeze({
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 600000;
 const KILL_GRACE_MS = 2000;
+const PROBE_TIMEOUT_MS = 10000;
 const HEAD_BYTES = 1024;
 const BWRAP_DEFAULTS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const PRLIMIT_DEFAULTS = ['/usr/bin/prlimit'];
@@ -188,16 +189,9 @@ function parseRunAs(runAs) {
       }
     }
   }
-  // Seatbelt has no setpriv equivalent: a macOS caller always runs as itself.
-  // A root caller never gets here: locateBinaries refuses it first.
-  if (process.platform === 'darwin') {
-    const own = { uid: process.getuid(), gid: process.getgid() };
-    if (runAs !== undefined && (runAs.uid !== own.uid || runAs.gid !== own.gid)) {
-      throw invalid(`runAs must be absent or the current uid and gid (${own.uid}:${own.gid}); an unprivileged process cannot switch users`);
-    }
-    return { ...own, drop: false };
-  }
-  if (isPrivileged()) return { uid: runAs?.uid ?? DEFAULT_DROP_ID, gid: runAs?.gid ?? DEFAULT_DROP_ID, drop: true };
+  // Seatbelt has no setpriv equivalent, so a macOS caller always runs as
+  // itself; a root caller is refused later, when locateBinaries runs.
+  if (process.platform !== 'darwin' && isPrivileged()) return { uid: runAs?.uid ?? DEFAULT_DROP_ID, gid: runAs?.gid ?? DEFAULT_DROP_ID, drop: true };
   const own = { uid: process.getuid(), gid: process.getgid() };
   if (runAs !== undefined && (runAs.uid !== own.uid || runAs.gid !== own.gid)) {
     throw invalid(`runAs must be absent or the current uid and gid (${own.uid}:${own.gid}); an unprivileged process cannot switch users`);
@@ -397,19 +391,46 @@ async function assertMountPointsFree(input, mounts, signal, deadline) {
   }
 }
 
+// Runs a short host probe (ps, sysctl) with an empty environment. The kill
+// timer is cleared when it exits so it never signals a reused process group.
+async function captureProbeOutput(command, args, signal, deadline) {
+  checkPreparation(signal, deadline);
+  const name = command.split('/').pop();
+  const stdout = await new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env: {}, detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    const kill = () => {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
+    const timer = setTimeout(kill, PROBE_TIMEOUT_MS);
+    signal?.addEventListener('abort', kill, { once: true });
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', (error) => reject(unavailable(`${name} could not be started: ${error.message}`)));
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', kill);
+      try {
+        checkPreparation(signal, deadline);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (code === 0) resolve(out);
+      else reject(unavailable(`${name} exited ${code}`));
+    });
+  });
+  return stdout;
+}
+
 // Darwin has no /proc. XNU's RLIMIT_NPROC counts processes per uid (fork1
 // compares chgproccnt(uid)), not threads, so the baseline counts the uid's
 // process lines, unlike the Linux /proc scan which counts threads.
 async function countDarwinUserProcesses(uid, signal, deadline) {
-  checkPreparation(signal, deadline);
-  const { stdout } = await new Promise((resolve, reject) => {
-    const child = spawn('/bin/ps', ['-A', '-o', 'uid='], { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => (code === 0 ? resolve({ stdout: out }) : reject(new Error(`ps exited ${code}`))));
-    setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }, 10000).unref();
-  });
+  const stdout = await captureProbeOutput('/bin/ps', ['-A', '-o', 'uid='], signal, deadline);
   let processes = 0;
   for (const line of stdout.split('\n')) {
     checkPreparation(signal, deadline);
@@ -423,15 +444,14 @@ async function countDarwinUserProcesses(uid, signal, deadline) {
 // refuses to claim maxProcesses above it. Returns null when the sysctl cannot
 // be read, in which case the wrapper's own ulimit failure is the backstop.
 async function darwinMaxProcPerUid(signal, deadline) {
-  checkPreparation(signal, deadline);
-  const { stdout } = await new Promise((resolve, reject) => {
-    const child = spawn('/usr/sbin/sysctl', ['-n', 'kern.maxprocperuid'], { env: {}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => (code === 0 ? resolve({ stdout: out }) : reject(new Error(`sysctl exited ${code}`))));
-    setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }, 10000).unref();
-  });
+  let stdout;
+  try {
+    stdout = await captureProbeOutput('/usr/sbin/sysctl', ['-n', 'kern.maxprocperuid'], signal, deadline);
+  } catch (error) {
+    // Cancellation and the setup deadline still stop the run.
+    if (error.code === 'CHECK_CANCELLED' || error.code === 'CHECK_DEADLINE') throw error;
+    return null;
+  }
   const value = Number(stdout.trim());
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
@@ -556,16 +576,15 @@ async function linkMountPoints(work, mounts) {
 // through spawn's env (sandbox-exec keeps it), so no env(1) is launched inside
 // the sandbox. There is no network rule to allow: (deny default) already denies
 // all outbound traffic.
-function seatbeltArguments({ binaries, profilePath, work, check, shell }) {
-  const executable = check.executable === '/opt/node/bin/node' ? binaries.nodeExecutable : join(work, check.executable.replace(/^\/work\//u, ''));
-  if (!shell) return ['-f', profilePath, executable, ...check.argv.slice(1)];
+function seatbeltArguments({ nodeExecutable, profilePath, work, check, wrapper }) {
+  const executable = check.executable === '/opt/node/bin/node' ? nodeExecutable : join(work, check.executable.replace(/^\/work\//u, ''));
   // The argv reaches the shell only as "$@", never as script text.
-  return ['-f', profilePath, ...shell, executable, ...check.argv.slice(1)];
+  return ['-f', profilePath, '/bin/bash', '-c', wrapper, 'tinysdd-check', executable, ...check.argv.slice(1)];
 }
 
-function seatbeltEnvironment({ binaries, work, home, tmp }) {
+function seatbeltEnvironment({ nodeRoot, work, home, tmp }) {
   return Object.freeze({
-    PATH: `${join(binaries.nodeRoot, 'bin')}:/usr/bin:/bin`,
+    PATH: `${join(nodeRoot, 'bin')}:/usr/bin:/bin`,
     HOME: home,
     TMPDIR: tmp,
     CI: '1',
@@ -712,8 +731,8 @@ function runSandbox({ command, args, cwd, env, timeoutMs, capture, signal, group
       } catch {
         child.kill('SIGKILL');
       }
-      // --die-with-parent and the PID namespace take the sandbox down with
-      // bwrap. If something still holds the pipes open, stop waiting for them.
+      // The group kill (and on Linux the PID namespace) takes the sandbox
+      // down. If something still holds the pipes open, stop waiting for them.
       graceTimer = setTimeout(() => {
         child.stdout.destroy();
         child.stderr.destroy();
@@ -791,28 +810,20 @@ export async function runCheck(options) {
       const work = join(scratch, 'work');
       const home = join(scratch, 'home');
       const tmp = join(scratch, 'tmp');
-      await mkdir(work, { mode: 0o700 });
+      // Nothing else reads the scratch copy on macOS, so it becomes /work as is.
+      await rename(input, work);
       await mkdir(home, { mode: 0o700 });
       await mkdir(tmp, { mode: 0o700 });
-      // The host copy stays where it is; /work is a real directory so the
-      // check writes into the scratch, never into the host copy.
-      await copyDirectory(input, work, { used: 0, limit: request.limits.scratchBytes }, '', options.signal, setupDeadline).catch((error) => {
-        throw copyFailure(error);
-      });
       await linkMountPoints(work, request.mounts);
       const profilePath = join(scratch, 'check.sb');
       // A symlinked bin/node (Homebrew) is granted and started at its target.
       const nodeExecutable = await realpath(join(request.nodeRoot, 'bin', 'node'));
       const profile = buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts: request.mounts });
       await writeFile(profilePath, profile, { mode: 0o600 });
-      checkPreparation(options.signal, setupDeadline);
-      const capture = new OutputCapture(request.limits.storedOutputBytes);
-      const remainingTimeout = setupDeadline === undefined ? request.check.timeoutMs : setupDeadline - Date.now();
-      checkPreparation(options.signal, setupDeadline);
       // sandbox-exec runs its command with the process working directory, so
       // cwd makes the check start in the scratch work copy like --chdir /work.
       // RLIMIT_FSIZE and RLIMIT_NPROC both work on Darwin; like prlimit on
-      // Linux they are set through a fixed /bin/sh wrapper, and the wrapper
+      // Linux they are set through a fixed bash wrapper, and the wrapper
       // refuses to run (exit 125, tinysdd-setup:) when either ulimit fails,
       // which sandboxSetupFailure turns into CHECK_RUNNER_UNAVAILABLE. NPROC
       // counts processes per uid on XNU, so the baseline counts processes and
@@ -836,17 +847,15 @@ export async function runCheck(options) {
         `ulimit -u ${processLimit} || { printf '${SETUP_PREFIX}setting the process limit failed\\n' >&2; exit ${SETUP_FAILURE_EXIT}; }`,
         'exec "$@"',
       ].join('; ');
+      const env = seatbeltEnvironment({ nodeRoot: request.nodeRoot, work, home, tmp });
+      checkPreparation(options.signal, setupDeadline);
+      const capture = new OutputCapture(request.limits.storedOutputBytes);
+      const remainingTimeout = setupDeadline === undefined ? request.check.timeoutMs : setupDeadline - Date.now();
       const run = await runSandbox({
         command: binaries.sandboxExec,
-        args: seatbeltArguments({
-          binaries: { ...binaries, nodeExecutable },
-          profilePath,
-          work,
-          check: request.check,
-          shell: ['/bin/bash', '-c', wrapper, 'tinysdd-check'],
-        }),
+        args: seatbeltArguments({ nodeExecutable, profilePath, work, check: request.check, wrapper }),
         cwd: work,
-        env: seatbeltEnvironment({ binaries: { ...binaries, nodeRoot: request.nodeRoot }, work, home, tmp }),
+        env,
         timeoutMs: remainingTimeout,
         capture,
         signal: options.signal,
@@ -867,7 +876,7 @@ export async function runCheck(options) {
           runner: 'seatbelt',
           sandboxExec: binaries.sandboxExec,
           network: 'none',
-          env: [...SANDBOX_ENV],
+          env: Object.keys(env),
           runAs: { uid: runAs.uid, gid: runAs.gid },
           profile: 'check.sb',
           limitsApplied: ['fileSizeBytes', ...(processLimitApplied ? ['maxProcesses'] : []), 'storedOutputBytes', 'returnedTailBytes'],

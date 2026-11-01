@@ -1402,7 +1402,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     assert.equal(result.sandbox.runner, 'seatbelt');
     assert.equal(result.sandbox.sandboxExec, stub.path);
     assert.equal(result.sandbox.network, 'none');
-    assert.deepEqual(result.sandbox.env, ['PATH', 'HOME', 'CI', 'LANG', 'PWD']);
+    assert.deepEqual(result.sandbox.env, ['PATH', 'HOME', 'TMPDIR', 'CI', 'LANG', 'PWD']);
     assert.deepEqual(result.sandbox.runAs, { uid: process.getuid(), gid: process.getgid() });
     assert.ok(result.sandbox.limitsApplied.includes('fileSizeBytes'));
     assert.ok(result.sandbox.limitsApplied.includes('storedOutputBytes'));
@@ -1410,7 +1410,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     // tmpfsBytes have no Darwin equivalent: all three are reported as not applied.
     assert.deepEqual(result.sandbox.limitsNotApplied.filter((key) => !['maxProcesses'].includes(key)).sort(), ['addressSpaceBytes', 'scratchBytes', 'tmpfsBytes']);
     assert.ok(Number.isInteger(result.sandbox.processBaseline) && result.sandbox.processBaseline >= 1);
-    // The stub recorded argv: -f <profile>, then the fixed /bin/sh wrapper whose
+    // The stub recorded argv: -f <profile>, then the fixed bash wrapper whose
     // argv follows it as "$@", then the check argv with the host node.
     const { args, profile } = parseDump(stub.dump);
     assert.ok(args[1].endsWith('/check.sb'), args[1]);
@@ -1440,7 +1440,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     for (const launched of [args[2], args[6]]) {
       assert.ok(allowed.some((path) => launched === path || launched.startsWith(`${path}/`)), `${launched} is not covered by process-exec: ${allowed.join(', ')}`);
     }
-    // /bin/sh (the wrapper) and the shebang interpreter /usr/bin/env stay
+    // /bin/bash (the wrapper) and the shebang interpreter /usr/bin/env stay
     // executable, matching what the Linux runner allows from /usr and /bin.
     assert.ok(allowed.includes('/bin') && allowed.includes('/usr/bin'), allowed.join(', '));
   });
