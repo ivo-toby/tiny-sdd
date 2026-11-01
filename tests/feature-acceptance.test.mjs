@@ -408,3 +408,53 @@ test('feature acceptance and report refuse symlinked event ledger paths', async 
     await cleanup(root);
   }
 });
+
+test('each feature runs its own integration command from featureIntegration.features', async () => {
+  const root = await project();
+  try {
+    await writeFile(join(root, 'tests', 'report.mjs'), 'export const report = true;\n');
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      workers: {},
+      featureIntegration: {
+        argv: ['node', 'tests/feature-integration.mjs'],
+        testPaths: ['tests/feature-integration.mjs'],
+        entrypoints: ['src/entrypoint.mjs'],
+        features: {
+          'report-core': { argv: ['node', 'tests/report.mjs'], testPaths: ['tests/report.mjs'], entrypoints: ['src/entrypoint.mjs'] },
+        },
+      },
+    }));
+    await acceptedTask(root, 'one', { feature: 'broker' });
+    await acceptedTask(root, 'two', { feature: 'report-core' });
+    const ran = [];
+    const accept = (feature) => acceptFeatureController(root, {
+      feature,
+      by: 'operator',
+      reason: 'per-feature integration',
+      integrationRunner: async ({ check }) => {
+        ran.push([feature, check.argv]);
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 1 };
+      },
+    });
+    await accept('report-core');
+    await accept('broker');
+    assert.deepEqual(ran, [
+      ['report-core', ['node', 'tests/report.mjs']],
+      ['broker', ['node', 'tests/feature-integration.mjs']],
+    ]);
+    const report = await reportFeature(root, { feature: 'report-core' });
+    assert.equal(report.stale, false, JSON.stringify(report.staleReasons));
+
+    await writeFile(join(root, '.tinysdd', 'config.json'), JSON.stringify({
+      schemaVersion: 1,
+      workers: {},
+      featureIntegration: { features: { 'report-core': { argv: ['node', 'tests/report.mjs'], testPaths: ['tests/report.mjs'] } } },
+    }));
+    const missing = await accept('broker').catch((error) => error);
+    assert.equal(missing.code, 'FEATURE_INTEGRATION_CONFIG');
+    assert.match(missing.message, /broker/u);
+  } finally {
+    await cleanup(root);
+  }
+});

@@ -8,6 +8,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path';
@@ -331,4 +332,71 @@ export async function fileExists(target) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve a symlink target lexically from the link's project-relative path.
+ * Only relative targets whose `..` segments all lead (`../../pkg`, `CLAUDE.md`)
+ * are accepted, and they must stay inside the root. With every link in a tree
+ * held to this rule, kernel resolution cannot leave the tree either. Returns
+ * the resolved project-relative path, or null when the target is refused.
+ */
+export function containedSymlinkTarget(linkPath, target) {
+  if (typeof target !== 'string' || target.length === 0 || target.includes('\0') || target.startsWith('/')) return null;
+  if (Buffer.byteLength(target) > 4096) return null;
+  const segments = target.split('/').filter((segment) => segment !== '' && segment !== '.');
+  let up = 0;
+  while (up < segments.length && segments[up] === '..') up += 1;
+  const names = segments.slice(up);
+  if (names.length === 0 || names.includes('..')) return null;
+  const parent = linkPath.split('/').slice(0, -1);
+  if (up > parent.length) return null;
+  return [...parent.slice(0, parent.length - up), ...names].join('/');
+}
+
+const MAX_GIT_LIST_BYTES = 64 * 1024 * 1024;
+
+/**
+ * List tracked plus untracked-but-not-ignored files below a project root, as
+ * the worker copy does. Returns { paths: null, reason } when Git cannot list
+ * the directory, so callers can fall back to a walk.
+ */
+export async function gitProjectFileList(projectRoot) {
+  // Discovery must depend only on cwd, never on an inherited GIT_DIR.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  const child = spawn('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: projectRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const chunks = [];
+  let bytes = 0;
+  let overflow = false;
+  let stderr = '';
+  child.stdout.on('data', (chunk) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_GIT_LIST_BYTES) chunks.push(chunk);
+    else overflow = true;
+  });
+  child.stderr.on('data', (chunk) => {
+    if (stderr.length < 2048) stderr += chunk.toString('utf8').slice(0, 2048 - stderr.length);
+  });
+  const termination = await new Promise((resolvePromise) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+      finish({ code: null, reason: 'git ls-files timed out' });
+    }, 30_000);
+    timer.unref?.();
+    child.once('error', (error) => finish({ code: null, reason: error?.code === 'ENOENT' ? 'git is unavailable' : (error instanceof Error ? error.message : String(error)) }));
+    child.once('close', (code) => finish({ code, reason: null }));
+  });
+  if (termination.reason) return { paths: null, reason: termination.reason };
+  if (termination.code !== 0) return { paths: null, reason: stderr.trim().split('\n')[0] || `git ls-files exited ${termination.code}` };
+  if (overflow) return { paths: null, reason: `git ls-files output exceeds ${MAX_GIT_LIST_BYTES} bytes` };
+  const listed = Buffer.concat(chunks).toString('utf8').split('\0').filter((path) => path.length > 0);
+  // Unmerged index entries are listed once per stage.
+  return { paths: [...new Set(listed)].sort(), reason: null };
 }

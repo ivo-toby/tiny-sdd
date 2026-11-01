@@ -556,7 +556,7 @@ const NOTE = [
   'Workers return isolated candidates and patches; they never apply or accept them. `task apply` copies a reviewed run\'s retained eligible actual files into the project and records the run; apply before `task review`, because acceptance binds the project\'s files.',
   'Use `worker start` for real model calls from an agent: it detaches the controller from short-lived interactive shells. Poll it with `worker status`. Stopping a launch with `worker stop` finalizes the run with outcome `stopped`, keeping its evidence and candidate.',
   'Use --json for machine-readable results, including failed worker evidence.',
-  'Feature acceptance requires featureIntegration in .tinysdd/config.json; TinySDD executes that typed command through the host check runner before recording an event.',
+  'Feature acceptance requires featureIntegration in .tinysdd/config.json (optionally one command per feature under featureIntegration.features); TinySDD executes that typed command through the host check runner before recording an event.',
   'Every command accepts --help (and `tinysdd help <command> [<sub>]`) for its own usage, flags and an example.',
 ];
 

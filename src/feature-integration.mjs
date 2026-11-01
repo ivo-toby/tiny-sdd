@@ -9,9 +9,10 @@ import {
   mkdtemp,
   open,
   opendir,
+  readlink,
   realpath,
   rm,
-  writeFile,
+  symlink,
 } from 'node:fs/promises';
 
 import { parseChecksManifest } from './checks-manifest.mjs';
@@ -22,8 +23,10 @@ import {
   assertPlainObject,
   atomicWriteFile,
   canonicalProjectRoot,
+  containedSymlinkTarget,
   digestJson,
   ensureDirectory,
+  gitProjectFileList,
   normalizeProjectRelative,
   resolveProjectPath,
   sha256,
@@ -37,6 +40,10 @@ export const FEATURE_INTEGRATION_DEFAULT_TIMEOUT_MS = 120_000;
 export const FEATURE_INTEGRATION_MAX_TIMEOUT_MS = 600_000;
 export const FEATURE_INTEGRATION_MAX_MANIFEST_BYTES = 512 * 1024;
 export const FEATURE_INTEGRATION_MAX_TREE_FILES = 20_000;
+// Dependency mounts use the check channel's limit (#195): an ordinary
+// npm-workspaces node_modules has more than 30,000 entries.
+export const FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES = 250_000;
+export const FEATURE_INTEGRATION_MAX_FEATURES = 64;
 export const FEATURE_INTEGRATION_MAX_TREE_BYTES = 512 * 1024 * 1024;
 export const FEATURE_INTEGRATION_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const FEATURE_INTEGRATION_MAX_DECLARATIONS = 256;
@@ -44,8 +51,10 @@ export const FEATURE_INTEGRATION_MAX_PATH_BYTES = 4096;
 export const FEATURE_INTEGRATION_MAX_PROOF_BYTES = 8 * 1024 * 1024;
 export const FEATURE_INTEGRATION_TEST_ENV = 'TINYSDD_FEATURE_INTEGRATION_TEST';
 
-const CONFIG_KEYS = ['schemaVersion', 'manifest', 'checkId', 'argv', 'command', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints'];
+const CONFIG_KEYS = ['schemaVersion', 'manifest', 'checkId', 'argv', 'command', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints', 'features'];
 const CHECK_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
+const FEATURE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
+const SOURCE_SELECTIONS = ['git-ls-files', 'walk'];
 
 function invalid(message, details = undefined) {
   throw tinyError('CONFIG_INVALID', message, details);
@@ -135,10 +144,10 @@ async function readBoundedFile(path, { maxBytes = FEATURE_INTEGRATION_MAX_MANIFE
  * Validate the optional host-owned feature integration command. The command is
  * retained as argv and is later passed to runCheck; it is never shell text.
  */
-export function validateFeatureIntegrationConfig(value, label = 'config.featureIntegration') {
+export function validateFeatureIntegrationConfig(value, label = 'config.featureIntegration', { allowFeatures = true } = {}) {
   assertPlainObject(value, 'CONFIG_INVALID', label);
   try {
-    assertExactKeys(value, CONFIG_KEYS, 'CONFIG_INVALID', label);
+    assertExactKeys(value, allowFeatures ? CONFIG_KEYS : CONFIG_KEYS.filter((key) => key !== 'features'), 'CONFIG_INVALID', label);
   } catch (error) {
     if (error?.code === 'CONFIG_INVALID') throw error;
     invalid(error instanceof Error ? error.message : `${label} contains an unknown key`);
@@ -146,12 +155,18 @@ export function validateFeatureIntegrationConfig(value, label = 'config.featureI
   if (value.schemaVersion !== undefined && value.schemaVersion !== FEATURE_INTEGRATION_SCHEMA_VERSION) {
     invalid(`${label}.schemaVersion must be ${FEATURE_INTEGRATION_SCHEMA_VERSION}`);
   }
+  const features = value.features === undefined ? undefined : featureConfigs(value.features, `${label}.features`);
   const manifest = value.manifest === undefined ? undefined : path(value.manifest, `${label}.manifest`);
   const suppliedArgv = value.argv === undefined ? undefined : command(value.argv, `${label}.argv`);
   const suppliedCommand = value.command === undefined ? undefined : command(value.command, `${label}.command`);
   if (suppliedArgv !== undefined && suppliedCommand !== undefined) invalid(`${label} must use argv or command, not both`);
   const argv = suppliedArgv ?? suppliedCommand;
-  if (manifest === undefined && argv === undefined) invalid(`${label} requires manifest or argv`);
+  if (manifest === undefined && argv === undefined) {
+    if (features === undefined) invalid(`${label} requires manifest or argv`);
+    const stray = ['checkId', 'timeoutMs', 'dependencyMounts', 'testPaths', 'entrypoints'].filter((key) => value[key] !== undefined);
+    if (stray.length > 0) invalid(`${label}.${stray[0]} requires a default manifest or argv; put it under ${label}.features`);
+    return { schemaVersion: FEATURE_INTEGRATION_SCHEMA_VERSION, features };
+  }
   if (manifest !== undefined && argv !== undefined) invalid(`${label} cannot combine manifest and argv`);
   if (manifest !== undefined && value.timeoutMs !== undefined && !(value.schemaVersion === FEATURE_INTEGRATION_SCHEMA_VERSION && value.timeoutMs === FEATURE_INTEGRATION_DEFAULT_TIMEOUT_MS)) invalid(`${label}.timeoutMs belongs in the checks manifest when manifest is used`);
   if (manifest !== undefined && value.dependencyMounts !== undefined && value.dependencyMounts.length > 0) invalid(`${label}.dependencyMounts belongs in the checks manifest when manifest is used`);
@@ -175,6 +190,7 @@ export function validateFeatureIntegrationConfig(value, label = 'config.featureI
     dependencyMounts,
     testPaths,
     entrypoints,
+    ...(features === undefined ? {} : { features }),
   };
   if (argv !== undefined) {
     try {
@@ -194,9 +210,33 @@ function checkIdValue(value, label) {
   return checkId(value, label);
 }
 
+function featureConfigs(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(`${label} must be an object keyed by feature`);
+  const names = Object.keys(value).sort();
+  if (names.length === 0 || names.length > FEATURE_INTEGRATION_MAX_FEATURES) invalid(`${label} must name between 1 and ${FEATURE_INTEGRATION_MAX_FEATURES} features`);
+  const features = {};
+  for (const name of names) {
+    if (!FEATURE_PATTERN.test(name)) invalid(`${label} key must be a feature label: ${name}`);
+    features[name] = validateFeatureIntegrationConfig(value[name], `${label}.${name}`, { allowFeatures: false });
+  }
+  return features;
+}
+
+/**
+ * The integration configuration that applies to one feature: its own entry
+ * under `features`, else the project-wide command, else undefined.
+ */
+export function featureIntegrationConfigFor(config, feature) {
+  if (config === undefined || config === null) return undefined;
+  if (config.features && Object.hasOwn(config.features, feature)) return config.features[feature];
+  if (config.argv === undefined && config.manifest === undefined) return undefined;
+  const { features: _features, ...fallback } = config;
+  return fallback;
+}
+
 /** Build the checks-manifest shape used by runCheck for an inline argv. */
 export function inlineFeatureIntegrationManifest(config) {
-  const normalized = validateFeatureIntegrationConfig(config);
+  const normalized = validateFeatureIntegrationConfig(config, 'config.featureIntegration', { allowFeatures: false });
   if (!normalized.argv) return null;
   return {
     schemaVersion: 1,
@@ -210,7 +250,7 @@ export function inlineFeatureIntegrationManifest(config) {
  * Manifest bytes are returned so proof can bind the exact declaration.
  */
 export async function resolveFeatureIntegrationCommand(projectRoot, config, { read = readBoundedFile } = {}) {
-  const normalized = validateFeatureIntegrationConfig(config);
+  const normalized = validateFeatureIntegrationConfig(config, 'config.featureIntegration', { allowFeatures: false });
   if (normalized.argv) {
     const manifestText = JSON.stringify(inlineFeatureIntegrationManifest(normalized));
     const parsed = parseChecksManifest(JSON.stringify(inlineFeatureIntegrationManifest(normalized)));
@@ -303,10 +343,21 @@ async function readAndCopyFile(source, target, info, state, label, { mountReadab
 }
 
 /**
- * Copy a bounded, regular-file-only tree into a disposable retained directory.
+ * Copy a bounded tree into a disposable retained directory. Regular files and
+ * directories are copied; a relative symlink that stays inside the project is
+ * recreated as the same link. `paths` selects project files (from Git) instead
+ * of walking the whole source. `symlinkBase` is the tree's project-relative
+ * location, so a dependency mount's links are checked against the project.
  * The returned identity describes the bytes actually mounted into runCheck.
  */
-export async function copyIntegrationTree(source, destination, { excluded = [], identityAlgorithm = 'sha256-candidate-tree-v1', mountReadable = false } = {}) {
+export async function copyIntegrationTree(source, destination, {
+  excluded = [],
+  identityAlgorithm = 'sha256-candidate-tree-v1',
+  mountReadable = false,
+  paths = null,
+  symlinkBase = '',
+  maxEntries = FEATURE_INTEGRATION_MAX_TREE_FILES,
+} = {}) {
   await assertNoSymlinkPath(source, { allowMissing: false, requireDirectory: true });
   const sourceRealpath = await realpath(source);
   if (sourceRealpath !== source) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration source must be canonical: ${source}`, { path: source });
@@ -316,39 +367,102 @@ export async function copyIntegrationTree(source, destination, { excluded = [], 
   if (mountReadable) await chmod(destination, destinationMode);
   const state = { bytes: 0, files: 0, entries: 0 };
   const entries = [];
-  async function visit(current, target, prefix = '') {
+  const directories = new Set();
+  const limit = () => {
+    if (++state.entries > maxEntries) {
+      throw tinyError('FEATURE_INTEGRATION_INPUT_LIMIT', `integration input exceeds ${maxEntries} entries`, { limit: maxEntries });
+    }
+  };
+  async function makeDirectory(from, to, path, info) {
+    if (await realpath(from) !== from) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input directory is not canonical: ${path}`, { path });
+    const targetMode = (info.mode & 0o7777) | 0o700 | (mountReadable ? 0o0555 : 0);
+    await mkdir(to, { recursive: false, mode: targetMode });
+    await chmod(to, targetMode);
+    entries.push({ path, kind: 'directory', mode: targetMode });
+    directories.add(path);
+  }
+  async function copyEntry(from, to, path, info, nested) {
+    if (info.isSymbolicLink()) {
+      const target = await readlink(from);
+      const linkPath = symlinkBase ? `${symlinkBase}/${path}` : path;
+      if (containedSymlinkTarget(linkPath, target) === null) {
+        throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input symlink leaves the project or is not a plain relative path: ${path} -> ${target}`, { path, target });
+      }
+      await symlink(target, to);
+      entries.push({ path, kind: 'symlink', target });
+    } else if (info.isDirectory()) {
+      await makeDirectory(from, to, path, info);
+      await visit(from, to, path, nested);
+    } else if (info.isFile()) {
+      const copied = await readAndCopyFile(from, to, info, state, path, { mountReadable });
+      entries.push({ path, ...copied });
+    } else {
+      throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input contains a special file: ${path}`, { path });
+    }
+  }
+  // nested: a directory Git listed as one entry (a submodule or nested
+  // repository); its own .git is repository state, not project source.
+  async function visit(current, target, prefix = '', nested = false) {
     const names = [];
     for await (const entry of await opendir(current)) {
-      if (++state.entries > FEATURE_INTEGRATION_MAX_TREE_FILES) {
-        throw tinyError('FEATURE_INTEGRATION_INPUT_LIMIT', `integration input exceeds ${FEATURE_INTEGRATION_MAX_TREE_FILES} entries`, { limit: FEATURE_INTEGRATION_MAX_TREE_FILES });
-      }
+      limit();
       names.push(entry.name);
     }
     names.sort();
     for (const name of names) {
       const path = prefix ? `${prefix}/${name}` : name;
-      if (excludedProjectPath(path, excluded)) continue;
+      if (excludedProjectPath(path, excluded) || (nested && name === '.git')) continue;
       state.files += 1;
-      const from = join(current, name);
-      const to = join(target, name);
-      const info = await lstat(from);
-      if (info.isSymbolicLink()) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input contains a symlink: ${path}`, { path });
-      if (info.isDirectory()) {
-        if (await realpath(from) !== from) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input directory is not canonical: ${path}`, { path });
-        const targetMode = (info.mode & 0o7777) | 0o700 | (mountReadable ? 0o0555 : 0);
-        await mkdir(to, { recursive: false, mode: targetMode });
-        await chmod(to, targetMode);
-        entries.push({ path, kind: 'directory', mode: targetMode });
-        await visit(from, to, path);
-      } else if (info.isFile()) {
-        const copied = await readAndCopyFile(from, to, info, state, path, { mountReadable });
-        entries.push({ path, ...copied });
-      } else {
-        throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input contains a special file: ${path}`, { path });
-      }
+      await copyEntry(join(current, name), join(target, name), path, await lstat(join(current, name)), nested);
     }
   }
-  await visit(source, destination);
+  async function copyListed(listedPaths) {
+    for (const listed of listedPaths) {
+      // An untracked nested repository is listed once, as "dir/".
+      const path = listed.endsWith('/') ? listed.slice(0, -1) : listed;
+      if (path.length === 0 || excludedProjectPath(path, excluded)) continue;
+      let normalized;
+      try {
+        normalized = normalizeProjectRelative(path, 'git-listed path');
+      } catch {
+        normalized = null;
+      }
+      if (normalized !== path) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `git listed a path that is not project-relative: ${path}`, { path });
+      const parts = path.split('/');
+      let parentMissing = false;
+      for (let index = 1; index < parts.length; index += 1) {
+        const directory = parts.slice(0, index).join('/');
+        if (directories.has(directory)) continue;
+        const from = join(source, ...parts.slice(0, index));
+        let info;
+        try {
+          info = await lstat(from);
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+          parentMissing = true;
+          break;
+        }
+        if (info.isSymbolicLink() || !info.isDirectory()) throw tinyError('FEATURE_INTEGRATION_UNSAFE_INPUT', `integration input path passes through a non-directory: ${directory}`, { path: directory });
+        limit();
+        await makeDirectory(from, join(destination, ...parts.slice(0, index)), directory, info);
+      }
+      if (parentMissing || directories.has(path)) continue;
+      const from = join(source, ...parts);
+      let info;
+      try {
+        info = await lstat(from);
+      } catch (error) {
+        // Tracked but deleted in the working tree (not yet staged).
+        if (error?.code === 'ENOENT') continue;
+        throw error;
+      }
+      limit();
+      state.files += 1;
+      await copyEntry(from, join(destination, ...parts), path, info, true);
+    }
+  }
+  if (paths === null) await visit(source, destination);
+  else await copyListed(paths);
   entries.sort((left, right) => left.path.localeCompare(right.path));
   return {
     identity: {
@@ -507,11 +621,25 @@ async function createArtifact(root, id) {
   return artifact;
 }
 
-async function copySourceSnapshot(root, destination, dependencyMounts) {
-  return copyIntegrationTree(root, destination, {
+// selection 'auto' lists project files with Git (tracked plus untracked and
+// not ignored, as the worker copy does) and walks the tree when Git cannot
+// list it. A recorded selection is replayed exactly, so freshness compares
+// like with like; proofs written before the Git selection have none and walk.
+async function copySourceSnapshot(root, destination, dependencyMounts, selection = 'auto') {
+  let paths = null;
+  if (selection !== 'walk') {
+    const listing = await gitProjectFileList(root);
+    if (listing.paths !== null && listing.paths.length > 0) paths = listing.paths;
+    else if (selection === 'git-ls-files') {
+      throw tinyError('FEATURE_INTEGRATION_STALE', `project files can no longer be listed with git: ${listing.reason ?? 'no files listed'}`);
+    }
+  }
+  const copied = await copyIntegrationTree(root, destination, {
     excluded: ['.git', '.tinysdd', ...dependencyMounts],
     identityAlgorithm: 'sha256-candidate-tree-v1',
+    paths,
   });
+  return { ...copied, selection: paths === null ? 'walk' : 'git-ls-files' };
 }
 
 async function copyDependencySnapshots(root, destination, dependencyMounts) {
@@ -523,6 +651,8 @@ async function copyDependencySnapshots(root, destination, dependencyMounts) {
       excluded: ['.git', '.tinysdd'],
       identityAlgorithm: 'sha256-dependency-tree-v1',
       mountReadable: true,
+      symlinkBase: target,
+      maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES,
     });
     dependencies.push({ target, sourcePath: target, retainedPath, identity: copied.identity });
   }
@@ -538,6 +668,8 @@ async function copyDependencySnapshotsFromRetained(sourceRoot, dependencyMounts,
       excluded: [],
       identityAlgorithm: 'sha256-dependency-tree-v1',
       mountReadable: true,
+      symlinkBase: target,
+      maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES,
     });
     dependencies.push({ target, retainedPath, identity: copied.identity });
   }
@@ -624,7 +756,7 @@ async function retainSnapshot(root, artifact, resolved, dependencies, id, featur
     protectedPaths: [...protectedPaths].sort(),
     command,
     config: configIdentity,
-    candidate: { path: pathForArtifact(id, 'candidate'), identity: candidate.identity, sha256: identityDigest(candidate.identity) },
+    candidate: { path: pathForArtifact(id, 'candidate'), selection: candidate.selection, identity: candidate.identity, sha256: identityDigest(candidate.identity) },
     dependencies: retainedDependencies.map((item) => ({
       target: item.target,
       path: pathForArtifact(id, `dependencies/${relative(dependencyPath, item.retainedPath).replaceAll(sep, '/')}`),
@@ -650,8 +782,8 @@ async function retainSnapshot(root, artifact, resolved, dependencies, id, featur
   return { reference, proof, artifact, candidate, dependencies: retainedDependencies };
 }
 
-async function verifySourceSnapshot(root, destination, dependencyMounts, expected) {
-  const candidate = await copySourceSnapshot(root, destination, dependencyMounts);
+async function verifySourceSnapshot(root, destination, dependencyMounts, expected, selection) {
+  const candidate = await copySourceSnapshot(root, destination, dependencyMounts, selection);
   if (identityDigest(candidate.identity) !== expected) throw tinyError('FEATURE_INTEGRATION_STALE', 'project changed while integration check was running');
   return candidate;
 }
@@ -686,7 +818,7 @@ export async function runFeatureIntegration(projectRoot, {
 } = {}) {
   assertInjectedRunner(runner);
   const root = await canonicalProjectRoot(projectRoot);
-  const normalized = validateFeatureIntegrationConfig(config);
+  const normalized = validateFeatureIntegrationConfig(config, 'config.featureIntegration', { allowFeatures: false });
   const normalizedMembership = normalizeFeatureMembership(membership);
   const normalizedDigests = normalizeAcceptanceDigests(activeAcceptanceDigests, normalizedMembership);
   const protectedSet = new Set(protectedPaths.map((item, index) => normalizedFeaturePath(item, `protectedPaths[${index}]`)));
@@ -730,7 +862,7 @@ export async function runFeatureIntegration(projectRoot, {
     if (commandIdentity(postResolved).sha256 !== retained.proof.command.sha256) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration command changed while the check was running');
     const postConfig = await configFilesIdentity(root);
     if (postConfig.sha256 !== retained.proof.config.sha256) throw tinyError('FEATURE_INTEGRATION_STALE', 'feature integration configuration changed while the check was running');
-    await verifySourceSnapshot(root, join(comparison, 'source-candidate'), dependencyMounts, retained.proof.candidate.sha256);
+    await verifySourceSnapshot(root, join(comparison, 'source-candidate'), dependencyMounts, retained.proof.candidate.sha256, retained.proof.candidate.selection);
     await verifyDependencySnapshots(root, join(comparison, 'source-dependencies'), dependencyMounts, dependencyDigest(retained.proof.dependencies));
     const retainedCandidate = await copyIntegrationTree(candidatePath, join(comparison, 'retained-candidate'), {
       excluded: [],
@@ -799,6 +931,7 @@ function validateProof(value, feature, membership, activeAcceptanceDigests) {
   if (!value.command || !value.config || !value.candidate || !Array.isArray(value.dependencies) || value.dependencies.length > 8 || !value.result || !Array.isArray(value.protectedPaths)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof is incomplete');
   if (!value.candidate.path.startsWith(FEATURE_INTEGRATION_ARTIFACT_PREFIX) || !value.candidate.path.endsWith('/candidate')) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof candidate path is invalid');
   if (typeof value.candidate.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.candidate.sha256)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof candidate identity is invalid');
+  if (value.candidate.selection !== undefined && !SOURCE_SELECTIONS.includes(value.candidate.selection)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof candidate selection is invalid');
   if (typeof value.config.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.config.sha256)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof configuration identity is invalid');
   if (typeof value.command.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.command.sha256)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof command identity is invalid');
   if (typeof value.result.path !== 'string' || !value.result.path.startsWith(FEATURE_INTEGRATION_ARTIFACT_PREFIX) || !value.result.path.endsWith('/result.json') || typeof value.result.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.result.sha256)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof result is invalid');
@@ -865,7 +998,7 @@ export async function featureIntegrationFreshness(projectRoot, {
     for (const [index, dependency] of value.dependencies.entries()) {
       const temporary = await makeTemporaryDirectory('tinysdd-feature-dependency-');
       try {
-        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true });
+        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true, symlinkBase: dependency.target, maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES });
         retainedDependencies.push({ target: dependency.target, identity: copied.identity });
       } finally {
         await rm(temporary, { recursive: true, force: true }).catch(() => {});
@@ -882,7 +1015,7 @@ export async function featureIntegrationFreshness(projectRoot, {
     }
     const sourceTemporaryRoot = await makeTemporaryDirectory('tinysdd-feature-source-');
     try {
-      const current = await copySourceSnapshot(root, join(sourceTemporaryRoot, 'candidate'), dependencyMounts);
+      const current = await copySourceSnapshot(root, join(sourceTemporaryRoot, 'candidate'), dependencyMounts, value.candidate.selection ?? 'walk');
       if (identityDigest(current.identity) !== reference.candidateSha256) reasons.push('project or tested bytes changed');
     } finally {
       await rm(sourceTemporaryRoot, { recursive: true, force: true }).catch(() => {});
