@@ -563,11 +563,37 @@ function nestedUserNamespaces(binaries, runAs, signal, deadline) {
   });
 }
 
+// Darwin has no bind mounts, so each mount target in the work copy is a real
+// directory of links to the mount's top-level entries (#209). Node resolves a
+// package's real path and looks for node_modules above it, which works because
+// the source keeps its own name; the top level itself stays writable scratch
+// for caches such as node_modules/.vite-temp, never the mount. A link at the
+// top level (a workspace link, @scope/pkg -> ../../packages/pkg) is recreated
+// with the same text, so it resolves into the work copy as it does on Linux.
+async function linkMountEntries(source, target, label, top) {
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(target, entry.name);
+    const path = `${label}/${entry.name}`;
+    const info = await lstat(from);
+    if (info.isSymbolicLink()) {
+      const linkTarget = await readlink(from);
+      if (containedSymlinkTarget(path, linkTarget) === null) throw invalid(`dependency mount symlink leaves the project: ${path}`, { path });
+      await symlink(linkTarget, to);
+    } else if (top && info.isDirectory() && entry.name.startsWith('@')) {
+      await mkdir(to, { mode: 0o700 });
+      await linkMountEntries(from, to, path, false);
+    } else {
+      await symlink(from, to);
+    }
+  }
+}
+
 async function linkMountPoints(work, mounts) {
   for (const mount of mounts) {
     const target = join(work, mount.target);
-    await mkdir(dirname(target), { recursive: true });
-    await symlink(mount.source, target, 'dir');
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await linkMountEntries(mount.source, target, mount.target, true);
   }
 }
 

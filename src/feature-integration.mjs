@@ -1,7 +1,7 @@
 import { constants as fsConstants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   chmod,
   lstat,
@@ -287,9 +287,9 @@ export async function resolveFeatureIntegrationCommand(projectRoot, config, { re
 const SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
 const SECRET_DIRECTORY = /^(?:\.aws|\.azure|\.gcloud|\.ssh|secrets?|credentials?)$/iu;
 
-function excludedProjectPath(path, excluded) {
+function excludedProjectPath(path, excluded, secretNames = true) {
   const parts = path.split('/');
-  if (parts.some((part, index) => SECRET_NAME.test(part) || (index < parts.length - 1 && SECRET_DIRECTORY.test(part)))) return true;
+  if (secretNames && parts.some((part, index) => SECRET_NAME.test(part) || (index < parts.length - 1 && SECRET_DIRECTORY.test(part)))) return true;
   return excluded.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
@@ -357,6 +357,7 @@ export async function copyIntegrationTree(source, destination, {
   paths = null,
   symlinkBase = '',
   maxEntries = FEATURE_INTEGRATION_MAX_TREE_FILES,
+  secretNames = true,
 } = {}) {
   await assertNoSymlinkPath(source, { allowMissing: false, requireDirectory: true });
   const sourceRealpath = await realpath(source);
@@ -411,7 +412,7 @@ export async function copyIntegrationTree(source, destination, {
     names.sort();
     for (const name of names) {
       const path = prefix ? `${prefix}/${name}` : name;
-      if (excludedProjectPath(path, excluded) || (nested && name === '.git')) continue;
+      if (excludedProjectPath(path, excluded, secretNames) || (nested && name === '.git')) continue;
       state.files += 1;
       await copyEntry(join(current, name), join(target, name), path, await lstat(join(current, name)), nested);
     }
@@ -420,7 +421,7 @@ export async function copyIntegrationTree(source, destination, {
     for (const listed of listedPaths) {
       // An untracked nested repository is listed once, as "dir/".
       const path = listed.endsWith('/') ? listed.slice(0, -1) : listed;
-      if (path.length === 0 || excludedProjectPath(path, excluded)) continue;
+      if (path.length === 0 || excludedProjectPath(path, excluded, secretNames)) continue;
       let normalized;
       try {
         normalized = normalizeProjectRelative(path, 'git-listed path');
@@ -601,6 +602,22 @@ function commandIdentity(resolved) {
   };
 }
 
+// node_modules is gitignored, so it reaches the check only as a dependency
+// mount. An argv path into it without one fails inside the check with a
+// confusing "Cannot find module"; say what to declare instead.
+async function assertArgvInputs(candidatePath, check, dependencyMounts) {
+  for (const [index, item] of check.argv.entries()) {
+    const first = item.split('/')[0];
+    if (first !== 'node_modules' || !item.includes('/')) continue;
+    if (dependencyMounts.some((mount) => item === mount || item.startsWith(`${mount}/`))) continue;
+    try {
+      await lstat(join(candidatePath, ...item.split('/')));
+    } catch {
+      throw tinyError('FEATURE_INTEGRATION_CONFIG', `feature integration argv[${index}] names ${item}, but node_modules is not a dependency mount; declare "dependencyMounts": ["node_modules"]`, { argv: index, path: item });
+    }
+  }
+}
+
 function identityDigest(identity) {
   return identity?.sha256 ?? digestJson(identity);
 }
@@ -642,17 +659,34 @@ async function copySourceSnapshot(root, destination, dependencyMounts, selection
   return { ...copied, selection: paths === null ? 'walk' : 'git-ls-files' };
 }
 
+function mountName(index) {
+  return `mount-${String(index).padStart(2, '0')}`;
+}
+
+// A mount is retained at mount-NN/<target> (mount-00/node_modules), not at
+// mount-NN itself: Node resolves a package's real path and looks for a
+// node_modules directory above it, so the retained tree must keep its name
+// (#209). Proofs written before carry no layout and hold the tree at mount-NN.
+const MOUNT_LAYOUT = 'target';
+
+function retainedMountRoot(base, index, target, layout = MOUNT_LAYOUT) {
+  return layout === MOUNT_LAYOUT ? join(base, mountName(index), ...target.split('/')) : join(base, mountName(index));
+}
+
 async function copyDependencySnapshots(root, destination, dependencyMounts) {
   const dependencies = [];
   for (const [index, target] of dependencyMounts.entries()) {
     const resolved = await resolveProjectPath(root, target, { field: `dependencyMounts[${index}]`, allowMissing: false, requireDirectory: true });
-    const retainedPath = join(destination, `mount-${String(index).padStart(2, '0')}`);
+    const retainedPath = retainedMountRoot(destination, index, target);
     const copied = await copyIntegrationTree(resolved.absolutePath, retainedPath, {
       excluded: ['.git', '.tinysdd'],
       identityAlgorithm: 'sha256-dependency-tree-v1',
       mountReadable: true,
       symlinkBase: target,
       maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES,
+      // Mounted as-is, like run_checks: package files such as
+      // dockerode/lib/secret.js are code, not project secrets.
+      secretNames: false,
     });
     dependencies.push({ target, sourcePath: target, retainedPath, identity: copied.identity });
   }
@@ -662,14 +696,17 @@ async function copyDependencySnapshots(root, destination, dependencyMounts) {
 async function copyDependencySnapshotsFromRetained(sourceRoot, dependencyMounts, destination) {
   const dependencies = [];
   for (const [index, target] of dependencyMounts.entries()) {
-    const source = join(sourceRoot, `mount-${String(index).padStart(2, '0')}`);
-    const retainedPath = join(destination, `mount-${String(index).padStart(2, '0')}`);
+    const source = retainedMountRoot(sourceRoot, index, target);
+    const retainedPath = retainedMountRoot(destination, index, target);
     const copied = await copyIntegrationTree(source, retainedPath, {
       excluded: [],
       identityAlgorithm: 'sha256-dependency-tree-v1',
       mountReadable: true,
       symlinkBase: target,
       maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES,
+      // Mounted as-is, like run_checks: package files such as
+      // dockerode/lib/secret.js are code, not project secrets.
+      secretNames: false,
     });
     dependencies.push({ target, retainedPath, identity: copied.identity });
   }
@@ -757,9 +794,10 @@ async function retainSnapshot(root, artifact, resolved, dependencies, id, featur
     command,
     config: configIdentity,
     candidate: { path: pathForArtifact(id, 'candidate'), selection: candidate.selection, identity: candidate.identity, sha256: identityDigest(candidate.identity) },
-    dependencies: retainedDependencies.map((item) => ({
+    dependencies: retainedDependencies.map((item, index) => ({
       target: item.target,
-      path: pathForArtifact(id, `dependencies/${relative(dependencyPath, item.retainedPath).replaceAll(sep, '/')}`),
+      path: pathForArtifact(id, `dependencies/${mountName(index)}`),
+      layout: MOUNT_LAYOUT,
       identity: item.identity,
       sha256: identityDigest(item.identity),
     })),
@@ -843,6 +881,7 @@ export async function runFeatureIntegration(projectRoot, {
       durationMs: null,
       output: { totalBytes: 0, storedBytes: 0, truncated: false, tailTruncated: false, text: '', tail: '' },
     });
+    await assertArgvInputs(candidatePath, resolved.check, dependencyMounts);
     const raw = await runner({
       candidateDir: candidatePath,
       check: resolved.check,
@@ -942,6 +981,7 @@ function validateProof(value, feature, membership, activeAcceptanceDigests) {
   for (const [index, dependency] of value.dependencies.entries()) {
     if (!dependency || typeof dependency !== 'object' || typeof dependency.target !== 'string' || typeof dependency.path !== 'string' || !dependency.path.startsWith(`${candidatePrefix}/dependencies/mount-`) || !/\/mount-0[0-7]$/u.test(dependency.path) || typeof dependency.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(dependency.sha256)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', `integration proof dependency ${index} is invalid`);
     const target = normalizedFeaturePath(dependency.target, `integration proof dependency ${index}.target`);
+    if (dependency.layout !== undefined && dependency.layout !== MOUNT_LAYOUT) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', `integration proof dependency ${index} has an unknown layout`);
     if (targets.includes(target)) throw tinyError('FEATURE_INTEGRATION_PROOF_INVALID', 'integration proof dependency targets are duplicated');
     targets.push(target);
   }
@@ -998,7 +1038,7 @@ export async function featureIntegrationFreshness(projectRoot, {
     for (const [index, dependency] of value.dependencies.entries()) {
       const temporary = await makeTemporaryDirectory('tinysdd-feature-dependency-');
       try {
-        const copied = await copyIntegrationTree(join(artifactRoot, 'dependencies', `mount-${String(index).padStart(2, '0')}`), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true, symlinkBase: dependency.target, maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES });
+        const copied = await copyIntegrationTree(retainedMountRoot(join(artifactRoot, 'dependencies'), index, dependency.target, dependency.layout ?? 'legacy'), temporary, { excluded: [], identityAlgorithm: 'sha256-dependency-tree-v1', mountReadable: true, symlinkBase: dependency.target, maxEntries: FEATURE_INTEGRATION_MAX_DEPENDENCY_ENTRIES, secretNames: false });
         retainedDependencies.push({ target: dependency.target, identity: copied.identity });
       } finally {
         await rm(temporary, { recursive: true, force: true }).catch(() => {});

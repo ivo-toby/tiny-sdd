@@ -424,9 +424,19 @@ bounded to 20,000 entries, each dependency mount to 250,000, each tree to
 512 MiB, and a manifest to 512 KiB. For per-feature tests, put a command per
 feature under `featureIntegration.features.<feature>` (same fields; a
 `manifest` such as `changes/<id>/feature-checks.json` with a `checkId` works);
-features without an entry use the top-level command. The check runner has no
-network or sockets, so a Docker-backed (testcontainers) feature test cannot
-pass under `feature accept`.
+features without an entry use the top-level command. Dependency mounts are
+retained under their own name (`dependencies/mount-00/node_modules`) and copied
+as-is, so Node resolves sibling packages and package files such as
+`dockerode/lib/secret.js` stay. An acceptance recorded before that change whose
+mounts contain such secret-named package files reads stale once (`project
+dependency bytes changed`); rerun `feature accept` to refresh it. On macOS the
+check's `node_modules` is writable
+scratch made of links into the mount (Vite's `.vite-temp` works, workspace
+links resolve into the checked copy); on Linux it is bound read-only, so pass
+`--configLoader runner` when a vite/vitest config exists. An `argv` path under
+`node_modules/` without a mount refuses and names the missing
+`dependencyMounts`. The check runner has no network or sockets, so a
+Docker-backed (testcontainers) feature test cannot pass under `feature accept`.
 Historical events without this optional proof remain readable but are reported
 as ineligible; their frozen usage report is unchanged.
 
