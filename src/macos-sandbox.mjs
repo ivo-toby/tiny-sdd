@@ -87,6 +87,11 @@ export function buildMacosSandboxProfile({ workspace, sourceRoot, compactionBund
 // libraries read-only (#220). /etc/mailname is only read when git looks up a
 // default identity; it is absent on macOS, and allowing the read turns git's
 // "Operation not permitted" warning into the host's silent ENOENT.
+// Unix-domain sockets are always allowed to bind, accept and connect below
+// work, home and tmp (#224): the tsx CLI, for one, opens an IPC socket in
+// $TMPDIR. The scratch is created fresh for each run, so the only sockets
+// there are the check's own; every other socket path stays denied, apart from
+// the Docker literals above.
 export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mounts = [], docker = null, loopback = false, git = null }) {
   const writable = [work, home, tmp];
   const writableFiles = ["/dev/null"];
@@ -120,6 +125,10 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mou
     // asks Open Directory over this service.
     '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))',
   ];
+  const scratchSocketRules = [
+    `(allow network-bind network-inbound ${writable.map((path) => `(local unix-socket (subpath ${pathString(path)}))`).join(" ")})`,
+    `(allow network-outbound ${writable.map((path) => `(remote unix-socket (subpath ${pathString(path)}))`).join(" ")})`,
+  ];
   const loopbackRules = !loopback && sockets.length === 0 ? [] : [
     '(allow network-outbound (remote ip "localhost:*"))',
     '(allow network-bind network-inbound (local ip "localhost:*"))',
@@ -136,6 +145,7 @@ export function buildSeatbeltCheckProfile({ work, home, tmp, nodeExecutable, mou
     ...writable.map((path) => `(allow file-read* file-write* (subpath ${pathString(path)}))`),
     ...writableFiles.map((path) => `(allow file-read* file-write* (literal ${pathString(path)}))`),
     ...writable.map((path) => `(deny file-write-unlink (literal ${pathString(path)}))`),
+    ...scratchSocketRules,
     ...loopbackRules,
     ...dockerRules,
     "",

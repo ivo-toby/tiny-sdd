@@ -400,6 +400,14 @@ a Seatbelt backend on macOS (#176), with these differences:
   be provided fails the run with `CHECK_TOOL_UNAVAILABLE`, so a test that
   guards on git is never green only because the sandbox hid it. The result
   records the binary as `sandbox.tools.git` (`null` without one).
+- Both backends allow Unix-domain sockets inside the check's own scratch
+  (#224), so the tsx CLI's IPC socket in `$TMPDIR` works. Seatbelt always
+  grants `network-bind network-inbound` for `(local unix-socket (subpath …))`
+  and `network-outbound` for `(remote unix-socket (subpath …))` on `work`,
+  `home` and `tmp`, with or without loopback. The scratch is fresh for each
+  run, so the only sockets there are the check's own; any other socket path
+  stays denied, apart from the Docker `path-literal` opt-in. bubblewrap needs
+  nothing: `/tmp` and `/work` are private, and no host socket is mounted.
 
 - The check never runs as root. A root caller drops to an unprivileged uid
   first (`runAs`, default 65534:65534) with
@@ -810,6 +818,7 @@ contexts grow.
 | Feature checks: loopback, tool caches and opt-in Docker (#212) | **Implemented; live macOS run pending** | `feature accept` checks always get loopback (Seatbelt allows localhost TCP and bind; `localhost` resolves through a Node `--require` shim); top-level `.cache`/`.vite`/`.vite-temp` in a mount are left out of the proof and are fresh writable directories in the check; an entry may declare `docker: { socket }`, recorded in the proof as `dockerAccess`. Workers and `run_checks` are unchanged. Merge waits for a passing postgram `feature accept` on a real Mac. |
 | `run_checks` loopback (#215) | **Implemented; checked with real Seatbelt on macOS** | Worker `run_checks` checks get the #212 loopback: Seatbelt allows localhost TCP and bind, and `localhost` resolves through the Node `--require` shim, so Vitest starts. Other hosts stay unreachable; no Docker. bubblewrap already had its own loopback and `/etc/hosts`. |
 | `git` in checks (#220) | **Implemented; checked with real Seatbelt on macOS (Homebrew and Command Line Tools git)** | `run_checks`, `feature accept` and benchmark checks get the controller's `git` read-only on `PATH`, with `GIT_CONFIG_NOSYSTEM=1` and the scratch `HOME`, so no user or system git configuration or credentials, and no network. On macOS the xcrun shim is replaced by the real git, and its exec path, `share/git-core` and libraries are granted. On Linux the git must be under `/usr` or `/bin`. A host git that cannot be provided fails with `CHECK_TOOL_UNAVAILABLE` instead of a silent skip. |
+| Unix sockets in the check scratch (#224) | **Implemented; checked with real Seatbelt on macOS** | Checks can bind, accept and connect Unix-domain sockets below their own `work`, `home` and `tmp`, so the tsx CLI's `$TMPDIR` IPC socket works. Sockets elsewhere stay denied (Seatbelt) or absent (bubblewrap), apart from the declared Docker socket. |
 | Worker runner interface (#154) | **Implemented (refactor); live bubblewrap/Seatbelt/Pi behavior unverified** | `worker.type` selects a runner from `src/runners/index.mjs`; Pi (`src/runners/pi.mjs`) was the first and OpenCode (`src/runners/opencode.mjs`, #155) followed. The runner locates and identifies its executable, prepares its state, builds its arguments and its sandbox mounts and environment, points its configuration at the inference relay and parses its events, which `captureProcess` also uses for live limits. Copying, snapshots, patches, scope checks, the check channel, the relay and the bubblewrap and Seatbelt wrappers stay in the worker. `runtime.json`, `result.json`, controller state and qualification identity are unchanged; an unknown `worker.type` is still `UNSUPPORTED_WORKER`. |
 | Shared briefs going stale | **Implemented** (#16) | One brief per slice, shared spec cited by line range. Approval binds the cited excerpts, not the whole file: the compiled text no longer carries `Source sha256:`. Older approvals keep binding the whole file through a legacy digest until re-approved. Addenda stay on hold. |
 | Behavior-split sizing signal | **Implemented** (#18) | Cited test characteristics (fake timers with deferred promises or races, or at least 8 ordering assertions) recommend a behavior split; thresholds are provisional and uncalibrated, pending the talon reruns. |
