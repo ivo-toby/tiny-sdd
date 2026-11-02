@@ -621,6 +621,14 @@ When the host has a git that the sandbox cannot provide (a Linux git outside
 fails with `CHECK_TOOL_UNAVAILABLE`. A test that skips itself when git is
 missing therefore cannot pass in the check only because git was hidden.
 
+Checks can use Unix-domain sockets in their own scratch (#224): `$TMPDIR`,
+`HOME` and the work copy. The tsx CLI (`node node_modules/tsx/dist/cli.mjs`)
+needs this, because it always opens an IPC socket in `$TMPDIR`. On macOS
+Seatbelt allows bind, accept and connect only below those three directories,
+with or without loopback; every other socket path stays denied, apart from the
+declared Docker socket. On Linux they are already private to the bubblewrap
+sandbox, and no host socket is mounted into it.
+
 Each dependency mount is retained under its own name
 (`.tinysdd/runs/feature-integration/<id>/dependencies/mount-00/node_modules`),
 so Node's real-path module resolution finds sibling packages. Mounts are copied

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -53,6 +54,47 @@ const SKIP = await skipReason();
 const PASSING_TEST = "import test from 'node:test';\ntest('adds', () => { if (1 + 1 !== 2) throw new Error('math'); });\n";
 const VALID_CHECK = { id: 'c1', argv: ['node', '--test', 't.test.mjs'], timeoutMs: 30000 };
 const FAILING_TEST = "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('fails on purpose', () => { assert.equal(1 + 1, 3, 'two plus one is three'); });\n";
+// Network rules of a Seatbelt profile other than the always-on Unix sockets
+// below the check's own scratch (#224).
+const foreignNetworkRules = (profile) => profile.split('\n').filter((line) => line.includes('network') && !line.includes('unix-socket (subpath'));
+
+// Binds a Unix socket in each scratch directory, exchanges a byte over it, then
+// tries to connect to and bind at the host paths given after `--outside`. It
+// prints one JSON line: per directory 'ok' or the error code, and per host path
+// 'connected'/'bound' or the error code.
+const UNIX_SOCKET_PROBE = [
+  "import { createServer, connect } from 'node:net';",
+  "import { homedir, tmpdir } from 'node:os';",
+  "import { join } from 'node:path';",
+  "const exchange = (path) => new Promise((resolve) => {",
+  "  const server = createServer((socket) => socket.end('y'));",
+  "  server.on('error', (error) => resolve(error.code));",
+  "  server.listen(path, () => {",
+  "    const client = connect(path, () => client.write('x'));",
+  "    client.on('data', (chunk) => { server.close(); resolve(String(chunk) === 'y' ? 'ok' : `reply ${chunk}`); });",
+  "    client.on('error', (error) => { server.close(); resolve(error.code); });",
+  "  });",
+  "});",
+  "const reach = (path) => new Promise((resolve) => {",
+  "  const client = connect(path, () => { client.destroy(); resolve('connected'); });",
+  "  client.on('error', (error) => resolve(error.code));",
+  "});",
+  "const bind = (path) => new Promise((resolve) => {",
+  "  const server = createServer();",
+  "  server.on('error', (error) => resolve(error.code));",
+  "  server.listen(path, () => { server.close(); resolve('bound'); });",
+  "});",
+  "const outside = process.argv.slice(process.argv.indexOf('--outside') + 1);",
+  "const seen = {",
+  "  tmp: await exchange(join(tmpdir(), 'st')),",
+  "  work: await exchange(join(process.cwd(), 'sw')),",
+  "  home: await exchange(join(homedir(), 'sh')),",
+  "  connect: await reach(outside[0]),",
+  "  bind: await bind(outside[1]),",
+  "};",
+  "console.log(JSON.stringify(seen));",
+  '',
+].join('\n');
 
 describe('check runner', { skip: SKIP }, () => {
   let fixtures;
@@ -242,6 +284,28 @@ describe('check runner', { skip: SKIP }, () => {
     assert.equal(result.exitCode, 4);
     assert.match(result.output.text, /to-stdout/u);
     assert.match(result.output.text, /to-stderr/u);
+  });
+
+  // #224: bubblewrap gives the check a private /tmp and /work, so Unix sockets
+  // there work, and a host socket is simply not in the mount namespace.
+  test('a check binds and uses Unix sockets in its scratch but cannot reach a host socket (#224)', async () => {
+    const hostDir = await mkdtemp(join(await realpath(tmpdir()), 'tsdd-us-'));
+    const hostSocket = join(hostDir, 'h.sock');
+    const host = createNetServer((socket) => socket.end('host'));
+    await new Promise((resolve) => host.listen(hostSocket, resolve));
+    try {
+      const candidate = await makeDir({ 'sock.mjs': UNIX_SOCKET_PROBE });
+      const result = await run(candidate, { argv: ['node', 'sock.mjs', '--outside', hostSocket, join(hostDir, 'b.sock')] });
+      assert.equal(result.exitCode, 0, result.output.text);
+      const seen = JSON.parse(result.output.text.trim().split('\n').at(-1));
+      assert.deepEqual({ tmp: seen.tmp, work: seen.work, home: seen.home }, { tmp: 'ok', work: 'ok', home: 'ok' });
+      assert.notEqual(seen.connect, 'connected');
+      assert.notEqual(seen.bind, 'bound');
+      assert.equal(existsSync(join(hostDir, 'b.sock')), false);
+    } finally {
+      await new Promise((resolve) => host.close(resolve));
+      await rm(hostDir, { recursive: true, force: true });
+    }
   });
 
   test('localhost resolves inside the sandbox, as test runners such as vitest need', async () => {
@@ -1537,9 +1601,10 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     assert.equal(args[5], 'tinysdd-check');
     assert.equal(args[6], join(dirname(dirname(process.execPath)), 'bin', 'node'));
     assert.deepEqual(args.slice(7), ['--test', 't.test.mjs']);
-    // The recorded profile is the written one: deny default, no network allow.
+    // The recorded profile is the written one: deny default, no network allow
+    // beyond Unix sockets in the scratch.
     assert.match(profile, /^\(version 1\)\n\(deny default\)/u);
-    assert.doesNotMatch(profile, /network/u, 'no network rule is allowed');
+    assert.deepEqual(foreignNetworkRules(profile), [], 'no network rule is allowed');
     assert.match(profile, /\(deny file-write-unlink /u);
   });
 
@@ -1572,7 +1637,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
       mounts: [{ source: '/proj/node_modules', target: 'node_modules' }],
     });
     assert.match(profile, /^\(version 1\)\n\(deny default\)\n/u);
-    assert.doesNotMatch(profile, /network/u);
+    assert.deepEqual(foreignNetworkRules(profile), []);
     assert.match(profile, /\(allow file-read\* file-write\* \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\)\)/u);
     assert.match(profile, /\(subpath "\/proj\/node_modules"\)/u);
     assert.match(profile, /\(allow process-exec \(subpath "\/bin"\) \(subpath "\/usr\/bin"\) \(subpath "\/private\/tmp\/tinysdd-check-x\/work"\) \(subpath "\/proj\/node_modules"\) \(literal "\/usr\/local\/bin\/node"\)\)/u);
@@ -1680,7 +1745,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     const plain = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path });
     assert.equal(plain.sandbox.network, 'none');
     assert.equal(JSON.parse(plain.output.text.trim().split('\n').at(-1)).options, null);
-    assert.doesNotMatch(parseDump(stub.dump).profile, /network/u);
+    assert.deepEqual(foreignNetworkRules(parseDump(stub.dump).profile), []);
     const looped = await run(candidate, { argv: ['node', 'probe.mjs'] }, { sandboxExecPath: stub.path, loopback: true });
     assert.equal(looped.exitCode, 0, looped.output.text);
     const seen = JSON.parse(looped.output.text.trim().split('\n').at(-1));
@@ -1688,7 +1753,7 @@ describe('seatbelt check runner (darwin path, stubbed sandbox-exec)', { skip: (p
     assert.match(seen.options, /^--require ".*\/home\/\.tinysdd-localhost\.cjs"$/u);
     assert.equal(looped.sandbox.network, 'loopback');
     assert.ok(looped.sandbox.env.includes('NODE_OPTIONS'));
-    const network = parseDump(stub.dump).profile.split('\n').filter((line) => line.includes('network'));
+    const network = foreignNetworkRules(parseDump(stub.dump).profile);
     assert.deepEqual(network, ['(allow network-outbound (remote ip "localhost:*"))', '(allow network-bind network-inbound (local ip "localhost:*"))']);
     await assert.rejects(run(candidate, {}, { sandboxExecPath: stub.path, loopback: 'yes' }), { code: 'CHECK_INVALID', message: /loopback must be a boolean/u });
   });
@@ -1925,10 +1990,10 @@ test('bubblewrap arguments share the network and bind the socket only when docke
 
 test('the seatbelt check profile allows the declared docker sockets and loopback TCP only', () => {
   const paths = { work: '/private/tmp/c/work', home: '/private/tmp/c/home', tmp: '/private/tmp/c/tmp', nodeExecutable: '/usr/local/bin/node' };
-  assert.doesNotMatch(buildSeatbeltCheckProfile(paths), /network/u);
+  assert.deepEqual(foreignNetworkRules(buildSeatbeltCheckProfile(paths)), []);
   const sockets = ['/var/run/docker.sock', '/private/var/run/docker.sock', '/Users/op/.orbstack/run/docker.sock'];
   const profile = buildSeatbeltCheckProfile({ ...paths, docker: { sockets } });
-  const network = profile.split('\n').filter((line) => line.includes('network'));
+  const network = foreignNetworkRules(profile);
   assert.deepEqual(network, [
     '(allow network-outbound (remote ip "localhost:*"))',
     '(allow network-bind network-inbound (local ip "localhost:*"))',
@@ -1937,8 +2002,8 @@ test('the seatbelt check profile allows the declared docker sockets and loopback
   assert.doesNotMatch(profile, /ip "\*/u);
   // Loopback alone opens localhost and nothing of Docker.
   const loopbackOnly = buildSeatbeltCheckProfile({ ...paths, loopback: true });
-  assert.deepEqual(loopbackOnly.split('\n').filter((line) => line.includes('network')), network.slice(0, 2));
-  assert.doesNotMatch(loopbackOnly, /unix-socket|mach-lookup/u);
+  assert.deepEqual(foreignNetworkRules(loopbackOnly), network.slice(0, 2));
+  assert.doesNotMatch(loopbackOnly, /path-literal|mach-lookup/u);
   // The only mach service is the user lookup testcontainers needs, and only with docker.
   assert.deepEqual(profile.split('\n').filter((line) => line.includes('mach-lookup')), ['(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))']);
   assert.doesNotMatch(buildSeatbeltCheckProfile(paths), /mach-lookup/u);
@@ -1997,4 +2062,50 @@ test('bubblewrap puts a provided git on PATH and keeps the system gitconfig out 
   assert.equal(system.GIT_CONFIG_NOSYSTEM, '1');
   const local = environment(sandboxArguments({ ...base, git: { executable: '/usr/local/bin/git', binDir: '/usr/local/bin', execPaths: ['/usr/local/libexec/git-core'], libraries: [], readable: [] } }));
   assert.equal(local.PATH, '/opt/node/bin:/usr/local/bin:/usr/bin:/bin');
+});
+
+test('the seatbelt check profile grants Unix sockets only below its own scratch (#224)', () => {
+  const paths = { work: '/private/tmp/c/work', home: '/private/tmp/c/home', tmp: '/private/tmp/c/tmp', nodeExecutable: '/usr/local/bin/node' };
+  const scratchRules = [
+    '(allow network-bind network-inbound (local unix-socket (subpath "/private/tmp/c/work")) (local unix-socket (subpath "/private/tmp/c/home")) (local unix-socket (subpath "/private/tmp/c/tmp")))',
+    '(allow network-outbound (remote unix-socket (subpath "/private/tmp/c/work")) (remote unix-socket (subpath "/private/tmp/c/home")) (remote unix-socket (subpath "/private/tmp/c/tmp")))',
+  ];
+  const network = (profile) => profile.split('\n').filter((line) => line.includes('network'));
+  // Always on, with or without loopback, and nothing else of the network.
+  assert.deepEqual(network(buildSeatbeltCheckProfile(paths)), scratchRules);
+  assert.deepEqual(network(buildSeatbeltCheckProfile({ ...paths, loopback: true })).filter((line) => line.includes('unix-socket')), scratchRules);
+  // Docker adds its own socket literal; the scratch rules stay subpaths of the three directories.
+  const docker = network(buildSeatbeltCheckProfile({ ...paths, docker: { sockets: ['/var/run/docker.sock'] } })).filter((line) => line.includes('unix-socket'));
+  assert.deepEqual(docker, [...scratchRules, '(allow network-outbound (remote unix-socket (path-literal "/var/run/docker.sock")))']);
+});
+
+// Real sandbox-exec, so these run on macOS only; the bubblewrap counterpart is
+// in the 'check runner' suite above.
+const REAL_SEATBELT_SKIP = process.platform !== 'darwin' ? 'needs macOS sandbox-exec' : AS_ROOT ? 'a root caller is refused before any run' : checkRunnerAvailable().available ? false : checkRunnerAvailable().reason;
+
+describe('seatbelt check runner (real sandbox-exec)', { skip: REAL_SEATBELT_SKIP }, () => {
+  test('a check binds and uses Unix sockets in its scratch but cannot reach or bind one outside it (#224)', async () => {
+    const root = await mkdtemp(join(await realpath(tmpdir()), 'tsdd-us-'));
+    const candidate = join(root, 'candidate');
+    const hostSocket = join(root, 'h.sock');
+    const host = createNetServer((socket) => socket.end('host'));
+    let hostConnections = 0;
+    host.on('connection', () => { hostConnections += 1; });
+    await new Promise((resolve) => host.listen(hostSocket, resolve));
+    try {
+      await mkdir(candidate);
+      await writeFile(join(candidate, 'sock.mjs'), UNIX_SOCKET_PROBE);
+      for (const loopback of [false, true]) {
+        const result = await runCheck({ candidateDir: candidate, loopback, check: { id: 'sock', argv: ['node', 'sock.mjs', '--outside', hostSocket, join(root, 'b.sock')], timeoutMs: 30000 } });
+        assert.equal(result.exitCode, 0, result.output.text);
+        const seen = JSON.parse(result.output.text.trim().split('\n').at(-1));
+        assert.deepEqual(seen, { tmp: 'ok', work: 'ok', home: 'ok', connect: 'EPERM', bind: 'EPERM' }, `loopback ${loopback}`);
+      }
+      assert.equal(hostConnections, 0);
+      assert.equal(existsSync(join(root, 'b.sock')), false);
+    } finally {
+      await new Promise((resolve) => host.close(resolve));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
