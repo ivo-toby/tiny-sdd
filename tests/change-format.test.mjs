@@ -138,6 +138,24 @@ test('fixture validates with a topological plan and ordinary create-modify runti
   }
 });
 
+test('.env.example is a valid implementation file; real env files are refused', async () => {
+  const root = await fixtureProject();
+  try {
+    const slicePath = join(root, 'examples/artifact-format/changes/broker-recut/slices/s1/slice.json');
+    const original = JSON.parse(await readFile(slicePath, 'utf8'));
+    const changePath = 'examples/artifact-format/changes/broker-recut/change.json';
+    for (const [name, code] of [['.env.example', null], ['.env', 'ARTIFACT_CREDENTIAL_PATH'], ['.env.local', 'ARTIFACT_CREDENTIAL_PATH'], ['.env.production', 'ARTIFACT_CREDENTIAL_PATH']]) {
+      const path = `examples/artifact-format/${name}`;
+      await writeFile(join(root, path), 'KEY=\n');
+      await writeFile(slicePath, JSON.stringify({ ...original, implementationFiles: [...original.implementationFiles, path] }));
+      if (code) await assert.rejects(validateChange(root, changePath), { code }, name);
+      else await validateChange(root, changePath);
+    }
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('file-count budgets and planned ownership overlaps are warnings', async () => {
   const root = await fixtureProject();
   try {

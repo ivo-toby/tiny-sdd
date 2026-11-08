@@ -13,6 +13,16 @@ test('ordinary created and modified files are eligible while extras remain visib
   assert.equal(classifyFileScopeChange({ path: 'src/extra.mjs', change: 'modified', before: file, after: { ...file, sha256: 'b'.repeat(64) } }), null);
 });
 
+test('env template files are eligible while real env files stay refused', () => {
+  const after = { ...file, sha256: 'b'.repeat(64) };
+  for (const path of ['.env.example', 'src/.env.sample', '.env.template', '.env.DIST']) {
+    assert.equal(classifyFileScopeChange({ path, change: 'modified', before: file, after }), null, path);
+  }
+  for (const path of ['.env', '.env.local', '.env.production', '.env.example.local', '.env.examples']) {
+    assert.ok(classifyFileScopeChange({ path, change: 'modified', before: file, after }), path);
+  }
+});
+
 test('protected, preparation and dependency boundaries include ancestor and descendant collisions', () => {
   for (const [options, path] of [
     [{ protectedPaths: ['specs/future.md'] }, 'specs/future.md/child.mjs'],

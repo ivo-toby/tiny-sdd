@@ -308,7 +308,7 @@ export async function resolveFeatureIntegrationCommand(projectRoot, config, { re
   return { config: normalized, manifest, manifestPath: normalized.manifest, manifestText: text, check };
 }
 
-const SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
+const SECRET_NAME = /^(?:\.env(?:\.(?!(?:example|sample|template|dist)$).*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
 const SECRET_DIRECTORY = /^(?:\.aws|\.azure|\.gcloud|\.ssh|secrets?|credentials?)$/iu;
 
 function excludedProjectPath(path, excluded, secretNames = true) {
