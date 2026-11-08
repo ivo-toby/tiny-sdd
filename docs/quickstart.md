@@ -1517,8 +1517,15 @@ still owns independent verification. The worker does not apply the patch,
 commit, or accept its own result. Inference can reach the selected
 provider; use only source you are authorized to send there. Raw event files may
 contain source. Filename exclusions are not a general secret scanner.
-The candidate omits `.git`, `.tinysdd`, `node_modules` and common credential files;
-source symlinks are rejected. In a Git work tree the copy set is
+The candidate omits `.git`, `.tinysdd`, `node_modules` and common credential files.
+A symlink whose relative target is a regular file in the same copy
+(`AGENTS.md -> CLAUDE.md`) is kept as that link; changing, deleting or retyping it
+is a scope violation. Any other symlink (absolute, leaving the project, `a/../b`,
+dangling, a directory, or a target that is ignored or excluded) is skipped and
+listed in `workspaceCopy.skippedSymlinks` with a reason. A symlinked
+`AGENTS.md` that the copy keeps puts its target's text in the prompt. An allowed,
+protected, preparation or context path that is or runs through a symlink fails
+before inference with `WORKSPACE_SYMLINK_UNSUPPORTED`. In a Git work tree the copy set is
 `git ls-files --cached --others --exclude-standard`, so gitignored files (runtime
 state, build output, local agent homes) are left out while new untracked source
 is kept; outside Git the whole tree is walked. `workspaceCopy.mode` in the result

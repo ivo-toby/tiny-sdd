@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, opendir, readlink, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, open, opendir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { checkRunnerAvailable, runCheck } from './check-runner.mjs';
+import { containedSymlinkTarget } from './fs-utils.mjs';
 
 const MAX_REQUESTS = 64;
 const MAX_REQUEST_BYTES = 1024;
@@ -149,7 +150,13 @@ async function freezeCandidate(source, destination, excluded, allowedPaths, sign
             candidateEntries[path] = { kind: 'file', mode: info.mode & 0o7777, bytes: position, sha256 };
             if (Object.hasOwn(allowedDigests, path)) allowedDigests[path] = sha256;
           } finally { await input.close(); await output.close(); }
-        } else throw new Error('check input contains a symlink or special file');
+        } else if (info.isSymbolicLink()) {
+          // The worker copy holds only links whose target stays in the candidate.
+          const target = await readlink(from);
+          if (containedSymlinkTarget(path, target) === null) throw new Error('check input contains a symlink that leaves the candidate');
+          await symlink(target, join(destination, path));
+          candidateEntries[path] = { kind: 'symlink', target };
+        } else throw new Error('check input contains a special file');
       }
     } finally { await directory.close(); }
   }

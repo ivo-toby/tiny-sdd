@@ -647,7 +647,12 @@ worker also needs Pi in
 the same installation as the CLI's Node executable, and the exact model in Pi's
 configured models. The exact Pi pin is 1.4.0 (1.0.0 is refused), which requires
 Node >=22.19.0; its fixed check-client integration still needs live qualification. Missing sandbox support fails closed. It uses
-read/write/edit tools in a disposable copy. Available declared checks add the
+read/write/edit tools in a disposable copy. The copy keeps a symlink only when
+its relative target is a regular file in the same copy (`AGENTS.md -> CLAUDE.md`);
+changing that link is a scope violation. Other symlinks are skipped and listed in
+`workspaceCopy.skippedSymlinks`. An allowed, protected, preparation or context path
+that is or runs through a symlink fails with `WORKSPACE_SYMLINK_UNSUPPORTED`.
+Available declared checks add the
 fixed `run_checks` client; generated code executes only in the separate check
 sandbox (bubblewrap on Linux, Seatbelt on macOS). An unavailable host records
 the reason and runs without the

@@ -2,7 +2,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -102,7 +102,7 @@ async function makeRuntime() {
   fakePi = join(root, "fake-pi.mjs");
   await writeFile(fakePi, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const action = process.env.TINYSDD_TEST_ACTION || "complete";
@@ -133,6 +133,9 @@ if (action === "protected") writeFileSync(join(process.cwd(), "src", "contract.t
 if (action === "input") writeFileSync(join(process.cwd(), "docs", "brief.md"), "rewritten brief\\n");
 if (action === "outside") writeFileSync(join(process.cwd(), "outside.txt"), "outside\\n");
 if (action === "dependency") writeFileSync(join(process.cwd(), "vendor", "dependency", "extra.mjs"), "extra\\n");
+if (action === "link-retarget") { rmSync(join(process.cwd(), "AGENTS.md")); symlinkSync("TASK.md", join(process.cwd(), "AGENTS.md")); }
+if (action === "link-delete") rmSync(join(process.cwd(), "AGENTS.md"));
+if (action === "link-retype") { rmSync(join(process.cwd(), "AGENTS.md")); writeFileSync(join(process.cwd(), "AGENTS.md"), "now a file\\n"); }
 if (action === "type-change") { rmSync(join(process.cwd(), "empty"), { recursive: true, force: true }); writeFileSync(join(process.cwd(), "empty"), "file\\n"); }
 if (action === "error") {
   console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"error",errorMessage:"synthetic provider failure",content:[{type:"text",text:"I could not continue."}]}}));
@@ -1939,15 +1942,48 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
-  test("rejects source symlink escapes before any model execution", async () => {
+  test("copies in-project file symlinks and skips escaping, dangling and excluded ones (#180)", async () => {
     const project = await makeProject();
     const outside = await mkdtemp(join(canonicalTmpdir, "tinysdd-worker-test-outside-"));
     try {
-      await (await import("node:fs/promises")).symlink(outside, join(project, "linked"));
-      await assert.rejects(
-        runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "complete") }),
-        /Source contains a symlink/u,
-      );
+      await writeFile(join(outside, "marker.txt"), "outside-marker\n");
+      await writeFile(join(project, "CLAUDE.md"), "Shared agent rules.\n");
+      await writeFile(join(project, ".env"), "TOKEN=synthetic-secret\n");
+      await symlink("CLAUDE.md", join(project, "AGENTS.md"));
+      await symlink("../TASK.md", join(project, "src", "task-link.md"));
+      await symlink(outside, join(project, "linked"));
+      await symlink(join(outside, "marker.txt"), join(project, "absolute.txt"));
+      await symlink("../outside/marker.txt", join(project, "climb.txt"));
+      await symlink("missing.md", join(project, "dangling.md"));
+      await symlink("src", join(project, "src-dir"));
+      await symlink(".env", join(project, "leak.md"));
+      await symlink("src/../CLAUDE.md", join(project, "dotdot.md"));
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+      assert.equal(result.outcome, "completed");
+      assert.deepEqual(result.scopeViolations, []);
+      assert.deepEqual(result.changedPaths.map(({ path }) => path), ["src/allowed.txt"]);
+      assert.equal(result.workspaceCopy.symlinks, 2);
+      assert.deepEqual(result.workspaceCopy.skippedSymlinks, [
+        { path: "absolute.txt", reason: "outside_project" },
+        { path: "climb.txt", reason: "outside_project" },
+        { path: "dangling.md", reason: "dangling" },
+        { path: "dotdot.md", reason: "outside_project" },
+        { path: "leak.md", reason: "target_not_copied" },
+        { path: "linked", reason: "outside_project" },
+        { path: "src-dir", reason: "target_not_copied" },
+      ]);
+      for (const tree of [result.artifactPaths.workspaceBefore, result.artifactPaths.workspaceAfter]) {
+        assert.equal(await readlink(join(tree, "AGENTS.md")), "CLAUDE.md");
+        assert.equal(await readlink(join(tree, "src", "task-link.md")), "../TASK.md");
+        for (const skipped of ["linked", "absolute.txt", "climb.txt", "dangling.md", "src-dir", "leak.md", "dotdot.md", ".env"]) {
+          await assert.rejects(lstat(join(tree, skipped)), { code: "ENOENT" }, skipped);
+        }
+      }
+      const before = JSON.parse(await readFile(result.artifactPaths.beforeSnapshot, "utf8"));
+      assert.deepEqual(before["AGENTS.md"], { kind: "symlink", sha256: null, size: null, target: "CLAUDE.md" });
+      const patch = await readFile(result.artifactPaths.patch, "utf8");
+      assert.doesNotMatch(patch, /AGENTS\.md|outside-marker|synthetic-secret/u);
+      assert.equal(await readlink(join(project, "AGENTS.md")), "CLAUDE.md");
       assert.equal(await realpath(join(project, "linked")), await realpath(outside));
     } finally {
       await rm(project, { recursive: true, force: true });
@@ -2048,7 +2084,7 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
-  test("git copy keeps symlink rejection, skips deleted tracked files and enforces limits", async () => {
+  test("git copy keeps tracked file symlinks, skips deleted tracked files and enforces limits", async () => {
     const project = await makeGitProject();
     const destinations = [];
     const destination = async () => {
@@ -2067,11 +2103,125 @@ describe("Pi worker capture and scope", () => {
       await assert.rejects(copyProjectTree(project, await destination(), { maxFiles: 3 }), /exceeds bounded worker input size/u);
       await assert.rejects(copyProjectTree(project, await destination(), { maxBytes: 8 }), /exceeds bounded worker input size/u);
       await symlink("allowed.txt", join(project, "src", "tracked-link"));
-      await git(project, "add", "src/tracked-link");
-      await assert.rejects(copyProjectTree(project, await destination()), /Source contains a symlink; refusing to copy src\/tracked-link/u);
+      await symlink("../debug.log", join(project, "src", "ignored-link"));
+      await git(project, "add", "src/tracked-link", "src/ignored-link");
+      const linked = await destination();
+      const withLinks = await copyProjectTree(project, linked);
+      assert.deepEqual([...withLinks.symlinks], ["src/tracked-link"]);
+      // A link to a gitignored file must not expose it; the ignored data/ link is never listed.
+      assert.deepEqual(withLinks.skippedSymlinks, [{ path: "src/ignored-link", reason: "target_not_copied" }]);
+      assert.equal(withLinks.copied.has("src/tracked-link"), false);
+      assert.equal(await readlink(join(linked, "src", "tracked-link")), "allowed.txt");
+      await assert.rejects(lstat(join(linked, "src", "ignored-link")), { code: "ENOENT" });
+      await assert.rejects(copyProjectTree(project, await destination(), { maxFiles: 5 }), /exceeds bounded worker input size/u);
     } finally {
       await rm(project, { recursive: true, force: true });
       for (const path of destinations) await rm(path, { recursive: true, force: true });
+    }
+  });
+
+  async function makeAgentsLinkProject() {
+    const project = await makeGitProject();
+    await writeFile(join(project, "CLAUDE.md"), "Shared agent rules for every assistant.\n");
+    await symlink("CLAUDE.md", join(project, "AGENTS.md"));
+    await git(project, "add", "CLAUDE.md", "AGENTS.md");
+    return project;
+  }
+
+  test("a tracked AGENTS.md -> CLAUDE.md link no longer blocks an unrelated task (#180)", async () => {
+    const project = await makeAgentsLinkProject();
+    try {
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+      assert.equal(result.outcome, "completed");
+      assert.deepEqual(result.scopeViolations, []);
+      assert.deepEqual(result.changedPaths.map(({ path }) => path), ["src/allowed.txt"]);
+      assert.equal(result.workspaceCopy.mode, "git-ls-files");
+      assert.equal(result.workspaceCopy.symlinks, 1);
+      assert.deepEqual(result.workspaceCopy.skippedSymlinks, []);
+      assert.equal(await readlink(join(result.artifactPaths.candidate, "AGENTS.md")), "CLAUDE.md");
+      const prompt = await readFile(result.artifactPaths.prompt, "utf8");
+      assert.match(prompt, /--- AGENTS\.md \(sha256:[0-9a-f]{64}\) ---\nShared agent rules for every assistant\./u);
+      const context = JSON.parse(await readFile(join(dirname(result.artifactPaths.prompt), "context.json"), "utf8"));
+      assert.ok(context.resources.some((entry) => entry.path === "AGENTS.md" && entry.target === "CLAUDE.md"));
+      assert.equal(await readlink(join(project, "AGENTS.md")), "CLAUDE.md");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  test("an AGENTS.md link the copy would skip is left out of the prompt", async () => {
+    const project = await makeGitProject();
+    try {
+      await writeFile(join(project, ".env"), "TOKEN=synthetic-secret\n");
+      await symlink(".env", join(project, "AGENTS.md"));
+      await git(project, "add", "AGENTS.md");
+      const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+      assert.equal(result.outcome, "completed");
+      assert.deepEqual(result.workspaceCopy.skippedSymlinks, [{ path: "AGENTS.md", reason: "target_not_copied" }]);
+      assert.doesNotMatch(await readFile(result.artifactPaths.prompt, "utf8"), /synthetic-secret/u);
+      await rm(join(project, "AGENTS.md"));
+      await writeFile(join(project, ".gitignore"), "data/\n*.log\nCLAUDE.local.md\n");
+      await writeFile(join(project, "CLAUDE.local.md"), "ignored-local-note\n");
+      await symlink("CLAUDE.local.md", join(project, "AGENTS.md"));
+      await symlink("loop/x", join(project, "loop"));
+      await git(project, "add", "AGENTS.md", "loop");
+      const ignored = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, "allowed") });
+      assert.equal(ignored.outcome, "completed");
+      assert.deepEqual(ignored.workspaceCopy.skippedSymlinks, [{ path: "AGENTS.md", reason: "target_not_copied" }, { path: "loop", reason: "dangling" }]);
+      assert.doesNotMatch(await readFile(ignored.artifactPaths.prompt, "utf8"), /ignored-local-note/u);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  for (const [action, change] of [["link-retarget", "modified"], ["link-delete", "deleted"], ["link-retype", "type_changed"]]) {
+    test(`a candidate that ${change === "modified" ? "retargets" : change === "deleted" ? "deletes" : "retypes"} a copied symlink is a scope violation`, async () => {
+      const project = await makeAgentsLinkProject();
+      try {
+        const result = await runWorker({ projectRoot: project, packet: packet(), worker: worker(), runtime: runtime(undefined, action) });
+        assert.equal(result.scopeViolations.length, 1);
+        assert.equal(result.scopeViolations[0].path, "AGENTS.md");
+        assert.equal(result.scopeViolations[0].change, change);
+        assert.equal(await readlink(join(project, "AGENTS.md")), "CLAUDE.md");
+      } finally {
+        await rm(project, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("an allowed or protected path that is or runs through a symlink is refused before inference", async () => {
+    const project = await makeAgentsLinkProject();
+    try {
+      await symlink("src", join(project, "src-link"));
+      await git(project, "add", "src-link");
+      for (const [label, candidate] of [
+        ["Allowed", { ...packet(["src/allowed.txt", "AGENTS.md"]) }],
+        ["Allowed", { ...packet(["src-link/new.txt"]) }],
+        ["Protected", { ...packet(), protectedPaths: ["AGENTS.md"] }],
+      ]) {
+        await assert.rejects(
+          runWorker({ projectRoot: project, packet: candidate, worker: worker(), runtime: runtime(undefined, "allowed") }),
+          (error) => error.code === "WORKSPACE_SYMLINK_UNSUPPORTED" && error.message.startsWith(`${label} path is or runs through a symlink`),
+        );
+      }
+      const manifest = JSON.stringify({ schemaVersion: 1, facts: [], resources: [{ path: "AGENTS.md", startLine: 1, endLine: 1, purpose: "Linked rules." }] });
+      await assert.rejects(
+        runWorker({
+          projectRoot: project,
+          packet: { ...packet(), context: { path: ".tinysdd/tasks/ctx.json", text: manifest, sha256: createHash("sha256").update(manifest).digest("hex") } },
+          worker: worker(),
+          runtime: runtime(undefined, "allowed"),
+        }),
+        { code: "WORKSPACE_SYMLINK_UNSUPPORTED" },
+      );
+      await assert.rejects(
+        runWorker({ projectRoot: project, packet: { ...packet(), preparation: [{ path: "AGENTS.md", exists: true }] }, worker: worker(), runtime: runtime(undefined, "allowed") }),
+        { code: "WORKSPACE_SYMLINK_UNSUPPORTED" },
+      );
+      const runs = await readdir(join(project, ".tinysdd", "runs")).catch(() => []);
+      for (const run of runs) await assert.rejects(stat(join(project, ".tinysdd", "runs", run, "stdout.jsonl")), { code: "ENOENT" });
+    } finally {
+      await rm(project, { recursive: true, force: true });
     }
   });
 
