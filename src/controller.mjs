@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { constants as fsConstants } from 'node:fs';
-import { chmod, lstat, open, readFile, readdir, rmdir, unlink } from 'node:fs/promises';
+import { chmod, lstat, open, readFile, readdir, readlink, rmdir, unlink } from 'node:fs/promises';
 import {
   assertInternalPath,
   assertPlainObject,
@@ -1389,7 +1389,7 @@ async function snapshotRunWorkspace(root, runId, workspace) {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       const absolute = join(current, entry.name);
       const info = await lstat(absolute);
-      if (info.isSymbolicLink()) snapshot[path] = { kind: 'symlink', sha256: null, size: null };
+      if (info.isSymbolicLink()) snapshot[path] = { kind: 'symlink', sha256: null, size: null, target: await readlink(absolute) };
       else if (info.isDirectory()) {
         snapshot[path] = { kind: 'directory', sha256: null, size: null };
         await visit(absolute, path);

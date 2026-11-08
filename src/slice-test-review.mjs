@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
-import { lstat, open, readFile, appendFile, readdir } from 'node:fs/promises';
+import { lstat, open, readFile, appendFile, readdir, readlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -652,7 +652,7 @@ async function snapshotRunWorkspace(root, runId, workspace) {
       let info;
       try { info = await lstat(absolute); } catch { throw reviewError('SLICE_TEST_REVIEW_RUN_INVALID', `run ${runId} ${workspace} cannot retain ${relativePath}`); }
       if (info.isSymbolicLink()) {
-        snapshot[relativePath] = { kind: 'symlink', sha256: null, size: null };
+        snapshot[relativePath] = { kind: 'symlink', sha256: null, size: null, target: await readlink(absolute) };
       } else if (info.isDirectory()) {
         snapshot[relativePath] = { kind: 'directory', sha256: null, size: null };
         await visit(absolute, relativePath);

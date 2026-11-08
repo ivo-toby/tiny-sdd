@@ -1765,6 +1765,63 @@ test('apply writes created and modified files, records the run and leaves the ta
   }
 });
 
+// A worker run of a project with a tracked AGENTS.md -> CLAUDE.md link retains
+// the link in both workspaces and records its target in both snapshots (#180).
+async function linkRun(root, afterTarget, snapshotTarget = afterTarget) {
+  const directory = await fakeRun(root, RUN_ONE, {
+    before: { 'CLAUDE.md': 'rules\n', 'src/b.ts': 'old b\n' },
+    after: { 'CLAUDE.md': 'rules\n', 'src/b.ts': 'new b\n' },
+  });
+  await symlink('CLAUDE.md', join(directory, 'workspace-before', 'AGENTS.md'));
+  await symlink(afterTarget, join(directory, 'workspace-after', 'AGENTS.md'));
+  for (const [name, target] of [['before-snapshot.json', 'CLAUDE.md'], ['after-snapshot.json', snapshotTarget]]) {
+    const snapshot = JSON.parse(await readFile(join(directory, name), 'utf8'));
+    snapshot['AGENTS.md'] = target === undefined
+      ? { kind: 'symlink', sha256: null, size: null }
+      : { kind: 'symlink', sha256: null, size: null, target };
+    await writeFile(join(directory, name), JSON.stringify(snapshot));
+  }
+}
+
+test('apply accepts a run that retains an unchanged project symlink', async () => {
+  const root = await applyProject({ 'CLAUDE.md': 'rules\n', 'src/b.ts': 'old b\n' });
+  try {
+    await symlink('CLAUDE.md', join(root, 'AGENTS.md'));
+    await linkRun(root, 'CLAUDE.md');
+    await apply(root);
+    assert.equal(await readProject(root, 'src/b.ts'), 'new b\n');
+    assert.equal(await readProject(root, 'AGENTS.md'), 'rules\n');
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply finds a retargeted symlink itself, even when the run reports no violation', async () => {
+  const root = await applyProject({ 'CLAUDE.md': 'rules\n', 'src/b.ts': 'old b\n' });
+  try {
+    await linkRun(root, 'src/b.ts');
+    const result = JSON.parse(await readFile(join(root, '.tinysdd', 'runs', RUN_ONE, 'result.json'), 'utf8'));
+    result.changedPaths.push({ path: 'AGENTS.md', change: 'modified', before: { kind: 'symlink', sha256: null, size: null, target: 'CLAUDE.md' }, after: { kind: 'symlink', sha256: null, size: null, target: 'src/b.ts' } });
+    result.fileScope.actualPaths = ['AGENTS.md', 'src/b.ts'];
+    await writeFile(join(root, '.tinysdd', 'runs', RUN_ONE, 'result.json'), JSON.stringify(result));
+    await assert.rejects(apply(root), (error) => error.code === 'RUN_SCOPE_VIOLATION' && error.details.paths.includes('AGENTS.md'));
+    await assertNothingApplied(root, { 'src/b.ts': 'old b\n' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('apply refuses a retained symlink snapshot that hides the link target', async () => {
+  const root = await applyProject({ 'CLAUDE.md': 'rules\n', 'src/b.ts': 'old b\n' });
+  try {
+    await linkRun(root, 'src/b.ts', undefined);
+    await assert.rejects(apply(root), { code: 'RUN_MALFORMED' });
+    await assertNothingApplied(root, { 'src/b.ts': 'old b\n' });
+  } finally {
+    await cleanup(root);
+  }
+});
+
 test('apply refuses a run retained from before brief re-approval', async () => {
   const root = await applyProject({});
   try {

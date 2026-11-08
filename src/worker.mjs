@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -14,7 +14,7 @@ import { CHECK_TOOLS, createCheckChannel, identifyDependencyMounts } from "./che
 import { compileContext, contextSizeMetrics } from "./context-compiler.mjs";
 import { buildMacosSandboxProfile } from "./macos-sandbox.mjs";
 import { startInferenceRelay } from "./inference-relay.mjs";
-import { stableStringify as fsStableStringify } from "./fs-utils.mjs";
+import { containedSymlinkTarget, stableStringify as fsStableStringify } from "./fs-utils.mjs";
 import { DEFAULT_RUNTIME_SCOPE, classifyFileScopeChange, detectFilesystemAliases, observedPathError, preparationPaths, unicodeCaseFold } from "./file-scope.mjs";
 import {
   COMPACTION_ANCHOR_ENV,
@@ -38,6 +38,7 @@ const SAFE_TASK_ID = /^[a-z0-9][a-z0-9_-]{0,127}$/u;
 const SAFE_RUN_ID = /^worker-[0-9A-Za-z-]+$/u;
 // A run cut off by a limit keeps a verifiable candidate; apply still requires a completed head.
 const REVISION_BASE_OUTCOMES = new Set(["completed", "timeout", "tool_limit"]);
+const SYMLINK_UNSUPPORTED = "WORKSPACE_SYMLINK_UNSUPPORTED";
 const CONTROLLER_TASKS_PREFIX = ".tinysdd/tasks/";
 const CONTROLLER_REVIEWS_PREFIX = ".tinysdd/reviews/";
 const PROJECT_SECRET_NAME = /^(?:\.env(?:\.(?!(?:example|sample|template|dist)$).*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
@@ -138,13 +139,32 @@ async function ensureProjectPath(root, relPath, { allowMissing = false, regular 
       if (allowMissing && error?.code === "ENOENT") return { path: target, rel: safe, exists: false };
       fail(`Cannot inspect project path ${safe}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (info.isSymbolicLink()) fail(`Symlinked project path is not allowed: ${safe}`);
+    if (info.isSymbolicLink()) failSymlink(`Symlinked project path is not allowed: ${safe}`);
     if (index < pieces.length - 1 && !info.isDirectory()) fail(`Project path parent is not a directory: ${safe}`);
   }
   const canonical = await realpath(target);
   if (!isInside(root, canonical)) fail(`Project path escapes projectRoot: ${safe}`);
   if (regular && !(await lstat(target)).isFile()) fail(`Project resource is not a regular file: ${safe}`);
   return { path: target, rel: safe, exists: true };
+}
+
+function failSymlink(message) {
+  throw new WorkerError(message, { code: SYMLINK_UNSUPPORTED });
+}
+
+async function symlinkComponent(root, relPath) {
+  const pieces = relPath.split("/");
+  for (let index = 1; index <= pieces.length; index += 1) {
+    let info;
+    try {
+      info = await lstat(join(root, ...pieces.slice(0, index)));
+    } catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
+      throw error;
+    }
+    if (info.isSymbolicLink()) return pieces.slice(0, index).join("/");
+  }
+  return null;
 }
 
 function excludedName(name, directory) {
@@ -204,15 +224,52 @@ async function gitCopyList(sourceRoot) {
  * --others --exclude-standard`, so gitignored runtime state never reaches the
  * worker while new untracked source does.  Everything else (no Git, Git
  * unavailable, or an immutable baseline snapshot) uses the recursive walk.
+ *
+ * A symlink is recreated only when its relative target is a regular file that
+ * this copy also contains, so a link can never expose an excluded, ignored or
+ * outside file. Other symlinks are skipped and reported.
  */
 export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = true, maxFiles = MAX_COPY_FILES, maxBytes = MAX_COPY_BYTES } = {}) {
   const counters = { files: 0, bytes: 0 };
   const copied = new Set();
+  const links = [];
   const count = (size) => {
     counters.files += 1;
     counters.bytes += size;
-    if (counters.files > maxFiles || counters.bytes > maxBytes) fail("Project copy exceeds bounded worker input size");
+    if (counters.files + links.length > maxFiles || counters.bytes > maxBytes) fail("Project copy exceeds bounded worker input size");
   };
+  const deferLink = (rel, sourcePath, destinationPath) => {
+    links.push({ rel, sourcePath, destinationPath });
+    if (counters.files + links.length > maxFiles) fail("Project copy exceeds bounded worker input size");
+  };
+  async function finishLinks() {
+    const symlinks = new Set();
+    const skippedSymlinks = [];
+    for (const link of links) {
+      const target = await readlink(link.sourcePath);
+      const resolved = containedSymlinkTarget(link.rel, target);
+      let reason = null;
+      if (resolved === null) reason = "outside_project";
+      else if (!copied.has(resolved)) {
+        reason = "target_not_copied";
+        try {
+          await lstat(join(sourceRoot, ...resolved.split("/")));
+        } catch (error) {
+          if (["ENOENT", "ENOTDIR", "ELOOP"].includes(error?.code)) reason = "dangling";
+          else throw error;
+        }
+      }
+      if (reason) {
+        skippedSymlinks.push({ path: link.rel, reason });
+        continue;
+      }
+      await mkdir(dirname(link.destinationPath), { recursive: true, mode: 0o700 });
+      await symlink(target, link.destinationPath);
+      symlinks.add(link.rel);
+    }
+    skippedSymlinks.sort((left, right) => left.path.localeCompare(right.path));
+    return { symlinks, skippedSymlinks };
+  }
   async function visit(source, destination, relativePath) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
@@ -222,7 +279,10 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
       const sourcePath = join(source, entry.name);
       const destinationPath = join(destination, entry.name);
       const info = await lstat(sourcePath);
-      if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${rel}`);
+      if (info.isSymbolicLink()) {
+        deferLink(rel, sourcePath, destinationPath);
+        continue;
+      }
       if (info.isDirectory()) {
         await visit(sourcePath, destinationPath, rel);
         continue;
@@ -236,7 +296,7 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
   const listing = useGit ? await gitCopyList(sourceRoot) : { paths: null, reason: "immutable baseline snapshot" };
   if (!listing.paths) {
     await visit(sourceRoot, destinationRoot, "");
-    return { mode: "walk", fallbackReason: listing.reason, files: counters.files, bytes: counters.bytes, missingSkipped: 0, copied };
+    return { mode: "walk", fallbackReason: listing.reason, files: counters.files, bytes: counters.bytes, missingSkipped: 0, copied, ...(await finishLinks()) };
   }
   await mkdir(destinationRoot, { recursive: true, mode: 0o700 });
   const checkedDirectories = new Set();
@@ -261,7 +321,7 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
         parentMissing = true;
         break;
       }
-      if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${directory}`);
+      if (info.isSymbolicLink()) failSymlink(`Source path runs through a symlinked directory; refusing to copy ${directory}`);
       if (!info.isDirectory()) fail(`Source contains unsupported filesystem entry: ${directory}`);
       checkedDirectories.add(directory);
     }
@@ -279,8 +339,11 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
       missingSkipped += 1;
       continue;
     }
-    if (info.isSymbolicLink()) fail(`Source contains a symlink; refusing to copy ${rel}`);
     const destinationPath = join(destinationRoot, ...parts);
+    if (info.isSymbolicLink()) {
+      deferLink(rel, sourcePath, destinationPath);
+      continue;
+    }
     if (info.isDirectory()) {
       // A gitlink (submodule) is listed as a directory; copy its working tree
       // with the walk rules rather than dropping source the task may need.
@@ -294,10 +357,24 @@ export async function copyProjectTree(sourceRoot, destinationRoot, { useGit = tr
     copied.add(rel);
   }
   if (copied.size === 0) fail("git ls-files listed no copyable files under projectRoot; refusing an empty worker workspace (is the project directory gitignored by an enclosing repository?)");
-  return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied };
+  return { mode: "git-ls-files", fallbackReason: null, files: counters.files, bytes: counters.bytes, missingSkipped, copied, ...(await finishLinks()) };
+}
+
+async function assertNoSymlinkBoundaries(root, boundaries) {
+  for (const [label, paths] of boundaries) {
+    for (const path of paths) {
+      if (await symlinkComponent(root, path) !== null) failSymlink(`${label} path is or runs through a symlink, which the worker cannot scope: ${path}`);
+    }
+  }
 }
 
 export async function assertCopiedInputs(sourceRoot, copy, allowedPaths, protectedPaths, preparation, compiledContext) {
+  await assertNoSymlinkBoundaries(sourceRoot, [
+    ["Allowed", allowedPaths],
+    ["Protected", protectedPaths],
+    ["Preparation", preparation.map((entry) => entry.path)],
+    ["Context resource", (compiledContext?.resources ?? []).map((resource) => resource.path)],
+  ]);
   for (const path of protectedPaths) {
     if (!copy.copied.has(path)) fail(`Protected path is not part of the worker copy (missing, gitignored or excluded): ${path}`);
   }
@@ -565,43 +642,56 @@ async function overlayRevisionBase(base, workspace) {
         fail(`Base run is missing changed file ${path}: ${error instanceof Error ? error.message : String(error)}`);
       }
       if (info.isSymbolicLink() || !info.isFile()) fail(`Base run changed path is not a regular file: ${path}`);
+      if (await symlinkComponent(workspace, path) !== null) failSymlink(`Base run changed path is a symlink in the worker copy: ${path}`);
       await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
       await copyFile(source, destination);
     }
   }
 }
 
+// Returns false for a link whose target could leave the tree; such a link is
+// never recreated in retained evidence.
+async function copyContainedSymlink(sourcePath, destinationPath, relativePath) {
+  const target = await readlink(sourcePath);
+  if (containedSymlinkTarget(relativePath, target) === null) return false;
+  await symlink(target, destinationPath);
+  return true;
+}
+
 export async function copyRegularTree(sourceRoot, destinationRoot) {
-  async function visit(source, destination) {
+  async function visit(source, destination, relativePath) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
     for (const entry of entries) {
+      const rel = relativePath ? `${relativePath}/${entry.name}` : entry.name;
       const sourcePath = join(source, entry.name);
       const destinationPath = join(destination, entry.name);
       const info = await lstat(sourcePath);
-      if (info.isSymbolicLink()) fail(`Disposable workspace unexpectedly contains a symlink: ${entry.name}`);
-      if (info.isDirectory()) await visit(sourcePath, destinationPath);
+      if (info.isSymbolicLink()) {
+        if (!(await copyContainedSymlink(sourcePath, destinationPath, rel))) fail(`Disposable workspace contains a symlink that leaves it: ${rel}`);
+      } else if (info.isDirectory()) await visit(sourcePath, destinationPath, rel);
       else if (info.isFile()) await copyFile(sourcePath, destinationPath);
       else fail(`Disposable workspace contains unsupported entry: ${entry.name}`);
     }
   }
-  await visit(sourceRoot, destinationRoot);
+  await visit(sourceRoot, destinationRoot, "");
 }
 
 export async function copySnapshotTree(sourceRoot, destinationRoot) {
-  async function visit(source, destination) {
+  async function visit(source, destination, relativePath) {
     const entries = await readdir(source, { withFileTypes: true });
     await mkdir(destination, { recursive: true, mode: 0o700 });
     for (const entry of entries) {
+      const rel = relativePath ? `${relativePath}/${entry.name}` : entry.name;
       const sourcePath = join(source, entry.name);
       const destinationPath = join(destination, entry.name);
       const info = await lstat(sourcePath);
-      if (info.isSymbolicLink()) continue;
-      if (info.isDirectory()) await visit(sourcePath, destinationPath);
+      if (info.isSymbolicLink()) await copyContainedSymlink(sourcePath, destinationPath, rel);
+      else if (info.isDirectory()) await visit(sourcePath, destinationPath, rel);
       else if (info.isFile()) await copyFile(sourcePath, destinationPath);
     }
   }
-  await visit(sourceRoot, destinationRoot);
+  await visit(sourceRoot, destinationRoot, "");
 }
 
 async function hashFile(path, maxBytes = Number.POSITIVE_INFINITY) {
@@ -672,7 +762,8 @@ export async function snapshotTree(root) {
       const path = join(current, entry.name);
       const info = await lstat(path);
       if (info.isSymbolicLink()) {
-        output[rel] = { kind: "symlink", sha256: null, size: null };
+        // The target makes a retargeted link a visible change.
+        output[rel] = { kind: "symlink", sha256: null, size: null, target: await readlink(path) };
       } else if (info.isDirectory()) {
         output[rel] = { kind: "directory", sha256: null, size: null };
         await visit(path, rel);
@@ -727,7 +818,35 @@ async function readTextResource(projectRoot, pathValue, label, options = {}) {
   return { path: resource.rel, text, sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) };
 }
 
-async function findApplicableAgents(projectRoot, relevantPaths) {
+// A symlinked AGENTS.md (AGENTS.md -> CLAUDE.md) is read through only under the
+// worker copy's rule: a relative target inside the project that is a regular,
+// non-excluded file reached without another symlink that the copy lists.
+// Anything else is skipped.
+async function readAgentsResource(projectRoot, path, listed) {
+  if (await symlinkComponent(projectRoot, path) !== path) return readTextResource(projectRoot, path, "AGENTS.md");
+  const resolved = containedSymlinkTarget(path, await readlink(join(projectRoot, ...path.split("/"))));
+  if (resolved === null) return null;
+  const parts = resolved.split("/");
+  if (parts.some((part, index) => excludedName(part, index < parts.length - 1))) return null;
+  if (await symlinkComponent(projectRoot, resolved) !== null) return null;
+  if (!(await listed(resolved))) return null;
+  try {
+    if (!(await lstat(join(projectRoot, ...parts))).isFile()) return null;
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
+    throw error;
+  }
+  return { ...(await readTextResource(projectRoot, resolved, "AGENTS.md")), path, target: resolved };
+}
+
+async function findApplicableAgents(projectRoot, relevantPaths, { useGit = true } = {}) {
+  let listing;
+  const listed = async (path) => {
+    listing ??= useGit ? await gitCopyList(projectRoot) : { paths: null };
+    if (listing.paths === null) return true;
+    listing.set ??= new Set(listing.paths);
+    return listing.set.has(path);
+  };
   const paths = new Set(["AGENTS.md"]);
   for (const relativePath of relevantPaths) {
     const pieces = relativePath.split("/");
@@ -736,11 +855,12 @@ async function findApplicableAgents(projectRoot, relevantPaths) {
   const resources = [];
   for (const path of [...paths].sort()) {
     try {
-      resources.push(await readTextResource(projectRoot, path, "AGENTS.md"));
+      const resource = await readAgentsResource(projectRoot, path, listed);
+      if (resource) resources.push(resource);
     } catch (error) {
       if (error?.code === "ENOENT" || /Cannot inspect project path/.test(String(error?.message))) continue;
       if (error instanceof WorkerError && /Cannot inspect project path/.test(error.message)) continue;
-      // Missing optional instructions are fine; symlinked instructions are not.
+      // Missing optional instructions are fine.
       if (error?.cause?.code === "ENOENT") continue;
       throw error;
     }
@@ -1602,6 +1722,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
   }
   const limits = runner.validateWorker(effectiveWorker);
   const selectedAllowed = normalizedPacket.allowedPaths.map((path) => projectRelative(path, "packet allowed path"));
+  await assertNoSymlinkBoundaries(sourceRoot, [["Allowed", selectedAllowed], ["Protected", normalizedPacket.protectedPaths]]);
   const frozenBaseline = await resolveFrozenBaseline(sourceRoot, baselineRunId, normalizedPacket.taskId);
   const workerSelection = workerSelectionRecord(selection, await resolveEscalationSource(sourceRoot, escalatedFrom, normalizedPacket.taskId));
   const executionSource = frozenBaseline?.root ?? sourceRoot;
@@ -1647,7 +1768,9 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
       if (!matchedContextDigest) fail("Context compiler rejected packet: selected source no longer matches the approved context digest");
     }
   } catch (error) {
-    fail(`Context compiler rejected packet: ${error?.message ?? String(error)}`);
+    const message = `Context compiler rejected packet: ${error?.message ?? String(error)}`;
+    if (error?.code === "SYMLINK_PATH" || error?.details?.cause === "SYMLINK_PATH") failSymlink(message);
+    fail(message);
   }
   const skillPaths = validateResourceList(worker.skills, "worker.skills");
   const instructionPaths = validateResourceList(worker.instructions, "worker.instructions");
@@ -1657,7 +1780,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
     ...instructionPaths,
     ...(brief.resource?.path?.startsWith("<") ? [] : [brief.resource?.path].filter((path) => path && !isControllerArtifactPath(path))),
     ...(review?.evidence.path?.startsWith("<") ? [] : [review?.evidence.path].filter((path) => path && !isControllerArtifactPath(path))),
-  ]);
+  ], { useGit: !frozenBaseline });
   const skills = [];
   for (const path of skillPaths) skills.push(await readTextResource(sourceRoot, path, "worker skill"));
   const instructions = [];
@@ -1890,7 +2013,7 @@ export async function runWorker({ projectRoot, packet, worker, profile, runtime,
         ordinaryCreateModify: true,
         deletions: false,
       },
-      workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped },
+      workspaceCopy: { mode: workspaceCopy.mode, ...(workspaceCopy.fallbackReason ? { fallbackReason: workspaceCopy.fallbackReason } : {}), files: workspaceCopy.files, bytes: workspaceCopy.bytes, missingSkipped: workspaceCopy.missingSkipped, symlinks: workspaceCopy.symlinks.size, skippedSymlinks: workspaceCopy.skippedSymlinks },
       outcome,
       ...(outcome !== "completed" ? {
         candidateState: {

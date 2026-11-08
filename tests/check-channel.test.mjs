@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -87,6 +87,52 @@ test('check channel runs a declared request and records checked bytes and live m
     assert.equal(log.length, 1);
     assert.equal(log[0].outcome, 'passed');
     assert.equal(log[0].outputSha256, createHash('sha256').update('ok\n').digest('hex'));
+  } finally {
+    await channel.cleanup();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('check channel freezes a contained candidate symlink and refuses one that leaves the candidate (#180)', async () => {
+  const root = await mkdtemp(join(canonicalTmpdir, 'tinysdd-channel-link-'));
+  const workspace = join(root, 'workspace');
+  const artifactDir = join(root, 'artifact');
+  await mkdir(join(workspace, 'src'), { recursive: true });
+  await mkdir(artifactDir);
+  await writeFile(join(workspace, 'src', 'allowed.txt'), 'before\n');
+  await writeFile(join(workspace, 'CLAUDE.md'), 'rules\n');
+  await symlink('CLAUDE.md', join(workspace, 'AGENTS.md'));
+  const seen = [];
+  const channel = await createCheckChannel({
+    manifest: { schemaVersion: 1, dependencyMounts: [], checks: [{ id: 'unit', argv: ['node', '-e', ''], timeoutMs: 1000 }] },
+    sourceRoot: root,
+    workspace,
+    artifactDir,
+    tempRoot: canonicalTmpdir,
+    allowedPaths: ['src/allowed.txt'],
+    maxCheckRuns: 4,
+    nodeRoot: root,
+    runner: async ({ candidateDir }) => {
+      seen.push(await readlink(join(candidateDir, 'AGENTS.md')));
+      return { exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: { text: '', tail: '', totalBytes: 0, truncated: false } };
+    },
+  });
+  try {
+    channel.start(5000);
+    await writeFile(join(channel.requests, `${'b'.repeat(64)}.json`), JSON.stringify({ checkId: 'unit' }));
+    channel.poll();
+    const response = await waitFor(join(channel.responses, `${'b'.repeat(64)}.json`));
+    assert.equal(response.error, undefined);
+    assert.deepEqual(seen, ['CLAUDE.md']);
+    assert.deepEqual(channel.runs[0].candidateEntries['AGENTS.md'], { kind: 'symlink', target: 'CLAUDE.md' });
+    await rm(join(workspace, 'AGENTS.md'));
+    await symlink('../outside.txt', join(workspace, 'AGENTS.md'));
+    await writeFile(join(channel.requests, `${'c'.repeat(64)}.json`), JSON.stringify({ checkId: 'unit' }));
+    channel.poll();
+    const refused = await waitFor(join(channel.responses, `${'c'.repeat(64)}.json`));
+    assert.equal(refused.error.code, 'CHECK_INVALID');
+    assert.match(refused.error.message, /symlink that leaves the candidate/u);
+    assert.equal(seen.length, 1);
   } finally {
     await channel.cleanup();
     await rm(root, { recursive: true, force: true });

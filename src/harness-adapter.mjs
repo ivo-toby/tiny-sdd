@@ -785,6 +785,8 @@ export async function beginHarnessCapture({ projectRoot, bundleDir, harness, mod
     files: copy.files,
     bytes: copy.bytes,
     missingSkipped: copy.missingSkipped,
+    symlinks: copy.symlinks.size,
+    skippedSymlinks: copy.skippedSymlinks,
   };
   const retainedBundlePath = await retainBundle(bundle, artifactDir);
   const sessionId = randomUUID();
