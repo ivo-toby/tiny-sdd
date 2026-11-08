@@ -26,7 +26,7 @@ export const RUNTIME_SCOPE = DEFAULT_RUNTIME_SCOPE;
 
 // Keep these exclusions aligned with the worker copy boundary. Artifact
 // validation must reject the names before it opens a referenced file.
-const PROJECT_SECRET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
+const PROJECT_SECRET_NAME = /^(?:\.env(?:\.(?!(?:example|sample|template|dist)$).*)?|\.npmrc|\.pypirc|credentials?(?:\..*)?|secrets?(?:\..*)?|tokens?(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/iu;
 const PROJECT_SECRET_DIR = /^(?:\.aws|\.azure|\.gcloud|\.ssh|secrets?|credentials?)$/iu;
 
 const SLUG = /^[a-z0-9][a-z0-9_-]*$/u;

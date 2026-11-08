@@ -2034,6 +2034,20 @@ describe("Pi worker capture and scope", () => {
     }
   });
 
+  test("copy keeps .env.example-style templates and still excludes real env files", async () => {
+    const project = await mkdtemp(join(canonicalTmpdir, "tinysdd-env-src-"));
+    const destination = await mkdtemp(join(canonicalTmpdir, "tinysdd-env-dst-"));
+    try {
+      const names = [".env", ".env.local", ".env.production", ".env.example", ".env.SAMPLE", ".env.template", ".env.dist", "keep.txt"];
+      for (const name of names) await writeFile(join(project, name), "x\n");
+      await copyProjectTree(project, destination, { useGit: false });
+      assert.deepEqual((await readdir(destination)).sort(), [".env.SAMPLE", ".env.dist", ".env.example", ".env.template", "keep.txt"]);
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(destination, { recursive: true, force: true });
+    }
+  });
+
   test("git copy keeps symlink rejection, skips deleted tracked files and enforces limits", async () => {
     const project = await makeGitProject();
     const destinations = [];
