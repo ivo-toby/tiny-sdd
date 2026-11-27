@@ -57,7 +57,7 @@ test('unconfigured limits remain explicit defaults and low caps alone never crea
   await assert.rejects(inspectEffectiveModelSettings({ ...input, observedReasoningTokens: -1 }), { code: 'MODEL_SETTINGS_INVALID' });
 });
 
-test('Pi 1.4.0 OpenAI off mapping sends no effort when compatibility disables it', async (t) => {
+test('Pi 1.5.2 OpenAI off mapping sends no effort when compatibility disables it', async (t) => {
   const input = await fixture(t, { reasoning: true, maxTokens: 16384, thinkingLevelMap: { off: 'none' }, compat: { thinkingFormat: 'openai', supportsReasoningEffort: false } });
   const report = await inspectEffectiveModelSettings(input);
   assert.equal(report.settings.effectiveThinkingControl, 'not-sent');
@@ -66,7 +66,7 @@ test('Pi 1.4.0 OpenAI off mapping sends no effort when compatibility disables it
   assert.equal(report.findings[0].code, 'THINKING_CONTROL_MISMATCH');
 });
 
-test('Pi 1.4.0 clamps unsupported off before classifying DeepSeek control and its budget', async (t) => {
+test('Pi 1.5.2 clamps unsupported off before classifying DeepSeek control and its budget', async (t) => {
   const input = await fixture(t, { reasoning: true, maxTokens: 16384, thinkingLevelMap: { off: null }, compat: { thinkingFormat: 'deepseek', thinkingTokenBudgetField: 'thinking_budget_tokens' } });
   const report = await inspectEffectiveModelSettings(input);
   assert.equal(report.settings.effectiveThinkingControl, 'sent');
@@ -78,7 +78,7 @@ test('Pi 1.4.0 clamps unsupported off before classifying DeepSeek control and it
   assert.throws(() => assertEffectiveModelSettingsConfirmed(report, { settingsDigest: report.settingsDigest }), { code: 'MODEL_SETTINGS_FINDING_ACKNOWLEDGEMENT_REQUIRED' });
 });
 
-test('Pi 1.4.0 keeps supported medium unchanged and retains the complete level map', async (t) => {
+test('Pi 1.5.2 keeps supported medium unchanged and retains the complete level map', async (t) => {
   const input = await fixture(t, { reasoning: true, maxTokens: 16384, contextWindow: 256000, thinkingLevelMap: { minimal: 'low', low: 'low', medium: 'medium', high: 'xhigh', xhigh: 'xhigh', max: 'xhigh' } });
   const report = await inspectEffectiveModelSettings({ ...input, profile: { runtime: { thinking: 'medium' } } });
   assert.equal(report.settings.requestedThinking, 'medium');
