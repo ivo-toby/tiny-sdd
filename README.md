@@ -410,3 +410,26 @@ and [early CLI pilot](docs/cli-pilot-results-2026-09-06.md). Their outcomes belo
 to those exact fixtures, model configurations and review conditions. Current
 benchmark work must retain unsuccessful runs and distinguish fixture failures
 from model failures.
+
+## Benchmark results
+
+TinySDD measures small models on the [Aider polyglot benchmark](docs/polyglot-benchmark-results-2026-10-28.md):
+207 oracle-checked Exercism exercises in six languages, one attempt plus one revision with the test output, tests in an offline container. pass@1 is the first attempt. pass@2 includes the revision. Each score belongs to the exact configuration in its registry profile, and noise is about ±3 points per run.
+
+| Model (host) | pass@1 | pass@2 | min/task |
+| --- | ---: | ---: | ---: |
+| qwen38nextflash (randal) | 86.5% | 97.1% | 2.0 |
+| muselim (Titan, 20 min timeout) | 84.5% | 93.7% | 7.9 |
+| inkling2sq20 (Titan, Pi 1.5.2) | 82.6% | 95.2% | 2.4 |
+| gemma26lim (Titan, 32k tokens, 20 min) | 78.3% | 94.2% | 9.0 |
+| qwen38pi (Titan) | 70.0% | 86.5% | 1.6 |
+| qwen36mt32 (Titan, 32k tokens) | 66.7% | 87.0% | 2.7 |
+| north (Titan) | 52.7% | 74.9% | 9.3 |
+
+What the measurements show:
+- Generic instruction candidates did not help. Seven candidates on five models were confirmed on held-out exercises, and none was kept.
+- Looser limits helped more. Higher token limits and longer timeouts raised pass@1 by 2.5 to 4.8 points on every model tried.
+- The revision round is the strongest mechanism. It adds 9 to 22 points from pass@1 to pass@2.
+- A fast worker with escalation to a strong worker solves more than the strong worker alone in about half the time (simulated, issue #164).
+
+The full table, the method, the caveats and the cost are in the [results report](docs/polyglot-benchmark-results-2026-10-28.md). Exercism exercises are public and probably in the training data, so absolute scores are inflated and the ranking carries more information than the numbers. The inkling2sq20 run used a newer Pi version than the other rows, so it is not paired with them. The benchmark code is in `bench/polyglot` and is not shipped in the npm package.

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "titan-inkling2-mini-sq20-128k-v1",
+  "instructions": "",
+  "runtime": {
+    "thinking": "medium",
+    "reasoning": true
+  },
+  "status": "baseline",
+  "model": {
+    "route": "titan/strata/inkling-2-mini-sq20-128k",
+    "contextWindow": 128000,
+    "parallel": 1
+  },
+  "limits": {
+    "timeoutMs": 600000
+  },
+  "responseBudget": {
+    "maxTokens": 32768
+  },
+  "benchmarks": [
+    {
+      "suite": "aider-polyglot@7e0611e",
+      "harness": "tinysdd bench/polyglot",
+      "date": "2026-11-28",
+      "variant": "baseline",
+      "split": "all",
+      "run": "main",
+      "settings": {
+        "route": "titan/strata/inkling-2-mini-sq20-128k",
+        "contextWindow": 128000,
+        "maxTokens": 32768,
+        "thinking": "medium",
+        "timeoutMs": 600000,
+        "parallel": 1
+      },
+      "exercises": 207,
+      "validExercises": 207,
+      "repeats": 1,
+      "pass1": 0.826,
+      "pass2": 0.952,
+      "minutesPerTask": 2.4,
+      "perLanguage": {
+        "cpp": {
+          "n": 26,
+          "pass1": 0.731,
+          "pass2": 0.885
+        },
+        "go": {
+          "n": 36,
+          "pass1": 0.667,
+          "pass2": 0.972
+        },
+        "java": {
+          "n": 39,
+          "pass1": 0.897,
+          "pass2": 0.974
+        },
+        "javascript": {
+          "n": 48,
+          "pass1": 0.938,
+          "pass2": 1
+        },
+        "python": {
+          "n": 34,
+          "pass1": 0.941,
+          "pass2": 0.971
+        },
+        "rust": {
+          "n": 24,
+          "pass1": 0.667,
+          "pass2": 0.833
+        }
+      }
+    }
+  ]
+}

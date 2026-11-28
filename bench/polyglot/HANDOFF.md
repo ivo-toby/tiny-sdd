@@ -1,4 +1,4 @@
-# Polyglot benchmark: handoff (2026-10-24)
+# Polyglot benchmark: handoff (updated 2026-11-28)
 
 This file is everything a new Claude session needs to continue the polyglot
 benchmark on another machine. Read it together with `RUNBOOK.md` (operating
@@ -17,21 +17,60 @@ repeat). Baselines, pass@1 / pass@2 / minutes per task:
 | Model key | Route | pass@1 | pass@2 | min/task |
 |---|---|---|---|---|
 | qwen38nextflash (randal) | randal-mi50/llamacpp/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf | 86.5 | 97.1 | 2.0 |
+| muselim (Glimmer, 20 min timeout) | titan/llamacpp/muse-glimmer-2x64k | 84.5 | 93.7 | 7.9 |
+| inkling2sq20 (2026-11-28, Pi 1.5.2) | titan/strata/inkling-2-mini-sq20-128k | 82.6 | 95.2 | 2.4 |
 | muse (Glimmer) | titan/llamacpp/muse-glimmer-2x64k | 79.7 | 91.8 | 7.8 |
+| gemma26lim (32k tokens, 20 min timeout) | titan/llamacpp/gemma4-26b-a4b-2x64k | 78.3 | 94.2 | 9.0 |
 | gemma26 | titan/llamacpp/gemma4-26b-a4b-2x64k | 75.8 | 88.4 | 6.0 |
 | qwen38pi | titan/llamacpp/qwen3.8-pi-q4km-128k | 70.0 | 86.5 | 1.6 |
 | flint (partial, 188/207, no Rust) | titan/llamacpp/flint-ud-q3-256k | 69.7 | 87.8 | 6.2 |
 | qwen38q3 | titan/llamacpp/qwen3.8-q3-2x64k | 69.6 | 84.5 | 3.4 |
 | qwen38q4s | titan/llamacpp/qwen3.8-q4s-2x128k | 69.1 | 87.9 | 2.7 |
+| qwen36mt32 (32k tokens) | titan/llamacpp/qwen3.6-35b-a3b-2x128k | 66.7 | 87.0 | 2.7 |
 | qwen36 | titan/llamacpp/qwen3.6-35b-a3b-2x128k | 63.3 | 81.2 | 2.7 |
 | north | titan/llamacpp/north-mini-code-2x64k | 52.7 | 74.9 | 9.3 |
 
 Noise is about ±3 points per repeat. swift15 and thinkingcap were never run.
+Results measured with different settings or Pi versions are not paired; a
+score belongs to exactly the configuration in its card.
+
+**Settings variants (2026-10-24 to 2026-10-26).** Looser limits helped more than any
+instruction candidate:
+
+| Variant | pass@1 vs original | pass@2 vs original | Effect |
+|---|---|---|---|
+| qwen36mt32 (maxTokens 32768) | 66.7 vs 63.3 | 87.0 vs 81.2 | response token limit failures 16 to 4 |
+| gemma26lim (maxTokens 32768, 20 min) | 78.3 vs 75.8 | 94.2 vs 88.4 | worker timeouts 3 to 0 |
+| muselim (20 min) | 84.5 vs 79.7 | 93.7 vs 91.8 | worker timeouts 37 to 2 |
+
+**inkling2sq20 (2026-11-28).** Route `titan/strata/inkling-2-mini-sq20-128k`,
+contextWindow 128000, maxTokens 32768, thinking medium, parallel 1, 10 minute
+timeout, one repeat.
+- pass@1 by language: cpp 73.1, go 66.7, java 89.7, javascript 93.8, python 94.1, rust 66.7.
+- 197 of 207 exercises passed within two attempts.
+- Harness errors stayed at 10; all of them date from the 2026-10 runs (the CPU limit fix and the muse route hang).
+- Go and Rust are the weak languages.
+- The run used Pi 1.5.2. The other baselines used Pi 1.0.0, and there is no inkling2sq20 run on 1.0.0. Part of the difference can come from the Pi version.
+- The card is `profiles/titan-inkling2-mini-sq20-128k-v1.json`. No instruction candidates were tried for this model.
 
 **Instruction candidates so far (Phase 3):** none was kept.
 - **qwen38nextflash:** 3 rounds, 9 candidates. On holdout, pass@1 improved by +3.8 and +2.9 points. Both were rejected because the improvement was not above 5 points and Go dropped.
 - **qwen38pi:** 2 rounds, 6 candidates. On holdout, pass@1 changed by −1.0 and +1.0 points. Round 3 was stopped by the operator.
 - **Pattern:** small gains on the discovery screen disappeared on holdout.
+- **Opus candidates, 1 round each (2026-10-26 to 2026-10-28), holdout pass@1, none kept:**
+
+| Candidate | Variant | Holdout candidate vs baseline | Reason |
+|---|---|---|---|
+| qwen36-o2-error-cases | qwen36mt32 | 64.4 vs 70.2 (−5.8) | delta not above 5; java and python dropped |
+| gemma26-o2-existing-api | gemma26lim | 76.9 vs 75.0 (+1.9) | delta not above 5 |
+| muse-o2-trace-edges | muselim | 76.0 vs 81.7 (−5.8) | delta not above 5; cpp and go dropped |
+
+  The screen gains were 2 to 4 exercises and vanished again. Three go/ entries
+  of the muse confirm ended 0/0 during a Titan route hang on 2026-10-28; even
+  counted as passes, the delta stays about −2.9, so the decision does not change.
+- **qwen36-o1 (16k maxTokens):** abandoned at 71/104 holdout entries. The operator
+  dropped the 88 open entries on 2026-10-30 because qwen36mt32 replaced that
+  setting. The operator keeps `titan-qwen36-35b-a3b-2x128k-mt32-v1` in the registry.
 
 **Haiku candidates withdrawn (2026-10-24):** `qwen36-r1-*`, `gemma26-r1-*` and `muse-r1-*` were written by Haiku and then withdrawn by the operator.
 - Their profiles stay registered in the run, but never queue or use them.
@@ -47,6 +86,10 @@ Noise is about ±3 points per repeat. swift15 and thinkingcap were never run.
 | muse | 20 | 11 at the 10-minute timeout (about 23 tok/s) |
 
 ## 2. What to do next (operator decisions, 2026-10-24)
+
+Status 2026-11-28: Step 1, Step 1b and Step 2 are done (see section 1 for the
+results). The text below stays as the procedure for new models. The inkling2sq20
+baseline followed the Step 1 recipe (`add-repeat`, `run --models`, `report`, `card`).
 
 Never run two processes against Titan at once; the operator is
 energy-conscious. Run each step with `--models KEY`. Do not use `--host titan`,
@@ -116,7 +159,7 @@ RUNBOOK Phase 3. Haiku may only analyze.
 **What the new machine needs:**
 - Linux with Docker and bubblewrap, or macOS;
 - Node ≥ 22.19;
-- Pi `1.4.0` (`@earendil-works/pi-coding-agent`) beside that Node. The 2026-10 run used Pi `1.0.0`; a run on 1.4.0 needs its own baselines before results are compared;
+- Pi `1.5.2` (`@earendil-works/pi-coding-agent`) beside that Node (the pin in `src/setup.mjs` after #229). The 2026-10 runs used Pi `1.0.0` and the inkling2sq20 run used `1.5.2`; a run on a new Pi version needs its own baselines before results are compared;
 - network access to `https://ai-gateway.cloud.toby.nu/v1` and, for triage only, `api.typesafe.ai`.
 
 **Keys:**
@@ -164,8 +207,8 @@ the new machine:
 > regels van `~/workspace/tinysdd-bench-data/runs/main/NOTES.md`. Controleer
 > daarna de omgeving volgens HANDOFF §3 (pgrep, `status --run main`, Docker
 > image) en meld kort wat je ziet. Start pas runs als ik dat bevestig; begin
-> dan met Stap 1 (qwen36mt32) en daarna Stap 2 (Opus-kandidaten voor qwen36,
-> gemma26, muse) precies zoals in HANDOFF §2. Houd je aan alle regels uit de
+> daarna met de stap die ik noem. Stap 1, 1b en 2 uit HANDOFF §2 zijn klaar
+> (resultaten in §1). Houd je aan alle regels uit de
 > RUNBOOK: nooit holdout-failures of `.meta/` bekijken, nooit twee runs
 > tegelijk op Titan, sleutels alleen via `inject_keys` of de omgeving en nooit
 > tonen. Log elke stap in NOTES.md, doe check-ins elke 30 minuten met de
