@@ -9,7 +9,7 @@ dependency-free `tinysdd` CLI: install it with `npm install --global tinysdd`,
 then run `tinysdd setup` ([guided setup](#guided-setup-for-an-existing-project)).
 [Releases](releases.md) describes how versions are published.
 CI runs the test suite on Node 22.19.0 and Node 24.
-The fixed check client targets Pi 1.4.0, an exact pin (1.0.0 is refused),
+The fixed check client targets Pi 1.5.2, an exact pin (1.0.0 and 1.4.0 are refused),
 which requires Node >=22.19.0; its live sandbox loading and Titan smoke still
 require qualification.
 The first adapter expects Pi in the same installation's `bin` directory as the
@@ -899,7 +899,7 @@ requested by an all-checks call, so size the budget for the number of declared
 checks (a slice declaring `test`, `lint` and `typecheck` spends 3 runs per
 all-checks call). Exhaustion, unknown ids and runner
 unavailability throw tool errors while
-the worker continues. Pi 1.4.0 executes a batch containing `run_checks`
+the worker continues. Pi 1.5.2 executes a batch containing `run_checks`
 sequentially in assistant source order: `[write, run_checks]` observes that
 write; `[run_checks, write]` checks the earlier candidate. The tool does not
 reorder sibling writes. Checks share
@@ -913,7 +913,7 @@ limit exceeded, a special file), the run starts without `run_checks` and
 `runtime.json.runChecks.reason` starts with `dependency mount identity
 unavailable:`.
 
-Pi 1.4.0 silently drops an unregistered name from `--tools`, so the worker
+Pi 1.5.2 silently drops an unregistered name from `--tools`, so the worker
 checks the tool list Pi announces before the first turn against
 `runtime.json.capabilities.tools`. When a contract tool such as `run_checks` is
 missing, the worker stops Pi and the run fails with the warning `Pi did not
@@ -1136,7 +1136,7 @@ benchmarked profile to the shared registry with a PR to the repository's
 `profiles/`.
 
 Before a launch, TinySDD compares the requested thinking level with what Pi will
-actually send for that model entry (rules read from pi-ai 1.4.0; the thinking-budget,
+actually send for that model entry (rules read from pi-ai 1.5.2; the thinking-budget,
 clamp and OpenAI/DeepSeek request code is unchanged from pi-ai 1.0.0). A thinking
 level Pi cannot send, because the entry lacks `reasoning: true`, fails
 `worker start` and `worker run` before any model call. Warnings cover `thinking: "off"`
@@ -1179,7 +1179,7 @@ compaction, add this to the selected profile:
 ```
 
 `reserveTokens` must be at least the worker's effective `maxTokens`; an omitted
-reserve uses that effective value. In Pi 1.4.0 it only sets when automatic
+reserve uses that effective value. In Pi 1.5.2 it only sets when automatic
 compaction starts; summary budgets no longer depend on it, and the deterministic
 path makes no model call. The host writes an immutable approved-packet
 anchor and loads TinySDD's deterministic extension through the Linux bubblewrap
@@ -1202,7 +1202,7 @@ is included separately. Profiles cannot override task permissions. MCP and
 arbitrary runtime extensions are not supported in this first adapter.
 Every worker launch passes `--offline`, `--no-extensions`, `--no-mcp`,
 `--no-skills`, `--no-prompt-templates`, `--no-context-files` and `--no-approve`,
-so Pi 1.4.0 does not discover extensions, MCP servers, skills, prompt templates
+so Pi does not discover extensions, MCP servers, skills, prompt templates
 or context files, and ignores trust-gated project-local configuration. `--no-extensions` also suppresses
 the built-in extensions; `--no-mcp` is an explicit guard against MCP servers.
 Available checks-bearing packets explicitly load only TinySDD’s read-only check
@@ -1339,12 +1339,12 @@ contract; setup enforces confirmation through its skill workflow. Do not
 script automatic digest confirmation. Reinspect and reconfirm settings changes.
 
 The report separates `requestedThinking` from Pi's `effectiveThinking` after
-level clamping. In Pi 1.4.0, `thinkingLevelMap.off: null` can clamp `off` to
+level clamping. In Pi 1.5.2, `thinkingLevelMap.off: null` can clamp `off` to
 `minimal`, enabling reasoning; this requires the named mismatch acknowledgement.
 OpenAI-format `off` needs both a string off mapping and reasoning-effort support
 to send a value. Unsupported non-off requests still fail preflight rather than
 silently accepting a clamped level. `sent` predicts request construction only,
-not server compliance. The basis names checked Pi 1.4.0 clamping/OpenAI/DeepSeek
+not server compliance. The basis names checked pi-ai 1.4.0 clamping/OpenAI/DeepSeek
 rules; other format predictions are legacy and auto-detection stays unverified.
 `maxTokens` is the configured response ceiling. Pi can lower the cap for an
 individual request based on remaining context; this report is not an observation

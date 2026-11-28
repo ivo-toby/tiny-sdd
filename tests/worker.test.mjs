@@ -250,7 +250,7 @@ if (action === "tools") {
   process.exit(0);
 }
 if (action === "loadout-missing" || action === "loadout-complete") {
-  // Pi 1.4.0's system message lists the tools declared to the model.
+  // Pi 1.5.2's system message lists the tools declared to the model.
   const names = action === "loadout-missing" ? ["read", "write", "edit"] : ["read", "write", "edit", "run_checks"];
   console.log(JSON.stringify({ type: "message_start", message: { role: "system", content: "", toolsAdded: names.map((name) => ({ name, description: name })) } }));
   if (action === "loadout-missing") {
@@ -1424,7 +1424,7 @@ describe("Pi worker capture and scope", () => {
       assert.equal(availableArgs.includes("bash"), false);
       assert.equal(availableArgs.includes("sh"), false);
       assert.equal(availableArgs.includes("shell"), false);
-      // Pi 1.4.0 auto-discovers extensions, MCP servers, skills, prompts and context files unless told not to.
+      // Pi auto-discovers extensions, MCP servers, skills, prompts and context files unless told not to.
       for (const flag of ["--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve"]) {
         assert.equal(availableArgs.includes(flag), true, `worker launch must pass ${flag}`);
       }

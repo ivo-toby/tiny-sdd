@@ -645,7 +645,7 @@ dispatch when a project uses an explicit budget.
 Worker mode requires Linux with bubblewrap or macOS with `sandbox-exec`; a `pi`
 worker also needs Pi in
 the same installation as the CLI's Node executable, and the exact model in Pi's
-configured models. The exact Pi pin is 1.4.0 (1.0.0 is refused), which requires
+configured models. The exact Pi pin is 1.5.2 (1.0.0 and 1.4.0 are refused), which requires
 Node >=22.19.0; its fixed check-client integration still needs live qualification. Missing sandbox support fails closed. It uses
 read/write/edit tools in a disposable copy. The copy keeps a symlink only when
 its relative target is a regular file in the same copy (`AGENTS.md -> CLAUDE.md`);
@@ -678,7 +678,7 @@ model-free deterministic hook with `runtime.compaction.enabled: true`:
 ```
 
 `reserveTokens` must be at least effective `maxTokens`; omitting it derives the
-effective value. In Pi 1.4.0 it only sets when automatic compaction starts; summary
+effective value. In Pi 1.5.2 it only sets when automatic compaction starts; summary
 budgets no longer depend on it, and the deterministic path makes no model call.
 The host stages a read-only approved-packet anchor and wrapper
 for both bubblewrap and Seatbelt, independent of `run_checks`. Only paired old
@@ -816,12 +816,12 @@ contract; setup enforces confirmation through its skill workflow. Do not
 script automatic digest confirmation. Reinspect and reconfirm settings changes.
 
 The report separates `requestedThinking` from Pi's `effectiveThinking` after
-level clamping. In Pi 1.4.0, `thinkingLevelMap.off: null` can clamp `off` to
+level clamping. In Pi 1.5.2, `thinkingLevelMap.off: null` can clamp `off` to
 `minimal`, enabling reasoning; this requires the named mismatch acknowledgement.
 OpenAI-format `off` needs both a string off mapping and reasoning-effort support
 to send a value. Unsupported non-off requests still fail preflight rather than
 silently accepting a clamped level. `sent` predicts request construction only,
-not server compliance. The basis names checked Pi 1.4.0 clamping/OpenAI/DeepSeek
+not server compliance. The basis names checked pi-ai 1.4.0 clamping/OpenAI/DeepSeek
 rules; other format predictions are legacy and auto-detection stays unverified.
 `maxTokens` is the configured response ceiling. Pi can lower the cap for an
 individual request based on remaining context; this report is not an observation
@@ -1089,7 +1089,7 @@ project, more than 250,000 entries or 512 MiB) starts the worker without
 `limits.maxCheckRuns` defaults to 12 (integer 1–20), charged per individual
 check, so size it for the number of declared checks: a slice declaring `test`,
 `lint` and `typecheck` spends 3 runs per all-checks call. Budget exhaustion, unknown ids and runner unavailability throw tool
-errors and do not end the worker. Pi 1.4.0 makes a batch containing `run_checks`
+errors and do not end the worker. Pi 1.5.2 makes a batch containing `run_checks`
 sequential in assistant source order: `[write, run_checks]` sees the write;
 `[run_checks, write]` sees the earlier candidate. No sibling reordering occurs.
 OpenCode 2.1.4 has no such order: both calls of `[write, run_checks]` or

@@ -24,7 +24,7 @@ check runner wired to the worker as `run_checks`, slice-DAG `status`, the
 benchmark harness, usage accounting, the macOS worker #13, the format spec and
 SDD skills). Since then: the profile registry (#123), the OpenCode harness kind
 (#153) and worker type (#155), the Linux relay-only network (#152), the runner
-interface (#154), Pi 1.4.0, per-task workers and escalation, grouped help
+interface (#154), Pi 1.5.2, per-task workers and escalation, grouped help
 (#173), `change validate|export` (#175), the macOS Seatbelt check runner (#176),
 profile limits as defaults (#174), multiple named checks per slice (#181), the
 TypeScript typecheck advisory (#187), incomplete runs as revision bases

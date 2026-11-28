@@ -27,7 +27,7 @@ or a small model pilot does not establish reliable delivery across projects.
 | --- | --- | --- |
 | Onboarding | Global CLI, prerequisite checks, Linux sandbox startup probe, explicit Pi model discovery, version-matched Claude/Codex skill installation | Setup does not install prerequisites, authenticate models or run inference. |
 | SDD preparation | Constitution entry check; specify, research, plan and slice skills; portable change artifacts and cited context | The skills guide the outer agent. They are not an automatic end-to-end planner. |
-| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; per-task worker choice; retained candidates, patches, checks and usage | Pi is pinned to **1.4.0**, OpenCode to **2.1.4**. Pi and OpenCode workers get `run_checks` on Linux (bubblewrap) and macOS (Seatbelt); the macOS check runner refuses root, and live macOS and OpenCode check runs are unverified. `worker stop` is Linux-only. |
+| Workers | Pi or OpenCode execution in disposable sandboxed copies; protected inputs; per-task worker choice; retained candidates, patches, checks and usage | Pi is pinned to **1.5.2**, OpenCode to **2.1.4**. Pi and OpenCode workers get `run_checks` on Linux (bubblewrap) and macOS (Seatbelt); the macOS check runner refuses root, and live macOS and OpenCode check runs are unverified. `worker stop` is Linux-only. |
 | Review and acceptance | Explicit task approval, candidate application, review and feature integration checks; living-spec archive tooling | The operator owns decisions. `feature accept` requires a configured integration command and fresh evidence. |
 | Slice-test assessment | Configured Jev assessment, bounded revisions, independent checks and a recorded strong review | Strong-model review is externally performed and attested. Live comparative evaluation remains open. |
 | Benchmarks | Retained runs, independent visible/held-out verification, qualification and effective-settings confirmation | Coverage and fixture quality still need calibration. A benchmark score is not a guarantee of correct code. |
@@ -43,7 +43,7 @@ The dated experiment reports are historical evidence, not a current model rankin
 Prerequisites:
 
 - **Node.js >= 22.19.0**.
-- **Pi 1.4.0** (`@earendil-works/pi-coding-agent`, exact pin; 1.0.0 is refused), installed beside the Node
+- **Pi 1.5.2** (`@earendil-works/pi-coding-agent`, exact pin; 1.0.0 and 1.4.0 are refused), installed beside the Node
   executable used by TinySDD, with an explicit provider/model in Pi's `models.json`.
 - Or, for an OpenCode worker: **OpenCode 2.1.4** (exact pin), a single binary at
   `~/.opencode/bin/opencode`, and an OpenCode config file that defines the provider.

@@ -163,19 +163,19 @@ test('Node floor and Pi installation checks distinguish missing, unsupported, an
   }
 });
 
-test('the Pi version contract accepts only the exact 1.4.0 pin', async () => {
-  assert.equal(PI_VERSION, '1.4.0');
+test('the Pi version contract accepts only the exact 1.5.2 pin', async () => {
+  assert.equal(PI_VERSION, '1.5.2');
   const home = await temporary('tinysdd-pi-contract-home-');
   try {
-    const current = await fakePi(home, '1.4.0');
+    const current = await fakePi(home, '1.5.2');
     assert.equal((await inspectPiInstallation({ nodeExecutable: current.node })).status, 'ready');
-    for (const version of ['1.0.0', '1.4.1']) {
+    for (const version of ['1.0.0', '1.4.0', '1.5.3']) {
       const other = await fakePi(home, version);
       const result = await inspectPiInstallation({ nodeExecutable: other.node });
       assert.equal(result.status, 'unsupported-version', version);
       assert.equal(result.supported, false);
       assert.equal(result.version, version);
-      assert.equal(result.reason, `TinySDD requires ${PI_PACKAGE_NAME}@1.4.0; found ${version}`);
+      assert.equal(result.reason, `TinySDD requires ${PI_PACKAGE_NAME}@1.5.2; found ${version}`);
     }
   } finally {
     await cleanup(home);
@@ -193,7 +193,7 @@ test('a Pi executable whose nearby package is not the Pi package is unqualified,
     await writeFile(pi, '#!/bin/sh\n');
     await chmod(node, 0o755);
     await chmod(pi, 0o755);
-    await writeFile(join(bin, 'package.json'), JSON.stringify({ name: 'some-other-package', version: '1.4.0' }));
+    await writeFile(join(bin, 'package.json'), JSON.stringify({ name: 'some-other-package', version: '1.5.2' }));
     const result = await inspectPiInstallation({ nodeExecutable: node });
     assert.equal(result.status, 'unqualified');
     assert.equal(result.supported, false);
@@ -217,7 +217,7 @@ test('runSetup names the exact replacement when Pi 1.0.0 is still installed', as
     const result = await runSetup({ homeDir: home, nodeExecutable: pi.node, nodeVersion: '22.19.0', sourceAgentDir: agent, sourceEnv: {}, platform: 'darwin', sandbox: { privileged: false, executablePaths: { sandboxExec: pi.pi } }, configDir: join(home, 'config'), archiveBytes: archive(entries) });
     assert.equal(result.ready, false);
     assert.equal(result.checks.pi.status, 'unsupported-version');
-    assert.match(result.nextSteps.join('\n'), /Replace @earendil-works\/pi-coding-agent@1\.0\.0 with @earendil-works\/pi-coding-agent@1\.4\.0 beside this Node executable/u);
+    assert.match(result.nextSteps.join('\n'), /Replace @earendil-works\/pi-coding-agent@1\.0\.0 with @earendil-works\/pi-coding-agent@1\.5\.2 beside this Node executable/u);
   } finally {
     await cleanup(home);
   }

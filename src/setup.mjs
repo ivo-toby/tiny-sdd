@@ -17,9 +17,9 @@ const PACKAGE = JSON.parse(await readFile(PACKAGE_PATH, 'utf8'));
 export const CLI_VERSION = PACKAGE.version;
 export const PACKAGE_NAME = PACKAGE.name;
 export const PI_PACKAGE_NAME = '@earendil-works/pi-coding-agent';
-// Exact pin. 1.4.0 was checked against the 1.0.0 -> 1.4.0 changelog and package
-// source (issue #100); other versions are refused, including 1.0.0.
-export const PI_VERSION = '1.4.0';
+// Exact pin. 1.5.2 was checked against the 1.4.0 -> 1.5.2 changelog and package
+// source (issues #100 and #229); other versions are refused, including 1.0.0 and 1.4.0.
+export const PI_VERSION = '1.5.2';
 export const NODE_MINIMUM = Object.freeze({ major: 22, minor: 19, patch: 0 });
 export const GIT_REPOSITORY = 'https://github.com/ivo-toby/tiny-sdd';
 export const SETUP_DOCS_URL = `${GIT_REPOSITORY}/blob/main/docs/setup.md`;

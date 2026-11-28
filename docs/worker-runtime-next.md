@@ -833,6 +833,7 @@ contexts grow.
 | Profile limits as defaults (#174) | **Implemented** | A profile's measured `limits` are defaults; explicit worker limits win. `config show` and `runtime.json` record each limit as `{ measured, effective, source }`. |
 | `change validate` and `change export` subcommands (#175) | **Implemented** | What `scripts/validate-change.mjs` and `scripts/export-slice.mjs` do is also available as installed `tinysdd change validate|export` subcommands, so no source checkout is needed; the export output must be outside the source project. |
 | Cited files in workspace as read-only | Deferred | Fix note 8 suggests it if re-reads stay high. S1 had zero; `citedRereads` measures the rest. |
+| Pi pin 1.5.2 (#229) | **Implemented; live Pi/bubblewrap worker behavior unverified** | `PI_VERSION` is 1.5.2 and `setup` refuses 1.0.0 and 1.4.0. Compared with 1.4.0, the pi-ai thinking budgets, `clampThinkingLevel`, the URL part of `detectCompat` and the compaction trigger are unchanged, and `clampMaxTokensToContext` differs only above a `maxTokens` of 32768. Observed against a local stub server with the worker flags: the tool announcement, the `--tools` drop of an unregistered name, the request fields and the `run_checks` extension. Skills, prompt template and MCP discovery, `fd`/`rg` downloads under the sandbox and a live model run are not verified. |
 
 ## 4. Measuring single task vs slices
 

@@ -18,7 +18,7 @@ function buildPiArgs({ provider, model, sessionPath, thinking, systemPromptPath,
     "--mode",
     "json",
     "--no-extensions",
-    // --no-extensions already leaves out the built-in MCP extension in Pi 1.4.0;
+    // --no-extensions already leaves out the built-in MCP extension;
     // this also keeps any MCP server config (for example a project .pi/mcp.json) from connecting.
     "--no-mcp",
     "--no-skills",
@@ -157,7 +157,7 @@ export function parseEvents(text) {
   const toolCallsByName = {};
   const readPaths = [];
   const compactions = [];
-  // Pi 1.4.0 announces the tools it declares to the model in a system message before the first turn.
+  // Pi 1.5.2 announces the tools it declares to the model in a system message before the first turn.
   let toolLoadout = null;
   for (const line of text.split(/\r?\n/u)) {
     if (!line.trim()) continue;

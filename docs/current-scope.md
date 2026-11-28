@@ -40,7 +40,7 @@ GitHub issues track open work. In short, `main` has:
   dependent's apply that extends its prerequisite's files records
   `review.extendedBy` instead of staling it (#202). The operator records every
   approval and verdict; nothing is accepted automatically.
-- **Workers.** Pi 1.4.0 or OpenCode 2.1.4 in sandboxed disposable copies
+- **Workers.** Pi 1.5.2 or OpenCode 2.1.4 in sandboxed disposable copies
   (bubblewrap with a relay-only network on Linux, Seatbelt on macOS), with
   per-task worker choice and suggested escalation; a scope-clean `timeout` or
   `tool_limit` run can be the base of a revision. A run fails when the Pi
