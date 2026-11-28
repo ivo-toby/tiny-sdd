@@ -47,7 +47,7 @@ instruction candidate:
 contextWindow 128000, maxTokens 32768, thinking medium, parallel 1, 10 minute
 timeout, one repeat.
 - pass@1 by language: cpp 73.1, go 66.7, java 89.7, javascript 93.8, python 94.1, rust 66.7.
-- Outcomes: 197 passed, 6 compile errors, 3 without edits, 3 with failing tests, 1 scope violation.
+- 197 of 207 exercises passed within two attempts.
 - Harness errors stayed at 10; all of them date from the 2026-10 runs (the CPU limit fix and the muse route hang).
 - Go and Rust are the weak languages.
 - The run used Pi 1.5.2. The other baselines used Pi 1.0.0, and there is no inkling2sq20 run on 1.0.0. Part of the difference can come from the Pi version.

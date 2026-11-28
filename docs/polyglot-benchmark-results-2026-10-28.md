@@ -26,6 +26,7 @@ Noise between repeats is about ±3 points. Every number below is a single repeat
 | --- | ---: | ---: | ---: |
 | qwen38nextflash (randal) | 86.5% | 97.1% | 2.0 |
 | muselim (Titan, 20 min timeout) | 84.5% | 93.7% | 7.9 |
+| inkling2sq20 (Titan, 2026-11-28, Pi 1.5.2) | 82.6% | 95.2% | 2.4 |
 | muse (Titan) | 79.7% | 91.8% | 7.8 |
 | gemma26lim (Titan, 32k tokens, 20 min) | 78.3% | 94.2% | 9 |
 | gemma26 (Titan) | 75.8% | 88.4% | 6.0 |
@@ -33,9 +34,11 @@ Noise between repeats is about ±3 points. Every number below is a single repeat
 | flint (Titan, 188 exercises, no Rust) | 69.7% | 87.8% | 6.2 |
 | qwen38q3 (Titan) | 69.6% | 84.5% | 3.4 |
 | qwen38q4s (Titan) | 69.1% | 87.9% | 2.7 |
-| qwen36mt32 (Titan, 32k tokens) | 66.7% | 87.0% | |
+| qwen36mt32 (Titan, 32k tokens) | 66.7% | 87.0% | 2.7 |
 | qwen36 (Titan) | 63.3% | 81.2% | 2.7 |
 | north (Titan) | 52.7% | 74.9% | 9.3 |
+
+The inkling2sq20 row was added on 2026-11-28; see [the later run](#later-run-inkling2sq20-2026-11-28). The other rows used Pi 1.0.0.
 
 Defaults are 16k output tokens and a 10-minute worker timeout. The `randal` route name says Qwen3.6 but serves Qwen3.8-Next-Flash.
 
@@ -76,6 +79,18 @@ The baselines allow a simulation without new runs. Each exercise is first given 
 | qwen38pi → qwen38nextflash | 98.6% | 2.1 | 28 (13.5%) |
 
 On Titan, escalating from qwen38pi to muselim solves more exercises than muselim alone in less than half the time. Two limits to this simulation: an escalated exercise gets up to four attempts instead of two, and the strong worker does not see why the fast one failed. It does use the strong worker's real result on the same hard exercises, so the correlation between "hard for one" and "hard for the other" is in the numbers. This supports #164.
+
+## Later run: inkling2sq20 (2026-11-28)
+
+A new Titan route, `titan/strata/inkling-2-mini-sq20-128k`, was measured with the same method: baseline only, one repeat, 128k context, 32768 output tokens, thinking medium, 10-minute timeout, one task at a time. This run used Pi 1.5.2, not Pi 1.0.0.
+
+| pass@1 | pass@2 | min/task | cpp | go | java | javascript | python | rust |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 82.6% | 95.2% | 2.4 | 73.1% | 66.7% | 89.7% | 93.8% | 94.1% | 66.7% |
+
+The language columns are pass@1. 197 of 207 exercises passed within two attempts. No instruction candidates were tried for this model.
+
+Among the Titan models, inkling2sq20 has the best speed and quality together: it is 2.4 min per task at 82.6%, where muselim needs 7.9 min for 84.5%. Go and Rust are its weak languages. Because the Pi version differs from the other baselines, the gap to them is not paired and can partly come from Pi. Noise is about ±3 points. The registry card is `profiles/titan-inkling2-mini-sq20-128k-v1.json`.
 
 ## Cost
 
